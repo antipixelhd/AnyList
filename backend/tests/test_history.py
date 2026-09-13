@@ -428,6 +428,36 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("http://other.local", calls)
 
 
+class DismissSessionTests(unittest.IsolatedAsyncioTestCase):
+    """#382: the per-item Now Playing dismiss button reuses this endpoint,
+    which predates it as a manual-session-only "stop" action - confirm it
+    isn't source-restricted and works for a webhook-sourced (plex) session."""
+
+    async def test_dismisses_a_plex_sourced_session(self) -> None:
+        session = PlaybackSession(
+            id=1, user_id=7, media_id=10, session_key="plex:7:abc", source="plex",
+            state="playing", progress_percent=0.5, progress_seconds=600,
+            started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
+        )
+        db = _FakeSession([session, None, None])
+
+        result = await history.dismiss_session(
+            session_key="plex:7:abc", db=db, current_user=SimpleNamespace(id=7)
+        )
+
+        self.assertEqual(result, {"status": "ok"})
+        db.commit.assert_awaited_once()
+
+    async def test_missing_session_returns_404(self) -> None:
+        db = _FakeSession([None])
+
+        with self.assertRaises(HTTPException) as ctx:
+            await history.dismiss_session(
+                session_key="plex:7:missing", db=db, current_user=SimpleNamespace(id=7)
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
 class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
     """#174: get_now_playing builds its media dict inline rather than through
     enrich_with_state, so it needs its own wiring for the episode-order

@@ -3207,12 +3207,18 @@ async def update_manual_session(
 
 
 @router.delete("/session/{session_key}")
-async def stop_manual_session(
+async def dismiss_session(
     session_key: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    """Stop and discard a manual session without marking as watched."""
+    """Discard a single Now Playing session without marking it as watched.
+
+    Not source-restricted - originally added for manual sessions, but also
+    used by the Now Playing bar's per-item dismiss button (#382) to drop a
+    stray webhook-sourced session (e.g. a Plex client that never sent
+    media.stop on a Fire TV autoplay transition) without clearing every
+    other active session for the user."""
     result = await db.execute(
         select(PlaybackSession).where(
             PlaybackSession.session_key == session_key,

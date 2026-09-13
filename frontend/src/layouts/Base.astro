@@ -831,6 +831,9 @@ const bottomNavItem = (active: boolean) =>
                 ${etaLine}
               </div>
             ${href ? '</a>' : '</div>'}
+            <button type="button" data-npdismiss="${sessionKey}" title="Remove from Now Playing" aria-label="Remove from Now Playing" class="absolute top-1 right-1 md:right-2 p-1.5 rounded-full text-zinc-600 hover:text-zinc-200 hover:bg-zinc-800/80 transition-colors z-10 cursor-pointer">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
             <div class="absolute bottom-0 left-0 right-0" style="height:2px;background:rgba(0,0,0,0.12)">
               <div data-npbar="${sessionKey}"
                 data-ps="${progressSeconds}"
@@ -892,9 +895,28 @@ const bottomNavItem = (active: boolean) =>
       } catch { /* ignore */ }
     }
 
+    // #382: per-item dismiss on the Now Playing bar, for a stray session a
+    // client never sent a stop event for (seen on Fire TV autoplay
+    // transitions) - clears just that one instead of forcing "Clear" to wipe
+    // every active session for the user.
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-npdismiss]');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      btn.disabled = true;
+      try {
+        await fetch(`/api/proxy/history/session/${encodeURIComponent(btn.dataset.npdismiss)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${window.__AUTH_TOKEN__}` },
+        });
+      } catch { /* ignore, next poll reconciles either way */ }
+      pollNowPlaying();
+    });
+
     if (window.__AUTH_TOKEN__) {
       const isHome = () => window.location.pathname === '/';
-      
+
       const runPoll = () => {
         if (isHome()) pollNowPlaying();
       };
