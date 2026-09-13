@@ -210,6 +210,7 @@ class UserSettings(BaseModel):
     shuffle_next_up: Optional[bool] = None
     minimalist_next_up: Optional[bool] = None
     hide_watched_from_recently_added: Optional[bool] = None
+    condense_history_by_show: Optional[bool] = None
     rate_prompt_movies: Optional[bool] = None
     rate_prompt_episodes: Optional[bool] = None
     duplicate_watch_window_minutes: Optional[int] = Field(default=None, ge=0)
