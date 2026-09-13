@@ -212,6 +212,7 @@ class UserSettings(BaseModel):
     hide_watched_from_recently_added: Optional[bool] = None
     rate_prompt_movies: Optional[bool] = None
     rate_prompt_episodes: Optional[bool] = None
+    duplicate_watch_window_minutes: Optional[int] = Field(default=None, ge=0)
 
     @field_validator("rpdb_api_key", mode="before")
     @classmethod
@@ -387,6 +388,10 @@ class WatchEventCreate(BaseModel):
     series_tvdb_id: Optional[int] = None  # lets the show be linked to TVDB (see #101) without requiring a prior visit to its TVDB page
     season_number: Optional[int] = None
     episode_number: Optional[int] = None
+    # Set after the user confirms a "this looks like a duplicate, add anyway?"
+    # prompt (see the 409 duplicate_watch response from POST /history), to
+    # record it despite an existing watch within the dedup window (#390).
+    force: bool = False
 
 
 class ManualSessionStart(BaseModel):

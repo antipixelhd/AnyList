@@ -2011,20 +2011,21 @@ const bottomNavItem = (active: boolean) =>
           return;
         }
 
-        try {
-          const watchBody: Record<string, unknown> = {
-            media_type: _watchHistoryMediaType,
-            completed: true,
-            watched_at: watchedAt,
-          };
-          if (_watchHistoryTmdbId) watchBody.tmdb_id = Number(_watchHistoryTmdbId);
-          if (_watchHistoryMediaId) watchBody.media_id = Number(_watchHistoryMediaId);
-          if (_watchHistoryMediaType === 'episode' && (_watchHistoryShowTmdbId || _watchHistoryShowTvdbId)) {
-            if (_watchHistoryShowTmdbId) watchBody.series_tmdb_id = Number(_watchHistoryShowTmdbId);
-            if (_watchHistoryShowTvdbId) watchBody.series_tvdb_id = Number(_watchHistoryShowTvdbId);
-            if (_watchHistorySeasonNumber) watchBody.season_number = Number(_watchHistorySeasonNumber);
-            if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
-          }
+        const watchBody: Record<string, unknown> = {
+          media_type: _watchHistoryMediaType,
+          completed: true,
+          watched_at: watchedAt,
+        };
+        if (_watchHistoryTmdbId) watchBody.tmdb_id = Number(_watchHistoryTmdbId);
+        if (_watchHistoryMediaId) watchBody.media_id = Number(_watchHistoryMediaId);
+        if (_watchHistoryMediaType === 'episode' && (_watchHistoryShowTmdbId || _watchHistoryShowTvdbId)) {
+          if (_watchHistoryShowTmdbId) watchBody.series_tmdb_id = Number(_watchHistoryShowTmdbId);
+          if (_watchHistoryShowTvdbId) watchBody.series_tvdb_id = Number(_watchHistoryShowTvdbId);
+          if (_watchHistorySeasonNumber) watchBody.season_number = Number(_watchHistorySeasonNumber);
+          if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
+        }
+
+        const submitWatch = async () => {
           await apiFetch('/history', 'POST', watchBody);
           await loadWatchHistoryEvents();
           syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
@@ -2034,9 +2035,41 @@ const bottomNavItem = (active: boolean) =>
           (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
           (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
           input.classList.add('hidden');
+        };
+
+        try {
+          await submitWatch();
         } catch (err) {
-          logBtn.textContent = idleLabel;
-          alertFromError(err, 'Failed to mark as watched');
+          // A 409 {detail: {error: "duplicate_watch", message, ...}} means this
+          // looks like a duplicate of an existing watch within the configured
+          // window (#390) - only the manual entry point gets to override that
+          // with a confirmation, everything else (webhooks, imports) just skips
+          // silently.
+          let duplicateDetail: any = null;
+          try {
+            const data = JSON.parse((err as Error).message);
+            if (data?.detail?.error === 'duplicate_watch') duplicateDetail = data.detail;
+          } catch {}
+
+          let forcedSuccess = false;
+          if (duplicateDetail) {
+            const proceed = await showConfirm(
+              'Possible duplicate',
+              duplicateDetail.message || 'This looks like a duplicate of an existing watch. Add anyway?',
+            );
+            if (proceed) {
+              try {
+                watchBody.force = true;
+                await submitWatch();
+                forcedSuccess = true;
+              } catch (err2) {
+                alertFromError(err2, 'Failed to mark as watched');
+              }
+            }
+          } else {
+            alertFromError(err, 'Failed to mark as watched');
+          }
+          if (!forcedSuccess) logBtn.textContent = idleLabel;
         }
         logBtn.disabled = false;
       });

@@ -25,6 +25,7 @@ from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, 
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
+from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
 from core.enrichment import create_media_safely
 from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
 
@@ -2157,6 +2158,20 @@ async def mark_as_watched(
         else None if "watched_at" in event_in.model_fields_set
         else datetime.utcnow()
     )
+    if event_in.completed and not event_in.force:
+        window_minutes = await get_dedup_window_minutes(db, current_user.id)
+        duplicate = await find_duplicate_watch_event(db, current_user.id, media.id, watched_at, window_minutes)
+        if duplicate is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "duplicate_watch",
+                    "message": "This looks like a duplicate of an existing watch. Add anyway?",
+                    "existing_event_id": duplicate.id,
+                    "existing_watched_at": duplicate.watched_at.isoformat() if duplicate.watched_at else None,
+                },
+            )
+
     event = WatchEvent(
         user_id=current_user.id,
         media_id=media.id,
@@ -3203,6 +3218,9 @@ async def auto_complete_manual_sessions(db: AsyncSession) -> None:
                 PlaybackProgress.media_id == session.media_id,
             )
         )
+        window_minutes = await get_dedup_window_minutes(db, session.user_id)
+        if await find_duplicate_watch_event(db, session.user_id, session.media_id, now, window_minutes) is not None:
+            continue
         event = WatchEvent(
             user_id=session.user_id,
             media_id=session.media_id,
@@ -3249,10 +3267,16 @@ async def complete_manual_session(
         )
     )
 
+    now = datetime.utcnow()
+    window_minutes = await get_dedup_window_minutes(db, current_user.id)
+    if await find_duplicate_watch_event(db, current_user.id, media_id, now, window_minutes) is not None:
+        await db.commit()
+        return {"status": "ok"}
+
     event = WatchEvent(
         user_id=current_user.id,
         media_id=media_id,
-        watched_at=datetime.utcnow(),
+        watched_at=now,
         completed=True,
         play_count=1,
         progress_percent=1.0,

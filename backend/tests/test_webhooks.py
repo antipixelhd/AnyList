@@ -141,13 +141,13 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         # unknown-dated watch event, every later real rewatch reported by
         # Jellyfin/Plex/Emby was silently treated as a duplicate of it
         # forever. watched_at can't carry that bound when it's NULL, so the
-        # branch must check created_at (when the row was actually inserted)
-        # instead - assert it's actually in the query, not just watched_at.
+        # shared dedup query (core.watch_dedup.find_duplicate_watch_event)
+        # falls back to created_at via coalesce() - assert that's actually in
+        # the query, not just watched_at.
         db = _FakeDB(queued_scalars=[None])
         await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
         compiled = str(db.executed_statements[0])
-        self.assertIn("watch_events.created_at", compiled)
-        self.assertIn("watch_events.watched_at IS NULL", compiled)
+        self.assertIn("coalesce(watch_events.watched_at, watch_events.created_at)", compiled)
 
 
 class WriteCompletedEventsAndFilterEchoesTests(IsolatedAsyncioTestCase):

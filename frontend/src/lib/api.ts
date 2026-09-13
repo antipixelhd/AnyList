@@ -493,6 +493,7 @@ export interface UserSettings {
   minimalist_next_up: boolean;
   rate_prompt_movies: boolean;
   rate_prompt_episodes: boolean;
+  duplicate_watch_window_minutes: number | null;
 }
 
 export interface MediaServerConnection {

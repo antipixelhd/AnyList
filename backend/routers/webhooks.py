@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, or_, and_
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm.exc import StaleDataError
 
 from db import get_db
@@ -33,6 +33,7 @@ from core.episode_order import (
     reconcile_divergent_episode_media,
 )
 from core.rewatch import record_rewatch_progress, get_active_rewatch
+from core.watch_dedup import DEFAULT_DEDUP_WINDOW_MINUTES, dedup_window_from_settings, find_duplicate_watch_event
 from models.rewatch import RewatchProgress
 from core import tmdb
 from core import trakt as trakt_client
@@ -638,6 +639,7 @@ async def _write_watch_event(
     progress_percent: float,
     progress_seconds: int,
     completed: bool,
+    window_minutes: int = DEFAULT_DEDUP_WINDOW_MINUTES,
 ) -> bool:
     """Returns False only when this call was consumed as a push-watched echo
     (see the _recently_pushed_watched comment above) - True in every other
@@ -656,32 +658,17 @@ async def _write_watch_event(
         # A single completed viewing is often reported by more than one webhook
         # event for the same session (e.g. Plex sends both `media.scrobble` at
         # ~90% and `media.stop` when the session actually closes) — without this
-        # guard each one adds its own WatchEvent row.
-        recent_cutoff = datetime.utcnow() - timedelta(minutes=5)
-        existing = await db.execute(
-            select(WatchEvent.id).where(
-                WatchEvent.user_id == user_id,
-                WatchEvent.media_id == media_id,
-                or_(
-                    WatchEvent.watched_at >= recent_cutoff,
-                    # NULL >= cutoff is never true in SQL, so an unknown-dated
-                    # event (manually logged without a date) needs its own
-                    # branch to still be caught here — but watched_at can't
-                    # say when that row was actually written, so it must be
-                    # bounded by created_at instead, same as the dated branch
-                    # above. Without that bound this matched an unknown-dated
-                    # event forever, silently swallowing every real rewatch
-                    # of a title logged that way as a "duplicate" (#355).
-                    and_(WatchEvent.watched_at.is_(None), WatchEvent.created_at >= recent_cutoff),
-                ),
-            ).limit(1)
-        )
-        if existing.scalar_one_or_none() is not None:
+        # guard each one adds its own WatchEvent row. Also catches the same play
+        # arriving again from a different source within the user's configured
+        # window (#390), since find_duplicate_watch_event doesn't care which
+        # source either row came from.
+        now = datetime.utcnow()
+        if await find_duplicate_watch_event(db, user_id, media_id, now, window_minutes) is not None:
             return True
         event = WatchEvent(
             user_id=user_id,
             media_id=media_id,
-            watched_at=datetime.utcnow(),
+            watched_at=now,
             progress_seconds=progress_seconds,
             progress_percent=1.0,
             completed=True,
@@ -709,7 +696,8 @@ async def _write_watch_event(
 
 
 async def _write_completed_events_and_filter_echoes(
-    db: AsyncSession, user_id: int, media_list: list["Media"], progress_seconds: int
+    db: AsyncSession, user_id: int, media_list: list["Media"], progress_seconds: int,
+    window_minutes: int = DEFAULT_DEDUP_WINDOW_MINUTES,
 ) -> list["Media"]:
     """Writes a completed WatchEvent for each item in media_list (a Jellyfin/
     Emby "mark played" webhook can carry more than one for a multi-episode
@@ -720,7 +708,7 @@ async def _write_completed_events_and_filter_echoes(
     Trakt/MDBList/Simkl/Bingebase either (#369)."""
     return [
         m for m in media_list
-        if await _write_watch_event(db, user_id, m.id, 1.0, progress_seconds, True)
+        if await _write_watch_event(db, user_id, m.id, 1.0, progress_seconds, True, window_minutes)
     ]
 
 
@@ -1301,6 +1289,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     # Almost always one episode; a combined multi-episode file (see #138)
@@ -1418,7 +1407,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes)
         await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1437,7 +1426,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
         non_echo_media = media_list
         if not conn or conn.sync_watched:
             non_echo_media = await _write_completed_events_and_filter_echoes(
-                db, user.id, media_list, data["progress_seconds"]
+                db, user.id, media_list, data["progress_seconds"], window_minutes
             )
         await db.commit()
         for m in non_echo_media:
@@ -1458,7 +1447,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 await _close_session(db, session_key)
                 # See the matching comment in the MarkPlayed branch above (#369).
                 non_echo_media = await _write_completed_events_and_filter_echoes(
-                    db, user.id, media_list, data["progress_seconds"]
+                    db, user.id, media_list, data["progress_seconds"], window_minutes
                 )
                 await db.commit()
                 for m in non_echo_media:
@@ -1566,6 +1555,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     # See the matching comment in _handle_jellyfin_webhook (#138 follow-up).
@@ -1664,7 +1654,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             progress_percent = 1.0
         if (not conn or conn.sync_watched) and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes)
         await db.commit()
         for m in media_list:
             await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
@@ -1681,7 +1671,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
         non_echo_media = media_list
         if not conn or conn.sync_watched:
             non_echo_media = await _write_completed_events_and_filter_echoes(
-                db, user.id, media_list, data["progress_seconds"]
+                db, user.id, media_list, data["progress_seconds"], window_minutes
             )
         await db.commit()
         for m in non_echo_media:
@@ -1754,6 +1744,7 @@ async def _handle_jellyfin_scrobble_webhook(
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     # See the matching comment in _handle_jellyfin_webhook (#138 follow-up).
@@ -1836,7 +1827,7 @@ async def _handle_jellyfin_scrobble_webhook(
             progress_percent = 1.0
         if conn.sync_watched and progress_percent > 0.05:
             for m in media_list:
-                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+                await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes)
         await db.commit()
         if not is_duplicate:
             for m in media_list:
@@ -1854,7 +1845,7 @@ async def _handle_jellyfin_scrobble_webhook(
         non_echo_media = media_list
         if conn.sync_watched:
             non_echo_media = await _write_completed_events_and_filter_echoes(
-                db, user.id, media_list, data["progress_seconds"]
+                db, user.id, media_list, data["progress_seconds"], window_minutes
             )
         await db.commit()
         if not is_duplicate:
@@ -1877,7 +1868,7 @@ async def _handle_jellyfin_scrobble_webhook(
                 await _close_session(db, session_key)
                 # See the matching comment in the MarkPlayed branch above (#369).
                 non_echo_media = await _write_completed_events_and_filter_echoes(
-                    db, user.id, media_list, data["progress_seconds"]
+                    db, user.id, media_list, data["progress_seconds"], window_minutes
                 )
                 await db.commit()
                 if not is_duplicate:
@@ -2596,6 +2587,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     session_key = f"plex:{user.id}:{data['session_key']}"
@@ -2683,6 +2675,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                     db, user.id, media_id,
                     progress_percent, progress_seconds,
                     progress_percent >= 0.90,
+                    window_minutes,
                 )
             await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await _backfill_credits_stingers(db, media, tmdb_key)
@@ -2697,7 +2690,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
         if not conn or conn.sync_watched:
             media = await find_or_create_media_plex(data, db, api_key=tmdb_key, conn=conn, user_id=user.id)
             if media:
-                await _write_watch_event(db, user.id, media.id, 1.0, data["progress_seconds"], True)
+                await _write_watch_event(db, user.id, media.id, 1.0, data["progress_seconds"], True, window_minutes)
             await db.commit()
 
     elif event == "media.rate":
@@ -2910,6 +2903,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     session_key = f"plex:scrobble:{user.id}:{data['session_key']}"
@@ -2985,7 +2979,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
         if conn.sync_playback:
             progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
             if conn.sync_watched and progress_percent > 0.05:
-                await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, progress_percent >= 0.90)
+                await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes)
         await _backfill_plex_runtime(db, media, data, None, tmdb_key)
         await _backfill_credits_stingers(db, media, tmdb_key)
         if conn.sync_collection:
@@ -3008,7 +3002,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
     elif event == "media.scrobble":
         await _close_session(db, session_key)
         if conn.sync_watched:
-            await _write_watch_event(db, user.id, media.id, 1.0, data["progress_seconds"], True)
+            await _write_watch_event(db, user.id, media.id, 1.0, data["progress_seconds"], True, window_minutes)
         if conn.sync_collection:
             quality = data.get("quality")
             await _ensure_collection_entry(
@@ -3329,6 +3323,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     media = await find_or_create_media_kodi(data, db, api_key=tmdb_key, user_id=user.id)
@@ -3386,7 +3381,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)
         completed = data.get("ended") or progress_percent >= 0.90
         if completed or progress_percent > 0.05:
-            await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, completed)
+            await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, completed, window_minutes)
         await db.commit()
         await _maybe_trakt_scrobble(settings, media, "stop", progress_percent, db=db)
         await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
@@ -3509,6 +3504,7 @@ async def kodi_rating(
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
+    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     data = {

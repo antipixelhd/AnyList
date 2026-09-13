@@ -35,6 +35,7 @@ from core.identity import coerce_id, link_show_ids
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
+from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event, is_duplicate_watch_time
 from core.watchlist_reconcile import compute_new_baseline, media_key, plan_watchlist_reconcile
 from models.rewatch import ShowRewatch, RewatchProgress
 
@@ -3003,6 +3004,7 @@ async def _backfill_plex_watch_history(
     server_username: str | None,
     ratingkey_to_media: dict[str, int],
     job_id: int | None = None,
+    window_minutes: int = 0,
 ) -> tuple[int, int]:
     """Import every distinct Plex play as its own WatchEvent, not just the most
     recent one — Plex's library-scan endpoints (get_movies/get_shows/get_episodes)
@@ -3082,11 +3084,23 @@ async def _backfill_plex_watch_history(
             else:
                 confirmed_watched_by_media[media_id].add(watched_at)
 
+        # window_minutes is the user's raw configured override (0 if unset) -
+        # deliberately NOT the floored effective value the general dedup
+        # setting uses elsewhere (core.watch_dedup.DEFAULT_DEDUP_WINDOW_MINUTES
+        # = 5), which would otherwise widen PLEX_CONFIRMED_RECONCILE_WINDOW's
+        # tuned 2-minute echo check by default and reintroduce #320 (a genuine
+        # distinct play a few minutes after a confirmed one wrongly suppressed
+        # as an echo). An explicit override only ever widens these two
+        # reconcile windows beyond their tuned defaults, never narrows them.
+        user_window = timedelta(minutes=window_minutes)
+        provisional_window = max(PLEX_WEBHOOK_RECONCILE_WINDOW, user_window)
+        confirmed_window = max(PLEX_CONFIRMED_RECONCILE_WINDOW, user_window)
+
         def _closest_provisional(media_id: int, watched_at: datetime) -> tuple[int, datetime] | None:
             candidates = provisional_by_media.get(media_id) or []
             in_range = [
                 c for c in candidates
-                if abs((watched_at - c[1]).total_seconds()) <= PLEX_WEBHOOK_RECONCILE_WINDOW.total_seconds()
+                if abs((watched_at - c[1]).total_seconds()) <= provisional_window.total_seconds()
             ]
             if not in_range:
                 return None
@@ -3095,7 +3109,7 @@ async def _backfill_plex_watch_history(
         def _has_nearby_confirmed(media_id: int, watched_at: datetime) -> bool:
             candidates = confirmed_watched_by_media.get(media_id) or set()
             return any(
-                abs((watched_at - c).total_seconds()) <= PLEX_CONFIRMED_RECONCILE_WINDOW.total_seconds()
+                abs((watched_at - c).total_seconds()) <= confirmed_window.total_seconds()
                 for c in candidates
             )
 
@@ -3896,6 +3910,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             if conn.sync_watched:
                 new_events, reconciled, unmatched = await _backfill_plex_watch_history(
                     user_id, conn.id, p_url, p_token, conn.server_username, _plex_ratingkey_to_media, job_id,
+                    window_minutes=(settings.duplicate_watch_window_minutes or 0) if settings else 0,
                 )
                 if new_events or reconciled or unmatched:
                     print(
@@ -4152,23 +4167,23 @@ async def _apply_nuvio_watch_history(
             WatchEvent.media_id.in_(media_ids),
         )
     )
-    existing = set(existing_result.all())
-    existing_by_media: dict[int, datetime | None] = {}
-    for existing_media_id, existing_watched_at in existing:
-        existing_by_media.setdefault(existing_media_id, existing_watched_at)
+    existing_by_media: dict[int, list[datetime | None]] = {}
+    for existing_media_id, existing_watched_at in existing_result.all():
+        existing_by_media.setdefault(existing_media_id, []).append(existing_watched_at)
+
+    window_minutes = await get_dedup_window_minutes(db, user_id)
     added_media_ids: set[int] = set()
     new_events: list[WatchEvent] = []
     for media, watched_at in candidates:
+        times = existing_by_media.get(media.id, [])
         if dedupe_by_media_id_only:
-            if media.id in existing_by_media:
+            if times:
                 continue
-        else:
-            existing_watched_at = existing_by_media.get(media.id)
-            if watched_at is None:
-                if existing_watched_at is not None:
-                    continue
-            elif (media.id, watched_at) in existing:
+        elif watched_at is None:
+            if any(t is None for t in times):
                 continue
+        elif is_duplicate_watch_time({media.id: [t for t in times if t is not None]}, media.id, watched_at, window_minutes):
+            continue
         event = WatchEvent(
             user_id=user_id,
             media_id=media.id,
@@ -4179,12 +4194,9 @@ async def _apply_nuvio_watch_history(
         )
         db.add(event)
         new_events.append(event)
-        # Keep both structures in sync - exact-match dedup (the default path)
-        # still checks `existing` directly, and without this an exact-duplicate
-        # row later in the same batch would no longer be caught, creating a
-        # second WatchEvent for it in one sync run.
-        existing.add((media.id, watched_at))
-        existing_by_media[media.id] = watched_at
+        # Keep in sync - a duplicate row later in the same batch must still be
+        # caught, or it'd create a second WatchEvent for it in one sync run.
+        existing_by_media.setdefault(media.id, []).append(watched_at)
         added_media_ids.add(media.id)
     await db.commit()
     for event in new_events:
@@ -5341,15 +5353,8 @@ async def _apply_arvio_watched_movie(
         if tmdb_api_key:
             await enrich_media(media, api_key=tmdb_api_key)
 
-    event_query = select(WatchEvent).where(
-        WatchEvent.user_id == user_id,
-        WatchEvent.media_id == media.id,
-        WatchEvent.completed == True,
-    )
-    if watched_at:
-        event_query = event_query.where(WatchEvent.watched_at == watched_at)
-
-    existing = (await db.execute(event_query)).scalars().first()
+    window_minutes = await get_dedup_window_minutes(db, user_id)
+    existing = await find_duplicate_watch_event(db, user_id, media.id, watched_at, window_minutes)
     if not existing:
         event = WatchEvent(
             user_id=user_id,
@@ -5478,15 +5483,8 @@ async def _apply_arvio_watched_episode(
         if tmdb_api_key:
             await enrich_media(media, api_key=tmdb_api_key)
 
-    event_query = select(WatchEvent).where(
-        WatchEvent.user_id == user_id,
-        WatchEvent.media_id == media.id,
-        WatchEvent.completed == True,
-    )
-    if watched_at:
-        event_query = event_query.where(WatchEvent.watched_at == watched_at)
-
-    existing = (await db.execute(event_query)).scalars().first()
+    window_minutes = await get_dedup_window_minutes(db, user_id)
+    existing = await find_duplicate_watch_event(db, user_id, media.id, watched_at, window_minutes)
     if not existing:
         event = WatchEvent(
             user_id=user_id,
@@ -8154,6 +8152,79 @@ async def heal_push_echo_duplicates(
         burst.append(row)
         prev_at = row.watched_at
     _flush_burst()
+
+    if not to_delete:
+        return {"status": "ok", "healed": 0}
+
+    await db.execute(delete(WatchEvent).where(WatchEvent.id.in_(to_delete)))
+    await db.commit()
+    return {"status": "ok", "healed": len(to_delete)}
+
+
+class HealDuplicateHistoryBody(BaseModel):
+    window_minutes: int
+
+
+@router.post("/heal-duplicate-history")
+async def heal_duplicate_history(
+    body: HealDuplicateHistoryBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Manually collapse this user's WatchEvent rows that are within
+    window_minutes of another watch of the same movie/episode, regardless of
+    which source produced either one - e.g. the same play recorded once by a
+    Plex webhook and again hours later by a daily Trakt import (#390). Unlike
+    the live prevention check (Settings > duplicate_watch_window_minutes),
+    this is a one-off retroactive sweep the user runs on demand with their
+    own window, for history that already has duplicates in it.
+
+    Adjacent watches within the window chain into one cluster (A-B close and
+    B-C close merges all three, even if A-C alone would exceed the window) -
+    within a cluster, keeps the row most likely to be the real one: completed
+    over provisional, then earliest.
+    """
+    if body.window_minutes < 1:
+        raise HTTPException(status_code=422, detail="window_minutes must be at least 1")
+
+    result = await db.execute(
+        select(WatchEvent)
+        .where(WatchEvent.user_id == current_user.id)
+        .order_by(WatchEvent.media_id, WatchEvent.id)
+    )
+    events = result.scalars().all()
+
+    def _effective_time(event: WatchEvent) -> datetime:
+        return event.watched_at or event.created_at
+
+    def _rank(event: WatchEvent) -> tuple[int, datetime]:
+        if event.completed and not event.provisional:
+            tier = 0
+        elif event.completed:
+            tier = 1
+        else:
+            tier = 2
+        return (tier, _effective_time(event))
+
+    by_media: dict[int, list[WatchEvent]] = {}
+    for event in events:
+        by_media.setdefault(event.media_id, []).append(event)
+
+    tolerance = timedelta(minutes=body.window_minutes).total_seconds()
+    to_delete: list[int] = []
+    for media_events in by_media.values():
+        media_events.sort(key=_effective_time)
+        cluster: list[WatchEvent] = []
+        for event in media_events:
+            if cluster and (_effective_time(event) - _effective_time(cluster[-1])).total_seconds() > tolerance:
+                if len(cluster) > 1:
+                    keeper = min(cluster, key=_rank)
+                    to_delete.extend(e.id for e in cluster if e is not keeper)
+                cluster = []
+            cluster.append(event)
+        if len(cluster) > 1:
+            keeper = min(cluster, key=_rank)
+            to_delete.extend(e.id for e in cluster if e is not keeper)
 
     if not to_delete:
         return {"status": "ok", "healed": 0}
