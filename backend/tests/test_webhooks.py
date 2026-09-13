@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from models.base import MediaType
@@ -19,6 +20,7 @@ from routers.webhooks import (
     _consume_recently_pushed_watched,
     _ensure_collection_entry,
     _episode_for_progress,
+    _get_or_open_session,
     _is_duplicate_webhook_delivery,
     _maybe_bingebase_scrobble,
     _maybe_simkl_scrobble,
@@ -179,6 +181,98 @@ class WriteCompletedEventsAndFilterEchoesTests(IsolatedAsyncioTestCase):
 
         self.assertEqual([m.id for m in result], [2, 3])
         self.assertEqual(len(db.added), 2)
+
+
+class _NestedTxn:
+    def __init__(self, db: "_OpenSessionFakeDB"):
+        self.db = db
+
+    async def __aenter__(self):
+        self.db.events.append("begin_nested")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False  # let exceptions propagate, like a real SAVEPOINT rollback
+
+
+class _OpenSessionFakeDB:
+    """Fakes just enough of AsyncSession for _get_or_open_session: each
+    execute() call returns the next queued scalar_one_or_none() value, add()
+    is recorded (with ordering relative to begin_nested(), same regression
+    guard as create_media_safely's own tests), and flush() can be made to
+    raise to simulate a lost race on the session_key unique index."""
+
+    def __init__(self, queued_scalars, flush_raises: Exception | None = None):
+        self._queued = list(queued_scalars)
+        self.added: list = []
+        self.events: list[str] = []
+        self.flush_raises = flush_raises
+        self.flush_calls = 0
+
+    async def execute(self, stmt):
+        value = self._queued.pop(0) if self._queued else None
+        return _ScalarResult(value)
+
+    def add(self, obj):
+        self.events.append("add")
+        self.added.append(obj)
+
+    def begin_nested(self):
+        return _NestedTxn(self)
+
+    async def flush(self):
+        self.flush_calls += 1
+        if self.flush_raises is not None:
+            raise self.flush_raises
+
+
+class GetOrOpenSessionTests(IsolatedAsyncioTestCase):
+    """Regression tests for #392: two webhook events for a session that
+    doesn't exist yet (e.g. Jellyfin's PlaybackStart and its first
+    PlaybackProgress, sent back to back) can both SELECT nothing and both
+    try to INSERT - the loser must recover instead of 500ing."""
+
+    async def test_existing_session_is_returned_without_inserting(self):
+        existing = SimpleNamespace(id=1, session_key="jellyfin:1:abc")
+        db = _OpenSessionFakeDB(queued_scalars=[existing])
+
+        session = await _get_or_open_session(db, "jellyfin:1:abc", "jellyfin", 1, 2)
+
+        self.assertIs(session, existing)
+        self.assertEqual(db.added, [])
+        self.assertEqual(db.events, [])
+
+    async def test_creates_session_when_none_exists(self):
+        db = _OpenSessionFakeDB(queued_scalars=[None])
+
+        session = await _get_or_open_session(db, "jellyfin:1:abc", "jellyfin", 1, 2)
+
+        self.assertEqual(session.session_key, "jellyfin:1:abc")
+        self.assertIn(session, db.added)
+        # add() must happen *after* the savepoint is entered - see
+        # _OpenSessionFakeDB and create_media_safely's matching comment.
+        self.assertEqual(db.events, ["begin_nested", "add"])
+
+    async def test_lost_race_returns_the_winners_row(self):
+        winner = SimpleNamespace(id=7, session_key="jellyfin:1:abc")
+        db = _OpenSessionFakeDB(
+            queued_scalars=[None, winner],  # first SELECT: none; re-select after conflict: winner
+            flush_raises=IntegrityError("stmt", {}, Exception("duplicate key")),
+        )
+
+        session = await _get_or_open_session(db, "jellyfin:1:abc", "jellyfin", 1, 2)
+
+        self.assertIs(session, winner)
+        self.assertEqual(db.events, ["begin_nested", "add"])
+
+    async def test_integrity_error_with_no_existing_row_reraises(self):
+        db = _OpenSessionFakeDB(
+            queued_scalars=[None, None],
+            flush_raises=IntegrityError("stmt", {}, Exception("duplicate key")),
+        )
+
+        with self.assertRaises(IntegrityError):
+            await _get_or_open_session(db, "jellyfin:1:abc", "jellyfin", 1, 2)
 
 
 class _CollectionIdResult:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from db import get_db
@@ -527,23 +528,44 @@ async def _get_or_open_session(
     user_id: int,
     media_id: int,
 ) -> PlaybackSession:
+    """Tolerates a concurrent open of the same session_key racing with this
+    one - two webhook events for a session that doesn't exist yet (Jellyfin/
+    Emby's PlaybackStart and its first PlaybackProgress, sent back to back)
+    can both SELECT nothing and both try to INSERT. Same recovery as
+    create_media_safely: add()+flush() inside a savepoint, then on
+    IntegrityError re-select and return the row the winner created, so the
+    loser applies its own state/progress update on top instead of 500ing
+    (#392)."""
     result = await db.execute(
         select(PlaybackSession).where(PlaybackSession.session_key == session_key)
     )
     session = result.scalar_one_or_none()
-    if not session:
-        session = PlaybackSession(
-            session_key=session_key,
-            source=source,
-            user_id=user_id,
-            media_id=media_id,
-            progress_percent=0.0,
-            progress_seconds=0,
-            started_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+    if session:
+        return session
+    session = PlaybackSession(
+        session_key=session_key,
+        source=source,
+        user_id=user_id,
+        media_id=media_id,
+        progress_percent=0.0,
+        progress_seconds=0,
+        started_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    try:
+        # add() happens *inside* the savepoint, not before it - see
+        # create_media_safely's comment on why that ordering matters.
+        async with db.begin_nested():
+            db.add(session)
+            await db.flush()
+    except IntegrityError:
+        result = await db.execute(
+            select(PlaybackSession).where(PlaybackSession.session_key == session_key)
         )
-        db.add(session)
-        await db.flush()
+        existing = result.scalar_one_or_none()
+        if not existing:
+            raise
+        return existing
     return session
 
 
