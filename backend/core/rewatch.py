@@ -25,6 +25,22 @@ def capped_season_episode_counts(
     - if next_episode_to_air is set, everything from it onward is unaired;
     - drop any whole season whose premiere date is still in the future, which
       also covers TVDB-sourced shows that carry neither *_episode_to_air field.
+
+    That third check alone still let a renewed-but-unscheduled season through
+    (#385 follow-up): TMDB sometimes adds a placeholder next season with a
+    nonzero episode_count and NO air_date at all (not a future one - simply
+    absent, since nothing's been scheduled yet), and "no date" fails an
+    "is this date in the future" check either way. When last/next_episode_to_air
+    are both missing too - the only case this whole-season check is actually
+    relied on, since a real cap already zeroes anything past it regardless of
+    that season's own date - and the show is confirmed still active
+    ("Returning Series" or similar, not "Ended"/"Canceled"), a season is only
+    kept if its air_date is on or before today; missing no longer assumed
+    fine there, mirroring _has_confirmed_air_date's reasoning for Next Up.
+    A concluded show (or one with no status recorded at all) keeps the old,
+    lenient reading - it has nothing left to announce, so a season with no
+    air_date recorded is just an ordinary metadata gap, not a sign it hasn't
+    happened yet.
     """
     seasons = (show.tmdb_data or {}).get("seasons", [])
     season_ep_counts: dict[int, int] = {
@@ -54,9 +70,18 @@ def capped_season_episode_counts(
             if sn > cap_sn:
                 season_ep_counts[sn] = 0
 
+    still_active = getattr(show, "status", None) in ("Returning Series", "In Production", "Planned", "Pilot")
     for s in seasons:
         air = s.get("air_date")
-        if air and air > today_str:
+        confirmed_past = bool(air) and air <= today_str
+        if cap is None and still_active:
+            # No last/next_episode_to_air data to anchor on, and the show is
+            # confirmed still active - the only remaining signal is each
+            # season's own air_date, so an unconfirmed one can't be assumed
+            # fine (#385 follow-up).
+            if not confirmed_past:
+                season_ep_counts[s["season_number"]] = 0
+        elif air and air > today_str:
             season_ep_counts[s["season_number"]] = 0
 
     return season_ep_counts
