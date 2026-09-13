@@ -964,11 +964,13 @@ if (me.totp_enabled) {
   }
 
   // Keeps the toast below the nav (so it never covers it or the account
-  // dropdown) while still sitting near the top once the nav scrolls away.
+  // dropdown) while still sitting near the top once the nav scrolls away -
+  // floored by the iOS safe-area inset (notch/status bar), not just a flat
+  // 16px, or it renders underneath it once the nav is out of view (#402).
   function positionMessage(msg: HTMLElement) {
     const nav = document.querySelector('nav');
     const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
-    msg.style.top = `${Math.max(16, navBottom + 12)}px`;
+    msg.style.top = `max(16px, calc(env(safe-area-inset-top, 0px) + 8px), ${navBottom + 12}px)`;
   }
 
   function showMessage(text, type = 'success', opts: { scroll?: boolean } = {}) {
