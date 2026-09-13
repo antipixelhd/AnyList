@@ -288,6 +288,7 @@ const seasonTitle = season
                         ratingTitle={show?.title}
                         ratingSubtitle={ep.name || `Episode ${ep.episode_number}`}
                         ratingPosterPath={ep.image_url || season?.poster_path || show?.poster_path}
+                        airDate={ep.air_date}
                       />
                     )}
                   </div>

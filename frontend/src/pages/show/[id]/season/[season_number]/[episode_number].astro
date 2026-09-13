@@ -187,6 +187,7 @@ const thumbnail = episode?.still_path || show?.poster_path || null;
                   ratingTitle={show?.title}
                   ratingSubtitle={episode.title}
                   ratingPosterPath={episode.still_path || episode.season?.poster_path || show?.poster_path}
+                  airDate={episode.air_date}
                 />
               </div>
             )}

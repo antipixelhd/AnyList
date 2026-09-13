@@ -519,10 +519,11 @@ const bottomNavItem = (active: boolean) =>
           Mark as unwatched
         </button>
         <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
-        <div class="flex gap-2">
-          <button id="watch-history-now-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
-          <button id="watch-history-custom-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
-          <button id="watch-history-unknown-btn" class="flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Unknown</button>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="watch-history-now-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white">Just now</button>
+          <button id="watch-history-airdate-btn" class="hidden px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Air Date</button>
+          <button id="watch-history-custom-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Custom</button>
+          <button id="watch-history-unknown-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Unknown</button>
         </div>
         <input type="datetime-local" id="watch-history-date-input" class="hidden w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 focus:outline-none focus:border-green-500 [color-scheme:dark]" />
         <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
@@ -1738,11 +1739,15 @@ const bottomNavItem = (active: boolean) =>
     // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
     let _watchHistoryMediaId = '';
     let _watchHistoryMediaType = '';
-    let _watchHistoryDateMode: 'now' | 'custom' | 'unknown' = 'now';
+    let _watchHistoryDateMode: 'now' | 'airdate' | 'custom' | 'unknown' = 'now';
     let _watchHistoryShowTmdbId = '';
     let _watchHistoryShowTvdbId = '';
     let _watchHistorySeasonNumber = '';
     let _watchHistoryEpisodeNumber = '';
+    // The item's own air/release date (YYYY-MM-DD), if known - lets "Air Date"
+    // offer it as a one-click alternative to "Just now" (#395). Empty in bulk
+    // season/show mode, where no single date applies.
+    let _watchHistoryAirDate = '';
     // Set when the modal is being used to mark a whole season/show watched
     // (no single item's history applies) rather than logging one item's play.
     let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement; tvdbId: string } | null = null;
@@ -1761,20 +1766,28 @@ const bottomNavItem = (active: boolean) =>
     function resetWatchHistoryDateUI() {
       _watchHistoryDateMode = 'now';
       const nowBtn = document.getElementById('watch-history-now-btn')!;
+      const airDateBtn = document.getElementById('watch-history-airdate-btn')!;
       const customBtn = document.getElementById('watch-history-custom-btn')!;
       const unknownBtn = document.getElementById('watch-history-unknown-btn')!;
       const dateInput = document.getElementById('watch-history-date-input') as HTMLInputElement;
-      const activeClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
-      const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
+      const activeClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
+      const inactiveClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
       nowBtn.className = activeClass;
       customBtn.className = inactiveClass;
       unknownBtn.className = inactiveClass;
+      // Air Date only makes sense for a single item with a known, already-
+      // aired date - hidden entirely in bulk season/show mode, or when the
+      // date isn't known or hasn't happened yet (#395).
+      const today = new Date().toISOString().slice(0, 10);
+      const airDateAvailable = !!_watchHistoryAirDate && _watchHistoryAirDate <= today;
+      airDateBtn.className = inactiveClass;
+      airDateBtn.classList.toggle('hidden', !airDateAvailable);
       dateInput.classList.add('hidden');
       dateInput.value = toLocal(new Date());
       dateInput.max = toLocal(new Date());
     }
 
-    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '', mediaId = '') {
+    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '', mediaId = '', airDate = '') {
       _watchHistoryBulkMode = null;
       _watchHistoryTmdbId = tmdbId;
       _watchHistoryMediaId = mediaId;
@@ -1783,6 +1796,7 @@ const bottomNavItem = (active: boolean) =>
       _watchHistoryShowTvdbId = showTvdbId;
       _watchHistorySeasonNumber = seasonNumber;
       _watchHistoryEpisodeNumber = episodeNumber;
+      _watchHistoryAirDate = airDate;
 
       document.getElementById('watch-history-modal-title')!.textContent = 'Watch History';
       document.getElementById('watch-history-modal-events')!.classList.remove('hidden');
@@ -1796,6 +1810,8 @@ const bottomNavItem = (active: boolean) =>
 
     function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
       _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId };
+      // No single date applies across a whole season/show - never offer it here.
+      _watchHistoryAirDate = '';
 
       document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? 'Mark Season Watched' : 'Mark Show Watched';
       document.getElementById('watch-history-modal-events')!.classList.add('hidden');
@@ -1940,22 +1956,36 @@ const bottomNavItem = (active: boolean) =>
     });
 
     (() => {
-      const activeClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
-      const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
+      const activeClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
+      const inactiveClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
+      // Air Date's own "active"/"inactive" classes never touch its "hidden"
+      // state - that's set once, separately, by resetWatchHistoryDateUI based
+      // on whether an air date is actually available (#395).
+      const setDateModeButtons = (mode) => {
+        (document.getElementById('watch-history-now-btn') as HTMLElement).className = mode === 'now' ? activeClass : inactiveClass;
+        const airDateBtn = document.getElementById('watch-history-airdate-btn') as HTMLElement;
+        const airDateWasHidden = airDateBtn.classList.contains('hidden');
+        airDateBtn.className = mode === 'airdate' ? activeClass : inactiveClass;
+        airDateBtn.classList.toggle('hidden', airDateWasHidden);
+        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = mode === 'custom' ? activeClass : inactiveClass;
+        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = mode === 'unknown' ? activeClass : inactiveClass;
+      };
 
       document.getElementById('watch-history-now-btn')!.addEventListener('click', () => {
         _watchHistoryDateMode = 'now';
-        (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
-        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
-        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+        setDateModeButtons('now');
+        document.getElementById('watch-history-date-input')!.classList.add('hidden');
+      });
+
+      document.getElementById('watch-history-airdate-btn')!.addEventListener('click', () => {
+        _watchHistoryDateMode = 'airdate';
+        setDateModeButtons('airdate');
         document.getElementById('watch-history-date-input')!.classList.add('hidden');
       });
 
       document.getElementById('watch-history-custom-btn')!.addEventListener('click', () => {
         _watchHistoryDateMode = 'custom';
-        (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
-        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = activeClass;
-        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+        setDateModeButtons('custom');
         const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
         input.max = toLocal(new Date());
         input.classList.remove('hidden');
@@ -1964,9 +1994,7 @@ const bottomNavItem = (active: boolean) =>
 
       document.getElementById('watch-history-unknown-btn')!.addEventListener('click', () => {
         _watchHistoryDateMode = 'unknown';
-        (document.getElementById('watch-history-now-btn') as HTMLElement).className = inactiveClass;
-        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
-        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = activeClass;
+        setDateModeButtons('unknown');
         document.getElementById('watch-history-date-input')!.classList.add('hidden');
       });
 
@@ -1976,7 +2004,12 @@ const bottomNavItem = (active: boolean) =>
           ? null
           : _watchHistoryDateMode === 'now'
             ? toUTC(new Date())
-            : toUTC(new Date(input.value || toLocal(new Date())));
+            : _watchHistoryDateMode === 'airdate'
+              // Date-only string (YYYY-MM-DD) - midday, not midnight, so this
+              // can never shift a day backward in a timezone east of UTC
+              // (see AGENTS.md's date-only string guidance).
+              ? toUTC(new Date(_watchHistoryAirDate + 'T12:00:00'))
+              : toUTC(new Date(input.value || toLocal(new Date())));
         const logBtn = document.getElementById('watch-history-log-btn') as HTMLButtonElement;
         const idleLabel = logBtn.textContent || 'Mark as watched';
         logBtn.disabled = true;
@@ -2031,9 +2064,7 @@ const bottomNavItem = (active: boolean) =>
           syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
           // Reset to "Just now" after logging
           _watchHistoryDateMode = 'now';
-          (document.getElementById('watch-history-now-btn') as HTMLElement).className = activeClass;
-          (document.getElementById('watch-history-custom-btn') as HTMLElement).className = inactiveClass;
-          (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = inactiveClass;
+          setDateModeButtons('now');
           input.classList.add('hidden');
         };
 
@@ -2109,7 +2140,7 @@ const bottomNavItem = (active: boolean) =>
         const seriesId = showTmdbId || tmdbId;
 
         if (mediaType === 'movie' || mediaType === 'episode') {
-          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '', mediaId);
+          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '', mediaId, card.dataset.airDate || '');
           return;
         }
 
