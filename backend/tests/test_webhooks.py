@@ -32,10 +32,24 @@ from routers.webhooks import (
     find_or_create_media_jellyfin,
     find_or_create_media_jellyfin_multi,
     find_or_create_media_kodi,
+    find_or_create_media_plex,
     mark_pushed_watched,
     parse_jellyfin_payload,
     parse_kodi_payload,
 )
+
+
+class _Scalars:
+    def __init__(self, value):
+        self._value = value
+
+    def first(self):
+        return self._value[0] if isinstance(self._value, list) else self._value
+
+    def all(self):
+        if isinstance(self._value, list):
+            return self._value
+        return [] if self._value is None else [self._value]
 
 
 class _ScalarResult:
@@ -44,6 +58,9 @@ class _ScalarResult:
 
     def scalar_one_or_none(self):
         return self._value
+
+    def scalars(self):
+        return _Scalars(self._value)
 
 
 class _FakeDB:
@@ -273,6 +290,72 @@ class GetOrOpenSessionTests(IsolatedAsyncioTestCase):
 
         with self.assertRaises(IntegrityError):
             await _get_or_open_session(db, "jellyfin:1:abc", "jellyfin", 1, 2)
+
+
+class FindOrCreateMediaPlexRefreshTests(IsolatedAsyncioTestCase):
+    """Regression tests for #394: an episode matched by tmdb_id must have its
+    metadata refreshed from TMDB on every match, not just returned as-is from
+    whatever Plex reported when the row was first created - Plex's own title
+    for a brand-new episode can still be a pre-air working title ("TTT
+    Anniversary" vs. the aired "125 Years Young"), and unlike the episode/
+    season pages this cached row was otherwise never revisited again."""
+
+    def _payload(self):
+        return {
+            "media_type": "episode",
+            "tmdb_id": "123",
+            "grandparent_tmdb_id": "999",
+            "title": "TTT Anniversary",
+        }
+
+    async def test_already_linked_episode_is_refreshed_from_tmdb(self):
+        existing = SimpleNamespace(id=10, media_type=MediaType.episode, show_id=55, tmdb_id=123)
+        show = SimpleNamespace(id=55, tmdb_id=999, tvdb_id=None)
+        refreshed = SimpleNamespace(id=10, media_type=MediaType.episode, show_id=55, tmdb_id=123, title="125 Years Young")
+        db = _FakeDB(queued_scalars=[existing, show])
+
+        with patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=refreshed)) as enrich_safely:
+            result = await find_or_create_media_plex(self._payload(), db, api_key="tmdb-key", user_id=7)
+
+        self.assertIs(result, refreshed)
+        enrich_safely.assert_awaited_once()
+        _, kwargs = enrich_safely.await_args
+        self.assertEqual(kwargs.get("series_tmdb_id"), 999)
+
+    async def test_refresh_failure_falls_back_to_the_cached_row(self):
+        # enrich_media already tolerates a TMDB failure internally and leaves
+        # the row untouched - this covers the (unexpected) case of something
+        # else in the refresh path raising, which must still not lose the
+        # perfectly good cached row or crash the webhook.
+        existing = SimpleNamespace(
+            id=10, media_type=MediaType.episode, show_id=55, tmdb_id=123, title="TTT Anniversary",
+        )
+        show = SimpleNamespace(id=55, tmdb_id=999, tvdb_id=None)
+        db = _FakeDB(queued_scalars=[existing, show])
+
+        with patch("routers.webhooks.enrich_media_safely", AsyncMock(side_effect=Exception("TMDB unreachable"))):
+            result = await find_or_create_media_plex(self._payload(), db, api_key="tmdb-key", user_id=7)
+
+        self.assertIs(result, existing)
+        self.assertEqual(result.title, "TTT Anniversary")
+
+    async def test_orphan_episode_still_gets_backfilled_and_refreshed(self):
+        # media.show_id is None: the pre-existing backfill-show-context branch
+        # must still run before the new refresh-on-match behavior.
+        existing = SimpleNamespace(id=10, media_type=MediaType.episode, show_id=None, tmdb_id=123)
+        show = SimpleNamespace(id=55, tmdb_id=999, tvdb_id=None)
+        refreshed = SimpleNamespace(id=10, media_type=MediaType.episode, show_id=55, tmdb_id=123, title="125 Years Young")
+        db = _FakeDB(queued_scalars=[existing])
+
+        with (
+            patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)),
+            patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=refreshed)) as enrich_safely,
+        ):
+            result = await find_or_create_media_plex(self._payload(), db, api_key="tmdb-key", user_id=7)
+
+        self.assertIs(result, refreshed)
+        self.assertEqual(existing.show_id, 55)
+        enrich_safely.assert_awaited_once()
 
 
 class _CollectionIdResult:

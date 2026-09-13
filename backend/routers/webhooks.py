@@ -2466,18 +2466,36 @@ async def find_or_create_media_plex(
         )
         media = result.scalars().first()
         if media:
-            # Backfill show context if this episode record was created without it
+            show: Show | None = None
             if media.media_type == MediaType.episode and media.show_id is None and series_tmdb_id:
+                # Backfill show context if this episode record was created without it
                 try:
                     show = await _find_or_create_show(db, series_tmdb_id, api_key)
                     media.show_id = show.id
+                except Exception as e:
+                    print(f"  Could not backfill show context for episode: {e}")
+            elif media.media_type == MediaType.episode and media.show_id is not None:
+                show_result = await db.execute(select(Show).where(Show.id == media.show_id))
+                show = show_result.scalar_one_or_none()
+
+            if media.media_type == MediaType.episode and show:
+                # Refresh title/metadata from TMDB on every match, not just
+                # once at creation - Plex's own title for a brand-new episode
+                # can still be a pre-air working title (#394: "TTT Anniversary"
+                # vs. the aired "125 Years Young"), and unlike the episode/
+                # season pages (which always fetch TMDB live), this cached row
+                # was otherwise never revisited again after creation.
+                # enrich_media already tolerates a TMDB failure internally,
+                # leaving the existing row exactly as it was rather than
+                # raising or blanking anything out.
+                try:
                     tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
-                    await enrich_media(
-                        media, api_key=api_key, series_tmdb_id=series_tmdb_id,
+                    media = await enrich_media_safely(
+                        db, media, api_key=api_key, series_tmdb_id=series_tmdb_id or show.tmdb_id,
                         tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
                     )
                 except Exception as e:
-                    print(f"  Could not backfill show context for episode: {e}")
+                    print(f"  Could not refresh episode metadata: {e}")
             return media
 
     # 2b. Movie matching by title + year if TMDB ID is missing
