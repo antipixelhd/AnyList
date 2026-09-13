@@ -1249,6 +1249,7 @@ class WatchedLookupFailedWarningTests(unittest.TestCase):
                         "media_id": 1,
                         "title": "Any Title",
                         "media_type": media_type.value,
+                        "series_name": None,
                         "reason": sync.WATCHED_LOOKUP_FAILED_REASON,
                     },
                 )
@@ -1259,7 +1260,20 @@ class WatchedLookupFailedWarningTests(unittest.TestCase):
         self.assertEqual(warning["media_id"], 1)
         self.assertIsNone(warning["title"])
         self.assertIsNone(warning["media_type"])
+        self.assertIsNone(warning["series_name"])
         self.assertEqual(warning["reason"], sync.WATCHED_LOOKUP_FAILED_REASON)
+
+    def test_series_name_only_carried_for_episodes(self):
+        # #400: lets Connections group these by show - a movie has no show to
+        # group under, so series_name must stay None even if one is passed.
+        movie = SimpleNamespace(title="A Movie", media_type=sync.MediaType.movie)
+        self.assertIsNone(sync.watched_lookup_failed_warning(1, movie, series_name="Some Show")["series_name"])
+
+        episode = SimpleNamespace(title="Pilot", media_type=sync.MediaType.episode)
+        self.assertEqual(
+            sync.watched_lookup_failed_warning(1, episode, series_name="Some Show")["series_name"],
+            "Some Show",
+        )
 
 
 class MatchUnmatchedShowDisplacedTmdbIdTests(_PartialWatchDB):

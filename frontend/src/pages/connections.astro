@@ -5467,10 +5467,36 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           </div>
         ` : '';
 
+        // Group episode lookup-failures by series_name (same reasoning as
+        // groupedEpisodeWarnings above) - a large legacy watch history
+        // against a partial library can produce thousands of these for a
+        // handful of shows, and one row per episode makes the panel
+        // unusable (#400).
+        const groupedLookupWarnings: Map<string, {count: number, reason: string}> = new Map();
+        const standaloneLookupWarnings: any[] = [];
+        for (const w of lookupWarnings) {
+          if (w.media_type === 'episode' && w.series_name) {
+            const existing = groupedLookupWarnings.get(w.series_name);
+            if (existing) existing.count++;
+            else groupedLookupWarnings.set(w.series_name, {count: 1, reason: w.reason ?? 'Not found on this server'});
+          } else {
+            standaloneLookupWarnings.push(w);
+          }
+        }
+        const lookupDisplayCount = groupedLookupWarnings.size + standaloneLookupWarnings.length;
+
         const renderLookup = hasLookupPanel ? `
           <div class="space-y-1">
             <p class="text-xs text-zinc-500 mb-2">Watch history that has no matching item in this library. Nothing was marked watched here - this is not an unmatched TMDB title.</p>
-            ${lookupWarnings.map((w: any) => `
+            ${[...groupedLookupWarnings.entries()].map(([seriesName, {count, reason}]) => `
+              <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
+                <div class="flex-1 min-w-0">
+                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(seriesName)}</span>
+                  <span class="ml-2 text-xs text-zinc-600">${count} episode${count !== 1 ? 's' : ''}</span>
+                  <p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(reason)}</p>
+                </div>
+              </div>`).join('')}
+            ${standaloneLookupWarnings.map((w: any) => `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
                   <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title ?? 'Untitled')}</span>
@@ -5490,7 +5516,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             >
               <div class="flex items-center gap-2">
                 ${warnIcon}
-                <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${lookupWarnings.length} watched item${lookupWarnings.length > 1 ? 's' : ''} not found on this server</span>
+                <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${lookupDisplayCount} watched item${lookupDisplayCount !== 1 ? 's' : ''} not found on this server${lookupWarnings.length !== lookupDisplayCount ? ` (${lookupWarnings.length} episodes)` : ''}</span>
                 <span class="text-xs text-zinc-500">· ${escapeHtml(pushDate)}</span>
               </div>
               ${chevron}

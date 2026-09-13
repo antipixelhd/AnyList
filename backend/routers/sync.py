@@ -6243,13 +6243,21 @@ WATCHED_LOOKUP_FAILED_REASON = (
 )
 
 
-def watched_lookup_failed_warning(media_id: int, media: Media | None) -> dict:
-    """Warning dict for a watch the full-push slow path could not resolve."""
+def watched_lookup_failed_warning(media_id: int, media: Media | None, series_name: str | None = None) -> dict:
+    """Warning dict for a watch the full-push slow path could not resolve.
+
+    series_name (episodes only) lets Connections group these the same way it
+    already groups pull-side unmatched warnings - a large legacy watch
+    history against a partial library can produce thousands of these for a
+    handful of shows, and one row per episode makes the panel unusable (#400).
+    """
+    is_episode = bool(media and media.media_type == MediaType.episode)
     return {
         "type": "watched_lookup_failed",
         "media_id": media_id,
         "title": media.title if media else None,
         "media_type": media.media_type.value if media and media.media_type else None,
+        "series_name": series_name if is_episode else None,
         "reason": WATCHED_LOOKUP_FAILED_REASON,
     }
 
@@ -6513,6 +6521,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             lookup_media_ids = missing_ids | season_rating_ids
             media_info: dict[int, Media] = {}
             show_tmdb_map: dict[int, int] = {}  # show.id → show.tmdb_id
+            show_title_map: dict[int, str] = {}  # show.id → show.title, for grouping lookup-failed warnings (#400)
 
             if lookup_media_ids:
                 media_rows_list = await _select_in_chunks(
@@ -6528,9 +6537,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     show_ids_list = list(show_ids_needed)
                     for i in range(0, len(show_ids_list), _MAX_IN_PARAMS):
                         chunk = show_ids_list[i : i + _MAX_IN_PARAMS]
-                        show_rows = await db.execute(select(Show.id, Show.tmdb_id).where(Show.id.in_(chunk)))
+                        show_rows = await db.execute(select(Show.id, Show.tmdb_id, Show.title).where(Show.id.in_(chunk)))
                         for row in show_rows.all():
                             show_tmdb_map[row[0]] = row[1]
+                            show_title_map[row[0]] = row[2]
 
             # For Jellyfin/Emby, AnyProviderIdEquals can't be trusted to
             # narrow results on every server version - a per-item lookup can
@@ -6635,6 +6645,15 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             print(f"Full push for connection {connection_id}: pushing {total} items ({len(push_items)} known, {len(lookup_items)} via live lookup, {watched_group_row_count} watched rows in {len(watched_sid_to_mids)} groups, {len(watched_lookup_mids)} watched rows pending lookup)...")
 
             sem = asyncio.Semaphore(10)
+            # Separate, higher limit for _resolve_watched_lookup only - a
+            # read-only "does this exist" check, unlike everything else
+            # sharing `sem` (which also issues mutating mark_watched/
+            # set_rating calls and is kept conservative on purpose). A large
+            # legacy watch history against a partial library can mean
+            # thousands of these, almost all misses, and gating them behind
+            # the same limit as writes made a full push take minutes longer
+            # than it needed to (#400).
+            lookup_sem = asyncio.Semaphore(25)
             _PROGRESS_INTERVAL = 20
 
             def _extract_source_id(item_dict: dict | None) -> str | None:
@@ -6793,7 +6812,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         return False
 
             async def _resolve_watched_lookup(mid: int) -> tuple[int, str | None]:
-                async with sem:
+                async with lookup_sem:
                     return mid, await _find_source_id(mid)
 
             async def _push_watched_group(client: _httpx.AsyncClient, sid: str, mids: set[int]) -> bool:
@@ -6839,7 +6858,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         else:
                             newly_failed += 1
                             m = media_info.get(mid)
-                            lookup_warnings.append(watched_lookup_failed_warning(mid, m))
+                            series_name = show_title_map.get(m.show_id) if m and m.show_id else None
+                            lookup_warnings.append(watched_lookup_failed_warning(mid, m, series_name=series_name))
                     if newly_failed:
                         done += newly_failed
                         failed_count += newly_failed
