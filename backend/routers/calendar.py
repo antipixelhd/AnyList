@@ -163,7 +163,12 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
                     "show_id": show.id,
                     "show_tmdb_id": show.tmdb_id,
                     "show_tvdb_id": show.tvdb_id,
-                    "show_title": show.title,
+                    # detail was already fetched with language=language above -
+                    # its name is the localized one for free, unlike the raw
+                    # stored show.title (#404 follow-up: this endpoint already
+                    # requested translated episode/season data but still
+                    # stamped the untranslated show name on every entry).
+                    "show_title": detail.get("name") or show.title,
                     "poster_path": show.poster_path,
                     "season_number": ep.get("season_number"),
                     "episode_number": ep.get("episode_number"),

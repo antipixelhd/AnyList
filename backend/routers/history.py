@@ -23,7 +23,7 @@ from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
-from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations
+from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
 from core.enrichment import create_media_safely
@@ -492,6 +492,9 @@ async def get_now_playing(
     )
     rows = result.all()
     sessions = []
+    # media_id -> show_id, for the translation overlay below - not itself part
+    # of the response, just tracked alongside the loop that already knows it.
+    show_id_by_media_id: dict[int, int] = {}
     for session, media in rows:
         item: dict = {
             "session_key": session.session_key,
@@ -525,11 +528,35 @@ async def get_now_playing(
                 item["media"]["show_tvdb_id"] = show.tvdb_id
                 item["media"]["show_poster_path"] = show.poster_path
                 item["media"]["show_backdrop_path"] = show.backdrop_path
+                show_id_by_media_id[media.id] = media.show_id
         elif media.media_type == MediaType.episode:
             hint = (media.tmdb_data or {}).get("show_title")
             if hint:
                 item["media"]["show_title"] = hint
         sessions.append(item)
+
+    # Apply the viewer's metadata language (#404 follow-up) - this endpoint
+    # builds its own dicts inline rather than going through the usual
+    # enrich_with_state + translation pass every other listing gets, so the
+    # Now Playing bar showed untranslated titles/names regardless of the
+    # user's setting. Movies/episodes translate via MediaTranslation on their
+    # own media id; the show name shown alongside an episode translates via
+    # ShowTranslation on the Show row instead (same split as Next Up/lists).
+    if sessions:
+        lang = await get_user_metadata_language(db, current_user.id)
+        if lang:
+            media_list = [s["media"] for s in sessions]
+            media_ids = [m["id"] for m in media_list if m.get("id")]
+            translations = await get_media_translations(db, media_ids, lang)
+            apply_media_translations(media_list, translations)
+
+            show_ids = set(show_id_by_media_id.values())
+            if show_ids:
+                show_translations = await get_show_translations(db, list(show_ids), lang)
+                for m in media_list:
+                    t = show_translations.get(show_id_by_media_id.get(m.get("id")))
+                    if t and t.get("title") and m.get("show_title"):
+                        m["show_title"] = t["title"]
 
     # Episode-order preference / TVDB position translation (#186) - this
     # endpoint builds its own dict inline rather than going through
@@ -1387,6 +1414,20 @@ async def get_next_up(
             media_ids = [i["id"] for i in items if i.get("id")]
             translations = await get_media_translations(db, media_ids, lang)
             apply_media_translations(items, translations)
+
+            # The featured/hero card (and every row here) displays show_title
+            # - the show's own name, not this episode's - so MediaTranslation
+            # alone never reaches it; that lives on the Show row's own
+            # ShowTranslation instead, same split lists.py already accounts
+            # for (#221). Without this, Next Up kept showing the untranslated
+            # show name even once its episodes were correctly translated (#404).
+            show_ids = {i["show_id"] for i in items if i.get("show_id")}
+            if show_ids:
+                show_translations = await get_show_translations(db, list(show_ids), lang)
+                for item in items:
+                    t = show_translations.get(item.get("show_id"))
+                    if t and t.get("title") and item.get("show_title"):
+                        item["show_title"] = t["title"]
 
     return {"next_up": items}
 

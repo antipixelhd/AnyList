@@ -46,6 +46,11 @@ class _Result:
     def scalar_one_or_none(self):
         return self.item
 
+    def first(self):
+        if isinstance(self.item, list):
+            return self.item[0] if self.item else None
+        return self.item
+
     def all(self):
         if isinstance(self.item, list):
             return self.item
@@ -448,6 +453,7 @@ class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([
             [(session, media)],  # main PlaybackSession+Media query
             show,                # per-session Show lookup
+            None,                # get_user_metadata_language - none set
             [preference],        # get_order_keys_for_series
             [pos],               # get_positions_for_series
         ])
@@ -473,6 +479,7 @@ class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([
             [(session, media)],  # main PlaybackSession+Media query
             show,                # per-session Show lookup
+            None,                # get_user_metadata_language - none set
             [],                  # get_order_keys_for_series - no non-aired pref
         ])
 
@@ -481,6 +488,45 @@ class GetNowPlayingEpisodeOrderTests(unittest.IsolatedAsyncioTestCase):
         item = result["now_playing"][0]["media"]
         self.assertNotIn("show_episode_order", item)
         self.assertNotIn("display_season_number", item)
+
+
+class GetNowPlayingTranslationTests(unittest.IsolatedAsyncioTestCase):
+    """#404 follow-up: get_now_playing builds its dict inline rather than
+    through the usual translation pass every other listing gets - it must
+    apply both MediaTranslation (this episode's own title) and
+    ShowTranslation (the show name shown alongside it) itself."""
+
+    async def test_metadata_language_translates_episode_and_show_title(self) -> None:
+        media = Media(
+            id=10, tmdb_id=550, media_type=MediaType.episode,
+            title="Episode EN", season_number=1, episode_number=1, show_id=1,
+        )
+        show = Show(id=1, tmdb_id=550, title="Show EN")
+        session = PlaybackSession(
+            id=1, user_id=7, media_id=10, session_key="k", source="plex",
+            state="playing", progress_percent=0.1, progress_seconds=60,
+            started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
+        )
+        media_translation = SimpleNamespace(
+            media_id=10, title="Episode FR", overview=None, tagline=None, poster_path=None,
+        )
+        show_translation = SimpleNamespace(
+            show_id=1, title="Show FR", overview=None, tagline=None, poster_path=None,
+        )
+        db = _FakeSession([
+            [(session, media)],   # main PlaybackSession+Media query
+            show,                 # per-session Show lookup
+            ("fr",),              # get_user_metadata_language
+            [media_translation],  # get_media_translations
+            [show_translation],   # get_show_translations
+            [],                   # get_order_keys_for_series - no non-aired pref
+        ])
+
+        result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
+
+        item = result["now_playing"][0]["media"]
+        self.assertEqual(item["title"], "Episode FR")
+        self.assertEqual(item["show_title"], "Show FR")
 
 
 class GetNowPlayingCreditsStingerTests(unittest.IsolatedAsyncioTestCase):
@@ -497,7 +543,7 @@ class GetNowPlayingCreditsStingerTests(unittest.IsolatedAsyncioTestCase):
             state="playing", progress_percent=0.1, progress_seconds=60,
             started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
         )
-        db = _FakeSession([[(session, media)]])
+        db = _FakeSession([[(session, media)], None])  # trailing None: get_user_metadata_language
 
         result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
 
@@ -512,7 +558,7 @@ class GetNowPlayingCreditsStingerTests(unittest.IsolatedAsyncioTestCase):
             state="playing", progress_percent=0.1, progress_seconds=60,
             started_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
         )
-        db = _FakeSession([[(session, media)]])
+        db = _FakeSession([[(session, media)], None])  # trailing None: get_user_metadata_language
 
         result = await history.get_now_playing(db=db, current_user=SimpleNamespace(id=7))
 
