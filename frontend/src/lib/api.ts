@@ -115,7 +115,9 @@ export interface SeasonState {
 
 export interface EpisodeItem {
   id: number | null;
-  tmdb_id: number;
+  // null for a TVDB-only episode (no TMDB counterpart); use `id` then.
+  tmdb_id: number | null;
+  tvdb_id?: number | null;
   episode_number: number;
   season_number?: number;
   canonical_season_number?: number;
@@ -178,7 +180,9 @@ export interface EpisodeDetail {
   canonical_episode_number?: number;
   runtime: number | null;
   tmdb_rating: number | null;
-  tmdb_id: number;
+  // null for a TVDB-only episode (no TMDB counterpart); use `id` then.
+  tmdb_id: number | null;
+  tvdb_id?: number | null;
   id: number | null;
   in_library: boolean;
   watched: boolean;
@@ -645,6 +649,11 @@ export interface MediaItem {
   show_tvdb_id?: number | null;
   show_poster_path?: string | null;
   show_backdrop_path?: string | null;
+  // The item's own provider ids besides tmdb_id. For an episode, tvdb_id is
+  // the TVDB *episode* id. A TVDB-only episode has tvdb_id and no tmdb_id;
+  // actions on it go through its local `id` (media_id) instead.
+  tvdb_id?: number | null;
+  imdb_id?: string | null;
   // True when this episode has no real TMDB counterpart and was enriched
   // from TVDB instead (see #101) — its season/episode numbers are TVDB's
   // raw numbers, not TMDB's, regardless of whether show_tmdb_id is set.
@@ -731,6 +740,8 @@ export interface NowPlayingMedia {
   show_tmdb_id?: number;
   show_tvdb_id?: number | null;
   show_poster_path?: string | null;
+  tvdb_id?: number | null;
+  imdb_id?: string | null;
   tvdb_sourced?: boolean;
   show_episode_order?: string | null;
   display_season_number?: number | null;

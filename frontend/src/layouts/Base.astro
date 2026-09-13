@@ -1062,6 +1062,8 @@ const bottomNavItem = (active: boolean) =>
       }
     }
 
+    // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
+    let _ratingMediaId = '';
     function openRatingPopover(
       btn: HTMLElement | null,
       tmdbId: string,
@@ -1070,8 +1072,10 @@ const bottomNavItem = (active: boolean) =>
       seasonNumber: number | null = null,
       episodeOrder: string = 'tmdb',
       itemInfo: { title?: string; subtitle?: string; posterUrl?: string; landscape?: boolean } | null = null,
+      mediaId: string = '',
     ) {
       _activeRatingBtn = btn;
+      _ratingMediaId = mediaId;
       const popover = document.getElementById('rating-popover')!;
       const starsEl = document.getElementById('rating-stars')!;
       const removeBtn = document.getElementById('rating-remove')!;
@@ -1122,7 +1126,9 @@ const bottomNavItem = (active: boolean) =>
         });
         half.addEventListener('click', async () => {
           try {
-            const ratingBody: Record<string, unknown> = { tmdb_id: Number(tmdbId), media_type: mediaType, rating: i };
+            const ratingBody: Record<string, unknown> = { media_type: mediaType, rating: i };
+            if (tmdbId) ratingBody.tmdb_id = Number(tmdbId);
+            if (_ratingMediaId) ratingBody.media_id = Number(_ratingMediaId);
             if (seasonNumber !== null) ratingBody.season_number = seasonNumber;
             if (seasonNumber !== null && nonAiredOrder(episodeOrder)) ratingBody.episode_order = episodeOrder;
             await apiFetch('/ratings', 'POST', ratingBody);
@@ -1156,7 +1162,8 @@ const bottomNavItem = (active: boolean) =>
         try {
           const seasonQuery = seasonNumber !== null ? `&season_number=${seasonNumber}` : '';
           const orderQuery = seasonNumber !== null && nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
-          await apiFetch(`/ratings?tmdb_id=${tmdbId}&media_type=${mediaType}${seasonQuery}${orderQuery}`, 'DELETE');
+          const idQuery = tmdbId ? `tmdb_id=${tmdbId}` : `media_id=${_ratingMediaId}`;
+          await apiFetch(`/ratings?${idQuery}&media_type=${mediaType}${seasonQuery}${orderQuery}`, 'DELETE');
           if (btn) {
             btn.dataset.userRating = '';
             btn.dataset.state = 'inactive';
@@ -1236,6 +1243,8 @@ const bottomNavItem = (active: boolean) =>
     // ── List popover ───────────────────────────────────────────────────────────
     let _activeListBtn: HTMLElement | null = null;
     let _listTmdbId = '';
+    // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
+    let _listMediaId = '';
     let _listMediaType = '';
     let _listSeasonNumber = '';
 
@@ -1244,9 +1253,10 @@ const bottomNavItem = (active: boolean) =>
       _activeListBtn = null;
     }
 
-    async function openListPopover(btn: HTMLElement, tmdbId: string, mediaType: string, seasonNumber = '') {
+    async function openListPopover(btn: HTMLElement, tmdbId: string, mediaType: string, seasonNumber = '', mediaId = '') {
       _activeListBtn = btn;
       _listTmdbId = tmdbId;
+      _listMediaId = mediaId;
       _listMediaType = mediaType;
       _listSeasonNumber = seasonNumber;
       const popover = document.getElementById('list-popover')!;
@@ -1285,14 +1295,19 @@ const bottomNavItem = (active: boolean) =>
             // dataset also has a season number for display purposes.
             const seasonNumber = _listMediaType === 'series' && _listSeasonNumber ? Number(_listSeasonNumber) : null;
             if (cb.checked) {
-              const body: Record<string, unknown> = { tmdb_id: Number(_listTmdbId), media_type: _listMediaType };
+              const body: Record<string, unknown> = { media_type: _listMediaType };
+              if (_listTmdbId) body.tmdb_id = Number(_listTmdbId);
+              if (_listMediaId) body.media_id = Number(_listMediaId);
               if (seasonNumber != null) body.season_number = seasonNumber;
               await apiFetch(`/lists/${listId}/items`, 'POST', body);
             } else {
               // Find the list_item id — need to fetch list detail
               const detail = await apiFetch(`/lists/${listId}`);
-              const item = detail.items?.find((i: { media: { tmdb_id: number; season_number: number | null } }) => {
-                if (i.media?.tmdb_id !== Number(_listTmdbId)) return false;
+              const item = detail.items?.find((i: { media: { id?: number; tmdb_id: number | null; season_number: number | null } }) => {
+                const sameItem = _listTmdbId
+                  ? i.media?.tmdb_id === Number(_listTmdbId)
+                  : !!_listMediaId && i.media?.id === Number(_listMediaId);
+                if (!sameItem) return false;
                 // Only a whole-season list entry (media_type=series) needs
                 // season_number to disambiguate one season from another on
                 // the same show. For everything else (movies, episodes,
@@ -1590,7 +1605,7 @@ const bottomNavItem = (active: boolean) =>
         // Re-open popover if we had an active card
         if (_activeListBtn) {
           const card = _activeListBtn.closest('[data-card]') as HTMLElement;
-          if (card) openListPopover(_activeListBtn, card.dataset.tmdbId!, card.dataset.mediaType!);
+          if (card) openListPopover(_activeListBtn, card.dataset.tmdbId || '', card.dataset.mediaType!, '', card.dataset.mediaId || card.dataset.id || '');
         }
       } catch { /* ignore */ }
     });
@@ -1720,6 +1735,8 @@ const bottomNavItem = (active: boolean) =>
 
     // ── Watch history modal ────────────────────────────────────────────────────
     let _watchHistoryTmdbId = '';
+    // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
+    let _watchHistoryMediaId = '';
     let _watchHistoryMediaType = '';
     let _watchHistoryDateMode: 'now' | 'custom' | 'unknown' = 'now';
     let _watchHistoryShowTmdbId = '';
@@ -1757,9 +1774,10 @@ const bottomNavItem = (active: boolean) =>
       dateInput.max = toLocal(new Date());
     }
 
-    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '') {
+    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '', mediaId = '') {
       _watchHistoryBulkMode = null;
       _watchHistoryTmdbId = tmdbId;
+      _watchHistoryMediaId = mediaId;
       _watchHistoryMediaType = mediaType;
       _watchHistoryShowTmdbId = showTmdbId;
       _watchHistoryShowTvdbId = showTvdbId;
@@ -1832,11 +1850,13 @@ const bottomNavItem = (active: boolean) =>
       const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
       unwatchBtn.classList.add('hidden');
       try {
-        const seriesQuery = _watchHistoryMediaType === 'episode' && _watchHistoryShowTmdbId
-          ? `&series_tmdb_id=${_watchHistoryShowTmdbId}`
+        const seriesQuery = _watchHistoryMediaType === 'episode'
+          ? (_watchHistoryShowTmdbId ? `&series_tmdb_id=${_watchHistoryShowTmdbId}` : '')
+            + (_watchHistoryShowTvdbId ? `&series_tvdb_id=${_watchHistoryShowTvdbId}` : '')
           : '';
+        const itemIdQuery = _watchHistoryTmdbId ? `tmdb_id=${_watchHistoryTmdbId}` : `media_id=${_watchHistoryMediaId}`;
         const { watched, events }: { watched: boolean; events: Array<{ id: number; watched_at: string | null }> } = await apiFetch(
-          `/history/item-events?tmdb_id=${_watchHistoryTmdbId}&media_type=${_watchHistoryMediaType}${seriesQuery}`
+          `/history/item-events?${itemIdQuery}&media_type=${_watchHistoryMediaType}${seriesQuery}`
         );
         if (events.length === 0) {
           eventsEl.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500 italic">No plays recorded yet</div>';
@@ -1860,8 +1880,11 @@ const bottomNavItem = (active: boolean) =>
         const hasEvents = events.length > 0;
         unwatchBtn.classList.toggle('hidden', !hasEvents);
         document.getElementById('watch-history-log-btn')!.textContent = hasEvents ? 'Log a rewatch' : 'Mark as watched';
+        const cardSelector = _watchHistoryTmdbId
+          ? `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"]`
+          : `[data-card][data-media-id="${_watchHistoryMediaId}"][data-media-type="${_watchHistoryMediaType}"]`;
         document.querySelectorAll<HTMLElement>(
-          `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"] [data-action="watched"]`
+          `${cardSelector} [data-action="watched"]`
         ).forEach(b => updateWatchedButtonUI(b, watched));
       } catch {
         eventsEl.innerHTML = '<div class="px-4 py-2 text-xs text-red-400">Failed to load</div>';
@@ -1902,8 +1925,11 @@ const bottomNavItem = (active: boolean) =>
       unwatchBtn.disabled = true;
       unwatchBtn.textContent = 'Removing…';
       try {
+        const unwatchIdQuery = _watchHistoryTmdbId
+          ? `tmdb_id=${encodeURIComponent(_watchHistoryTmdbId)}`
+          : `id=${encodeURIComponent(_watchHistoryMediaId)}`;
         await apiFetch(
-          `/history/item?tmdb_id=${encodeURIComponent(_watchHistoryTmdbId)}&media_type=${encodeURIComponent(_watchHistoryMediaType)}`,
+          `/history/item?${unwatchIdQuery}&media_type=${encodeURIComponent(_watchHistoryMediaType)}`,
           'DELETE'
         );
         await loadWatchHistoryEvents();
@@ -1987,13 +2013,14 @@ const bottomNavItem = (active: boolean) =>
 
         try {
           const watchBody: Record<string, unknown> = {
-            tmdb_id: Number(_watchHistoryTmdbId),
             media_type: _watchHistoryMediaType,
             completed: true,
             watched_at: watchedAt,
           };
-          if (_watchHistoryMediaType === 'episode' && _watchHistoryShowTmdbId) {
-            watchBody.series_tmdb_id = Number(_watchHistoryShowTmdbId);
+          if (_watchHistoryTmdbId) watchBody.tmdb_id = Number(_watchHistoryTmdbId);
+          if (_watchHistoryMediaId) watchBody.media_id = Number(_watchHistoryMediaId);
+          if (_watchHistoryMediaType === 'episode' && (_watchHistoryShowTmdbId || _watchHistoryShowTvdbId)) {
+            if (_watchHistoryShowTmdbId) watchBody.series_tmdb_id = Number(_watchHistoryShowTmdbId);
             if (_watchHistoryShowTvdbId) watchBody.series_tvdb_id = Number(_watchHistoryShowTvdbId);
             if (_watchHistorySeasonNumber) watchBody.season_number = Number(_watchHistorySeasonNumber);
             if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
@@ -2049,7 +2076,7 @@ const bottomNavItem = (active: boolean) =>
         const seriesId = showTmdbId || tmdbId;
 
         if (mediaType === 'movie' || mediaType === 'episode') {
-          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '');
+          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '', mediaId);
           return;
         }
 
@@ -2088,9 +2115,9 @@ const bottomNavItem = (active: boolean) =>
         } catch { /* ignore */ }
 
       } else if (action === 'list') {
-        if (!tmdbId) { alert('Cannot add unmatched item to lists'); return; }
+        if (!tmdbId && !mediaId) { alert('Cannot add unmatched item to lists'); return; }
         if (document.getElementById('list-popover')!.classList.contains('hidden') || _activeListBtn !== btn) {
-          openListPopover(btn, tmdbId, mediaType, card.dataset.season || '');
+          openListPopover(btn, tmdbId, mediaType, card.dataset.season || '', mediaId);
         } else {
           closeListPopover();
         }
@@ -2132,8 +2159,10 @@ const bottomNavItem = (active: boolean) =>
               const query = tmdbId ? `tmdb_id=${tmdbId}` : `id=${mediaId}`;
               await apiFetch(`/media/collect?${query}&media_type=${mediaType}`, 'DELETE');
             } else {
-              if (!tmdbId) { alert('Cannot manually collect unmatched items'); return; }
-              const collectBody: Record<string, number | string> = { tmdb_id: Number(tmdbId), media_type: mediaType };
+              if (!tmdbId && !mediaId) { alert('Cannot manually collect unmatched items'); return; }
+              const collectBody: Record<string, number | string> = { media_type: mediaType };
+              if (tmdbId) collectBody.tmdb_id = Number(tmdbId);
+              if (mediaId) collectBody.media_id = Number(mediaId);
               if (mediaType === 'episode') {
                 const epNum = card.dataset.episodeNumber;
                 if (showTmdbId) collectBody.series_tmdb_id = Number(showTmdbId);
@@ -2176,7 +2205,7 @@ const bottomNavItem = (active: boolean) =>
             }
           : null;
         if (document.getElementById('rating-popover')!.classList.contains('hidden') || _activeRatingBtn !== btn) {
-          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason, episodeOrder, rateInfo);
+          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason, episodeOrder, rateInfo, mediaId);
         } else {
           closeRatingPopover();
         }

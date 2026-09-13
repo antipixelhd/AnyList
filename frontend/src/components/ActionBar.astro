@@ -142,7 +142,7 @@ const dropTitle = dropped
 
 <div
   data-card
-  data-tmdb-id={String(tmdbId)}
+  data-tmdb-id={tmdbId != null ? String(tmdbId) : ""}
   data-media-type={mediaType}
   data-show-tmdb-id={showTmdbId ? String(showTmdbId) : ""}
   data-season={seasonNumber != null ? String(seasonNumber) : ""}

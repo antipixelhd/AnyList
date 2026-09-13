@@ -80,7 +80,7 @@ class _FakeSession:
 class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.user = SimpleNamespace(id=7)
-        self.show = SimpleNamespace(id=55, tvdb_id=None)
+        self.show = SimpleNamespace(id=55, tmdb_id=277439, tvdb_id=None, canonical_source="tmdb")
         self.event = WatchEventCreate(
             tmdb_id=5767197,
             media_type=MediaType.episode,
@@ -736,7 +736,7 @@ class RatePromptTests(unittest.IsolatedAsyncioTestCase):
 
     def _movie(self):
         return SimpleNamespace(
-            id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club",
+            id=10, tmdb_id=550, tvdb_id=None, imdb_id=None, media_type=MediaType.movie, title="Fight Club",
             season_number=None, episode_number=None, poster_path="/fc.jpg", show=None,
         )
 
@@ -767,7 +767,7 @@ class RatePromptTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_episode_uses_show_title_and_still_then_show_poster(self):
         episode = SimpleNamespace(
-            id=10, tmdb_id=42, media_type=MediaType.episode, title="Pilot",
+            id=10, tmdb_id=42, tvdb_id=None, imdb_id=None, media_type=MediaType.episode, title="Pilot",
             season_number=1, episode_number=1, poster_path="/ep-still.jpg",
             show=SimpleNamespace(title="The Show", poster_path="/show.jpg"),
         )
@@ -779,7 +779,7 @@ class RatePromptTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_episode_falls_back_to_show_poster_without_still(self):
         episode = SimpleNamespace(
-            id=10, tmdb_id=42, media_type=MediaType.episode, title="Pilot",
+            id=10, tmdb_id=42, tvdb_id=None, imdb_id=None, media_type=MediaType.episode, title="Pilot",
             season_number=1, episode_number=1, poster_path=None,
             show=SimpleNamespace(title="The Show", poster_path="/show.jpg"),
         )

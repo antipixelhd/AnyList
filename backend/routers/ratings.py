@@ -14,31 +14,24 @@ from models.users import UserSettings
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 from core.enrichment import enrich_media, create_media_safely
+from core.identity import find_media
 from core.episode_order import validate_episode_order, normalize_order_key, is_aired_order
 
 router = APIRouter()
 
 
 class RatingIn(BaseModel):
-    tmdb_id: int
+    # Any one of media_id / tmdb_id / tvdb_id identifies the item (a
+    # TVDB-only episode has no tmdb_id - see core/identity.py).
+    tmdb_id: Optional[int] = None
+    tvdb_id: Optional[int] = None
+    media_id: Optional[int] = None
     media_type: str
     rating: float = Field(..., ge=0.0, le=10.0)
     review: Optional[str] = None
     season_number: Optional[int] = None
     episode_order: Optional[str] = None
 
-
-async def _find_media(db: AsyncSession, tmdb_id: int, media_type: MediaType) -> Optional[Media]:
-    """Look up a Media row by (tmdb_id, media_type). Duplicate rows for the same
-    key exist in the wild - most commonly for episodes, from concurrent webhook/
-    sync ingestion racing to create the same one - so this deterministically
-    picks the oldest row instead of crashing with MultipleResultsFound (#157)."""
-    result = await db.execute(
-        select(Media)
-        .where(Media.tmdb_id == tmdb_id, Media.media_type == media_type)
-        .order_by(Media.id)
-    )
-    return result.scalars().first()
 
 
 def format_rating(rating: Rating, media: Media) -> dict:
@@ -83,8 +76,12 @@ async def submit_rating(
         raise HTTPException(status_code=400, detail=f"Invalid media_type: {body.media_type}")
 
     # Look up existing Media row, create on-the-fly if missing
-    media = await _find_media(db, body.tmdb_id, media_type)
+    media = await find_media(
+        db, media_type, media_id=body.media_id, tmdb_id=body.tmdb_id, tvdb_id=body.tvdb_id,
+    )
 
+    if not media and not body.tmdb_id:
+        raise HTTPException(status_code=404, detail="Media not found")
     if not media:
         from routers.media import get_user_tmdb_key
         from core import tmdb
@@ -199,8 +196,10 @@ async def get_media_rating(
 
 @router.delete("")
 async def delete_rating(
-    tmdb_id: int,
     media_type: str,
+    tmdb_id: Optional[int] = Query(None),
+    tvdb_id: Optional[int] = Query(None),
+    media_id: Optional[int] = Query(None),
     season_number: Optional[int] = Query(None),
     episode_order: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -210,8 +209,10 @@ async def delete_rating(
         mt = MediaType(media_type)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid media_type: {media_type}")
+    if not (tmdb_id or tvdb_id or media_id):
+        raise HTTPException(status_code=400, detail="One of tmdb_id, tvdb_id or media_id is required")
 
-    media = await _find_media(db, tmdb_id, mt)
+    media = await find_media(db, mt, media_id=media_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 

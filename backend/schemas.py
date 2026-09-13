@@ -374,7 +374,12 @@ class PasswordUpdate(BaseModel):
     new_password: str
 
 class WatchEventCreate(BaseModel):
-    tmdb_id: int
+    # Any one of media_id / tmdb_id / tvdb_id identifies the item (see
+    # core/identity.py). tmdb_id used to be mandatory; a TVDB-only episode
+    # has none, so clients send media_id (or tvdb_id + series_tvdb_id context).
+    tmdb_id: Optional[int] = None
+    tvdb_id: Optional[int] = None
+    media_id: Optional[int] = None
     media_type: MediaType
     watched_at: Optional[datetime] = None  # omitted = now; explicit null = unknown date
     completed: bool = True

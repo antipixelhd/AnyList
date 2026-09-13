@@ -992,6 +992,43 @@ class BuildOrderPositionsTests(_PositionsDB):
             out = await _eo.build_order_positions(db, 1, "tmdb:aired")
         self.assertEqual(out["positions"], 0)
 
+    async def test_tvdb_order_does_not_claim_a_tvdb_id_another_show_holds(self) -> None:
+        # Regression: "Locked Up: The Oasis" (TMDB) and its TVDB-only twin
+        # "Vis a Vis: El Oasis" are two Show rows for one series. Picking a
+        # TVDB ordering on the TMDB row used to assign the twin's tvdb_id to
+        # it and die on uq_shows_tvdb_id at autoflush. The id must be used
+        # for the fetch without being persisted on the row.
+        async with self.Session() as db:
+            twin = ShowModel(tvdb_id=364495, tmdb_id=None, title="Vis a Vis: El Oasis", canonical_source="tvdb")
+            tmdb_show = ShowModel(tmdb_id=45871, tvdb_id=None, title="Locked Up: The Oasis")
+            db.add_all([twin, tmdb_show])
+            await db.commit()
+            tmdb_show_id = tmdb_show.id
+
+        seen: dict = {}
+
+        async def _fake_type_builder(db, series_tmdb_id, order_key, show_tvdb_id, *args, **kwargs):
+            seen["tvdb_id"] = show_tvdb_id
+            return [_eo.ShowEpisodePosition(
+                series_tmdb_id=series_tmdb_id, order_key=order_key,
+                display_season=1, display_episode=1, tmdb_episode_id=1,
+                tmdb_season_number=1, tmdb_episode_number=1,
+            )]
+
+        with patch.object(_tmdb, "get_show", AsyncMock(return_value={"name": "Locked Up: The Oasis", "external_ids": {"tvdb_id": 364495}})), \
+             patch.object(_eo, "_order_positions_from_tvdb_type", _fake_type_builder):
+            async with self.Session() as db:
+                show = await db.get(ShowModel, tmdb_show_id)
+                out = await _eo.build_order_positions(
+                    db, 45871, "tvdb:dvd", show=show, tmdb_api_key="k", tvdb_api_key="t",
+                )
+                await db.commit()
+
+        self.assertEqual(out["positions"], 1)
+        self.assertEqual(seen["tvdb_id"], 364495)
+        async with self.Session() as db:
+            self.assertIsNone((await db.get(ShowModel, tmdb_show_id)).tvdb_id)
+
 
 class GetOrderKeysForSeriesTests(_PositionsDB):
     async def test_only_non_aired_shows_returned(self) -> None:

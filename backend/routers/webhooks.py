@@ -25,6 +25,7 @@ from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
 from core.enrichment import create_media_safely, enrich_media, enrich_media_safely
+from core.identity import coerce_id, link_show_ids, show_tvdb_id_is_free
 from core.episode_order import (
     ensure_episode_order_mapping_for_season,
     get_episode_order,
@@ -404,10 +405,22 @@ async def _duplicated_by_full_connection(db: AsyncSession, source: str, user_id:
 async def _find_or_create_show(db: AsyncSession, series_tmdb_id: int, api_key: str = None) -> Show:
     result = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
     show = result.scalar_one_or_none()
+    if show:
+        # Backfill the TVDB cross-reference TMDB already told us about, so a
+        # TMDB-matched show also carries its tvdb_id (dual identity, step 1).
+        ext_tvdb = coerce_id(((show.tmdb_data or {}).get("external_ids") or {}).get("tvdb_id"))
+        if ext_tvdb and not show.tvdb_id:
+            if await link_show_ids(db, show, tvdb_id=ext_tvdb):
+                await db.flush()
+        return show
     if not show:
         show_data = await tmdb.get_show(series_tmdb_id, api_key=api_key)
+        ext_tvdb = coerce_id((show_data.get("external_ids") or {}).get("tvdb_id"))
+        if ext_tvdb and not await show_tvdb_id_is_free(db, ext_tvdb):
+            ext_tvdb = None
         show = Show(
             tmdb_id=series_tmdb_id,
+            tvdb_id=ext_tvdb,
             title=show_data.get("name", ""),
             original_title=show_data.get("original_name"),
             overview=show_data.get("overview"),

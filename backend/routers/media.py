@@ -37,6 +37,7 @@ from core.episode_order import (
 )
 from models.profile import UserProfileData
 from core import tmdb
+from core.identity import find_media
 from core.limiter import limiter
 from core.networks import search_curated_networks
 from core.rewatch import get_active_rewatches_for_shows
@@ -882,6 +883,8 @@ def format_media(media: Media) -> dict:
     return {
         "id": media.id,
         "tmdb_id": media.tmdb_id,
+        "tvdb_id": media.tvdb_id,
+        "imdb_id": media.imdb_id,
         "type": media.media_type,
         "title": media.title,
         "original_title": media.original_title,
@@ -2473,7 +2476,12 @@ from pydantic import BaseModel as PydanticModel
 
 
 class CollectRequest(PydanticModel):
-    tmdb_id: int
+    # Any one of media_id / tmdb_id / tvdb_id identifies the item (a
+    # TVDB-only episode has no tmdb_id - see core/identity.py). Creating a
+    # row that doesn't exist yet still needs tmdb_id.
+    tmdb_id: Optional[int] = None
+    tvdb_id: Optional[int] = None
+    media_id: Optional[int] = None
     media_type: MediaType
     # Episode context — required when collecting an episode that doesn't exist in the DB yet
     series_tmdb_id: Optional[int] = None
@@ -3096,12 +3104,15 @@ async def manually_collect(
 ):
     """Manually add a movie to the user's collection."""
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    if not (body.tmdb_id or body.tvdb_id or body.media_id):
+        raise HTTPException(status_code=400, detail="One of tmdb_id, tvdb_id or media_id is required")
 
     # Find or create media record
-    media_q = await db.execute(
-        select(Media).where(Media.tmdb_id == body.tmdb_id, Media.media_type == body.media_type)
+    media = await find_media(
+        db, body.media_type, media_id=body.media_id, tmdb_id=body.tmdb_id, tvdb_id=body.tvdb_id,
     )
-    media = media_q.scalars().first()
+    if not media and not body.tmdb_id:
+        raise HTTPException(status_code=404, detail="Media not found")
 
     # If the episode row exists but is missing its show_id, link it now so season/show
     # collection percentages and season-page "collected" indicators stay consistent.
@@ -3267,25 +3278,17 @@ async def clear_collection(
 @router.delete("/collect")
 async def manually_uncollect(
     tmdb_id: int | None = Query(None),
+    tvdb_id: int | None = Query(None),
     media_id: int | None = Query(None, alias="id"),
     media_type: MediaType = Query(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Remove a manually-added item from the user's collection."""
-    if not tmdb_id and not media_id:
-        raise HTTPException(status_code=400, detail="Either tmdb_id or id is required")
+    if not (tmdb_id or tvdb_id or media_id):
+        raise HTTPException(status_code=400, detail="One of tmdb_id, tvdb_id or id is required")
 
-    if tmdb_id:
-        media_q = await db.execute(
-            select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == media_type)
-        )
-    else:
-        media_q = await db.execute(
-            select(Media).where(Media.id == media_id, Media.media_type == media_type)
-        )
-
-    media = media_q.scalars().first()
+    media = await find_media(db, media_type, media_id=media_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
     if not media:
         return {"status": "ok"}
 

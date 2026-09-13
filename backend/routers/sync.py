@@ -31,6 +31,7 @@ from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
 from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
+from core.identity import coerce_id, link_show_ids
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
 from core.rewatch import record_rewatch_progress, get_active_rewatches_for_shows
@@ -375,10 +376,40 @@ async def sync_shows_batch(
         await asyncio.gather(*[fetch_show(tid) for tid in to_fetch])
 
     if fetched:
+        # Persist TMDB's TVDB cross-reference on the row (step 1 of
+        # docs/tvdb-first-class-plan.md). shows.tvdb_id is unique, so only
+        # claim ids no other show holds and that exactly one fetched show
+        # wants; the rest are left for link_show_ids to sort out later.
+        wanted_tvdb: dict[int, int] = {}
+        tvdb_claims: dict[int, int] = {}
+        for tmdb_id, d in fetched.items():
+            ext_tvdb = coerce_id((d.get("external_ids") or {}).get("tvdb_id"))
+            if ext_tvdb:
+                wanted_tvdb.setdefault(ext_tvdb, tmdb_id)
+                tvdb_claims[ext_tvdb] = tvdb_claims.get(ext_tvdb, 0) + 1
+        dup_tvdb = {t for t, n in tvdb_claims.items() if n > 1}
+        taken_tvdb: dict[int, int | None] = {}
+        if wanted_tvdb:
+            taken_rows = await _select_in_chunks(
+                db,
+                lambda chunk: select(Show).where(Show.tvdb_id.in_(chunk)),
+                list(wanted_tvdb.keys()),
+            )
+            taken_tvdb = {s.tvdb_id: s.tmdb_id for s in taken_rows}
+
+        def _claimable_tvdb_id(tmdb_id: int, d: dict) -> int | None:
+            ext_tvdb = coerce_id((d.get("external_ids") or {}).get("tvdb_id"))
+            if not ext_tvdb or ext_tvdb in dup_tvdb:
+                return None
+            if ext_tvdb in taken_tvdb and taken_tvdb[ext_tvdb] != tmdb_id:
+                return None
+            return ext_tvdb
+
         values = []
         for tmdb_id, d in fetched.items():
             values.append({
                 "tmdb_id": tmdb_id,
+                "tvdb_id": _claimable_tvdb_id(tmdb_id, d),
                 "title": d.get("name"),
                 "original_title": d.get("original_name"),
                 "overview": d.get("overview"),
@@ -409,13 +440,17 @@ async def sync_shows_batch(
 
         # Show has 12 value columns; 32767 / 12 = 2730 rows max per statement.
         # Use BATCH_SIZE (500) to stay well under the asyncpg 32767-parameter limit.
-        update_cols = [k for k in values[0].keys() if k != "tmdb_id"]
+        update_cols = [k for k in values[0].keys() if k not in ("tmdb_id", "tvdb_id")]
         for i in range(0, len(values), BATCH_SIZE):
             chunk = values[i : i + BATCH_SIZE]
             stmt = insert(Show).values(chunk)
+            set_ = {k: getattr(stmt.excluded, k) for k in update_cols}
+            # Fill a missing tvdb_id on an existing row, never clear or
+            # replace one already there.
+            set_["tvdb_id"] = func.coalesce(Show.__table__.c.tvdb_id, stmt.excluded.tvdb_id)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["tmdb_id"],
-                set_={k: getattr(stmt.excluded, k) for k in update_cols},
+                set_=set_,
             )
             stmt = stmt.returning(Show)
             res = await db.execute(stmt)
@@ -7461,6 +7496,7 @@ async def apply_season_override(
             target_show = Show(
                 tvdb_id=override.target_show_tvdb_id,
                 tmdb_id=None,
+                canonical_source="tvdb",
                 title=show_fmt.get("title") or f"TVDB #{override.target_show_tvdb_id}",
                 original_title=show_fmt.get("original_title"),
                 overview=show_fmt.get("overview"),
@@ -7753,6 +7789,7 @@ async def match_unmatched_show(
             target_show = Show(
                 tvdb_id=body.tvdb_id,
                 tmdb_id=None,
+                canonical_source="tvdb",
                 title=show_fmt["title"] or body.show_title,
                 original_title=show_fmt.get("original_title"),
                 overview=show_fmt.get("overview"),
@@ -7788,9 +7825,10 @@ async def match_unmatched_show(
             media.show_id = target_show.id
             if ep:
                 tvdb_ep_id = ep.get("id")
-                # Store TVDB episode ID in tmdb_id column for ActionBar compatibility
+                # TVDB episode id lives in its own column (migration tvdb1st);
+                # tmdb_id stays NULL for an episode TMDB doesn't have.
                 if tvdb_ep_id:
-                    media.tmdb_id = tvdb_ep_id
+                    media.tvdb_id = int(tvdb_ep_id)
                 # TVDB sometimes has an episode with no name at all (see #173) -
                 # media.title is NOT NULL, so a brand-new row needs a fallback.
                 # Episode 0 is a real episode number, not "missing", hence the
@@ -7888,8 +7926,11 @@ async def match_unmatched_show(
             target_show = tmdb_show_result.scalar_one_or_none()
 
         if not target_show:
+            # No show holds tmdb_tvdb_id (the cross-reference lookup above came
+            # back empty), so it is safe to claim it on the new row.
             target_show = Show(
                 tmdb_id=body.tmdb_id,
+                tvdb_id=coerce_id(tmdb_tvdb_id),
                 title=show_data.get("name") or show_data.get("original_name"),
                 original_title=show_data.get("original_name"),
                 overview=show_data.get("overview"),
@@ -7917,6 +7958,7 @@ async def match_unmatched_show(
             target_show.first_air_date = show_data.get("first_air_date") or target_show.first_air_date
             target_show.last_air_date = show_data.get("last_air_date") or target_show.last_air_date
             target_show.tmdb_data = {**show_data, "seasons": seasons_meta}
+            await link_show_ids(db, target_show, tvdb_id=tmdb_tvdb_id)
 
         async def _fetch_season(season_number: int) -> dict | None:
             async with sem:

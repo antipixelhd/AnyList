@@ -208,7 +208,9 @@ async def get_season(tmdb_id: int, season_number: int, api_key: str = None, lang
 
 
 async def get_episode(tmdb_id: int, season_number: int, episode_number: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
-    params: dict = {"append_to_response": "credits"}
+    # external_ids rides along so enrichment can persist the TVDB episode id
+    # (and IMDb id) on the Media row without a second per-episode call.
+    params: dict = {"append_to_response": "credits,external_ids"}
     if language:
         params["language"] = language
     return await _get(

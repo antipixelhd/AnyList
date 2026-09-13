@@ -283,7 +283,7 @@ async def _order_positions_from_tmdb_group(
 
 
 async def _order_positions_from_tvdb_type(
-    db: AsyncSession, series_tmdb_id: int, order_key: str, show: ShowModel,
+    db: AsyncSession, series_tmdb_id: int, order_key: str, show_tvdb_id: int,
     tmdb_api_key: str, tvdb_api_key: str, cache_ttl: float | None,
 ) -> list[ShowEpisodePosition]:
     # Every tvdb:* order needs the tvdb-episode-id <-> canonical bridge.
@@ -315,7 +315,7 @@ async def _order_positions_from_tvdb_type(
 
     season_type = _tvdb_season_type(order_key)
     episodes = await tvdb.get_series_episodes(
-        int(show.tvdb_id), None, tvdb_api_key, season_type=season_type, cache_ttl=cache_ttl
+        int(show_tvdb_id), None, tvdb_api_key, season_type=season_type, cache_ttl=cache_ttl
     )
     rows = []
     seen_display = set()
@@ -391,19 +391,25 @@ async def build_order_positions(
     elif key.startswith("tvdb:"):
         if not (tmdb_api_key and tvdb_api_key):
             raise ValueError("TMDB and TVDB API keys required")
-        if show is None or not show.tvdb_id:
+        show_tvdb_id = show.tvdb_id if show is not None else None
+        if not show_tvdb_id:
             # ensure_episode_order_mapping resolves the tvdb id from TMDB itself,
-            # but the non-official types also need show.tvdb_id for the type fetch.
+            # but the non-official types also need the show's TVDB id for the
+            # type fetch. The id is used directly; it is only persisted on the
+            # Show row when no other row already holds it (shows.tvdb_id is
+            # unique - a TVDB-only twin of this show may own it, and a blind
+            # assignment then blows up the whole request on autoflush).
             sd = await tmdb.get_show(series_tmdb_id, api_key=tmdb_api_key, cache_ttl=cache_ttl)
             resolved = (sd.get("external_ids") or {}).get("tvdb_id")
             if not resolved:
                 raise ValueError("TMDB does not expose a TVDB id for this show")
-            if show is None:
-                show = ShowModel(tmdb_id=series_tmdb_id, title=sd.get("name") or "", tvdb_id=int(resolved))
-            else:
-                show.tvdb_id = int(resolved)
+            show_tvdb_id = int(resolved)
+            if show is not None:
+                from core.identity import link_show_ids
+                with db.no_autoflush:
+                    await link_show_ids(db, show, tvdb_id=show_tvdb_id)
         rows = await _order_positions_from_tvdb_type(
-            db, series_tmdb_id, key, show, tmdb_api_key, tvdb_api_key, cache_ttl
+            db, series_tmdb_id, key, show_tvdb_id, tmdb_api_key, tvdb_api_key, cache_ttl
         )
     else:
         raise ValueError(f"Unsupported episode order: {order_key}")

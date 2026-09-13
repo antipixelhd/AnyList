@@ -39,6 +39,7 @@ from core.episode_order import (
     list_available_orders,
     build_order_positions,
     get_position_maps,
+    _tvdb_season_type,
 )
 from core.enrichment import (
     tmdb_season_covers,
@@ -47,6 +48,7 @@ from core.enrichment import (
     apply_media_change_safely,
     is_unmapped_tvdb_episode,
 )
+from core.identity import link_show_ids
 from core.rewatch import (
     capped_season_episode_counts,
     total_aired_episodes,
@@ -550,13 +552,64 @@ async def get_episode_order_job(
     return job
 
 
-def _remap_show_seasons(payload: dict, by_canonical: dict) -> None:
+async def _tvdb_season_art(
+    db: AsyncSession, user_id: int, order_key: str, tvdb_id: int | None,
+) -> dict[int, dict]:
+    """{display_season_number: {"poster_path", "name", "air_date"}} from
+    TheTVDB's own season list for a `tvdb:*` order's season type - TVDB keeps
+    separate season entries (with their own artwork) per type, so a DVD or
+    absolute-order season has a real poster rather than the show's. Empty
+    for non-TVDB orders, no TVDB key, no TVDB id, or a failed fetch; callers
+    treat it as an optional overlay."""
+    if not order_key.startswith("tvdb:") or not tvdb_id:
+        return {}
+    tvdb_api_key = await get_user_tvdb_key(db, user_id)
+    if not tvdb_api_key:
+        return {}
+    try:
+        raw = await tvdb_client.get_series(int(tvdb_id), tvdb_api_key)
+    except Exception:
+        return {}
+    wanted = _tvdb_season_type(order_key)
+    # TVDB fills artwork/names in on the official seasons far more often than
+    # on the DVD/absolute/... entries (checked against Reacher: every official
+    # season has a poster, only DVD S1 does), so each field falls back to the
+    # official season with the same number before the caller falls back to
+    # the show poster.
+    typed: dict[int, dict] = {}
+    official: dict[int, dict] = {}
+    for s in raw.get("seasons") or []:
+        stype = s.get("type") or {}
+        if s.get("number") is None:
+            continue
+        entry = {
+            "poster_path": tvdb_client._image_url(s.get("image")),
+            "name": s.get("name"),
+            "air_date": s.get("premiereDate"),
+        }
+        if stype.get("type") == "official":
+            official[int(s["number"])] = entry
+        matches = str(stype.get("id")) == wanted if wanted.isdigit() else stype.get("type") == wanted
+        if matches:
+            typed[int(s["number"])] = entry
+    art: dict[int, dict] = {}
+    for number in set(typed) | set(official):
+        t = typed.get(number) or {}
+        o = official.get(number) or {}
+        art[number] = {k: t.get(k) or o.get(k) for k in ("poster_path", "name", "air_date")}
+    return art
+
+
+def _remap_show_seasons(payload: dict, by_canonical: dict, season_art: dict[int, dict] | None = None) -> None:
     """Rewrite a get_show payload's `seasons` dict and `seasons_meta` list into a
     non-aired ordering, in place. `by_canonical` maps
     (canonical_season, canonical_episode) -> ShowEpisodePosition. Episodes the
     ordering doesn't place are dropped from the season view (rare - a provider
-    ordering that omits an episode)."""
+    ordering that omits an episode). `season_art` (see _tvdb_season_art)
+    supplies per-display-season poster/name/air_date; without it the show
+    poster stands in."""
     from collections import defaultdict
+    season_art = season_art or {}
 
     remapped: dict[int, list] = defaultdict(list)
     for eps in (payload.get("seasons") or {}).values():
@@ -580,17 +633,30 @@ def _remap_show_seasons(payload: dict, by_canonical: dict) -> None:
         counts[pos.display_season] += 1
     payload["seasons_meta"] = [
         {
-            "season_number": ds, "name": f"Season {ds}", "overview": None,
-            "poster_path": payload.get("poster_path"), "episode_count": count,
-            "air_date": None,
+            "season_number": ds,
+            "name": (season_art.get(ds) or {}).get("name") or f"Season {ds}",
+            "overview": None,
+            "poster_path": (season_art.get(ds) or {}).get("poster_path") or payload.get("poster_path"),
+            "episode_count": count,
+            "air_date": (season_art.get(ds) or {}).get("air_date"),
         }
         for ds, count in sorted(counts.items())
     ]
+    # Episode cards inside a season inherit that season's poster where the
+    # aired-order view would have used the TMDB season poster.
+    for ds, eps in remapped.items():
+        poster = (season_art.get(ds) or {}).get("poster_path")
+        if not poster:
+            continue
+        for ep in eps:
+            if not ep.get("poster_path") or ep.get("poster_path") == payload.get("poster_path"):
+                ep["poster_path"] = poster
 
 
 async def _resolve_ordered_season(
     db: AsyncSession, series_tmdb_id: int, order_key: str, display_season: int,
     api_key: str, metadata_lang: str | None,
+    season_art: dict[int, dict] | None = None,
 ) -> tuple[dict, set[tuple[int, int]]] | None:
     """For a non-aired order, build a synthetic TMDB-season payload for one
     *display* season: the ordering's episodes for that group, pulled from their
@@ -630,13 +696,18 @@ async def _resolve_ordered_season(
             "_canonical_episode": pos.tmdb_episode_number,
         })
 
+    art = (season_art or {}).get(display_season) or {}
     synth = {
         "id": None,
-        "name": f"Season {display_season}",
+        "name": art.get("name") or f"Season {display_season}",
         "overview": None,
+        # TMDB-relative path (the header's canonical season poster) - callers
+        # run it through tmdb.poster_url. poster_url is an already-absolute
+        # TVDB season poster that wins over it when present.
         "poster_path": header.get("poster_path"),
+        "poster_url": art.get("poster_path"),
         "backdrop_path": header.get("backdrop_path"),
-        "air_date": None,
+        "air_date": art.get("air_date"),
         "vote_average": None,
         "episodes": episodes,
     }
@@ -1123,7 +1194,10 @@ async def get_show(
             "where_to_watch": where_to_watch,
         }
         if order_positions_by_canonical:
-            _remap_show_seasons(show_payload, order_positions_by_canonical)
+            season_art = await _tvdb_season_art(
+                db, effective_user_id, selected_episode_order, show_payload.get("tvdb_id"),
+            )
+            _remap_show_seasons(show_payload, order_positions_by_canonical, season_art)
         return show_payload
 
     # 2. If not local, fetch from TMDB - pass the viewer's metadata language so
@@ -1258,7 +1332,11 @@ async def get_show(
             "where_to_watch": where_to_watch,
         }
         if order_positions_by_canonical:
-            _remap_show_seasons(tmdb_show_payload, order_positions_by_canonical)
+            season_art = await _tvdb_season_art(
+                db, effective_user_id, selected_episode_order,
+                (data.get("external_ids") or {}).get("tvdb_id"),
+            )
+            _remap_show_seasons(tmdb_show_payload, order_positions_by_canonical, season_art)
         return tmdb_show_payload
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"TMDB Show not found: {e}")
@@ -1330,8 +1408,14 @@ async def get_show_season(
     metadata_lang = await get_user_metadata_language(db, effective_user_id)
 
     if show and not is_aired_order(order_key) and check_tmdb_key(api_key):
+        season_art = await _tvdb_season_art(
+            db, effective_user_id, order_key,
+            (order_pref_row.tvdb_id if order_pref_row else None)
+            or show.tvdb_id
+            or ((show.tmdb_data or {}).get("external_ids") or {}).get("tvdb_id"),
+        )
         ordered_season = await _resolve_ordered_season(
-            db, series_tmdb_id, order_key, season_number, api_key, metadata_lang
+            db, series_tmdb_id, order_key, season_number, api_key, metadata_lang, season_art,
         )
 
     local_episodes = []
@@ -1683,7 +1767,7 @@ async def get_show_season(
                 "season_number": season_number,
                 "name": tmdb_data.get("name"),
                 "overview": tmdb_data.get("overview"),
-                "poster_path": tmdb.poster_url(tmdb_data.get("poster_path")),
+                "poster_path": tmdb_data.get("poster_url") or tmdb.poster_url(tmdb_data.get("poster_path")),
                 "backdrop_path": tmdb.poster_url(
                     tmdb_data.get("backdrop_path"), size="w1280"
                 ),
@@ -2214,6 +2298,7 @@ async def get_tvdb_show(
             show = ShowModel(
                 tvdb_id=tvdb_id,
                 tmdb_id=None,
+                canonical_source="tvdb",
                 title=show_data.get("title") or f"TVDB #{tvdb_id}",
                 original_title=show_data.get("original_title"),
                 overview=show_data.get("overview"),
@@ -2233,10 +2318,7 @@ async def get_tvdb_show(
     # poster/backdrop/overview from TVDB when TMDB's own entry lacks them —
     # common for a sparsely-listed show. Never overwrite an existing
     # different tvdb_id link (it's unique).
-    show_changed = False
-    if not show.tvdb_id:
-        show.tvdb_id = tvdb_id
-        show_changed = True
+    show_changed = await link_show_ids(db, show, tvdb_id=tvdb_id)
     if not show.poster_path and show_data.get("poster_path"):
         show.poster_path = show_data["poster_path"]
         show_changed = True
@@ -2556,6 +2638,7 @@ async def get_tvdb_season(
             show = ShowModel(
                 tvdb_id=tvdb_id,
                 tmdb_id=None,
+                canonical_source="tvdb",
                 title=show_data.get("title") or f"TVDB #{tvdb_id}",
                 original_title=show_data.get("original_title"),
                 overview=show_data.get("overview"),
@@ -2575,10 +2658,7 @@ async def get_tvdb_season(
     # poster/backdrop/overview from TVDB when TMDB's own entry lacks them —
     # common for a sparsely-listed show. Never overwrite an existing
     # different tvdb_id link (it's unique).
-    show_changed = False
-    if not show.tvdb_id:
-        show.tvdb_id = tvdb_id
-        show_changed = True
+    show_changed = await link_show_ids(db, show, tvdb_id=tvdb_id)
     if not show.poster_path and show_data.get("poster_path"):
         show.poster_path = show_data["poster_path"]
         show_changed = True
@@ -2693,7 +2773,7 @@ async def get_tvdb_season(
                     except IntegrityError:
                         existing_result = await db.execute(
                             select(Media)
-                            .where(Media.tmdb_id == local_episode.tmdb_id, Media.media_type == MediaType.episode)
+                            .where(Media.tvdb_id == local_episode.tvdb_id, Media.media_type == MediaType.episode)
                             .order_by(Media.id)
                         )
                         existing = existing_result.scalars().first()
@@ -2794,24 +2874,24 @@ async def get_tvdb_season(
         (mapping.tmdb_episode_id if mapping else (local_episode.tmdb_id if local_episode else None))
         for _episode, mapping, local_episode, _unmatched_ep in mapped_rows
     ]
+    # Keyed on the local Media id, not tmdb_id - a TVDB-only episode has no
+    # tmdb_id at all (migration tvdb1st), and list items reference media.id.
     tvdb_episode_in_lists: dict[int, list[int]] = {}
-    _present_ep_tmdb_ids = [tid for tid in ep_resolved_tmdb_ids if tid]
-    if _present_ep_tmdb_ids:
+    _present_local_ids = [local_episode.id for _e, _m, local_episode, _u in mapped_rows if local_episode]
+    if _present_local_ids:
         user_lists_q = await db.execute(select(UserList.id).where(UserList.user_id == effective_user_id))
         user_list_ids = [r[0] for r in user_lists_q.all()]
         if user_list_ids:
             ep_lists_q = await db.execute(
-                select(Media.tmdb_id, ListItem.list_id)
-                .join(ListItem, ListItem.media_id == Media.id)
+                select(ListItem.media_id, ListItem.list_id)
                 .where(
-                    Media.tmdb_id.in_(_present_ep_tmdb_ids),
-                    Media.media_type == MediaType.episode,
+                    ListItem.media_id.in_(_present_local_ids),
                     ListItem.list_id.in_(user_list_ids),
                 )
                 .distinct()
             )
-            for ep_tmdb_id, list_id in ep_lists_q.all():
-                tvdb_episode_in_lists.setdefault(ep_tmdb_id, []).append(list_id)
+            for ep_media_id, list_id in ep_lists_q.all():
+                tvdb_episode_in_lists.setdefault(ep_media_id, []).append(list_id)
 
     enriched_eps = []
     for (episode, mapping, local_episode, unmatched_ep), ep_tmdb_id in zip(mapped_rows, ep_resolved_tmdb_ids):
@@ -2819,6 +2899,7 @@ async def get_tvdb_season(
             **episode,
             "id": local_episode.id if local_episode else None,
             "tmdb_id": ep_tmdb_id,
+            "tvdb_id": (local_episode.tvdb_id if local_episode and local_episode.tvdb_id else episode.get("tvdb_id")),
             "show_tmdb_id": series_tmdb_id,
             "tmdb_season_number": mapping.tmdb_season_number if mapping else season_number,
             "tmdb_episode_number": mapping.tmdb_episode_number if mapping else episode.get("episode_number"),
@@ -2826,7 +2907,7 @@ async def get_tvdb_season(
             "in_library": local_episode.id in collected_ep_ids if local_episode else False,
             "watched": local_episode.id in watched_ep_ids if local_episode else False,
             "user_rating": episode_ratings.get(local_episode.id) if local_episode else None,
-            "in_lists": tvdb_episode_in_lists.get(ep_tmdb_id, []) if ep_tmdb_id else [],
+            "in_lists": tvdb_episode_in_lists.get(local_episode.id, []) if local_episode else [],
         })
 
     total_eps = len(eps)
@@ -2922,6 +3003,7 @@ async def get_tvdb_episode(
             show = ShowModel(
                 tvdb_id=tvdb_id,
                 tmdb_id=None,
+                canonical_source="tvdb",
                 title=show_data.get("title") or f"TVDB #{tvdb_id}",
                 original_title=show_data.get("original_title"),
                 overview=show_data.get("overview"),
@@ -2941,10 +3023,7 @@ async def get_tvdb_episode(
     # TMDB doesn't have (see #101). Also backfill poster/backdrop/overview
     # from TVDB when TMDB's own entry lacks them — common for a sparsely-
     # listed show. Never overwrite an existing different tvdb_id link.
-    show_changed = False
-    if not show.tvdb_id:
-        show.tvdb_id = tvdb_id
-        show_changed = True
+    show_changed = await link_show_ids(db, show, tvdb_id=tvdb_id)
     if not show.poster_path and show_data.get("poster_path"):
         show.poster_path = show_data["poster_path"]
         show_changed = True
@@ -3023,7 +3102,7 @@ async def get_tvdb_episode(
                 except IntegrityError:
                     existing_result = await db.execute(
                         select(Media)
-                        .where(Media.tmdb_id == new_ep.tmdb_id, Media.media_type == MediaType.episode)
+                        .where(Media.tvdb_id == new_ep.tvdb_id, Media.media_type == MediaType.episode)
                         .order_by(Media.id)
                     )
                     existing = existing_result.scalars().first()
@@ -3125,11 +3204,22 @@ async def get_tvdb_episode(
         ep_state: dict = {"tmdb_id": resolved_tmdb_id, "type": "episode"}
         await enrich_with_state(db, effective_user_id, [ep_state])
         in_lists = ep_state.get("in_lists", [])
+    elif local_ep_id:
+        # TVDB-only episode: no tmdb_id to enrich by, but list items reference
+        # the local media id so membership is a direct lookup.
+        user_list_rows = await db.execute(
+            select(ListItem.list_id)
+            .join(UserList, UserList.id == ListItem.list_id)
+            .where(ListItem.media_id == local_ep_id, UserList.user_id == effective_user_id)
+            .distinct()
+        )
+        in_lists = [r[0] for r in user_list_rows.all()]
 
     return {
         **ep_data,
         "id": local_ep_id,
         "tmdb_id": resolved_tmdb_id,
+        "tvdb_id": (local_ep.tvdb_id if local_ep and local_ep.tvdb_id else ep_data.get("tvdb_id")),
         "show_tmdb_id": series_tmdb_id,
         "tmdb_season_number": canonical_season,
         "tmdb_episode_number": canonical_episode,
