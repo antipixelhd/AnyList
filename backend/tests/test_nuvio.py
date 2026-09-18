@@ -26,6 +26,7 @@ from routers.sync import (
     _push_nuvio_library_delta,
     _run_full_push,
 )
+from schemas import MediaServerConnectionResponse
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -65,6 +66,21 @@ class _SessionCM:
 
 
 class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_response_redacts_refresh_token(self) -> None:
+        response = MediaServerConnectionResponse.model_validate(
+            {
+                "id": 1,
+                "user_id": 7,
+                "type": "nuvio",
+                "name": "Nuvio",
+                "url": nuvio.DEFAULT_URL,
+                "token": "secret-refresh-token",
+                "created_at": datetime(2026, 9, 19),
+            }
+        )
+
+        self.assertEqual(response.token, "")
+
     async def test_sign_in_uses_custom_app_anon_key(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.headers["apikey"], "self-hosted-anon-key")

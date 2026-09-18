@@ -13,8 +13,14 @@ if ($Stop) {
     if (Test-Path -LiteralPath $pidFile) {
         foreach ($record in (Get-Content -LiteralPath $pidFile -Raw | ConvertFrom-Json)) {
             $process = Get-Process -Id $record.id -ErrorAction SilentlyContinue
-            if ($process -and $process.StartTime.ToUniversalTime().ToString('o') -eq $record.started) {
-                Stop-Process -Id $process.Id
+            if (!$process) { continue }
+            try {
+                $started = $process.StartTime.ToUniversalTime().ToString('o')
+            } catch {
+                continue
+            }
+            if ($started -eq $record.started) {
+                Stop-Process -Id $process.Id -ErrorAction Continue
             }
         }
         Remove-Item -LiteralPath $pidFile
@@ -35,7 +41,19 @@ try {
 & .\.venv\Scripts\python scripts\prepare_local_login.py
 if ($LASTEXITCODE -ne 0) { throw 'Local login setup failed.' }
 $records = @()
-if (Test-Path -LiteralPath $pidFile) { $records = (Get-Content -LiteralPath $pidFile -Raw | ConvertFrom-Json) }
+if (Test-Path -LiteralPath $pidFile) {
+    foreach ($record in (Get-Content -LiteralPath $pidFile -Raw | ConvertFrom-Json)) {
+        $process = Get-Process -Id $record.id -ErrorAction SilentlyContinue
+        if (!$process) { continue }
+        try {
+            if ($process.StartTime.ToUniversalTime().ToString('o') -eq $record.started) {
+                $records += $record
+            }
+        } catch {
+            continue
+        }
+    }
+}
 foreach ($service in @(
     @{ port=7341; name='backend'; exe=(Join-Path $runtimeRoot 'Scripts\python.exe'); args='-m uvicorn main:app --host 127.0.0.1 --port 7341'; cwd=(Join-Path $projectRoot 'backend') },
     @{ port=7340; name='frontend'; exe=(Get-Command node).Source; args='node_modules/astro/bin/astro.mjs dev --host 127.0.0.1 --port 7340'; cwd=(Join-Path $projectRoot 'frontend') }

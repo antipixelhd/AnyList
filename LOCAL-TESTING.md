@@ -6,7 +6,7 @@ This is a working local preview. It is ready for testing lists, ratings, progres
 
 1. Start Docker Desktop if it is not already running.
 2. Double-click **Start Media Tracker.cmd** in this folder. It starts the isolated database and web servers, then opens **http://localhost:7340**.
-3. Find your local passwords in **.venv/LOCAL-LOGIN.txt**. Sign in with **provider-test** for your private Stremio import, or **preview** for synthetic examples you can freely change. These are app logins, separate from your streaming account.
+3. Find your local passwords in **.venv/LOCAL-LOGIN.txt**. Sign in with **provider-test** for your private Stremio and Nuvio imports, or **preview** for synthetic examples you can freely change. These are app logins, separate from your streaming accounts.
 
 The app binds to this PC's loopback interface. Google SSO and VPS access are not part of this local test setup.
 
@@ -18,9 +18,9 @@ The app binds to this PC's loopback interface. Google SSO and VPS access are not
 - **Season ratings:** choose averaging or a separate show rating. Changing modes preserves your manual show score; unrated seasons never enter the average.
 - **Browse:** search for a movie or series using the configured TMDB access, open its details, then add it to a list.
 - **Profile → Library:** inspect streaming library membership separately from tracked lists.
-- **Home → Recent events:** inspect the first-import summary. Leave this real connection unapproved during this preview.
+- **Home → Recent events:** inspect the pending Nuvio first-import summary. Leave it unapproved during this preview.
 
-Your Stremio import currently contains **36 tracked entries**. Its outbound flags and schedules are disabled. Local edits do not currently write to your Stremio account. Keep these controls disabled; real outbound sync still needs isolated provider testing. Use the preview account for deletion experiments so your imported local lists remain convenient to inspect.
+The combined read-only Stremio and Nuvio imports currently contain **34 movies and 2 series**. Every outbound flag and schedule is disabled. The Nuvio first-import baseline is still unapproved, so it cannot export. Keep these controls disabled; real outbound sync still needs isolated provider testing. Use the preview account for deletion experiments so your imported local lists remain convenient to inspect.
 
 ## Stop or restart
 
@@ -28,9 +28,9 @@ Double-click **Stop Media Tracker.cmd** to stop the two web servers. The isolate
 
 ## Current limits
 
-- Stremio authentication and full read-only import are verified against your supplied account. Repeated import performed **zero remote writes**.
-- Playback dismissal/restoration and tracking-reset retries have automated tests for Stremio/Nuvio. No real outbound writes or live Nuvio session have been tested.
-- Streaming library mirroring, non-streaming provider reconciliation, rating conversion echo protection, detailed field-level conflict review and independent retry scheduling remain unfinished.
-- Some connection/settings screens still use Scrob's original layout. External IMDb/Rotten Tomatoes enrichment and Google SSO remain unverified.
+- Stremio and Nuvio authentication and repeated read-only imports are verified against the supplied accounts. The Nuvio refresh-token rotation path worked across consecutive pulls, and no remote writes were made.
+- Playback dismissal/restoration and tracking-reset retries have automated tests for Stremio/Nuvio. Real outbound behavior remains reserved for the isolated VPS test instance.
+- Streaming-library mirroring, cloud-provider first-write gates, score conversion/echo protection, and external IMDb/Rotten Tomatoes enrichment are implemented. Detailed field-level conflicts and independent retry scheduling remain unfinished.
+- Google SSO is implemented and locally tested but still needs a real Google client on the isolated deployment.
 
 Latest verification details and the implementation backlog are in `../docs/media-tracker/STATUS.md`.

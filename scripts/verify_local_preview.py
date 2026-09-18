@@ -24,4 +24,11 @@ for username in ('provider-test','preview'):
             result=response.json()
             assert result['owner']
             print(username,kind,'entries:',len(result['entries']))
+        connections=client.get('/api/proxy/auth/connections',headers={'Authorization':f'Bearer {client.cookies.get("token")}'})
+        connections.raise_for_status()
+        assert all(
+            not connection.get('token')
+            for connection in connections.json()
+            if connection.get('type') in ('stremio','nuvio','arvio')
+        ),'Cloud connection secret leaked through the response model'
         print(username,'login and local page checks passed')

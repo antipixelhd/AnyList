@@ -339,7 +339,7 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
 
     @model_validator(mode="after")
     def redact_cloud_credentials(self):
-        if self.type in ("stremio", "arvio"):
+        if self.type in ("stremio", "nuvio", "arvio"):
             self.token = ""
         return self
 
