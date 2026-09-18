@@ -35,7 +35,12 @@ class MDBListClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.url.path, "/rating/movie/tomatoes")
             self.assertEqual(request.url.params["apikey"], "secret-key")
             self.assertEqual(json.loads(request.content), {"ids": [550], "provider": "tmdb"})
-            return httpx.Response(200, json={"provider_id": "550", "provider_rating": 87})
+            return httpx.Response(200, json={
+                "provider_id": "tmdb",
+                "provider_rating": "tomatoes",
+                "mediatype": "movie",
+                "ratings": [{"id": 550, "rating": 87}],
+            })
 
         transport = httpx.MockTransport(handler)
         with patch.object(

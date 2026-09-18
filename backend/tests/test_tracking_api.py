@@ -19,7 +19,7 @@ from db import get_db
 from dependencies import get_current_user, get_optional_user
 from models import User, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity
+from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline
 from routers.tracking import router
 
 
@@ -118,6 +118,42 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.client.get(f'/tracking/title/{self.movie.id}')
         self.assertEqual(res.json()['friends'],[])
         self.assertIsNone(res.json()['friends_average'])
+
+    async def test_cloud_first_import_requires_explicit_approval(self):
+        from core.cloud_reconciliation import record_cloud_import, require_cloud_reconciliation
+
+        baseline = await record_cloud_import(self.db, self.owner.id, 'trakt', {'ratings': 3})
+        await self.db.commit()
+        self.assertFalse(baseline.approved)
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.kind == 'initial_cloud_import',
+        ))).scalars().all()
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0].provider, 'trakt')
+        with self.assertRaises(Exception) as blocked:
+            await require_cloud_reconciliation(self.db, self.owner.id, 'trakt')
+        self.assertEqual(getattr(blocked.exception, 'status_code', None), 409)
+
+        res = await self.client.post(
+            f'/tracking/recent-events/{reviews[0].id}',
+            json={'action': 'confirm'},
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        approved = (await self.db.execute(select(CloudBaseline).where(
+            CloudBaseline.user_id == self.owner.id,
+            CloudBaseline.provider == 'trakt',
+        ))).scalar_one()
+        self.assertTrue(approved.approved)
+        await require_cloud_reconciliation(self.db, self.owner.id, 'trakt')
+
+        await record_cloud_import(self.db, self.owner.id, 'trakt', {'ratings': 4})
+        await self.db.commit()
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.kind == 'initial_cloud_import',
+        ))).scalars().all()
+        self.assertEqual(len(reviews), 1)
 
     async def test_title_community_average_excludes_private_profiles(self):
         await self.save(self.movie, status='completed', manual_score=8)

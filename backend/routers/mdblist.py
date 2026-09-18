@@ -732,6 +732,8 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
 
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.cloud_reconciliation import record_cloud_import
+            await record_cloud_import(db, user_id, "mdblist", stats)
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,
@@ -1091,6 +1093,8 @@ async def push_mdblist(
     if not any((settings.mdblist_push_watched, settings.mdblist_push_ratings, settings.mdblist_push_watchlist,
                 settings.mdblist_push_collection, settings.mdblist_push_dropped)):
         raise HTTPException(status_code=400, detail="Enable at least one MDBList push option")
+    from core.cloud_reconciliation import require_cloud_reconciliation
+    await require_cloud_reconciliation(db, current_user.id, "mdblist")
 
     job = SyncJob(
         user_id=current_user.id,

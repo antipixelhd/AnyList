@@ -570,6 +570,8 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             # to other connections. Users push explicitly per-service (the "Push"
             # buttons), so a bulk pull of thousands of items doesn't unexpectedly
             # blast them out everywhere else at once.
+            from core.cloud_reconciliation import record_cloud_import
+            await record_cloud_import(db, user_id, "simkl", stats)
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,
@@ -863,6 +865,8 @@ async def push_simkl(
         raise HTTPException(status_code=400, detail="Simkl is not connected")
     if not settings.simkl_push_watched and not settings.simkl_push_ratings:
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Simkl' push flags first")
+    from core.cloud_reconciliation import require_cloud_reconciliation
+    await require_cloud_reconciliation(db, current_user.id, "simkl")
     job = SyncJob(user_id=current_user.id, source=CollectionSource.simkl, status=SyncStatus.pending, job_type="push")
     db.add(job)
     await db.commit()

@@ -56,6 +56,7 @@ class SyncReview(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     media_id: Mapped[int | None] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"))
     connection_id: Mapped[int | None] = mapped_column(ForeignKey("media_server_connections.id", ondelete="CASCADE"))
+    provider: Mapped[str | None] = mapped_column(String(24))
     kind: Mapped[str] = mapped_column(String(32))
     state: Mapped[str] = mapped_column(String(16), default="pending")
     previous_status: Mapped[str | None] = mapped_column(String(16))
@@ -68,6 +69,17 @@ class StreamBaseline(Base):
     __tablename__ = "tracking_baselines"
     connection_id: Mapped[int] = mapped_column(ForeignKey("media_server_connections.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CloudBaseline(Base):
+    __tablename__ = "tracking_cloud_baselines"
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_tracking_cloud_user_provider"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False)
     snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -227,7 +227,11 @@ async def _auto_sync_scheduler():
                         schedules: list[tuple[str, float, object]] = []
                         if auto_sync is not None:
                             schedules.append(("pull", auto_sync, cfg["pull_runner"]))
-                        if auto_push is not None and any(
+                        from core.cloud_reconciliation import cloud_push_is_approved
+                        push_approved = await cloud_push_is_approved(
+                            db, settings_row.user_id, source.value
+                        )
+                        if auto_push is not None and push_approved and any(
                             getattr(settings_row, flag) for flag in cfg["push_flags"]
                         ):
                             schedules.append(("push", auto_push, cfg["push_runner"]))

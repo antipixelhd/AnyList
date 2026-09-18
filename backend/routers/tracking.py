@@ -111,7 +111,7 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .order_by(StreamAction.id).limit(100))).all()
     pending=await db.scalar(select(func.count()).select_from(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.state=='pending'))
     return {'pending':pending,'outbound':[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions],
-        'results':[{'id':r.id,'kind':r.kind,'state':r.state,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+        'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
 
 
 class ReviewResolution(BaseModel):
@@ -128,6 +128,13 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         if body.action!='confirm':raise HTTPException(422,'Confirm this summary before allowing outbound sync')
         baseline=await db.get(StreamBaseline,event.connection_id)
         if not baseline:raise HTTPException(409,'Import this connection again')
+        baseline.approved=True
+    elif event.kind=='initial_cloud_import':
+        if body.action!='confirm':raise HTTPException(422,'Confirm this summary before allowing outbound sync')
+        from models.tracking import CloudBaseline
+        baseline=(await db.execute(select(CloudBaseline).where(
+            CloudBaseline.user_id==viewer.id,CloudBaseline.provider==event.provider))).scalar_one_or_none()
+        if not baseline:raise HTTPException(409,'Import this provider again')
         baseline.approved=True
     elif event.kind=='outbound_pending':
         raise HTTPException(409,'This operation requires the connection dispatcher; it cannot be marked successful manually')

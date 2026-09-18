@@ -1324,6 +1324,8 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             print(_trakt_import_summary(job_id, "sync", stats))
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.cloud_reconciliation import record_cloud_import
+            await record_cloud_import(db, user_id, "trakt", stats)
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed,
@@ -2089,6 +2091,8 @@ async def push_trakt(
     if not (settings.trakt_push_watched or settings.trakt_push_ratings
             or settings.trakt_push_collection or settings.trakt_push_dropped):
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Trakt' push flags first")
+    from core.cloud_reconciliation import require_cloud_reconciliation
+    await require_cloud_reconciliation(db, current_user.id, "trakt")
     job = SyncJob(user_id=current_user.id, source=CollectionSource.trakt, status=SyncStatus.pending, job_type="push")
     db.add(job)
     await db.commit()

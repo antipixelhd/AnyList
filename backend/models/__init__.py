@@ -30,7 +30,7 @@ from .title_credits import TitleCredits
 from .calendar_cache import UserCalendarCache
 from .plex_pending_push import PlexPendingPush
 from .oauth_device import OAuthDeviceGrant
-from .tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline
+from .tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, CloudBaseline
 
 __all__ = [
     "Base",
@@ -63,4 +63,5 @@ __all__ = [
     "ShowRewatch", "RewatchProgress",
     "PlexPendingPush",
     "OAuthDeviceGrant",
+    "CloudBaseline",
 ]

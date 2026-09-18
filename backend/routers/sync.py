@@ -1498,9 +1498,13 @@ async def _fan_out_changes_to_other_connections(
 
     season_tmdb_ids: dict[RatingKey, int] = {}
     # ── Trakt fan-out ────────────────────────────────────────────────────────
-    push_trakt_watched = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
-    push_trakt_ratings = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
-    push_trakt_collection = settings and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
+    from core.cloud_reconciliation import cloud_push_is_approved
+    trakt_approved = bool(settings) and await cloud_push_is_approved(db, user_id, "trakt")
+    mdblist_approved = bool(settings) and await cloud_push_is_approved(db, user_id, "mdblist")
+    simkl_approved = bool(settings) and await cloud_push_is_approved(db, user_id, "simkl")
+    push_trakt_watched = settings and trakt_approved and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_ratings = settings and trakt_approved and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_collection = settings and trakt_approved and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings or push_trakt_collection) and all_changed_ids:
         # Validate / refresh the token before the fan-out (own session - this
@@ -1638,9 +1642,9 @@ async def _fan_out_changes_to_other_connections(
                 )
 
     # ── MDBList fan-out ──────────────────────────────────────────────────────
-    push_mdblist_watched = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
-    push_mdblist_ratings = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_ratings and settings.mdblist_api_key
-    push_mdblist_collection = settings and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_collection and settings.mdblist_api_key
+    push_mdblist_watched = settings and mdblist_approved and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
+    push_mdblist_ratings = settings and mdblist_approved and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_ratings and settings.mdblist_api_key
+    push_mdblist_collection = settings and mdblist_approved and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_collection and settings.mdblist_api_key
 
     if (push_mdblist_watched or push_mdblist_ratings or push_mdblist_collection) and all_changed_ids:
         from core import mdblist as mdblist_client
@@ -1764,6 +1768,7 @@ async def _fan_out_changes_to_other_connections(
     # ── Simkl fan-out ────────────────────────────────────────────────────────
     push_simkl_watched = (
         settings
+        and simkl_approved
         and exclude_cloud_source != CollectionSource.simkl
         and settings.simkl_push_watched
         and settings.simkl_access_token
@@ -1771,6 +1776,7 @@ async def _fan_out_changes_to_other_connections(
     )
     push_simkl_ratings = (
         settings
+        and simkl_approved
         and exclude_cloud_source != CollectionSource.simkl
         and settings.simkl_push_ratings
         and settings.simkl_access_token

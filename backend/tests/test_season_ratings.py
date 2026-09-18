@@ -67,6 +67,12 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
         )
         p.start()
         self.addCleanup(p.stop)
+        approval = patch(
+            "core.cloud_reconciliation.cloud_push_is_approved",
+            AsyncMock(return_value=True),
+        )
+        approval.start()
+        self.addCleanup(approval.stop)
 
     async def test_season_rating_fans_out_with_provider_specific_identity(self) -> None:
         media = Media(

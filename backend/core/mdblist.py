@@ -91,16 +91,18 @@ async def get_catalog_rating(
         api_key,
         payload={"ids": [tmdb_id], "provider": "tmdb"},
     )
-    candidates: list[Any] = [result]
+    candidates: list[tuple[Any, bool]] = [(result, False)]
     for key in ("results", "ratings"):
         value = result.get(key)
         if isinstance(value, list):
-            candidates.extend(value)
-    for item in candidates:
+            candidates.extend((item, key == "ratings") for item in value)
+    for item, nested_rating in candidates:
         if not isinstance(item, dict):
             continue
         value = item.get("provider_rating")
-        if value is None and item.get("source") in {source, "rtomatoes", "rtaudience"}:
+        if nested_rating:
+            value = item.get("rating")
+        elif value is None and item.get("source") in {source, "rtomatoes", "rtaudience"}:
             value = item.get("value", item.get("rating"))
         try:
             return float(value) if value is not None else None
