@@ -574,25 +574,27 @@ The `POST /api/proxy/webhooks/kodi` endpoint (and the `kodi/history`, `kodi/rati
 
 ## OIDC / Single Sign-On
 
-Scrob supports any OpenID Connect provider (Authelia, Authentik, Keycloak, Google, etc.).
+Media Tracker supports OpenID Connect. For the invite-only Google setup used by
+this project, provision each account in Administration first and match it by
+verified email; see [Google sign-in setup](docs/google-sso.md).
 
 ```yaml
 OIDC_ENABLED: "true"
-OIDC_PROVIDER_NAME: "Authelia"
-OIDC_CLIENT_ID: "scrob"
+OIDC_PROVIDER_NAME: "Google"
+OIDC_CLIENT_ID: "your-client-id.apps.googleusercontent.com"
 OIDC_CLIENT_SECRET: "your-secret"
-OIDC_AUTH_URL: "https://auth.yourdomain.com/api/oidc/authorization"
-OIDC_TOKEN_URL: "https://auth.yourdomain.com/api/oidc/token"
-OIDC_USERINFO_URL: "https://auth.yourdomain.com/api/oidc/userinfo"
-OIDC_REDIRECT_URL: "https://scrob.yourdomain.com/oidc-callback"
-# OIDC_LOGOUT_URL: "https://auth.yourdomain.com/api/oidc/logout"  # your provider's logout endpoint
+OIDC_AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth"
+OIDC_TOKEN_URL: "https://oauth2.googleapis.com/token"
+OIDC_USERINFO_URL: "https://openidconnect.googleapis.com/v1/userinfo"
+OIDC_REDIRECT_URL: "https://media.example.com/oidc-callback"
 # OIDC_SCOPES: "openid email profile"     # default shown - override only if your provider needs different scopes
 # OIDC_IDENTIFIER_FIELD: "email"          # userinfo field used to match/create the Scrob account - default shown
-OIDC_AUTO_CREATE_USERS: "true"
+OIDC_AUTO_CREATE_USERS: "false"
+OIDC_REQUIRE_VERIFIED_EMAIL: "true"
 # OIDC_DISABLE_PASSWORD_LOGIN: "true"  # uncomment to enforce SSO-only
 ```
 
-Register Scrob as a client in your provider with redirect URI: `https://scrob.yourdomain.com/oidc-callback`
+Register the exact frontend callback URI in Google Cloud, for example `https://media.example.com/oidc-callback`.
 
 ## Email Validation & SMTP
 

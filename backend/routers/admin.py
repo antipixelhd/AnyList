@@ -122,7 +122,7 @@ async def create_user(
     user = User(
         username=username,
         email=email,
-        password_hash=get_password_hash(body.password),
+        password_hash=get_password_hash(body.password) if body.password else None,
         api_key=_generate_api_key(),
         role=UserRole.admin if body.is_admin else UserRole.user,
         is_admin=body.is_admin,

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     oidc_identifier_field: str = "email"
     oidc_scopes: str = "openid email profile"
     oidc_auto_create_users: bool = False
+    oidc_require_verified_email: bool = False
     oidc_disable_password_login: bool = False
 
     enable_registrations: bool = False

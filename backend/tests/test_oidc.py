@@ -1,6 +1,9 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from fastapi import HTTPException
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -80,6 +83,7 @@ class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
             oidc.app_settings,
             oidc_enabled=True,
             oidc_auto_create_users=True,
+            oidc_require_verified_email=False,
             oidc_identifier_field="sub",
             oidc_token_url="https://provider.example/token",
             oidc_userinfo_url="https://provider.example/userinfo",
@@ -119,6 +123,103 @@ class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
 
         created_user = db.add.call_args[0][0]
         self.assertFalse(created_user.is_admin)
+
+
+class OidcInviteOnlyGoogleTests(unittest.IsolatedAsyncioTestCase):
+    def _patched_settings(self, **overrides):
+        values = {
+            "oidc_enabled": True,
+            "oidc_auto_create_users": False,
+            "oidc_require_verified_email": True,
+            "oidc_identifier_field": "email",
+            "oidc_auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "oidc_token_url": "https://oauth2.googleapis.com/token",
+            "oidc_userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
+            "oidc_redirect_url": "https://media.example/oidc-callback",
+            "oidc_client_id": "client-id.apps.googleusercontent.com",
+            "oidc_client_secret": "client-secret",
+        }
+        values.update(overrides)
+        return patch.multiple(oidc.app_settings, **values)
+
+    async def test_verified_google_email_matches_preprovisioned_account_case_insensitively(self) -> None:
+        existing = SimpleNamespace(id=42)
+        db = _FakeSession([_UserResult(existing)])
+        client = _FakeHttpClient(
+            _FakeResponse(200, {"access_token": "provider-token"}),
+            _FakeResponse(200, {
+                "sub": "google-subject",
+                "email": "Friend@Example.COM",
+                "email_verified": True,
+            }),
+        )
+
+        with self._patched_settings(), \
+             patch("routers.oidc.httpx.AsyncClient", return_value=client), \
+             patch("routers.oidc.create_access_token", return_value="jwt-token") as create_token:
+            result = await oidc.oidc_exchange(
+                oidc.OidcExchangeRequest(code="auth-code"),
+                db,
+            )
+
+        self.assertEqual(result, {"access_token": "jwt-token"})
+        create_token.assert_called_once_with(subject=42)
+        db.add.assert_not_called()
+        db.commit.assert_not_awaited()
+
+    async def test_unverified_google_email_is_rejected_before_account_lookup(self) -> None:
+        db = _FakeSession([])
+        client = _FakeHttpClient(
+            _FakeResponse(200, {"access_token": "provider-token"}),
+            _FakeResponse(200, {
+                "email": "friend@example.com",
+                "email_verified": False,
+            }),
+        )
+
+        with self._patched_settings(), patch(
+            "routers.oidc.httpx.AsyncClient",
+            return_value=client,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await oidc.oidc_exchange(
+                    oidc.OidcExchangeRequest(code="auth-code"),
+                    db,
+                )
+
+        self.assertEqual(raised.exception.status_code, 403)
+        db.execute.assert_not_awaited()
+
+    async def test_unknown_verified_email_is_not_auto_created(self) -> None:
+        db = _FakeSession([_UserResult(None)])
+        client = _FakeHttpClient(
+            _FakeResponse(200, {"access_token": "provider-token"}),
+            _FakeResponse(200, {
+                "email": "unknown@example.com",
+                "email_verified": True,
+            }),
+        )
+
+        with self._patched_settings(), patch(
+            "routers.oidc.httpx.AsyncClient",
+            return_value=client,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await oidc.oidc_exchange(
+                    oidc.OidcExchangeRequest(code="auth-code"),
+                    db,
+                )
+
+        self.assertEqual(raised.exception.status_code, 403)
+        db.add.assert_not_called()
+
+    async def test_incomplete_enabled_configuration_fails_closed(self) -> None:
+        with self._patched_settings(oidc_auth_url=None):
+            with self.assertRaises(HTTPException) as raised:
+                await oidc.oidc_authorize()
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("OIDC_AUTH_URL", raised.exception.detail)
 
 
 if __name__ == "__main__":

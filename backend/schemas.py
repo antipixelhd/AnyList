@@ -534,5 +534,5 @@ class AdminUser(BaseModel):
 class AdminUserCreate(BaseModel):
     username : str = Field(min_length=1, max_length=150)
     email    : EmailStr
-    password : str = Field(min_length=1)
+    password : Optional[str] = Field(default=None, min_length=1)
     is_admin : bool = False

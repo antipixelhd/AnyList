@@ -155,6 +155,17 @@ class AdminCreateUserTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(u.is_admin)
         self.assertEqual(u.role.value if hasattr(u.role, "value") else u.role, "admin")
 
+    async def test_creates_sso_only_user_without_a_password(self):
+        res = await self.client.post("/admin/users", json={
+            "username": "morpheus",
+            "email": "morpheus@example.com",
+            "password": None,
+        })
+        self.assertEqual(res.status_code, 201, res.text)
+        user = await self._get_user("morpheus")
+        self.assertTrue(user.email_confirmed)
+        self.assertIsNone(user.password_hash)
+
     async def test_duplicate_username_or_email_is_rejected(self):
         await self.client.post("/admin/users", json={
             "username": "dup", "email": "dup@example.com", "password": "x",

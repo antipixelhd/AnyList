@@ -20,6 +20,21 @@ class OidcExchangeRequest(BaseModel):
     code: str
 
 
+def _require_oidc_configuration(*fields: str) -> None:
+    if not app_settings.oidc_enabled:
+        raise HTTPException(status_code=400, detail="OIDC not enabled")
+    missing = [
+        field.upper()
+        for field in fields
+        if not str(getattr(app_settings, field, "") or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"OIDC configuration incomplete: {', '.join(missing)}",
+        )
+
+
 @router.get("/config")
 async def oidc_config():
     return {
@@ -36,8 +51,11 @@ async def oidc_authorize():
     The frontend SSR layer sets the state cookie on the browser and redirects
     to the provider — the browser never talks to this endpoint directly.
     """
-    if not app_settings.oidc_enabled:
-        raise HTTPException(status_code=400, detail="OIDC not enabled")
+    _require_oidc_configuration(
+        "oidc_client_id",
+        "oidc_auth_url",
+        "oidc_redirect_url",
+    )
 
     state = secrets.token_urlsafe(32)
     params = {
@@ -60,8 +78,14 @@ async def oidc_exchange(
     Exchanges an authorization code (already validated by the frontend) for a JWT.
     Called server-to-server by the frontend's oidc-callback SSR page.
     """
-    if not app_settings.oidc_enabled:
-        raise HTTPException(status_code=400, detail="OIDC not enabled")
+    _require_oidc_configuration(
+        "oidc_client_id",
+        "oidc_client_secret",
+        "oidc_token_url",
+        "oidc_userinfo_url",
+        "oidc_redirect_url",
+        "oidc_identifier_field",
+    )
 
     try:
         async with httpx.AsyncClient() as client:
@@ -103,7 +127,22 @@ async def oidc_exchange(
             detail=f"Field '{app_settings.oidc_identifier_field}' not found in user info",
         )
 
-    result = await db.execute(select(User).where(func.lower(User.email) == str(identifier).strip().lower()))
+    if app_settings.oidc_require_verified_email:
+        if app_settings.oidc_identifier_field != "email":
+            raise HTTPException(
+                status_code=503,
+                detail="Verified-email OIDC login requires OIDC_IDENTIFIER_FIELD=email",
+            )
+        if userinfo.get("email_verified") is not True:
+            raise HTTPException(
+                status_code=403,
+                detail="The identity provider has not verified this email address",
+            )
+
+    normalized_identifier = str(identifier).strip().lower()
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_identifier)
+    )
     user = result.scalar_one_or_none()
 
     if not user:
@@ -134,7 +173,7 @@ async def oidc_exchange(
         is_first_user = count_result.scalar_one() == 0
 
         user = User(
-            email=str(identifier),
+            email=normalized_identifier,
             username=username,
             password_hash=None,
             api_key=secrets.token_urlsafe(32),
