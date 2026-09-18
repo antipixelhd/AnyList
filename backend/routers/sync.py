@@ -30,7 +30,15 @@ from models.global_settings import GlobalSettings
 from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
 from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely, enrich_media_safely, apply_media_change_safely, enrich_episode_from_tvdb
+from core.enrichment import (
+    apply_media_change_safely,
+    create_media_safely,
+    enrich_episode_from_tvdb,
+    enrich_media,
+    enrich_media_safely,
+    enrich_series_from_show,
+    is_unmapped_tvdb_episode,
+)
 from core.identity import coerce_id, link_show_ids
 from core.image_cache import pre_cache_all_collected_bg
 from core.translations import get_user_metadata_language
@@ -466,6 +474,26 @@ async def sync_shows_batch(
             show_map[str(source_id)] = show.id
             show_id_to_tmdb[show.id] = show.tmdb_id
 
+    # Whole-series Media rows power Media Tracker lists and details, while
+    # Show rows own episode numbering. Older syncs enriched only Show, leaving
+    # a matching Media row without its poster, synopsis, genres, or seasons.
+    # Repair those rows from the canonical Show metadata on every successful
+    # show mapping. Preserve the tracker-specific catalogue markers stored only
+    # on Media so watch history is never invalidated by a metadata refresh.
+    if existing_shows:
+        media_rows = await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(
+                Media.tmdb_id.in_(chunk), Media.media_type == MediaType.series
+            ),
+            list(existing_shows.keys()),
+        )
+        for media in media_rows:
+            show = existing_shows.get(media.tmdb_id)
+            if not show:
+                continue
+            enrich_series_from_show(media, show)
+
     return show_map, show_id_to_tmdb
 
 
@@ -487,6 +515,7 @@ async def batch_enrich_items(
         show_title_map = {}
 
     movies = [m for (m, _) in items if m.media_type == MediaType.movie]
+    series = [m for (m, _) in items if m.media_type == MediaType.series]
     episodes = [(m, stid) for (m, stid) in items if m.media_type == MediaType.episode and stid]
 
     # ── Movies: parallel enrichment ──────────────────────────────────────────
@@ -496,6 +525,13 @@ async def batch_enrich_items(
 
     if movies:
         await asyncio.gather(*[enrich_movie(m) for m in movies], return_exceptions=True)
+
+    async def enrich_series(media: Media):
+        async with semaphore:
+            await enrich_media(media, api_key=api_key)
+
+    if series:
+        await asyncio.gather(*[enrich_series(m) for m in series], return_exceptions=True)
 
     from core import tvdb as tvdb_client
 

@@ -9,8 +9,39 @@ from core import tmdb
 from core import tvdb as tvdb_client
 from core.identity import external_ids_from_tmdb, link_media_ids
 from models.media import Media, MediaType
+from models.show import Show
 
 logger = logging.getLogger(__name__)
+
+
+def enrich_series_from_show(media: Media, show: Show) -> None:
+    """Copy canonical show metadata onto its whole-series catalogue entry.
+
+    Show owns episode ordering, while Media owns list/detail presentation. The
+    two records deliberately remain separate, so provider sync must keep the
+    shared descriptive fields aligned without replacing tracking-only state.
+    """
+    tracking_data = {
+        key: value for key, value in (media.tmdb_data or {}).items()
+        if key.startswith("tracking_")
+    }
+    media.title = show.title or media.title
+    media.original_title = show.original_title
+    media.overview = show.overview
+    media.poster_path = show.poster_path
+    media.backdrop_path = show.backdrop_path
+    media.release_date = show.first_air_date
+    media.tmdb_rating = show.tmdb_rating
+    media.tagline = show.tagline
+    media.status = show.status
+    media.tmdb_data = {**(show.tmdb_data or {}), **tracking_data}
+    media.adult = bool((show.tmdb_data or {}).get("adult", media.adult))
+    external_ids = (show.tmdb_data or {}).get("external_ids") or {}
+    link_media_ids(
+        media,
+        tvdb_id=show.tvdb_id or external_ids.get("tvdb_id"),
+        imdb_id=external_ids.get("imdb_id"),
+    )
 
 
 async def create_media_safely(
@@ -232,6 +263,10 @@ async def enrich_media(
             media.backdrop_path = tmdb.poster_url(data.get("backdrop_path"), size="w1280")
             media.release_date = data.get("first_air_date")
             media.tmdb_rating = data.get("vote_average")
+            tracking_data = {
+                key: value for key, value in (media.tmdb_data or {}).items()
+                if key.startswith("tracking_")
+            }
             media.tmdb_data = {
                 "genres": [g["name"] for g in data.get("genres", [])],
                 "cast": [
@@ -242,6 +277,19 @@ async def enrich_media(
                 "status": data.get("status"),
                 "adult": data.get("adult", False),
                 "external_ids": data.get("external_ids", {}),
+                "seasons": [
+                    {
+                        "season_number": season.get("season_number"),
+                        "poster_path": tmdb.poster_url(season.get("poster_path")),
+                        "episode_count": season.get("episode_count"),
+                        "name": season.get("name"),
+                        "overview": season.get("overview"),
+                        "air_date": season.get("air_date"),
+                    }
+                    for season in data.get("seasons", [])
+                    if season.get("season_number") is not None
+                ],
+                **tracking_data,
             }
             media.adult = data.get("adult", False)
             series_tvdb_id, imdb_id = external_ids_from_tmdb(data)

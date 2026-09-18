@@ -11,9 +11,16 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.exc import IntegrityError
 
-from core.enrichment import create_media_safely, apply_media_change_safely, enrich_media, enrich_episode_from_tvdb
+from core.enrichment import (
+    apply_media_change_safely,
+    create_media_safely,
+    enrich_episode_from_tvdb,
+    enrich_media,
+    enrich_series_from_show,
+)
 from models.base import MediaType
 from models.media import Media
+from models.show import Show
 
 
 class _FakeScalars:
@@ -416,6 +423,69 @@ class EnrichMediaRuntimeColumnTests(unittest.IsolatedAsyncioTestCase):
         with patch("core.enrichment.tmdb.get_movie", AsyncMock(return_value=tmdb_data)):
             await enrich_media(media, api_key="tmdb-key")
         self.assertEqual(media.runtime, 120)
+
+
+class SeriesCatalogueMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_series_enrichment_stores_seasons_and_preserves_tracking_markers(self) -> None:
+        media = Media(
+            media_type=MediaType.series,
+            tmdb_id=1399,
+            tmdb_data={
+                "tracking_catalogue_refreshed_at": "fixture",
+                "tracking_episode_ids": [11, 12],
+            },
+        )
+        response = {
+            "name": "Fixture",
+            "overview": "A synopsis",
+            "poster_path": "/poster.jpg",
+            "backdrop_path": "/backdrop.jpg",
+            "first_air_date": "2020-01-01",
+            "genres": [{"name": "Drama"}],
+            "seasons": [
+                {
+                    "season_number": 1,
+                    "episode_count": 8,
+                    "name": "Season 1",
+                    "poster_path": "/season.jpg",
+                }
+            ],
+        }
+        with patch("core.enrichment.tmdb.get_show", AsyncMock(return_value=response)):
+            await enrich_media(media, api_key="tmdb-key")
+        self.assertEqual(media.overview, "A synopsis")
+        self.assertTrue(media.poster_path)
+        self.assertEqual(media.tmdb_data["seasons"][0]["episode_count"], 8)
+        self.assertEqual(media.tmdb_data["tracking_episode_ids"], [11, 12])
+        self.assertEqual(media.tmdb_data["tracking_catalogue_refreshed_at"], "fixture")
+
+    async def test_show_repairs_series_media_without_losing_tracking_markers(self) -> None:
+        media = Media(
+            media_type=MediaType.series,
+            tmdb_id=1399,
+            title="Placeholder",
+            tmdb_data={"tracking_episode_ids": [21], "obsolete": "remove"},
+        )
+        show = Show(
+            tmdb_id=1399,
+            tvdb_id=121361,
+            title="Fixture",
+            overview="A synopsis",
+            poster_path="https://image.test/poster.jpg",
+            backdrop_path="https://image.test/backdrop.jpg",
+            first_air_date="2020-01-01",
+            tmdb_data={
+                "genres": ["Drama"],
+                "seasons": [{"season_number": 1}],
+                "external_ids": {"imdb_id": "tt1234567"},
+            },
+        )
+        enrich_series_from_show(media, show)
+        self.assertEqual((media.title, media.overview), ("Fixture", "A synopsis"))
+        self.assertEqual(media.tvdb_id, 121361)
+        self.assertEqual(media.imdb_id, "tt1234567")
+        self.assertEqual(media.tmdb_data["tracking_episode_ids"], [21])
+        self.assertNotIn("obsolete", media.tmdb_data)
 
 
 class EnrichMediaCreditsStingerTests(unittest.IsolatedAsyncioTestCase):
