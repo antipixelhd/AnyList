@@ -1,5 +1,5 @@
 ---
-import Base from "../layouts/Base.astro";
+import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
 
@@ -22,10 +22,12 @@ const prefs: UserPreferences = {
   privacy_level: "private",
   ...(profileData ?? {}),
 };
+// Release one exposes the agreed profile-level private/public choice. Older
+// friends-only values behave as private until the owner explicitly publishes.
+prefs.privacy_level = prefs.privacy_level === "public" ? "public" : "private";
 
 const PRIVACY_LEVELS: [PrivacyLevel, string, string][] = [
   ["private", "Private", "Only you can see your profile and activity."],
-  ["friends_only", "Friends Only", "Only people you follow (and who follow you back) can see your activity."],
   ["public", "Public", "Anyone on this instance can see your profile and activity."],
 ];
 
@@ -130,11 +132,9 @@ const COUNTRIES = [
 ];
 ---
 
-<Base title="Profile">
+<TrackerSettings title="Profile settings">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-4xl mx-auto">
-    <h1 class="page-title mb-8">Profile</h1>
-
     <div id="js-message" class="hidden p-4 rounded-lg mb-8"></div>
 
     <div class="space-y-12">
@@ -205,7 +205,7 @@ const COUNTRIES = [
         <div class="mb-4 border-b border-zinc-800 pb-2">
           <h2 class="section-headline">Privacy</h2>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           {PRIVACY_LEVELS.map(([value, label, desc]) => (
             <label class={`relative flex flex-col p-4 rounded-xl border cursor-pointer transition-all hover:bg-zinc-900/50 group ${prefs.privacy_level === value ? 'bg-blue-500/5 border-blue-500/50' : 'bg-zinc-900 border-zinc-800'}`}>
               <div class="flex items-center justify-between mb-1">
@@ -439,7 +439,7 @@ const COUNTRIES = [
 
     </div>
   </div>
-</Base>
+</TrackerSettings>
 
 <script>
   function setup() {

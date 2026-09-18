@@ -1,5 +1,5 @@
 ---
-import Base from "../layouts/Base.astro";
+import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import type { AdminUser } from "../lib/api";
 import { connectionIconHtml } from "../lib/connectionIcons";
@@ -20,7 +20,7 @@ const [globalSettings, users] = await Promise.all([
 const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 ---
 
-<Base title="Admin">
+<TrackerSettings title="Administration">
   <div id="app-data"
     data-token={token}
     data-current-user-id={user!.id}
@@ -29,7 +29,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   </div>
 
   <div class="max-w-4xl mx-auto px-4 py-8 space-y-10">
-    <h1 class="page-title">Admin Panel</h1>
 
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
@@ -631,7 +630,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       </div>
     </section>
   </div>
-</Base>
+</TrackerSettings>
 
 <!-- Admin Heal Confirmation Modal -->
 <div id="admin-heal-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">

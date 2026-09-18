@@ -1,5 +1,5 @@
 ---
-import Base from "../layouts/Base.astro";
+import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import type { DeviceGrant } from "../lib/api";
 import { connectionIconHtml } from "../lib/connectionIcons";
@@ -31,11 +31,9 @@ const radarrConfigured   = !!(settings.radarr_url && settings.radarr_token);
 const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 ---
 
-<Base title="Connections">
+<TrackerSettings title="Connections">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-4xl mx-auto">
-    <h1 class="page-title mb-8">Connections</h1>
-
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="space-y-12">
@@ -196,7 +194,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     <!-- Right: Sync Preferences -->
                     <div class="space-y-4">
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">{typeLabel} → Scrob</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">{typeLabel} → Media Tracker</p>
                         {[
                           { key: "sync_collection", label: "Collection status" },
                           { key: "sync_watched", label: "Watched status" },
@@ -226,7 +224,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       </div>
                       {conn.type !== "arvio" && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → {typeLabel}</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Media Tracker → {typeLabel}</p>
                         {[
                           ...(conn.type === "nuvio" || conn.type === "stremio" ? [{ key: "push_collection", label: "Collection status" }] : []),
                           { key: "push_watched", label: "Watched status" },
@@ -240,7 +238,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           </label>
                         ))}
                         <button type="button" data-action="push_upstream" data-conn-id={conn.id} data-conn-name={conn.name}
-                          title={`Push enabled data from Scrob to ${conn.name}`}
+                          title={`Push enabled data from Media Tracker to ${conn.name}`}
                           class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                         >Push</button>
                       </div>
@@ -350,7 +348,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       <div id="plex-login-connection-wrap" class="hidden space-y-2">
                         <label for="plex-login-connection" class="block text-sm font-medium text-zinc-400">Connection</label>
                         <select id="plex-login-connection" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all cursor-pointer"></select>
-                        <p class="text-xs text-zinc-500">Pick the address Scrob should use to reach this server. Reachable ones are marked; you can also edit the URL field directly.</p>
+                        <p class="text-xs text-zinc-500">Pick the address Media Tracker should use to reach this server. Reachable ones are marked; you can also edit the URL field directly.</p>
                       </div>
                       <p id="plex-login-status" class="text-xs text-zinc-500 hidden"></p>
                       <input type="hidden" id="new-plex-auth-token" />
@@ -386,7 +384,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       </select>
                     </div>
                     <div id="new-stremio-link-row" class="hidden rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-3">
-                      <p class="text-sm text-zinc-300">Authorize Scrob from Stremio without sharing your password.</p>
+                        <p class="text-sm text-zinc-300">Authorize Media Tracker from Stremio without sharing your password.</p>
                       <button type="button" id="connect-stremio-btn" class="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer">Connect Stremio</button>
                       <div id="stremio-link-details" class="hidden space-y-3">
                         <a id="stremio-link-url" href="#" target="_blank" rel="noopener noreferrer" class="block text-sm text-blue-400 hover:text-blue-300 underline">Open Stremio authorization</a>
@@ -407,7 +405,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   </div>
                   <div class="space-y-4">
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p id="new-pull-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Server → Scrob</p>
+                      <p id="new-pull-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Server → Media Tracker</p>
                       {[
                         { id: "new-sync-collection", label: "Collection status", defaultOn: true },
                         { id: "new-sync-watched",    label: "Watched status",    defaultOn: true },
@@ -421,7 +419,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       ))}
                     </div>
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p id="new-push-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Server</p>
+                      <p id="new-push-heading" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Media Tracker → Server</p>
                       {[
                         { id: "new-push-watched", label: "Watched status" },
                         { id: "new-push-ratings", label: "Ratings" },
@@ -718,7 +716,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   <div class="space-y-4">
                     {settings.trakt_connected && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Trakt → Scrob</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Trakt → Media Tracker</p>
                         {[
                           { key: "trakt_sync_watched", label: "Watched history" },
                           { key: "trakt_sync_ratings", label: "Ratings" },
@@ -764,7 +762,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     )}
                     {settings.trakt_connected && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Trakt</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Media Tracker → Trakt</p>
                         {[
                           { key: "trakt_push_watched", label: "Watched status" },
                           { key: "trakt_push_ratings", label: "Ratings" },
@@ -785,7 +783,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           type="button"
                           data-action="push_trakt"
                           class="js-action-btn text-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                          title="Push all watched states and ratings from Scrob to Trakt"
+                          title="Push all watched states and ratings from Media Tracker to Trakt"
                         >Push</button>
                       </div>
                     )}
@@ -890,7 +888,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   {settings.simkl_connected && (
                     <div class="space-y-4">
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Simkl → Scrob</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Simkl → Media Tracker</p>
                         {[
                           { key: "simkl_sync_watched", label: "Watched history" },
                           { key: "simkl_sync_ratings", label: "Ratings" },
@@ -910,7 +908,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         >Pull</button>
                       </div>
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Simkl</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Media Tracker → Simkl</p>
                         {[
                           { key: "simkl_push_watched", label: "Watched status" },
                           { key: "simkl_push_ratings", label: "Ratings" },
@@ -930,7 +928,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           type="button"
                           data-action="push_simkl"
                           class="js-action-btn text-sm bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                          title="Push all watched states and ratings from Scrob to Simkl"
+                          title="Push all watched states and ratings from Media Tracker to Simkl"
                         >Push</button>
                       </div>
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
@@ -1025,7 +1023,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   <div class="space-y-4">
                     {settings.mdblist_connected && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">MDBList → Scrob</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">MDBList → Media Tracker</p>
                         {[
                           { key: "mdblist_sync_watched", label: "Watched history" },
                           { key: "mdblist_sync_ratings", label: "Ratings" },
@@ -1051,7 +1049,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     )}
                     {settings.mdblist_connected && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → MDBList</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Media Tracker → MDBList</p>
                         {[
                           { key: "mdblist_push_watched", label: "Watched status" },
                           { key: "mdblist_push_ratings", label: "Ratings" },
@@ -1201,7 +1199,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   </div>
                   <div class="space-y-4">
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scrob → Bingebase</p>
+                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Media Tracker → Bingebase</p>
                       <label class="flex items-center gap-3 cursor-pointer group">
                         <input type="checkbox" name="bingebase_scrobble" id="bingebase_scrobble" checked={settings.bingebase_scrobble !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-emerald-500 cursor-pointer" />
                         <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">
@@ -1217,7 +1215,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         data-action="push_bingebase"
                         disabled={!settings.bingebase_connected}
                         class="js-action-btn text-sm bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                        title="Push all historical watched items from Scrob to Bingebase"
+                        title="Push all historical watched items from Media Tracker to Bingebase"
                       >Push all history</button>
                     </div>
                   </div>
@@ -1433,7 +1431,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Import</h2>
         <div class="flex items-center gap-1 mb-4 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
-          <button type="button" data-import-tab="scrob" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors cursor-pointer active:scale-95 active:opacity-70">Scrob</button>
+          <button type="button" data-import-tab="scrob" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors cursor-pointer active:scale-95 active:opacity-70">Media Tracker</button>
           <button type="button" data-import-tab="trakt" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Trakt</button>
           <button type="button" data-import-tab="yamtrack" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Yamtrack</button>
         </div>
@@ -1451,9 +1449,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
             </svg>
             <p class="text-sm text-zinc-300 font-medium">
-              {hasTmdbKey ? "Drop a Scrob data export .zip here, or click to browse" : "TMDB Read Access Token is required for import"}
+              {hasTmdbKey ? "Drop a Media Tracker data export .zip here, or click to browse" : "TMDB Read Access Token is required for import"}
             </p>
-            <p class="text-xs text-zinc-500">From <span class="text-zinc-400">Settings → Export Data</span> on this or another Scrob account. Restores watch history, ratings, collection, lists, and comments.</p>
+            <p class="text-xs text-zinc-500">From <span class="text-zinc-400">Account settings → Export Data</span> on this or another Media Tracker account. Restores watch history, ratings, collection, lists, and comments.</p>
           </div>
           <div id="scrob-import-progress" class="hidden border border-zinc-800 rounded-2xl px-6 py-8 bg-zinc-900/40">
             <div class="flex justify-between items-center mb-2">
@@ -1539,7 +1537,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">API Key</h2>
         <div class="space-y-4 max-w-xl">
-          <p class="text-sm text-zinc-400">Use this key to authenticate requests to the Scrob API. Keep it secret — if it leaks, regenerate it immediately.</p>
+          <p class="text-sm text-zinc-400">Use this key to authenticate requests to the Media Tracker API. Keep it secret — if it leaks, regenerate it immediately.</p>
           <div class="space-y-2">
             <label for="scrob_api_key" class="block text-sm font-medium text-zinc-400">Your API Key</label>
             <div class="flex gap-2">
@@ -1604,7 +1602,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   <!-- Scrob Import Modal -->
   <div id="scrob-import-modal" class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
     <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-      <h2 class="text-2xl font-bold text-zinc-100 mb-2">Import from Scrob export?</h2>
+      <h2 class="text-2xl font-bold text-zinc-100 mb-2">Import from Media Tracker export?</h2>
       <p id="scrob-import-modal-body" class="text-zinc-400 mb-6 text-sm leading-relaxed"></p>
       <div class="space-y-2 mb-6">
         {[
@@ -1784,7 +1782,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       </div>
     </div>
   </div>
-</Base>
+</TrackerSettings>
 
 <script>
   const appData = document.getElementById('app-data');
@@ -2652,7 +2650,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       };
       syncOptionUI();
 
-      bodyEl.textContent = `Choose what to import from "${filename}". Existing Scrob data is retained and deduplicated.`;
+      bodyEl.textContent = `Choose what to import from "${filename}". Existing Media Tracker data is retained and deduplicated.`;
 
       const optionHandlers = options.map(opt => {
         const handler = () => {
@@ -2721,7 +2719,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       };
       syncOptionUI();
 
-      bodyEl.textContent = `Choose what to import from "${filename}". Existing Scrob data is retained and deduplicated.`;
+      bodyEl.textContent = `Choose what to import from "${filename}". Existing Media Tracker data is retained and deduplicated.`;
 
       const optionHandlers = options.map(opt => {
         const handler = () => {
@@ -2787,7 +2785,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       };
       syncOptionUI();
 
-      bodyEl.textContent = `Choose what to import from "${filename}". Existing Scrob data is retained and deduplicated.`;
+      bodyEl.textContent = `Choose what to import from "${filename}". Existing Media Tracker data is retained and deduplicated.`;
 
       const optionHandlers = options.map(opt => {
         const handler = () => {
@@ -3456,8 +3454,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               noPull ? 'Nothing to pull' : `Pull from ${connName}?`,
               noPull
-                ? `Your current settings have nothing selected to pull from ${connName}. Enable at least one option in the "${connName} → Scrob" section.`
-                : `This will import ${formatList(pulling)} from ${connName} into Scrob.`,
+                ? `Your current settings have nothing selected to pull from ${connName}. Enable at least one option in the "${connName} → Media Tracker" section.`
+                : `This will import ${formatList(pulling)} from ${connName} into Media Tracker.`,
               noPull ? 'Got it' : 'Pull',
               noPull
             );
@@ -3486,8 +3484,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               noPush ? 'Nothing to push' : `Push to ${connName}?`,
               noPush
-                ? `Your current settings have nothing selected to push to ${connName}. Enable at least one option in the "Scrob → ${connName}" section.`
-                : `This will push your ${formatList(pushing)} from Scrob to ${connName}. Existing data on the server may be overwritten.`,
+                ? `Your current settings have nothing selected to push to ${connName}. Enable at least one option in the "Media Tracker → ${connName}" section.`
+                : `This will push your ${formatList(pushing)} from Media Tracker to ${connName}. Existing data on the server may be overwritten.`,
               noPush ? 'Got it' : 'Push',
               noPush
             );
@@ -3589,9 +3587,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               noPull ? 'Nothing to pull' : fullResync ? 'Full resync from Trakt?' : 'Pull from Trakt?',
               noPull
-                ? 'Your current settings have nothing selected to pull from Trakt. Enable at least one option in the "Trakt → Scrob" section.'
+                ? 'Your current settings have nothing selected to pull from Trakt. Enable at least one option in the "Trakt → Media Tracker" section.'
                 : fullResync
-                  ? `This will scan your complete ${formatList(pulling)} on Trakt again. Existing Scrob events are retained and deduplicated.`
+                  ? `This will scan your complete ${formatList(pulling)} on Trakt again. Existing Media Tracker events are retained and deduplicated.`
                   : `This will import new ${formatList(pulling)} from Trakt since the last successful pull.`,
               noPull ? 'Got it' : fullResync ? 'Full resync' : 'Pull',
               noPull
@@ -3613,8 +3611,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               noPull ? 'Nothing to pull' : 'Pull from Simkl?',
               noPull
-                ? 'Your current settings have nothing selected to pull from Simkl. Enable at least one option in the "Simkl → Scrob" section.'
-                : `This will import your ${formatList(pulling)} from Simkl into Scrob.`,
+                ? 'Your current settings have nothing selected to pull from Simkl. Enable at least one option in the "Simkl → Media Tracker" section.'
+                : `This will import your ${formatList(pulling)} from Simkl into Media Tracker.`,
               noPull ? 'Got it' : 'Pull',
               noPull
             );
@@ -3634,8 +3632,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               noPush ? 'Nothing to push' : 'Push to Simkl?',
               noPush
-                ? 'Your current settings have nothing selected to push to Simkl. Enable at least one option in the "Scrob → Simkl" section.'
-                : `This will push your ${formatList(pushing)} from Scrob to Simkl. Existing data on Simkl may be overwritten.`,
+                ? 'Your current settings have nothing selected to push to Simkl. Enable at least one option in the "Media Tracker → Simkl" section.'
+                : `This will push your ${formatList(pushing)} from Media Tracker to Simkl. Existing data on Simkl may be overwritten.`,
               noPush ? 'Got it' : 'Push',
               noPush
             );
@@ -3657,8 +3655,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               noPush ? 'Nothing to push' : 'Push to Trakt?',
               noPush
-                ? 'Your current settings have nothing selected to push to Trakt. Enable at least one option in the "Scrob → Trakt" section.'
-                : `This will push your ${formatList(pushing)} from Scrob to Trakt. Existing data on Trakt may be overwritten.`,
+                ? 'Your current settings have nothing selected to push to Trakt. Enable at least one option in the "Media Tracker → Trakt" section.'
+                : `This will push your ${formatList(pushing)} from Media Tracker to Trakt. Existing data on Trakt may be overwritten.`,
               noPush ? 'Got it' : 'Push',
               noPush
             );
@@ -3678,8 +3676,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               empty ? 'Nothing to pull' : 'Pull from MDBList?',
               empty
-                ? 'Enable at least one option in the "MDBList → Scrob" section.'
-                : `This will import your ${formatList(selected)} from MDBList into Scrob.`,
+                ? 'Enable at least one option in the "MDBList → Media Tracker" section.'
+                : `This will import your ${formatList(selected)} from MDBList into Media Tracker.`,
               empty ? 'Got it' : 'Pull',
               empty
             );
@@ -3700,7 +3698,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const ok = await showConfirmModal(
               empty ? 'Nothing to push' : 'Push to MDBList?',
               empty
-                ? 'Enable at least one option in the "Scrob → MDBList" section.'
+                ? 'Enable at least one option in the "Media Tracker → MDBList" section.'
                 : `This will add or update your ${formatList(selected)} on MDBList. Existing remote items are retained.`,
               empty ? 'Got it' : 'Push',
               empty
@@ -3831,7 +3829,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm('Disconnect Trakt? This will remove your Trakt tokens from Scrob.')) return;
+          if (!confirm('Disconnect Trakt? This will remove your Trakt tokens from Media Tracker.')) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = 'Disconnecting…';
           try {
@@ -4165,7 +4163,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm('Disconnect Simkl? This will remove your Simkl token from Scrob.')) return;
+          if (!confirm('Disconnect Simkl? This will remove your Simkl token from Media Tracker.')) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = 'Disconnecting…';
           try {
@@ -4189,7 +4187,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const disconnectBtn = document.getElementById('mdblist-disconnect-btn');
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
-          if (!confirm('Disconnect MDBList? This will remove your MDBList API key from Scrob.')) return;
+          if (!confirm('Disconnect MDBList? This will remove your MDBList API key from Media Tracker.')) return;
           disconnectBtn.disabled = true;
           disconnectBtn.textContent = 'Disconnecting…';
           try {
@@ -4581,8 +4579,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const pullHeading = document.getElementById('new-pull-heading');
       const pushHeading = document.getElementById('new-push-heading');
       const providerName = isArvio ? 'ARVIO' : isNuvio ? 'Nuvio' : isStremio ? 'Stremio' : 'Server';
-      if (pullHeading) pullHeading.textContent = `${providerName} → Scrob`;
-      if (pushHeading) pushHeading.textContent = `Scrob → ${providerName}`;
+      if (pullHeading) pullHeading.textContent = `${providerName} → Media Tracker`;
+      if (pushHeading) pushHeading.textContent = `Media Tracker → ${providerName}`;
       if (type !== previousType) {
         pendingNuvioRefreshToken = '';
         if (stremioPollTimer !== null) {

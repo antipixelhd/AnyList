@@ -1,0 +1,77 @@
+---
+import { ClientRouter } from 'astro:transitions';
+import '../styles/global.css';
+import '../styles/tracker.css';
+
+const { title = 'Settings' } = Astro.props;
+const { user } = Astro.locals;
+const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
+const pathname = Astro.url.pathname;
+const settingsLinks = [
+  { href: '/user-settings', label: 'Profile', description: 'Identity and privacy' },
+  { href: '/settings', label: 'Account', description: 'Preferences and security' },
+  { href: '/connections', label: 'Connections', description: 'Sync providers and imports' },
+  { href: '/recent-events', label: 'Recent events', description: 'Review inferred changes' },
+];
+if (user?.is_admin) {
+  settingsLinks.push({ href: '/admin', label: 'Administration', description: 'Instance access and defaults' });
+}
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0b1622" />
+    <title>{title} · Media Tracker</title>
+    <link rel="icon" href="/favicon.svg" />
+    <ClientRouter />
+  </head>
+  <body class="tracker settings-app">
+    <a class="skip-link" href="#settings-content">Skip to settings</a>
+    <header class="topbar">
+      <a class="brand" href="/home" aria-label="Media Tracker home">
+        <span class="brand-mark" aria-hidden="true">M<span>t</span></span>
+        <span>Media Tracker</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="/home">Home</a>
+        <a href={`${profile}/movies`}>Movie List</a>
+        <a href={`${profile}/series`}>Series List</a>
+        <a href="/browse">Browse</a>
+      </nav>
+      <div class="account-nav">
+        {user ? (
+          <>
+            <a href={profile}>{user.display_name || user.username}</a>
+            <a class="active" href="/settings" aria-current="page">Settings</a>
+          </>
+        ) : <a href="/login">Sign in</a>}
+      </div>
+    </header>
+
+    <div class="settings-heading">
+      <div>
+        <span class="eyebrow">Your account</span>
+        <h1>{title}</h1>
+        <p>Manage how Media Tracker looks, behaves, and connects to your services.</p>
+      </div>
+    </div>
+
+    <div class="settings-shell">
+      <nav class="settings-nav" aria-label="Settings sections">
+        {settingsLinks.map((item) => {
+          const active = pathname === item.href;
+          return (
+            <a href={item.href} class:list={{ active }} aria-current={active ? 'page' : undefined}>
+              <strong>{item.label}</strong>
+              <span>{item.description}</span>
+            </a>
+          );
+        })}
+      </nav>
+      <main id="settings-content" class="settings-content"><slot /></main>
+    </div>
+    <footer class="page-footer">Media Tracker <span>Keep a little history of the stories you love.</span></footer>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 ---
-import Base from "../layouts/Base.astro";
+import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import type { TotpBackupCode } from "../lib/api";
 
@@ -20,11 +20,9 @@ if (me.totp_enabled) {
 }
 ---
 
-<Base title="Settings">
+<TrackerSettings title="Account settings">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="max-w-4xl mx-auto">
-    <h1 class="page-title mb-8">Settings</h1>
-
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="space-y-12">
@@ -155,7 +153,7 @@ if (me.totp_enabled) {
               <p>
                 Create a free <span class="text-zinc-400">project</span> key at
                 <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">thetvdb.com/api-information</a>
-                (key only, no PIN; requires attribution, which Scrob shows on TVDB pages). A <span class="text-zinc-400">subscriber-supported</span> key also needs your account's subscriber PIN above.
+                (key only, no PIN; requires attribution, which Media Tracker shows on TVDB pages). A <span class="text-zinc-400">subscriber-supported</span> key also needs your account's subscriber PIN above.
               </p>
             </div>
           </div>
@@ -198,7 +196,7 @@ if (me.totp_enabled) {
               </button>
             </div>
             <div class="text-xs text-zinc-500 space-y-1">
-              <p>Optional personal key for rating posters. Leave blank to disable and use original artwork. Scrob fetches the posters from RPDB server-side, so your key is never exposed in the page.</p>
+              <p>Optional personal key for rating posters. Leave blank to disable and use original artwork. Media Tracker fetches the posters from RPDB server-side, so your key is never exposed in the page.</p>
               <p>Choose poster style and ratings in the <a href="https://manager.ratingposterdb.com/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">RPDB manager</a>. Feature availability for your current plan is managed by RPDB.</p>
             </div>
           </div>
@@ -969,7 +967,7 @@ if (me.totp_enabled) {
     </div>
   </div>
 
-</section>
+</TrackerSettings>
 <script>
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
