@@ -46,7 +46,7 @@ async def get_public_access_status(db: AsyncSession = Depends(get_db)):
     return {
         # Requires a global TMDB key even if the toggle is on, in case the key
         # was removed after the admin enabled it.
-        "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation and gs.tmdb_api_key),
+        "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation),
         "disable_comments": bool(gs and gs.disable_comments),
     }
 
@@ -79,7 +79,7 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
         )
         is_mutual_follow = mutual_q.scalar_one() > 0
 
-    if not (is_owner or is_admin or privacy == PrivacyLevel.public or is_mutual_follow):
+    if not (is_owner or privacy == PrivacyLevel.public or is_mutual_follow):
         raise HTTPException(status_code=403, detail="This profile is private")
 
     # A request with no valid session (no JWT, or an API key that doesn't match

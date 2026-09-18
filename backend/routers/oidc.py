@@ -103,7 +103,7 @@ async def oidc_exchange(
             detail=f"Field '{app_settings.oidc_identifier_field}' not found in user info",
         )
 
-    result = await db.execute(select(User).where(User.email == str(identifier)))
+    result = await db.execute(select(User).where(func.lower(User.email) == str(identifier).strip().lower()))
     user = result.scalar_one_or_none()
 
     if not user:

@@ -241,7 +241,8 @@ async def _pull_library(
             "sync_pull_library",
             {"p_profile_id": profile_id, "p_limit": _PAGE_SIZE, "p_offset": offset},
         )
-        page = page if isinstance(page, list) else []
+        if not isinstance(page, list) or any(not isinstance(row, dict) for row in page):
+            raise NuvioAPIError('Nuvio library pull returned an incomplete collection')
         items.extend(page)
         if len(page) < _PAGE_SIZE:
             return items
@@ -264,7 +265,8 @@ async def _pull_watched_items(
             "sync_pull_watched_items",
             {"p_profile_id": profile_id, "p_page": page_number, "p_page_size": _PAGE_SIZE},
         )
-        page = page if isinstance(page, list) else []
+        if not isinstance(page, list) or any(not isinstance(row, dict) for row in page):
+            raise NuvioAPIError('Nuvio history pull returned an incomplete collection')
         items.extend(page)
         if len(page) < _PAGE_SIZE:
             return items
@@ -288,7 +290,9 @@ async def _pull_watch_progress(
         "sync_pull_watch_progress",
         {"p_profile_id": profile_id, "p_limit": 200},
     )
-    return rows if isinstance(rows, list) else []
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise NuvioAPIError('Nuvio progress pull returned an incomplete collection')
+    return rows
 
 
 async def pull_sync_data(

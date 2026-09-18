@@ -31,6 +31,14 @@ _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
 class StremioClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_or_missing_datastore_records_are_not_empty_snapshots(self):
+        for payload in ({}, [None], [{}], []):
+            with self.subTest(payload=payload), patch.object(stremio, '_api_request', AsyncMock(return_value=payload)):
+                with self.assertRaises(stremio.StremioAPIError):
+                    await stremio.datastore_get('fixture', ids=['tt1'])
+        with patch.object(stremio, '_api_request', AsyncMock(return_value=[])):
+            self.assertEqual(await stremio.datastore_get('fixture', all_items=True), [])
+
     async def test_link_poll_treats_code_101_as_pending(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/api/v2/read")
@@ -645,6 +653,7 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value="tmdb-key"),
             ),
             patch("routers.sync._push_stremio_connection", push),
+            patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()),
         ):
             await _push_watch_state(
                 db,

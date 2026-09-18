@@ -115,7 +115,11 @@ async def datastore_meta(auth_key: str) -> list[list[Any]]:
         {"authKey": auth_key, "collection": LIBRARY_COLLECTION},
         "library metadata pull",
     )
-    return result if isinstance(result, list) else []
+    if not isinstance(result, list):
+        raise StremioAPIError('Stremio library metadata pull returned an invalid collection')
+    if any(not isinstance(row, list) or len(row) < 2 or not row[0] for row in result):
+        raise StremioAPIError('Stremio library metadata pull returned incomplete rows')
+    return result
 
 
 async def datastore_get(
@@ -134,7 +138,11 @@ async def datastore_get(
         },
         "library pull",
     )
-    return [item for item in result if isinstance(item, dict)] if isinstance(result, list) else []
+    if not isinstance(result, list) or any(not isinstance(item, dict) or not item.get('_id') for item in result):
+        raise StremioAPIError('Stremio library pull returned an incomplete collection')
+    if ids and not all_items and set(ids) - {str(item['_id']) for item in result}:
+        raise StremioAPIError('Stremio incremental pull omitted requested records')
+    return result
 
 
 async def datastore_put(auth_key: str, changes: list[dict[str, Any]]) -> None:

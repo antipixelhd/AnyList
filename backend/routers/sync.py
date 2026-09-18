@@ -1201,6 +1201,13 @@ async def _fan_out_changes_to_other_connections(
             return True
 
         for conn in push_candidates:
+            if conn.type in ('stremio', 'nuvio'):
+                from core.tracking_snapshot import require_stream_reconciliation
+                try:
+                    await require_stream_reconciliation(db, conn)
+                except HTTPException:
+                    logger.info('Streaming push held for reconciliation: connection %s', conn.id)
+                    continue
             if conn.type == "stremio":
                 try:
                     await _push_stremio_connection(
@@ -4539,6 +4546,13 @@ async def _run_nuvio_sync(
             if progress_records:
                 await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
 
+            if conn.sync_playback and conn.sync_watched and not stats['errors']:
+                from core.tracking_snapshot import observe_stream_snapshot
+                await observe_stream_snapshot(db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                    complete=len(progress_records) < 200)
+                from core.stream_actions import dispatch_stream_actions
+                await dispatch_stream_actions(db, user_id)
+
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
@@ -5037,6 +5051,12 @@ async def _run_stremio_sync(
                 removed_ids=removed_ids,
                 complete_snapshot_ids=complete_snapshot_ids,
             )
+            if conn.sync_playback and conn.sync_watched and not stats['errors']:
+                from core.tracking_snapshot import observe_stream_snapshot
+                await observe_stream_snapshot(db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                    complete=complete_snapshot, touched={str(item['_id']) for item in items})
+                from core.stream_actions import dispatch_stream_actions
+                await dispatch_stream_actions(db, user_id)
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
             conn.stremio_pull_cursor_at = pull_started_at
@@ -6285,6 +6305,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 await db.commit()
                 return
 
+            from core.tracking_snapshot import require_stream_reconciliation
+            await require_stream_reconciliation(db, conn)
+
             if conn.type == "stremio":
                 settings_result = await db.execute(
                     select(UserSettings).where(UserSettings.user_id == user_id)
@@ -6936,6 +6959,8 @@ async def push_upstream(
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
+    from core.tracking_snapshot import require_stream_reconciliation
+    await require_stream_reconciliation(db, conn)
     if not conn.push_enabled:
         raise HTTPException(
             status_code=400,

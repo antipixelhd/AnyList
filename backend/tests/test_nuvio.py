@@ -41,6 +41,9 @@ class _Result:
     def all(self):
         return self._rows
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalar_one_or_none(self):
         return self._scalars[0] if self._scalars else None
 
@@ -638,6 +641,7 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
                 "routers.sync._push_nuvio_library_delta",
                 AsyncMock(return_value=True),
             ) as push_delta,
+            patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()),
         ):
             await _fan_out_changes_to_other_connections(
                 db,
@@ -985,6 +989,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[
                     _Result(scalars=[99]),  # SyncJob status=running update (job was pending)
                     _Result(scalars=[conn]),  # conn_result
+                    _Result(rows=[]),  # no unresolved tracking conflicts
                     _Result(scalars=[user_settings]),  # settings_result
                     None,  # SyncJob total_items update
                     None,  # SyncJob status=completed update
@@ -992,6 +997,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             ),
             commit=AsyncMock(),
             refresh=AsyncMock(),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True)),
         )
 
         pushed_items: list[dict] = []

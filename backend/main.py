@@ -733,6 +733,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from routers import tracking
+app.include_router(tracking.router, prefix="/tracking", tags=["tracking"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(oidc.router, prefix="/auth/oidc", tags=["oidc"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])

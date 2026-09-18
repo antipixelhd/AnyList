@@ -278,6 +278,8 @@ async def _push_watch_state(
 
         for conn in nuvio_connections:
             try:
+                from core.tracking_snapshot import require_stream_reconciliation
+                await require_stream_reconciliation(db, conn)
                 profile_id = nuvio_client.parse_profile_id(conn.server_user_id)
 
                 async def _persist_refresh(session: nuvio_client.NuvioSession, conn=conn) -> None:
@@ -320,6 +322,8 @@ async def _push_watch_state(
         watch_overrides = {media_id: watched for media_id in media_ids if media_id in stremio_eligible_ids}
         for conn in stremio_connections:
             try:
+                from core.tracking_snapshot import require_stream_reconciliation
+                await require_stream_reconciliation(db, conn)
                 await _push_stremio_connection(
                     db,
                     conn,
