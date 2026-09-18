@@ -3,3 +3,20 @@
 @media(hover:none){.row-menu{opacity:1}}@media(max-width:900px){.brand>span:last-child{display:none}.topbar{padding:0 20px;gap:15px}.topbar nav{gap:20px}.list-shell{gap:24px;grid-template-columns:180px minmax(0,1fr)}.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 50px 60px 40px;gap:8px;padding:10px 14px}.profile-tabs{gap:25px}.entry-title{gap:12px}}@media(max-width:650px){.topbar{height:auto;min-height:100px;flex-wrap:wrap;padding:12px 18px;gap:10px}.topbar nav{order:3;width:100%;justify-content:space-between;font-size:13px;gap:12px}.profile-hero{height:180px}.profile-identity{padding:45px 20px 0;gap:18px}.profile-avatar{width:105px;height:105px;font-size:42px}.profile-identity h1{font-size:21px}.profile-identity p{display:none}.profile-tabs{gap:24px;justify-content:start;padding:0 20px;overflow:auto;font-size:13px;white-space:nowrap}.list-shell{display:block;margin:24px auto;padding:0 16px}.mobile-filter-toggle{display:block;margin-bottom:15px}.filters{display:none;margin-bottom:25px}.filters.open{display:flex}.status-filters{grid-template-columns:repeat(2,1fr)}.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 35px 48px 32px;font-size:13px;padding:9px 10px}.entry-cover{width:32px;height:46px}.entry-title{gap:10px}.row-menu{opacity:1;padding:4px}.entry-head{font-size:11px}.entry-progress{font-size:12px}.status-section h2{margin-left:4px;font-size:18px}.editor-fields{grid-template-columns:repeat(2,1fr);gap:18px}.editor form,.editor-header{padding:20px}.editor-header h2{font-size:17px}.page-footer span{display:none}.detail-layout{grid-template-columns:100px minmax(0,1fr);gap:20px;padding:0 16px;margin-top:-45px}.detail-body{padding-top:45px}.detail-body h1{font-size:20px}.detail-banner{height:180px}.detail-sidebar .button-primary{padding:10px 4px;font-size:12px}.detail-facts{padding:12px}.season-card{display:block}.browse-form{flex-wrap:wrap}.browse-form input{min-width:100%}.page-width{padding:0 16px}.grid-view .entry-table{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-view .entry-cover{height:210px}.card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .unwatched-indicator{display:block;font-size:11px;color:var(--blue);margin-top:4px}
+
+/* Cover controls occupy the artwork instead of a separate action column. */
+.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 90px 110px}
+.entry-thumbnail{position:relative;flex:none;width:40px;height:57px}
+.entry-thumbnail .entry-cover{display:block;width:100%;height:100%}
+.entry-thumbnail .row-menu{position:absolute;inset:0;padding:0;background:#228fcbdc;border-radius:3px;font-weight:700;letter-spacing:1px}
+.entry-thumbnail .row-menu:focus-visible{outline:2px solid var(--bright);outline-offset:3px}
+#cover-preview{position:fixed;z-index:30;width:174px;height:248px;pointer-events:none;border-radius:5px;box-shadow:0 8px 30px #0008;background:var(--panel);padding:5px;animation:cover-reveal .14s ease-out}
+#cover-preview img{width:100%;height:100%;object-fit:cover;border-radius:3px}
+@keyframes cover-reveal{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.grid-view .entry-thumbnail{width:100%;height:215px;margin-bottom:9px}
+.grid-view .entry-thumbnail .entry-cover{height:100%;margin:0}
+.grid-view .entry-thumbnail .row-menu{inset:auto 6px 6px auto;width:36px;height:32px;opacity:1}
+@media(max-width:900px){.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 50px 60px}}
+@media(max-width:650px){.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 35px 55px}.entry-thumbnail{width:40px;height:56px}.grid-view .entry-thumbnail{height:210px}}
+@media(hover:none){.entry-thumbnail .row-menu{inset:auto 0 0;height:28px;opacity:1}}
+@media(prefers-reduced-motion:reduce){#cover-preview{animation:none}.row-menu{transition:none}}
