@@ -25,6 +25,20 @@ if ($Stop) {
         }
         Remove-Item -LiteralPath $pidFile
     }
+    # A Windows venv launcher can exit and orphan a replacement interpreter
+    # after its recorded PID was written. Clean up only listeners whose exact
+    # command lines match this launcher's two dedicated loopback services.
+    foreach ($port in @(7340,7341)) {
+        foreach ($listener in @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) {
+            $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+            if (!$processInfo) { continue }
+            $isBackend = $port -eq 7341 -and $processInfo.CommandLine -like "*$projectRoot*uvicorn main:app*--port 7341*"
+            $isFrontend = $port -eq 7340 -and $processInfo.CommandLine -like "*node_modules/astro/bin/astro.mjs dev*--port 7340*"
+            if ($isBackend -or $isFrontend) {
+                Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
     Write-Host 'Local web servers stopped. The database and saved data are retained.'
     exit
 }
