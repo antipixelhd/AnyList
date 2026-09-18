@@ -73,6 +73,12 @@ const dateLabel = (value: string | null) => value
             {title.tagline && <p class="detail-tagline">“{title.tagline}”</p>}
           </div>
 
+          <nav class="detail-tabs" aria-label="Title sections">
+            <a class="active" href="#overview">Overview</a>
+            {title.type === 'series' && <a href="#seasons">Seasons</a>}
+            <a href="#social">Social</a>
+          </nav>
+
           <section class="score-overview" aria-label="Ratings">
             <div><span>Community</span><strong>{scoreLabel(title.community_average)}</strong><small>{title.community_count ? `${title.community_count} public rating${title.community_count === 1 ? '' : 's'}` : 'No public ratings'}</small></div>
             <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
@@ -80,13 +86,13 @@ const dateLabel = (value: string | null) => value
             <div><span>Your score</span><strong>{scoreLabel(title.entry?.score ?? null)}</strong><small>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></div>
           </section>
 
-          <section class="detail-section synopsis-section">
+          <section class="detail-section synopsis-section" id="overview">
             <h2>Overview</h2>
             <p>{title.overview || 'No synopsis available yet.'}</p>
             {title.genres.length > 0 && <div class="genre-pills">{title.genres.map((genre: string) => <span>{genre}</span>)}</div>}
           </section>
 
-          <section class="detail-section following-section">
+          <section class="detail-section following-section" id="social">
             <div class="detail-section-heading">
               <div><span class="eyebrow">Social</span><h2>People you follow</h2></div>
               <strong>{scoreLabel(title.friends_average)}</strong>
@@ -105,7 +111,7 @@ const dateLabel = (value: string | null) => value
           </section>
 
           {title.type === 'series' && (
-            <section class="detail-section seasons-section">
+            <section class="detail-section seasons-section" id="seasons">
               <div class="detail-section-heading">
                 <div><span class="eyebrow">Episode history</span><h2>Seasons</h2></div>
                 {Astro.locals.user && <button class="button-secondary" id="refresh-episodes" data-media={title.id}>Refresh episode metadata</button>}
