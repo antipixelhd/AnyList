@@ -1,0 +1,10 @@
+---
+import Tracker from '../../../layouts/Tracker.astro';
+import ProfileHeader from '../../../components/ProfileHeader.astro';
+import {tracker,artwork} from '../../../lib/tracker';
+if(Astro.locals.user?.username!==Astro.params.username)return Astro.redirect('/login');
+let profile:any=null,entries:any[]=[],error='';
+try{[profile,{results:entries}]=await Promise.all([tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token),tracker('library',Astro.locals.token)]);}catch(e){error=(e as Error).message;}
+---
+<Tracker title="Library">{profile&&<ProfileHeader profile={profile} active="library"/>}<div class="page-width"><h1>Your streaming library</h1><p>Library membership is separate from your movie and series lists. Only you can see this tab.</p>
+{error?<p class="error-message">{error}</p>:entries.length?<div class="card-grid">{entries.map(m=><a class="media-card" href={`/title/${m.id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h2>{m.title}</h2><small>{m.type==='movie'?'Movie':'Series'}</small></a>)}</div>:<div class="empty-state"><h2>Your library is empty</h2><p>Connect Stremio or Nuvio to import your streaming library.</p><a class="button-primary" href="/connections">Connections</a></div>}</div></Tracker>

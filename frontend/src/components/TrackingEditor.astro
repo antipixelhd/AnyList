@@ -1,0 +1,92 @@
+---
+import {statuses} from '../lib/tracker';
+---
+<dialog class="editor" id="tracking-editor" aria-labelledby="editor-title">
+  <div class="editor-header"><h2 id="editor-title">Edit entry</h2><button type="button" class="editor-close" aria-label="Close editor">×</button></div>
+  <form id="tracking-form">
+    <div class="editor-fields">
+      <label>Status<select name="status">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select></label>
+      <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint">0 means unrated</span></label>
+      <label>Episode progress<input name="progress" type="number" min="0" step="1"/></label>
+      <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
+      <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
+      <label class="wide" id="rating-mode-field">Show score<select name="rating_mode"><option value="manual">Keep a separate show rating</option><option value="average">Average my rated seasons</option></select><span class="hint" id="calculated-score"></span></label>
+      <label class="wide">Personal notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
+      <label class="wide checkbox"><input type="checkbox" name="mark_released_watched"/>Mark all released episodes watched when completing</label>
+    </div>
+    <p id="editor-error" role="alert" class="error-message" hidden></p>
+    <div class="editor-actions"><label class="checkbox"><input type="checkbox" name="favorite"/>Favorite</label><div><button type="button" class="button-secondary editor-close">Cancel</button> <button type="submit" class="button-primary">Save</button></div></div>
+    <div style="text-align:right;margin-top:24px"><button type="button" class="button-secondary" id="delete-tracked-entry" style="color:#ef9fb2">Delete entry</button></div>
+  </form>
+</dialog>
+<script>
+  const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
+  const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
+  let current: any = null;
+  const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
+  const error = document.querySelector<HTMLElement>('#editor-error')!;
+  document.addEventListener('click', async (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
+    if (!button) return;
+    error.hidden = true;
+    form.reset();
+    current = null;
+    dialog.showModal();
+    document.querySelector('#editor-title')!.textContent = 'Loading entry…';
+    form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = true;
+    try {
+      const res = await fetch(`/api/proxy/tracking/title/${button.dataset.editEntry}`);
+      if (!res.ok) throw new Error('Unable to load this entry. Try again.');
+      const title = await res.json();
+      current = {id:title.id, type:title.type, ...(title.entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null})};
+      document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !title.entry;
+      document.querySelector('#editor-title')!.textContent = title.title;
+      for (const name of ['status','manual_score','progress','start_date','finish_date','rewatch_count','notes','rating_mode']) field(name).value = current[name] ?? '';
+      field('favorite').checked = !!current.favorite;
+      field('mark_released_watched').checked = true;
+      field('progress').disabled = title.type === 'movie';
+      document.querySelector<HTMLElement>('#rating-mode-field')!.hidden = title.type !== 'series';
+      updateMode();
+      form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = false;
+    } catch(e) { error.textContent = (e as Error).message; error.hidden = false; }
+  });
+  function updateMode() {
+    const average = field('rating_mode').value === 'average';
+    field('manual_score').disabled = average;
+    document.querySelector('#calculated-score')!.textContent = average ? `Calculated score: ${current?.score == null ? 'Unrated' : Number(current.score.toFixed(1))}. Only explicitly rated seasons count.` : '';
+  }
+  field('rating_mode').addEventListener('change', updateMode);
+  dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', () => dialog.close()));
+  document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
+    if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
+    const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
+    try{const response=await fetch(`/api/proxy/tracking/entry/${current.id}?confirmed=true`,{method:'DELETE'});if(!response.ok)throw new Error('Could not delete the entry. Try again.');location.reload();}catch(e){error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (!current) return;
+    error.hidden = true;
+    const submit = form.querySelector<HTMLButtonElement>('[type=submit]')!;
+    const status = field('status').value;
+    const body: any = {status, favorite:field('favorite').checked, notes:field('notes').value,
+      rewatch_count:Number(field('rewatch_count').value || 0), rating_mode:field('rating_mode').value};
+    if (!field('manual_score').disabled) body.manual_score = Number(field('manual_score').value || 0);
+    for (const name of ['start_date','finish_date']) {
+      // An untouched empty date must not suppress a transition's automatic date.
+      if (field(name).value !== (current[name] || '')) body[name] = field(name).value || null;
+    }
+    if (!field('progress').disabled && Number(field('progress').value) !== current.progress) {
+      body.progress = Number(field('progress').value);
+      if (body.progress < current.progress) {
+        if (!confirm('Mark the later episodes unwatched?')) return;
+        body.confirm_rollback = true;
+      }
+    }
+    body.mark_released_watched = status === 'completed' && current.status !== 'completed' && field('mark_released_watched').checked;
+    submit.disabled = true;
+    try {
+      const response = await fetch(`/api/proxy/tracking/entry/${current.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if (!response.ok) { const data = await response.json(); throw new Error(typeof data.detail === 'string' ? data.detail : 'Check your entry and try again.'); }
+      location.reload();
+    } catch(e) { error.textContent = (e as Error).message; error.hidden = false; submit.disabled = false; }
+  });
+</script>

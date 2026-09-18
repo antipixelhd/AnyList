@@ -1,0 +1,10 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+import {tracker,artwork} from '../lib/tracker';
+const type = Astro.url.searchParams.get('type')==='series'?'series':'movie';
+const q = Astro.url.searchParams.get('q')||'';
+let results:any[]=[],error='',notice='';
+try{const response=await tracker(`catalog?${new URLSearchParams({media_type:type,q})}`,Astro.locals.token);results=response.results;notice=response.notice||'';}catch(e){error=(e as Error).message;}
+---
+<Tracker title="Browse"><div class="page-width"><h1>Find your next story</h1><p>Explore your catalogue of movies and series.</p><form class="browse-form"><input type="search" name="q" placeholder="Search titles…" value={q} aria-label="Search titles"/><select name="type" aria-label="Media type"><option value="movie" selected={type==='movie'}>Movies</option><option value="series" selected={type==='series'}>Series</option></select><button class="button-primary">Search</button></form>
+{notice&&<p role="status">{notice}</p>}{error?<p class="error-message">{error}</p>:results.length?<div class="card-grid">{results.map(m=><a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h2>{m.title}</h2><small>{m.year}</small></a>)}</div>:<div class="empty-state"><h2>No matching titles</h2><p>Try a title search above.</p></div>}</div></Tracker>

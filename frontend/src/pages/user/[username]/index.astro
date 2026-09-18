@@ -1,0 +1,14 @@
+---
+import Tracker from '../../../layouts/Tracker.astro';
+import ProfileHeader from '../../../components/ProfileHeader.astro';
+import {tracker,artwork} from '../../../lib/tracker';
+let profile:any=null,error='';
+try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
+---
+<Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><div class="page-width">
+<div class="profile-totals">{Object.entries(profile.counts).map(([key,value])=><div><strong>{value}</strong><span>{key}</span></div>)}</div>
+<h2>Favorites</h2>{profile.favorites.length?<div class="card-grid">{profile.favorites.map((m:any)=><a class="media-card" href={`/title/${m.id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h2>{m.title}</h2></a>)}</div>:<p>No favorites yet.</p>}
+<h2 id="social" style="margin-top:40px">Social</h2>{profile.people.length?profile.people.map((p:any)=><div class="social-score"><a href={`/user/${encodeURIComponent(p.username)}`}>{p.display_name}</a><span>{p.following?'Following':'Follower'}</span></div>):<p>No public connections to show yet.</p>}
+{profile.owner&&<a class="button-secondary" href="/profile">Edit profile</a>}
+</div></>:<div class="page-width"><p class="error-message">{error}</p></div>}</Tracker>
+<style>.profile-totals{display:flex;justify-content:space-around;gap:20px;background:var(--panel);padding:25px;border-radius:5px;margin-bottom:35px;flex-wrap:wrap}.profile-totals div{text-align:center}.profile-totals strong{display:block;font-size:25px;color:var(--blue)}.profile-totals span{text-transform:capitalize;font-size:13px}</style>

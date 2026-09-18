@@ -9,7 +9,7 @@ const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oid
 const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/device/code", "/api/proxy/auth/device/token", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
-const PUBLIC_PROFILE_PAGE_RE = /^\/profile\/\d+\/?$/;
+const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series)))\/?$/;
 // The profile page's <img> tag hits this proxy path directly. It has no file
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.

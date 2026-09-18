@@ -1,0 +1,56 @@
+---
+import Tracker from '../../layouts/Tracker.astro';
+import TrackingEditor from '../../components/TrackingEditor.astro';
+import {tracker,artwork,scoreLabel,statuses} from '../../lib/tracker';
+let title:any=null,error='';
+try{title=await tracker(`title/${Astro.params.id}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
+---
+<Tracker title={title?.title||'Title'}>{title?<>
+<div class="detail-banner" style={{backgroundImage:artwork(title.backdrop,'w1280')?`url("${artwork(title.backdrop,'w1280')}")`:undefined}}></div>
+<div class="detail-layout"><aside class="detail-sidebar">{artwork(title.poster)&&<img class="detail-poster" src={artwork(title.poster)} alt=""/>}{Astro.locals.user&&<button class="button-primary" data-edit-entry={title.id}>{title.entry?statuses.find(([s])=>s===title.entry.status)?.[1]:'Add to list'}</button>}
+<dl class="detail-facts"><dt>Format</dt><dd>{title.type==='series'?'TV series':'Movie'}</dd><dt>Released</dt><dd>{title.year||'Unknown'}</dd><dt>Release status</dt><dd>{title.release_status||'Unknown'}</dd><dt>Genres</dt><dd>{title.genres.join(', ')||'—'}</dd><dt>Your score</dt><dd>{scoreLabel(title.entry?.score??null)}</dd></dl></aside>
+<div class="detail-body"><h1>{title.title}</h1><p>{title.overview||'No synopsis available yet.'}</p>
+<h2 style="font-size:18px;margin-top:36px">Following <span style="color:var(--blue)">{scoreLabel(title.friends_average)}</span></h2>{title.friends.length?title.friends.map((f:any)=><div class="social-score"><a href={`/user/${encodeURIComponent(f.username)}/${title.type==='movie'?'movies':'series'}`}>{f.username}</a><span>{scoreLabel(f.score)}</span></div>):<p>No ratings from people you follow yet.</p>}
+{title.type==='series'&&<section><h2 style="font-size:18px;margin-top:36px">Seasons</h2>{Astro.locals.user&&<button class="button-secondary" id="refresh-episodes" data-media={title.id}>Refresh episode metadata</button>}{title.seasons.length?title.seasons.map((s:any)=><div class="season-card"><div><strong>{s.name || `Season ${s.season_number}`}</strong><br/><small>{s.episode_count} episodes {s.air_date&&` · ${s.air_date.slice(0,4)}`}</small></div>{Astro.locals.user&&s.season_number>0&&<div class="season-progress"><small>{s.released_count===null?'Refresh to load episode progress':`${s.watched_count} / ${s.released_count} released watched`}</small><br/><button class="button-secondary" data-season-progress={s.season_number} data-watched="true" data-media={title.id} disabled={!s.released_count}>Mark watched</button> <button class="button-secondary" data-season-progress={s.season_number} data-watched="false" data-media={title.id} disabled={!s.watched_count}>Mark unwatched</button></div>}{Astro.locals.user&&<label>Season score <input type="number" step="0.5" min="0" max="10" placeholder="Unrated" value={title.entry?.season_scores?.[String(s.season_number)]??''} data-season={s.season_number} aria-label={`Season ${s.season_number} score`}/><button class="button-secondary" data-save-season={s.season_number} data-media={title.id} data-has-seasons={Object.values(title.entry?.season_scores||{}).some(Boolean)?'yes':'no'}>Save</button></label>}</div>):<p>Season metadata has not been loaded yet.</p>}</section>}
+<p id="season-message" role="status"></p></div></div><TrackingEditor/>
+<dialog class="editor" id="season-mode"><div class="editor-header"><h2>How should your show score work?</h2></div><form method="dialog" style="padding:28px"><p>Season scores stay independent. Other seasons won't be rated automatically.</p><button class="button-primary" value="average">Average my rated seasons</button> <button class="button-secondary" value="manual">Keep a separate show rating</button> <button class="button-secondary" value="cancel">Cancel</button></form></dialog>
+</>:<div class="page-width"><p class="error-message">{error}</p></div>}</Tracker>
+<script>
+document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async(event)=>{
+ const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes�';
+ try{const res=await fetch(`/api/proxy/tracking/title/${button.dataset.media}/refresh-episodes`,{method:'POST'});if(!res.ok){const data=await res.json();throw new Error(data.detail||'Unable to refresh episodes');}location.reload();}
+ catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;button.textContent='Refresh episode metadata';}
+});
+document.querySelectorAll<HTMLButtonElement>('[data-season-progress]').forEach(button=>button.addEventListener('click',async()=>{
+ button.disabled=true;
+ const body={watched:button.dataset.watched==='true',confirm_rollback:false};
+ const send=()=>fetch(`/api/proxy/tracking/entry/${button.dataset.media}/season/${button.dataset.seasonProgress}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ try{
+  let res=await send();
+  if(res.status===409){
+   const error=await res.json();
+   if(String(error.detail).includes('Confirm to continue')){
+    if(!confirm(error.detail)){button.disabled=false;return;}
+    body.confirm_rollback=true;res=await send();
+   }else throw new Error(error.detail);
+  }
+  if(!res.ok){const error=await res.json();throw new Error(error.detail||'Unable to update season.');}
+  location.reload();
+ }catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;}
+}));
+document.querySelectorAll<HTMLButtonElement>('[data-save-season]').forEach(button=>button.addEventListener('click',async()=>{
+ const input=document.querySelector<HTMLInputElement>(`[data-season="${button.dataset.saveSeason}"]`)!;
+ if(!input.reportValidity())return;
+ const body:any={season_scores:{[button.dataset.saveSeason!]:Number(input.value||0)}};
+ if(button.dataset.hasSeasons==='no'&&Number(input.value)>0){
+  const dialog=document.querySelector<HTMLDialogElement>('#season-mode')!;
+  dialog.returnValue='cancel';dialog.showModal();
+  const mode=await new Promise<string>(resolve=>dialog.addEventListener('close',()=>resolve(dialog.returnValue),{once:true}));
+  if(!['manual','average'].includes(mode))return;
+  body.rating_mode=mode;
+ }
+ button.disabled=true;
+ try{const res=await fetch(`/api/proxy/tracking/entry/${button.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(typeof e.detail==='string'?e.detail:'Unable to save score.');}location.reload();}
+ catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;}
+}));
+</script>

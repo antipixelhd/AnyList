@@ -1,0 +1,10 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+import {tracker,artwork,scoreLabel,statuses} from '../lib/tracker';
+let activities:any[]=[],error='',pending=0;
+if(!Astro.locals.user)return Astro.redirect('/browse');
+try{const [activity,events]=await Promise.all([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token)]);activities=activity.results;pending=events.pending;}catch(e){error=(e as Error).message;}
+---
+<Tracker title="Home"><div class="page-width"><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>Stories you're watching. Stories your friends love.</p><a class="button-secondary" href="/recent-events">Recent events {pending>0?`· ${pending} to review`:''}</a><h2 style="font-size:18px;margin-top:36px">Activity</h2>
+{error?<p class="error-message">{error}</p>:activities.length?activities.map(a=><article class="activity-card">{artwork(a.media.poster)&&<a href={`/title/${a.media.id}`}><img src={artwork(a.media.poster)} alt=""/></a>}<div><a href={`/user/${encodeURIComponent(a.username)}/${a.media.type==='movie'?'movies':'series'}`} style="color:var(--blue)">{a.username}</a><p>{statuses.find(([s])=>s===a.status)?.[1]} · <a href={`/title/${a.media.id}`}>{a.media.title}</a>{a.score!=null&&` · ${scoreLabel(a.score)}/10`}</p><time datetime={a.created_at}>{new Date(a.created_at+'Z').toLocaleDateString('en-GB')}</time></div></article>):<div class="empty-state"><h2>A fresh chapter</h2><p>Add titles and follow friends to start your activity feed.</p><a class="button-primary" href="/browse">Browse titles</a></div>}
+</div></Tracker>

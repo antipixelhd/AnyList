@@ -1,0 +1,16 @@
+---
+const {profile,active='overview'}=Astro.props;
+const base=`/user/${encodeURIComponent(profile.username)}`;
+---
+<section class="profile-hero"><div class="profile-identity">
+{profile.has_avatar?<img class="profile-avatar" src={`/api/proxy/profile/avatar/${profile.id}`} alt=""/>:<div class="profile-avatar" aria-hidden="true">{profile.display_name.slice(0,1).toUpperCase()}</div>}
+<div><h1>{profile.display_name}</h1><p>{profile.bio||'A collection of stories, one title at a time.'}</p></div>
+{!profile.owner&&Astro.locals.user&&<button class="button-primary" id="follow-profile" data-user={profile.id} data-following={profile.following?'yes':'no'}>{profile.following?'Following':'Follow'}</button>}
+</div></section>
+<nav class="profile-tabs" aria-label="Profile"><a href={base} class:list={{active:active==='overview'}}>Overview</a><a href={`${base}/movies`} class:list={{active:active==='movies'}}>Movie List</a><a href={`${base}/series`} class:list={{active:active==='series'}}>Series List</a>{profile.owner&&<a href={`${base}/library`} class:list={{active:active==='library'}}>Library</a>}<a href={`${base}#social`}>Social</a></nav>
+<script>
+document.querySelector<HTMLButtonElement>('#follow-profile')?.addEventListener('click',async event=>{
+ const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
+ try{const res=await fetch(`/api/proxy/profile/${button.dataset.user}/follow`,{method:button.dataset.following==='yes'?'DELETE':'POST'});if(!res.ok)throw new Error('Unable to update following.');location.reload();}catch{button.textContent='Try again';button.disabled=false;}
+});
+</script>
