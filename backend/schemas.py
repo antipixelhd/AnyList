@@ -476,6 +476,7 @@ class PublicProfileResponse(BaseModel):
 
 class GlobalSettings(BaseModel):
     tmdb_api_key           : Optional[str] = None
+    mdblist_api_key        : Optional[str] = None
     tvdb_api_key           : Optional[str] = None
     tvdb_subscriber_pin    : Optional[str] = None
     radarr_url             : Optional[str] = None

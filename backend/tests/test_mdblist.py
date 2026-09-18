@@ -30,6 +30,26 @@ _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
 class MDBListClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_rating_uses_documented_tmdb_batch_request(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/rating/movie/tomatoes")
+            self.assertEqual(request.url.params["apikey"], "secret-key")
+            self.assertEqual(json.loads(request.content), {"ids": [550], "provider": "tmdb"})
+            return httpx.Response(200, json={"provider_id": "550", "provider_rating": 87})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            mdblist.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            score = await mdblist.get_catalog_rating("secret-key", "movie", 550, "tomatoes")
+        self.assertEqual(score, 87)
+
+    async def test_catalog_rating_rejects_unknown_sources_before_network(self) -> None:
+        with self.assertRaises(ValueError):
+            await mdblist.get_catalog_rating("secret-key", "movie", 550, "unknown")
+
     async def test_get_watched_follows_cursor_pagination(self) -> None:
         cursors: list[str | None] = []
 

@@ -325,6 +325,7 @@ export interface AdminUser {
 
 export interface GlobalSettings {
   tmdb_api_key: string | null;
+  mdblist_api_key: string | null;
   tvdb_api_key: string | null;
   tvdb_subscriber_pin: string | null;
   radarr_url: string | null;

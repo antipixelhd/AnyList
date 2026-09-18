@@ -70,6 +70,45 @@ async def validate_api_key(api_key: str) -> bool:
         return False
 
 
+async def get_catalog_rating(
+    api_key: str,
+    media_type: str,
+    tmdb_id: int,
+    source: str,
+) -> float | None:
+    """Return one catalog rating using MDBList's documented batch endpoint.
+
+    ``source`` is one of ``imdb``, ``tomatoes`` (critic), or ``audience``.
+    MDBList has returned both a single result object and a result collection
+    over the lifetime of this endpoint, so the small parser accepts either
+    without guessing a score from unrelated fields.
+    """
+    if media_type not in {"movie", "show"} or source not in {"imdb", "tomatoes", "audience"}:
+        raise ValueError("Unsupported MDBList catalog rating request")
+    result = await _request(
+        "POST",
+        f"/rating/{media_type}/{source}",
+        api_key,
+        payload={"ids": [tmdb_id], "provider": "tmdb"},
+    )
+    candidates: list[Any] = [result]
+    for key in ("results", "ratings"):
+        value = result.get(key)
+        if isinstance(value, list):
+            candidates.extend(value)
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("provider_rating")
+        if value is None and item.get("source") in {source, "rtomatoes", "rtaudience"}:
+            value = item.get("value", item.get("rating"))
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 async def _get_all(api_key: str, path: str) -> dict[str, Any]:
     merged: dict[str, Any] = {
         "movies": [],

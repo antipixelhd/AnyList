@@ -248,6 +248,10 @@ def media_data(media):
         "overview": media.overview, "year": (media.release_date or "")[:4],
         "release_date": media.release_date, "original_title": media.original_title,
         "runtime": media.runtime or data.get("runtime"), "tmdb_score": media.tmdb_rating,
+        "imdb_score": media.imdb_rating,
+        "rt_critic_score": media.rt_critic_score,
+        "rt_audience_score": media.rt_audience_score,
+        "external_scores_updated_at": media.external_scores_updated_at,
         "tagline": media.tagline or data.get("tagline"), "adult": media.adult,
         "original_language": data.get("original_language"),
         "networks": [n for n in data.get("networks", []) if isinstance(n, dict) and n.get("name")],
@@ -366,6 +370,11 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
+    # Logged-out visitors only read the shared cache. Signed-in visits may
+    # refresh stale scores using the user's key, then the administrator key.
+    if viewer:
+        from core.external_scores import refresh_external_scores
+        await refresh_external_scores(db, media, viewer.id)
     entry = None
     friends = []
     if viewer:
