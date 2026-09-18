@@ -298,6 +298,50 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(show_entry.manual_score, 9)
         self.assertEqual(show_entry.season_scores, {'1': 6, '2': 8})
 
+    async def test_scheduled_catalogue_refresh_targets_stale_tracked_series_once(self):
+        from core.tracking_metadata import refresh_tracked_catalogues
+
+        self.show.tmdb_id = 987654301
+        self.show.tmdb_data = {
+            'tracking_catalogue_refreshed_at': (
+                datetime.now().astimezone() - timedelta(days=2)
+            ).isoformat(),
+        }
+        canonical = Show(
+            title='Fixture Show',
+            tmdb_id=self.show.tmdb_id,
+            canonical_source='tmdb',
+            status='Returning Series',
+        )
+        self.db.add(canonical)
+        await self.save(self.show, status='watching')
+        # The same shared title tracked by another user must still refresh once.
+        self.db.add(TrackedEntry(
+            user_id=self.friend.id,
+            media_id=self.show.id,
+            status='planning',
+            rating_mode='manual',
+            season_scores={},
+            progress=0,
+            favorite=False,
+            rewatch_count=0,
+        ))
+        await self.db.commit()
+
+        with patch(
+            'core.tracking_metadata.hydrate_tracking_episodes',
+            AsyncMock(return_value=12),
+        ) as hydrate:
+            stats = await refresh_tracked_catalogues(self.db, 'fixture-key')
+
+        hydrate.assert_awaited_once_with(self.db, self.show, 'fixture-key')
+        self.assertEqual(stats, {
+            'refreshed': 1,
+            'episodes': 12,
+            'skipped': 0,
+            'failed': 0,
+        })
+
     async def test_title_community_average_excludes_private_profiles(self):
         await self.save(self.movie, status='completed', manual_score=8)
         self.db.add(TrackedEntry(

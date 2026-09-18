@@ -452,6 +452,7 @@ async def _show_metadata_refresher():
         from models.global_settings import GlobalSettings
         from models.users import User, UserSettings
         from core import tmdb as tmdb_client
+        from core.tracking_metadata import refresh_tracked_catalogues
         from routers.media import check_tmdb_key
         from routers.shows import apply_show_metadata
     except Exception as e:
@@ -522,9 +523,6 @@ async def _show_metadata_refresher():
                     s for s in all_shows
                     if (s.tmdb_data or {}).get("source") != "tvdb" and not _snapshot_is_fresh(s)
                 ]
-                if not shows:
-                    continue
-
                 sem = asyncio.Semaphore(FETCH_CONCURRENCY)
                 refreshed = 0
                 revived = 0
@@ -544,11 +542,18 @@ async def _show_metadata_refresher():
                     if was_final and data.get("status") not in FINAL_STATUSES:
                         revived += 1
 
-                await asyncio.gather(*(_check(s) for s in shows))
+                if shows:
+                    await asyncio.gather(*(_check(s) for s in shows))
                 await db.commit()
                 log.info(
                     f"Show metadata refresher: refreshed {refreshed}/{len(shows)} stale shows, "
                     f"{revived} revived"
+                )
+                catalogue = await refresh_tracked_catalogues(db, api_key)
+                log.info(
+                    "Tracking catalogue refresher: refreshed "
+                    f"{catalogue['refreshed']} series / {catalogue['episodes']} episodes, "
+                    f"{catalogue['skipped']} skipped, {catalogue['failed']} failed"
                 )
         except Exception as e:
             log.error(f"Show metadata refresher: {e}")

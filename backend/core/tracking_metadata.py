@@ -1,10 +1,29 @@
-"""Load a complete regular-episode catalogue before cumulative progress edits."""
-from datetime import datetime, timezone
+"""Load and refresh complete regular-episode catalogues for tracked series."""
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from core import tmdb
 from core.enrichment import create_media_safely
 from models import Media, Show
 from models.base import MediaType
+from models.tracking import TrackedEntry
+
+
+FINAL_SHOW_STATUSES = {"Ended", "Canceled"}
+
+
+def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | None = None) -> bool:
+    value = (media.tmdb_data or {}).get("tracking_catalogue_refreshed_at")
+    if not value:
+        return False
+    try:
+        refreshed_at = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return False
+    if refreshed_at.tzinfo is None:
+        refreshed_at = refreshed_at.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    max_age = timedelta(days=30) if show_status in FINAL_SHOW_STATUSES else timedelta(hours=20)
+    return now - refreshed_at < max_age
 
 
 async def hydrate_tracking_episodes(db, media, api_key):
@@ -51,3 +70,37 @@ async def hydrate_tracking_episodes(db, media, api_key):
         'tracking_catalogue_refreshed_at': datetime.now(timezone.utc).isoformat()}
     await db.flush()
     return len(fetched)
+
+
+async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None):
+    """Refresh stale TMDB episode catalogues shared by any tracked series.
+
+    Active shows refresh daily. Ended/canceled shows refresh monthly, but the
+    daily show-metadata sweep changes a revived show's status first, making its
+    catalogue immediately eligible in the same pass.
+    """
+    rows = (await db.execute(
+        select(Media, Show)
+        .join(TrackedEntry, TrackedEntry.media_id == Media.id)
+        .outerjoin(Show, Show.tmdb_id == Media.tmdb_id)
+        .where(Media.media_type == MediaType.series, Media.tmdb_id.isnot(None))
+        .order_by(Media.id)
+    )).unique().all()
+    stats = {"refreshed": 0, "episodes": 0, "skipped": 0, "failed": 0}
+    for media, show in rows:
+        if show is not None and show.canonical_source != "tmdb":
+            stats["skipped"] += 1
+            continue
+        if tracking_catalogue_is_fresh(media, show.status if show else None, now):
+            stats["skipped"] += 1
+            continue
+        try:
+            async with db.begin_nested():
+                stats["episodes"] += await hydrate_tracking_episodes(db, media, api_key)
+            stats["refreshed"] += 1
+        except Exception:
+            # A provider/season failure rolls back this title only; the existing
+            # complete catalogue and watch history remain intact.
+            stats["failed"] += 1
+    await db.commit()
+    return stats
