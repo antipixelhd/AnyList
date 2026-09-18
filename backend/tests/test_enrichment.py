@@ -441,7 +441,14 @@ class SeriesCatalogueMetadataTests(unittest.IsolatedAsyncioTestCase):
             "poster_path": "/poster.jpg",
             "backdrop_path": "/backdrop.jpg",
             "first_air_date": "2020-01-01",
+            "original_language": "en",
             "genres": [{"name": "Drama"}],
+            "networks": [{"id": 1, "name": "Fixture Network", "logo_path": "/network.png"}],
+            "production_companies": [{"id": 2, "name": "Fixture Studio", "logo_path": "/studio.png"}],
+            "created_by": [{"id": 3, "name": "Fixture Creator"}],
+            "episode_run_time": [52],
+            "number_of_seasons": 1,
+            "number_of_episodes": 8,
             "seasons": [
                 {
                     "season_number": 1,
@@ -458,6 +465,10 @@ class SeriesCatalogueMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.tmdb_data["seasons"][0]["episode_count"], 8)
         self.assertEqual(media.tmdb_data["tracking_episode_ids"], [11, 12])
         self.assertEqual(media.tmdb_data["tracking_catalogue_refreshed_at"], "fixture")
+        self.assertEqual(media.tmdb_data["networks"][0]["name"], "Fixture Network")
+        self.assertEqual(media.tmdb_data["production_companies"][0]["name"], "Fixture Studio")
+        self.assertEqual(media.tmdb_data["created_by"][0]["name"], "Fixture Creator")
+        self.assertEqual(media.tmdb_data["episode_run_time"], [52])
 
     async def test_show_repairs_series_media_without_losing_tracking_markers(self) -> None:
         media = Media(

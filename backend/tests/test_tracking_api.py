@@ -119,6 +119,53 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.json()['friends'],[])
         self.assertIsNone(res.json()['friends_average'])
 
+    async def test_title_community_average_excludes_private_profiles(self):
+        await self.save(self.movie, status='completed', manual_score=8)
+        self.db.add(TrackedEntry(
+            user_id=self.friend.id,
+            media_id=self.movie.id,
+            status='completed',
+            manual_score=10,
+        ))
+        await self.db.commit()
+
+        res = await self.client.get(f'/tracking/title/{self.movie.id}')
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()['community_average'], 8)
+        self.assertEqual(res.json()['community_count'], 1)
+
+        friend_profile = (await self.db.execute(
+            select(UserProfileData).where(UserProfileData.user_id == self.friend.id)
+        )).scalar_one()
+        friend_profile.privacy_level = PrivacyLevel.public
+        await self.db.commit()
+        res = await self.client.get(f'/tracking/title/{self.movie.id}')
+        self.assertEqual(res.json()['community_average'], 9)
+        self.assertEqual(res.json()['community_count'], 2)
+
+    async def test_title_exposes_available_catalogue_details(self):
+        self.movie.original_title = 'Original Fixture Film'
+        self.movie.runtime = 125
+        self.movie.tmdb_rating = 7.25
+        self.movie.tagline = 'A fixture worth tracking.'
+        self.movie.imdb_id = 'tt1234567'
+        self.movie.tmdb_data = {
+            'original_language': 'en',
+            'production_companies': [{'id': 7, 'name': 'Fixture Studio'}],
+        }
+        await self.db.commit()
+
+        res = await self.client.get(f'/tracking/title/{self.movie.id}')
+        self.assertEqual(res.status_code, 200, res.text)
+        payload = res.json()
+        self.assertEqual(payload['original_title'], 'Original Fixture Film')
+        self.assertEqual(payload['runtime'], 125)
+        self.assertEqual(payload['tmdb_score'], 7.25)
+        self.assertEqual(payload['tagline'], 'A fixture worth tracking.')
+        self.assertEqual(payload['original_language'], 'en')
+        self.assertEqual(payload['studios'][0]['name'], 'Fixture Studio')
+        self.assertEqual(payload['imdb_id'], 'tt1234567')
+
     async def test_anonymous_requires_instance_switch(self):
         self.viewer=None
         res=await self.client.get('/tracking/catalog')

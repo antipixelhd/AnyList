@@ -238,10 +238,25 @@ async def profile_access(db, username, viewer):
 
 def media_data(media):
     data = media.tmdb_data or {}
+    regular_seasons = [
+        season for season in data.get("seasons", [])
+        if isinstance(season, dict) and (season.get("season_number") or 0) > 0
+    ]
     return {
         "id": media.id, "title": media.title, "type": media.media_type.value,
         "poster": media.poster_path, "backdrop": media.backdrop_path,
         "overview": media.overview, "year": (media.release_date or "")[:4],
+        "release_date": media.release_date, "original_title": media.original_title,
+        "runtime": media.runtime or data.get("runtime"), "tmdb_score": media.tmdb_rating,
+        "tagline": media.tagline or data.get("tagline"), "adult": media.adult,
+        "original_language": data.get("original_language"),
+        "networks": [n for n in data.get("networks", []) if isinstance(n, dict) and n.get("name")],
+        "studios": [c for c in data.get("production_companies", []) if isinstance(c, dict) and c.get("name")],
+        "creators": [c for c in data.get("created_by", []) if isinstance(c, dict) and c.get("name")],
+        "episode_runtime": next((value for value in data.get("episode_run_time", []) if value), None),
+        "season_count": data.get("number_of_seasons") or len(regular_seasons) or None,
+        "episode_count": data.get("number_of_episodes"),
+        "last_air_date": data.get("last_air_date"),
         "release_status": media.status or data.get('status'), "genres": [g if isinstance(g, str) else g["name"] for g in data.get("genres", []) if isinstance(g, str) or (isinstance(g, dict) and g.get("name"))],
         "tmdb_id": media.tmdb_id, "tvdb_id": media.tvdb_id, "imdb_id": media.imdb_id,
     }
@@ -374,9 +389,27 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
         released = [e for e in episodes if e.season_number == season.get('season_number')]
         season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
         season['watched_count'] = sum(e.id in watched for e in released)
+    community_entries = (await db.execute(
+        select(TrackedEntry)
+        .join(UserProfileData, UserProfileData.user_id == TrackedEntry.user_id)
+        .where(
+            TrackedEntry.media_id == media.id,
+            UserProfileData.privacy_level == PrivacyLevel.public,
+        )
+    )).scalars().all()
+    community_scores = [
+        score for public_entry in community_entries
+        if (score := effective_score(
+            public_entry.rating_mode,
+            public_entry.manual_score,
+            public_entry.season_scores,
+        )) is not None
+    ]
     return {**media_data(media), "entry": entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
-            "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
+            "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None,
+            "community_average": sum(community_scores) / len(community_scores) if community_scores else None,
+            "community_count": len(community_scores)}
 
 
 @router.post('/title/{media_id}/refresh-episodes')

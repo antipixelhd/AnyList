@@ -2,20 +2,157 @@
 import Tracker from '../../layouts/Tracker.astro';
 import StatusControl from '../../components/StatusControl.astro';
 import TrackingEditor from '../../components/TrackingEditor.astro';
-import {tracker,artwork,scoreLabel,statuses} from '../../lib/tracker';
-let title:any=null,error='';
-try{title=await tracker(`title/${Astro.params.id}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
+import { tracker, artwork, scoreLabel } from '../../lib/tracker';
+
+let title: any = null;
+let error = '';
+try {
+  title = await tracker(`title/${Astro.params.id}`, Astro.locals.token);
+} catch (cause) {
+  error = (cause as Error).message;
+}
+
+const runtimeLabel = (minutes: number | null, suffix = '') => {
+  if (!minutes) return null;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const value = hours ? `${hours}h${rest ? ` ${rest}m` : ''}` : `${rest}m`;
+  return suffix ? `${value} ${suffix}` : value;
+};
+const names = (items: any[] = []) => items.map((item) => item?.name).filter(Boolean);
+const dateLabel = (value: string | null) => value
+  ? new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(`${value.slice(0, 10)}T00:00:00`))
+  : null;
 ---
-<Tracker title={title?.title||'Title'}>{title?<>
-<div class="detail-banner" style={{backgroundImage:artwork(title.backdrop,'w1280')?`url("${artwork(title.backdrop,'w1280')}")`:undefined}}></div>
-<div class="detail-layout"><aside class="detail-sidebar">{artwork(title.poster)&&<img class="detail-poster" src={artwork(title.poster)} alt=""/>}{Astro.locals.user&&<StatusControl mediaId={title.id} status={title.entry?.status} type={title.type}/>}
-<dl class="detail-facts"><dt>Format</dt><dd>{title.type==='series'?'TV series':'Movie'}</dd><dt>Released</dt><dd>{title.year||'Unknown'}</dd><dt>Release status</dt><dd>{title.release_status||'Unknown'}</dd><dt>Genres</dt><dd>{title.genres.join(', ')||'—'}</dd><dt>Your score</dt><dd>{scoreLabel(title.entry?.score??null)}</dd></dl></aside>
-<div class="detail-body"><h1>{title.title}</h1><p>{title.overview||'No synopsis available yet.'}</p>
-<h2 style="font-size:18px;margin-top:36px">Following <span style="color:var(--blue)">{scoreLabel(title.friends_average)}</span></h2>{title.friends.length?title.friends.map((f:any)=><div class="social-score"><a href={`/user/${encodeURIComponent(f.username)}/${title.type==='movie'?'movies':'series'}`}>{f.username}</a><span>{scoreLabel(f.score)}</span></div>):<p>No ratings from people you follow yet.</p>}
-{title.type==='series'&&<section><h2 style="font-size:18px;margin-top:36px">Seasons</h2>{Astro.locals.user&&<button class="button-secondary" id="refresh-episodes" data-media={title.id}>Refresh episode metadata</button>}{title.seasons.length?title.seasons.map((s:any)=><div class="season-card"><div><strong>{s.name || `Season ${s.season_number}`}</strong><br/><small>{s.episode_count} episodes {s.air_date&&` · ${s.air_date.slice(0,4)}`}</small></div>{Astro.locals.user&&s.season_number>0&&<div class="season-progress"><small>{s.released_count===null?'Refresh to load episode progress':`${s.watched_count} / ${s.released_count} released watched`}</small><br/><button class="button-secondary" data-season-progress={s.season_number} data-watched="true" data-media={title.id} disabled={!s.released_count}>Mark watched</button> <button class="button-secondary" data-season-progress={s.season_number} data-watched="false" data-media={title.id} disabled={!s.watched_count}>Mark unwatched</button></div>}{Astro.locals.user&&<label>Season score <input type="number" step="0.5" min="0" max="10" placeholder="Unrated" value={title.entry?.season_scores?.[String(s.season_number)]??''} data-season={s.season_number} aria-label={`Season ${s.season_number} score`}/><button class="button-secondary" data-save-season={s.season_number} data-media={title.id} data-has-seasons={Object.values(title.entry?.season_scores||{}).some(Boolean)?'yes':'no'}>Save</button></label>}</div>):<p>Season metadata has not been loaded yet.</p>}</section>}
-<p id="season-message" role="status"></p></div></div><TrackingEditor/>
-<dialog class="editor" id="season-mode"><div class="editor-header"><h2>How should your show score work?</h2></div><form method="dialog" style="padding:28px"><p>Season scores stay independent. Other seasons won't be rated automatically.</p><button class="button-primary" value="average">Average my rated seasons</button> <button class="button-secondary" value="manual">Keep a separate show rating</button> <button class="button-secondary" value="cancel">Cancel</button></form></dialog>
-</>:<div class="page-width"><p class="error-message">{error}</p></div>}</Tracker>
+<Tracker title={title?.title || 'Title'}>
+  {title ? (
+    <>
+      <div
+        class="detail-banner"
+        style={{ backgroundImage: artwork(title.backdrop, 'w1280') ? `url("${artwork(title.backdrop, 'w1280')}")` : undefined }}
+      ></div>
+      <div class="detail-layout">
+        <aside class="detail-sidebar">
+          {artwork(title.poster) ? (
+            <img class="detail-poster" src={artwork(title.poster)} alt={`${title.title} poster`} />
+          ) : <div class="detail-poster detail-poster-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</div>}
+          {Astro.locals.user && (
+            <StatusControl mediaId={title.id} status={title.entry?.status} type={title.type} />
+          )}
+
+          <dl class="detail-facts">
+            <dt>Format</dt><dd>{title.type === 'series' ? 'TV series' : 'Movie'}</dd>
+            <dt>Released</dt><dd>{dateLabel(title.release_date) || title.year || 'Unknown'}</dd>
+            <dt>Release status</dt><dd>{title.release_status || 'Unknown'}</dd>
+            {title.type === 'movie' && title.runtime && <><dt>Runtime</dt><dd>{runtimeLabel(title.runtime)}</dd></>}
+            {title.type === 'series' && title.episode_runtime && <><dt>Episode runtime</dt><dd>{runtimeLabel(title.episode_runtime, 'per episode')}</dd></>}
+            {title.type === 'series' && title.season_count && <><dt>Seasons</dt><dd>{title.season_count}</dd></>}
+            {title.type === 'series' && title.episode_count && <><dt>Episodes</dt><dd>{title.episode_count}</dd></>}
+            {title.original_language && <><dt>Original language</dt><dd>{String(title.original_language).toUpperCase()}</dd></>}
+            {names(title.networks).length > 0 && <><dt>Networks</dt><dd>{names(title.networks).join(', ')}</dd></>}
+            {names(title.studios).length > 0 && <><dt>Studios</dt><dd>{names(title.studios).join(', ')}</dd></>}
+            {names(title.creators).length > 0 && <><dt>Created by</dt><dd>{names(title.creators).join(', ')}</dd></>}
+            <dt>Genres</dt><dd>{title.genres.join(', ') || '—'}</dd>
+          </dl>
+
+          <nav class="external-links" aria-label="External title links">
+            {title.tmdb_id && <a href={`https://www.themoviedb.org/${title.type === 'series' ? 'tv' : 'movie'}/${title.tmdb_id}`} target="_blank" rel="noreferrer">TMDB <span aria-hidden="true">↗</span></a>}
+            {title.imdb_id && <a href={`https://www.imdb.com/title/${title.imdb_id}/`} target="_blank" rel="noreferrer">IMDb <span aria-hidden="true">↗</span></a>}
+          </nav>
+        </aside>
+
+        <div class="detail-body">
+          <div class="detail-heading">
+            <p class="detail-kicker">
+              <span>{title.type === 'series' ? 'Series' : 'Movie'}</span>
+              {title.year && <span>{title.year}</span>}
+              {title.release_status && <span>{title.release_status}</span>}
+            </p>
+            <h1>{title.title}</h1>
+            {title.original_title && title.original_title !== title.title && <p class="original-title">{title.original_title}</p>}
+            {title.tagline && <p class="detail-tagline">“{title.tagline}”</p>}
+          </div>
+
+          <section class="score-overview" aria-label="Ratings">
+            <div><span>Community</span><strong>{scoreLabel(title.community_average)}</strong><small>{title.community_count ? `${title.community_count} public rating${title.community_count === 1 ? '' : 's'}` : 'No public ratings'}</small></div>
+            <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
+            <div><span>TMDB</span><strong>{scoreLabel(title.tmdb_score)}</strong><small>Provider score</small></div>
+            <div><span>Your score</span><strong>{scoreLabel(title.entry?.score ?? null)}</strong><small>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></div>
+          </section>
+
+          <section class="detail-section synopsis-section">
+            <h2>Overview</h2>
+            <p>{title.overview || 'No synopsis available yet.'}</p>
+            {title.genres.length > 0 && <div class="genre-pills">{title.genres.map((genre: string) => <span>{genre}</span>)}</div>}
+          </section>
+
+          <section class="detail-section following-section">
+            <div class="detail-section-heading">
+              <div><span class="eyebrow">Social</span><h2>People you follow</h2></div>
+              <strong>{scoreLabel(title.friends_average)}</strong>
+            </div>
+            {title.friends.length ? (
+              <div class="following-scores">
+                {title.friends.map((friend: any) => (
+                  <a class="social-score" href={`/user/${encodeURIComponent(friend.username)}/${title.type === 'movie' ? 'movies' : 'series'}`}>
+                    <span class="social-avatar" aria-hidden="true">{friend.username.slice(0, 1).toUpperCase()}</span>
+                    <span><strong>{friend.username}</strong><small>{friend.status}</small></span>
+                    <b>{scoreLabel(friend.score)}</b>
+                  </a>
+                ))}
+              </div>
+            ) : <p class="section-empty">No ratings from people you follow yet.</p>}
+          </section>
+
+          {title.type === 'series' && (
+            <section class="detail-section seasons-section">
+              <div class="detail-section-heading">
+                <div><span class="eyebrow">Episode history</span><h2>Seasons</h2></div>
+                {Astro.locals.user && <button class="button-secondary" id="refresh-episodes" data-media={title.id}>Refresh episode metadata</button>}
+              </div>
+              {title.seasons.length ? title.seasons.map((season: any) => (
+                <article class="season-card">
+                  {artwork(season.poster_path, 'w185') ? (
+                    <img src={artwork(season.poster_path, 'w185')} alt="" />
+                  ) : <div class="season-poster-placeholder" aria-hidden="true">S{season.season_number}</div>}
+                  <div class="season-copy">
+                    <h3>{season.name || `Season ${season.season_number}`}</h3>
+                    <p class="season-meta">{season.episode_count} episodes {season.air_date && ` · ${season.air_date.slice(0, 4)}`}</p>
+                    {season.overview && <p class="season-overview">{season.overview}</p>}
+                    {Astro.locals.user && season.season_number > 0 && (
+                      <div class="season-progress">
+                        <small>{season.released_count === null ? 'Refresh to load episode progress' : `${season.watched_count} / ${season.released_count} released watched`}</small>
+                        <div>
+                          <button class="button-secondary" data-season-progress={season.season_number} data-watched="true" data-media={title.id} disabled={!season.released_count}>Mark watched</button>
+                          <button class="button-secondary" data-season-progress={season.season_number} data-watched="false" data-media={title.id} disabled={!season.watched_count}>Mark unwatched</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {Astro.locals.user && (
+                    <label class="season-score">Season score
+                      <span><input type="number" step="0.5" min="0" max="10" placeholder="—" value={title.entry?.season_scores?.[String(season.season_number)] ?? ''} data-season={season.season_number} aria-label={`Season ${season.season_number} score`} /><button class="button-secondary" data-save-season={season.season_number} data-media={title.id} data-has-seasons={Object.values(title.entry?.season_scores || {}).some(Boolean) ? 'yes' : 'no'}>Save</button></span>
+                    </label>
+                  )}
+                </article>
+              )) : <p class="section-empty">Season metadata has not been loaded yet.</p>}
+            </section>
+          )}
+          <p id="season-message" role="status"></p>
+        </div>
+      </div>
+      <TrackingEditor />
+      <dialog class="editor" id="season-mode">
+        <div class="editor-header"><h2>How should your show score work?</h2></div>
+        <form method="dialog" class="season-mode-form">
+          <p>Season scores stay independent. Other seasons won't be rated automatically.</p>
+          <div class="season-mode-actions"><button class="button-primary" value="average">Average my rated seasons</button><button class="button-secondary" value="manual">Keep a separate show rating</button><button class="button-secondary" value="cancel">Cancel</button></div>
+        </form>
+      </dialog>
+    </>
+  ) : <div class="page-width"><p class="error-message">{error}</p></div>}
+</Tracker>
+
 <script>
 document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async(event)=>{
  const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes…';
@@ -51,7 +188,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-save-season]').forEach(butto
   body.rating_mode=mode;
  }
  button.disabled=true;
- try{const res=await fetch(`/api/proxy/tracking/entry/${button.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json();throw new Error(typeof e.detail==='string'?e.detail:'Unable to save score.');}location.reload();}
+ try{const res=await fetch(`/api/proxy/tracking/entry/${button.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const responseError=await res.json();throw new Error(typeof responseError.detail==='string'?responseError.detail:'Unable to save score.');}location.reload();}
  catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;}
 }));
 </script>

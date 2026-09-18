@@ -236,6 +236,17 @@ async def enrich_media(
             media.tmdb_data = {
                 "runtime": data.get("runtime"),
                 "genres": [g["name"] for g in data.get("genres", [])],
+                "original_language": data.get("original_language"),
+                "production_companies": [
+                    {
+                        "id": company.get("id"),
+                        "name": company.get("name"),
+                        "origin_country": company.get("origin_country"),
+                        "logo_path": tmdb.poster_url(company.get("logo_path"), size="w185"),
+                    }
+                    for company in data.get("production_companies", [])
+                    if company.get("name")
+                ],
                 "external_ids": data.get("external_ids", {}),
                 "cast": [
                     {"name": c["name"], "character": c.get("character", ""), "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
@@ -269,6 +280,36 @@ async def enrich_media(
             }
             media.tmdb_data = {
                 "genres": [g["name"] for g in data.get("genres", [])],
+                "original_language": data.get("original_language"),
+                "networks": [
+                    {
+                        "id": network.get("id"),
+                        "name": network.get("name"),
+                        "origin_country": network.get("origin_country"),
+                        "logo_path": tmdb.poster_url(network.get("logo_path"), size="w185"),
+                    }
+                    for network in data.get("networks", [])
+                    if network.get("name")
+                ],
+                "production_companies": [
+                    {
+                        "id": company.get("id"),
+                        "name": company.get("name"),
+                        "origin_country": company.get("origin_country"),
+                        "logo_path": tmdb.poster_url(company.get("logo_path"), size="w185"),
+                    }
+                    for company in data.get("production_companies", [])
+                    if company.get("name")
+                ],
+                "created_by": [
+                    {"id": creator.get("id"), "name": creator.get("name")}
+                    for creator in data.get("created_by", [])
+                    if creator.get("name")
+                ],
+                "episode_run_time": data.get("episode_run_time", []),
+                "number_of_seasons": data.get("number_of_seasons"),
+                "number_of_episodes": data.get("number_of_episodes"),
+                "last_air_date": data.get("last_air_date"),
                 "cast": [
                     {"name": c["name"], "character": c.get("character", ""), "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
                     for c in data.get("credits", {}).get("cast", [])[:10]

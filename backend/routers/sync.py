@@ -433,6 +433,35 @@ async def sync_shows_batch(
                     "genres": [g["name"] for g in d.get("genres", [])],
                     "external_ids": d.get("external_ids", {}),
                     "original_language": d.get("original_language"),
+                    "networks": [
+                        {
+                            "id": n.get("id"),
+                            "name": n.get("name"),
+                            "origin_country": n.get("origin_country"),
+                            "logo_path": tmdb.poster_url(n.get("logo_path"), size="w185"),
+                        }
+                        for n in d.get("networks", [])
+                        if n.get("name")
+                    ],
+                    "production_companies": [
+                        {
+                            "id": company.get("id"),
+                            "name": company.get("name"),
+                            "origin_country": company.get("origin_country"),
+                            "logo_path": tmdb.poster_url(company.get("logo_path"), size="w185"),
+                        }
+                        for company in d.get("production_companies", [])
+                        if company.get("name")
+                    ],
+                    "created_by": [
+                        {"id": creator.get("id"), "name": creator.get("name")}
+                        for creator in d.get("created_by", [])
+                        if creator.get("name")
+                    ],
+                    "episode_run_time": d.get("episode_run_time", []),
+                    "number_of_seasons": d.get("number_of_seasons"),
+                    "number_of_episodes": d.get("number_of_episodes"),
+                    "last_air_date": d.get("last_air_date"),
                     "seasons": [
                         {
                             "season_number": s["season_number"],
