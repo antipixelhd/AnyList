@@ -1,0 +1,57 @@
+---
+import {statuses} from '../lib/tracker';
+const {mediaId,status,type}=Astro.props;
+---
+<div class="status-control" data-status-control data-media={mediaId}>
+  <div class="status-split"><button class="button-primary" data-edit-entry={mediaId}>{statuses.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" aria-label="Quick status actions" aria-expanded="false" aria-controls="quick-status-options">⌄</button></div>
+  <div class="status-options" id="quick-status-options" hidden>
+    <button data-quick-status="completed">Set as Completed</button>
+    <button data-quick-status="watching">Set as Watching</button>
+    <button data-quick-status="planning">Set as Planning</button>
+    <button data-edit-entry={mediaId}>Open List Editor</button>
+  </div>
+  <p class="status-error" role="alert" hidden></p>
+  <dialog class="editor completion-choice" aria-labelledby="completion-heading">
+    <div class="editor-header"><h2 id="completion-heading">Mark as Completed</h2></div>
+    <form method="dialog"><p>Update this title's status to Completed.</p>{type==='series'&&<label class="checkbox"><input name="mark-watched" type="checkbox" checked/>Mark all released episodes watched</label>}<p class="hint">{type==='series'?'Unreleased episodes remain unwatched. Turn this off to change only the status.':'Your existing rating and notes will be preserved.'}</p><div class="editor-actions"><button class="button-secondary" value="cancel">Cancel</button><button class="button-primary" value="complete">Complete</button></div></form>
+  </dialog>
+</div>
+<script>
+document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=>{
+  const arrow=control.querySelector<HTMLButtonElement>('.status-arrow')!;
+  const options=control.querySelector<HTMLElement>('.status-options')!;
+  const error=control.querySelector<HTMLElement>('.status-error')!;
+  const dialog=control.querySelector<HTMLDialogElement>('dialog')!;
+  const close=()=>{options.hidden=true;arrow.setAttribute('aria-expanded','false');};
+  arrow.addEventListener('click',()=>{options.hidden=!options.hidden;arrow.setAttribute('aria-expanded',String(!options.hidden));});
+  arrow.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();options.hidden=false;arrow.setAttribute('aria-expanded','true');options.querySelector('button')?.focus();}});
+  control.addEventListener('keydown',event=>{if(event.key==='Escape'&&!dialog.open){close();arrow.focus();}});
+  control.addEventListener('focusout',event=>{if(!control.contains(event.relatedTarget as Node))close();});
+  document.addEventListener('click',event=>{if(!control.contains(event.target as Node))close();});
+  options.querySelector('[data-edit-entry]')?.addEventListener('click',close);
+  options.querySelectorAll<HTMLButtonElement>('[data-quick-status]').forEach(button=>button.addEventListener('click',async()=>{
+    close();error.hidden=true;
+    const status=button.dataset.quickStatus;
+    let markReleased=false;
+    if(status==='completed'){
+      dialog.returnValue='cancel';
+      const checkbox=dialog.querySelector<HTMLInputElement>('[name=mark-watched]');
+      if(checkbox)checkbox.checked=true;
+      dialog.showModal();
+      const result=await new Promise<string>(resolve=>dialog.addEventListener('close',()=>resolve(dialog.returnValue),{once:true}));
+      if(result!=='complete'){arrow.focus();return;}
+      markReleased=!!checkbox?.checked;
+    }
+    const buttons=control.querySelectorAll<HTMLButtonElement>('.status-split button,.status-options button');
+    buttons.forEach(b=>b.disabled=true);
+    try{
+      const response=await fetch(`/api/proxy/tracking/entry/${control.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status,mark_released_watched:markReleased})});
+      if(!response.ok){const body=await response.json();throw new Error(typeof body.detail==='string'?body.detail:'Could not update this title.');}
+      location.reload();
+    }catch(e){error.textContent=(e as Error).message;error.hidden=false;buttons.forEach(b=>b.disabled=false);arrow.focus();}
+  }));
+});
+</script>
+<style>
+.status-control{position:relative;margin-top:18px}.status-split{display:flex}.status-split .button-primary{margin:0;width:auto;min-height:44px}.status-split>button:first-child{flex:1;border-radius:4px 0 0 4px;padding:10px 8px}.status-split .status-arrow{width:40px;flex:none;border-radius:0 4px 4px 0;border-left:1px solid #ffffff40;padding:8px}.status-options{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:210px;background:var(--panel);border:1px solid var(--border);border-radius:5px;box-shadow:0 8px 24px #0005;padding:6px;animation:reveal .14s ease-out}.status-options button{display:block;width:100%;text-align:left;border:0;background:none;color:var(--text);padding:10px;border-radius:3px;font-size:13px;min-height:42px}.status-options button:hover,.status-options button:focus-visible{background:#20364b;color:var(--blue)}.status-options button:last-child{border-top:1px solid var(--border);margin-top:5px}.completion-choice{max-width:510px}.status-error{font-size:13px;color:#efb4c6}@keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.status-options{animation:none}}
+</style>

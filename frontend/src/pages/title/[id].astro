@@ -1,5 +1,6 @@
 ---
 import Tracker from '../../layouts/Tracker.astro';
+import StatusControl from '../../components/StatusControl.astro';
 import TrackingEditor from '../../components/TrackingEditor.astro';
 import {tracker,artwork,scoreLabel,statuses} from '../../lib/tracker';
 let title:any=null,error='';
@@ -7,7 +8,7 @@ try{title=await tracker(`title/${Astro.params.id}`,Astro.locals.token);}catch(e)
 ---
 <Tracker title={title?.title||'Title'}>{title?<>
 <div class="detail-banner" style={{backgroundImage:artwork(title.backdrop,'w1280')?`url("${artwork(title.backdrop,'w1280')}")`:undefined}}></div>
-<div class="detail-layout"><aside class="detail-sidebar">{artwork(title.poster)&&<img class="detail-poster" src={artwork(title.poster)} alt=""/>}{Astro.locals.user&&<button class="button-primary" data-edit-entry={title.id}>{title.entry?statuses.find(([s])=>s===title.entry.status)?.[1]:'Add to list'}</button>}
+<div class="detail-layout"><aside class="detail-sidebar">{artwork(title.poster)&&<img class="detail-poster" src={artwork(title.poster)} alt=""/>}{Astro.locals.user&&<StatusControl mediaId={title.id} status={title.entry?.status} type={title.type}/>}
 <dl class="detail-facts"><dt>Format</dt><dd>{title.type==='series'?'TV series':'Movie'}</dd><dt>Released</dt><dd>{title.year||'Unknown'}</dd><dt>Release status</dt><dd>{title.release_status||'Unknown'}</dd><dt>Genres</dt><dd>{title.genres.join(', ')||'—'}</dd><dt>Your score</dt><dd>{scoreLabel(title.entry?.score??null)}</dd></dl></aside>
 <div class="detail-body"><h1>{title.title}</h1><p>{title.overview||'No synopsis available yet.'}</p>
 <h2 style="font-size:18px;margin-top:36px">Following <span style="color:var(--blue)">{scoreLabel(title.friends_average)}</span></h2>{title.friends.length?title.friends.map((f:any)=><div class="social-score"><a href={`/user/${encodeURIComponent(f.username)}/${title.type==='movie'?'movies':'series'}`}>{f.username}</a><span>{scoreLabel(f.score)}</span></div>):<p>No ratings from people you follow yet.</p>}
@@ -17,7 +18,7 @@ try{title=await tracker(`title/${Astro.params.id}`,Astro.locals.token);}catch(e)
 </>:<div class="page-width"><p class="error-message">{error}</p></div>}</Tracker>
 <script>
 document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async(event)=>{
- const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes�';
+ const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes…';
  try{const res=await fetch(`/api/proxy/tracking/title/${button.dataset.media}/refresh-episodes`,{method:'POST'});if(!res.ok){const data=await res.json();throw new Error(data.detail||'Unable to refresh episodes');}location.reload();}
  catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;button.textContent='Refresh episode metadata';}
 });
