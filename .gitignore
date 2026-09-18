@@ -41,6 +41,10 @@ env/
 .python-version
 .pytest_cache/
 .ruff_cache/
+.pip-cache/
+.uv-cache/
+.npm-cache/
+**/.npm-cache/
 *.log
 backend/backend.pid
 backend/uvicorn.log

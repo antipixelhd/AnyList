@@ -1,0 +1,18 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: media_tracker
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: media_tracker
+    ports:
+      - "127.0.0.1:55438:5432"
+    volumes:
+      - media-tracker-local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media_tracker -d media_tracker"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  media-tracker-local:
