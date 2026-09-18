@@ -465,8 +465,10 @@ def _apply_imported_rating(
     rated_at = _trakt_rated_at(item.get("rated_at"))
     key = (media.id, season_number)
     current = existing.get(key)
-    if current and current.rating == rating_value:
-        current.rated_at = rated_at
+    from core.rating_projection import is_projected_echo
+    if current and (current.rating == rating_value or is_projected_echo(current.rating, rating_value)):
+        # A provider echo of a converted half-step must not erase local
+        # precision or advance its timestamp over the original edit.
         return False
     if current:
         current.rating = rating_value
@@ -1920,7 +1922,8 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                     media = media_by_id.get(media_id)
                     if not media or not media.tmdb_id:
                         continue
-                    rounded = max(1, min(10, round(rating)))
+                    from core.rating_projection import integer_provider_score
+                    rounded = integer_provider_score(rating)
                     if season_number is not None:
                         season_tmdb_id = season_tmdb_ids.get(key)
                         if not season_tmdb_id:

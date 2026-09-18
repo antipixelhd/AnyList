@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+from core.rating_projection import integer_provider_score
 
 logger = logging.getLogger(__name__)
 
@@ -395,17 +396,17 @@ async def set_ratings_batch(
     body: dict = {}
     if movie_ratings:
         body["movies"] = [
-            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            {"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}
             for tmdb_id, rating in movie_ratings
         ]
     if show_ratings:
         body["shows"] = [
-            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            {"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}
             for tmdb_id, rating in show_ratings
         ]
     if season_ratings:
         body["seasons"] = [
-            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            {"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}
             for tmdb_id, rating in season_ratings
         ]
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
@@ -528,7 +529,7 @@ async def set_movie_rating(
     client_id: str, access_token: str, tmdb_id: int, rating: float
 ) -> None:
     """Rate a movie on Trakt (1–10 scale)."""
-    trakt_rating = max(1, min(10, round(rating)))
+    trakt_rating = integer_provider_score(rating)
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{TRAKT_BASE}/sync/ratings",
@@ -673,7 +674,7 @@ async def set_show_rating(
     client_id: str, access_token: str, tmdb_id: int, rating: float
 ) -> None:
     """Rate a show on Trakt."""
-    trakt_rating = max(1, min(10, round(rating)))
+    trakt_rating = integer_provider_score(rating)
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{TRAKT_BASE}/sync/ratings",
@@ -689,7 +690,7 @@ async def set_season_rating(
     rating: float,
 ) -> None:
     """Rate a season on Trakt using its TMDB season identifier."""
-    trakt_rating = max(1, min(10, round(rating)))
+    trakt_rating = integer_provider_score(rating)
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{TRAKT_BASE}/sync/ratings",

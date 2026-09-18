@@ -564,8 +564,8 @@ async def _import_ratings(
                     key = (media.id, season_number)
                     current = existing.get(key)
                     rated_at = _utc_naive(entry.get("rated_at"))
-                    if current and current.rating == rating:
-                        current.rated_at = rated_at
+                    from core.rating_projection import is_projected_echo
+                    if current and (current.rating == rating or is_projected_echo(current.rating, rating)):
                         stats["skipped"] += 1
                         continue
                     if current:

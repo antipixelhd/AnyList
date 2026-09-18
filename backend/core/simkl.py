@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+from core.rating_projection import integer_provider_score
 
 from core.config import settings as app_settings
 
@@ -353,7 +354,7 @@ async def set_movie_rating(client_id: str, access_token: str, tmdb_id: int, rati
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{SIMKL_BASE}/sync/ratings",
-            json={"movies": [{"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}]},
+            json={"movies": [{"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
@@ -375,7 +376,7 @@ async def set_show_rating(client_id: str, access_token: str, tmdb_id: int, ratin
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         resp = await client.post(
             f"{SIMKL_BASE}/sync/ratings",
-            json={"shows": [{"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}]},
+            json={"shows": [{"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
         resp.raise_for_status()
@@ -393,12 +394,12 @@ async def set_ratings_batch(
     body: dict = {}
     if movie_ratings:
         body["movies"] = [
-            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            {"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}
             for tmdb_id, rating in movie_ratings
         ]
     if show_ratings:
         body["shows"] = [
-            {"rating": max(1, min(10, round(rating))), "ids": {"tmdb": tmdb_id}}
+            {"rating": integer_provider_score(rating), "ids": {"tmdb": tmdb_id}}
             for tmdb_id, rating in show_ratings
         ]
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
