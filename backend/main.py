@@ -298,6 +298,50 @@ async def _manual_session_completer():
             print(f"Manual session completer error: {e}")
 
 
+async def _dispatch_pending_stream_actions_once(session_factory=None):
+    """Retry durable streaming writes independently of provider pull schedules."""
+    from db import async_sessionmaker
+    from models.tracking import StreamAction
+    from core.stream_actions import dispatch_stream_actions
+
+    factory = session_factory or async_sessionmaker(
+        engine,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    )
+    async with factory() as db:
+        result = await db.execute(
+            select(StreamAction.user_id)
+            .where(StreamAction.state == "pending")
+            .distinct()
+            .order_by(StreamAction.user_id)
+        )
+        user_ids = list(result.scalars().all())
+
+    # Use one transaction per user. dispatch_stream_actions locks the user and
+    # each pending row, so multiple app processes remain idempotent.
+    for user_id in user_ids:
+        try:
+            async with factory() as db:
+                await dispatch_stream_actions(db, user_id)
+        except Exception as error:
+            # One unavailable connection must not prevent another user's writes
+            # from being retried on this tick. Remote error bodies are not logged.
+            print(
+                f"Stream action retry failed for user {user_id}: "
+                f"{type(error).__name__}"
+            )
+
+
+async def _stream_action_retry_scheduler():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await _dispatch_pending_stream_actions_once()
+        except Exception as error:
+            print(f"Stream action retry scheduler error: {type(error).__name__}")
+
+
 async def _emby_progress_poller():
     """Emby's webhook system has no progress event (only start/pause/unpause/
     stop), so a PlaybackSession opened by an Emby webhook freezes at the last
@@ -667,6 +711,7 @@ async def lifespan(app: FastAPI):
         await db.commit()
 
     scheduler_task = asyncio.create_task(_auto_sync_scheduler())
+    stream_action_task = asyncio.create_task(_stream_action_retry_scheduler())
     watchlist_task = asyncio.create_task(_watchlist_poller())
     manual_session_task = asyncio.create_task(_manual_session_completer())
     emby_progress_task = asyncio.create_task(_emby_progress_poller())
@@ -675,12 +720,17 @@ async def lifespan(app: FastAPI):
     yield
 
     scheduler_task.cancel()
+    stream_action_task.cancel()
     watchlist_task.cancel()
     manual_session_task.cancel()
     emby_progress_task.cancel()
     show_metadata_task.cancel()
     try:
         await scheduler_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await stream_action_task
     except asyncio.CancelledError:
         pass
     try:
