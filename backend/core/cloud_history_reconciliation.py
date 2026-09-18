@@ -1,0 +1,186 @@
+"""Apply newly imported cloud watch events to existing tracked entries safely."""
+from datetime import date, datetime, timezone
+
+from sqlalchemy import select
+
+from core.tracking_rules import effective_score
+from models import Media, Show, WatchEvent
+from models.base import MediaType
+from models.tracking import CloudBaseline, SyncReview, TrackedEntry, TrackingActivity
+
+
+def _naive_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status):
+    pending = (await db.execute(select(SyncReview).where(
+        SyncReview.user_id == user_id,
+        SyncReview.provider == provider,
+        SyncReview.media_id == entry.media_id,
+        SyncReview.kind == "cloud_conflict",
+        SyncReview.state == "pending",
+    ).limit(1))).scalar_one_or_none()
+    if pending is None:
+        label = {"trakt": "Trakt", "simkl": "Simkl", "mdblist": "MDBList"}.get(provider, provider)
+        db.add(SyncReview(
+            user_id=user_id,
+            media_id=entry.media_id,
+            provider=provider,
+            kind="cloud_conflict",
+            previous_status=entry.status,
+            proposed_status=proposed_status,
+            message=(
+                f"{label}: new watch history suggests {proposed_status}, "
+                "but its time cannot be ordered against your local edit. Your local status was kept."
+            ),
+        ))
+
+
+async def reconcile_cloud_watch_events(
+    db,
+    *,
+    user_id: int,
+    provider: str,
+    new_media_ids: set[int],
+) -> dict[str, int]:
+    stats = {"applied": 0, "conflicts": 0, "preserved": 0}
+    if not new_media_ids:
+        return stats
+    initial_import = (await db.execute(select(CloudBaseline.id).where(
+        CloudBaseline.user_id == user_id,
+        CloudBaseline.provider == provider,
+    ))).first() is None
+    rows = (await db.execute(
+        select(WatchEvent, Media)
+        .join(Media, Media.id == WatchEvent.media_id)
+        .where(WatchEvent.user_id == user_id, Media.id.in_(new_media_ids))
+    )).all()
+
+    roots: dict[int, dict] = {}
+    show_ids = {media.show_id for _, media in rows if media.media_type == MediaType.episode and media.show_id}
+    shows = {show.id: show for show in (await db.execute(
+        select(Show).where(Show.id.in_(show_ids))
+    )).scalars()} if show_ids else {}
+    series = (await db.execute(select(Media).where(Media.media_type == MediaType.series))).scalars().all()
+    series_by_tmdb = {media.tmdb_id: media for media in series if media.tmdb_id}
+    series_by_tvdb = {media.tvdb_id: media for media in series if media.tvdb_id}
+
+    for event, media in rows:
+        root = media
+        if media.media_type == MediaType.episode:
+            show = shows.get(media.show_id)
+            root = (series_by_tmdb.get(show.tmdb_id) or series_by_tvdb.get(show.tvdb_id)) if show else None
+        if root is None:
+            continue
+        item = roots.setdefault(root.id, {"media": root, "events": []})
+        item["events"].append((event, media))
+
+    for root_id, item in roots.items():
+        entry = (await db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == user_id,
+            TrackedEntry.media_id == root_id,
+        ))).scalar_one_or_none()
+        if entry is None:
+            continue
+        latest_at = max(
+            (_naive_utc(event.watched_at) for event, _ in item["events"] if event.watched_at),
+            default=None,
+        )
+        local_at = _naive_utc(entry.updated_at)
+        media = item["media"]
+        proposed_status = "completed" if media.media_type == MediaType.movie else "watching"
+        released = []
+        watched_ids: set[int] = set()
+        inferred_previous = []
+        if media.media_type == MediaType.series:
+            show = next((shows.get(child.show_id) for _, child in item["events"] if child.show_id), None)
+            if show:
+                released = (await db.execute(select(Media).where(
+                    Media.show_id == show.id,
+                    Media.media_type == MediaType.episode,
+                    Media.season_number > 0,
+                    Media.release_date.is_not(None),
+                    Media.release_date <= date.today().isoformat(),
+                ).order_by(Media.season_number, Media.episode_number))).scalars().all()
+                watched_ids = set((await db.execute(select(WatchEvent.media_id).where(
+                    WatchEvent.user_id == user_id,
+                    WatchEvent.media_id.in_([episode.id for episode in released]),
+                    WatchEvent.completed.is_(True),
+                ))).scalars()) if released else set()
+                last = max((index for index, episode in enumerate(released) if episode.id in watched_ids), default=-1)
+                inferred_previous = [
+                    episode for episode in released[:last + 1]
+                    if episode.id not in watched_ids
+                ]
+                proposed_progress = len(watched_ids) + len(inferred_previous)
+                complete = bool(
+                    (media.tmdb_data or {}).get("tracking_catalogue_refreshed_at")
+                    and released
+                    and proposed_progress == len(released)
+                )
+                proposed_status = "completed" if complete else "watching"
+
+        if entry.status == "completed":
+            # First release never reopens a completed title merely because it
+            # was watched again or gained later episodes.
+            for episode in inferred_previous:
+                db.add(WatchEvent(
+                    user_id=user_id,
+                    media_id=episode.id,
+                    completed=True,
+                    provisional=True,
+                    watched_at=None,
+                ))
+            if released:
+                entry.progress = len(watched_ids) + len(inferred_previous)
+            stats["preserved"] += 1
+            continue
+        reliably_newer = bool(latest_at and local_at and latest_at > local_at)
+        reliably_older = bool(latest_at and local_at and latest_at < local_at)
+        if not initial_import and not reliably_newer:
+            if reliably_older:
+                stats["preserved"] += 1
+            else:
+                await _add_status_conflict(
+                    db,
+                    user_id=user_id,
+                    provider=provider,
+                    entry=entry,
+                    proposed_status=proposed_status,
+                )
+                stats["conflicts"] += 1
+            continue
+
+        changed = entry.status != proposed_status
+        for episode in inferred_previous:
+            db.add(WatchEvent(
+                user_id=user_id,
+                media_id=episode.id,
+                completed=True,
+                provisional=True,
+                watched_at=None,
+            ))
+        if released:
+            entry.progress = len(watched_ids) + len(inferred_previous)
+        entry.status = proposed_status
+        if latest_at:
+            watched_date = latest_at.date()
+            if proposed_status == "watching" and entry.start_date is None:
+                entry.start_date = watched_date
+            if proposed_status == "completed" and entry.finish_date is None:
+                entry.finish_date = watched_date
+        if changed and not initial_import:
+            db.add(TrackingActivity(
+                user_id=user_id,
+                media_id=root_id,
+                status=entry.status,
+                score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+            ))
+        stats["applied"] += 1
+    await db.commit()
+    return stats

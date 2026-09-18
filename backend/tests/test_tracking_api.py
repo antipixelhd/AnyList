@@ -342,6 +342,81 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'failed': 0,
         })
 
+    async def test_newer_cloud_watch_completion_updates_existing_entry(self):
+        from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+
+        await self.save(self.movie, status='planning')
+        self.db.add(CloudBaseline(
+            user_id=self.owner.id,
+            provider='trakt',
+            approved=True,
+            snapshot={},
+        ))
+        watched_at = datetime.now() + timedelta(days=1)
+        self.db.add(WatchEvent(
+            user_id=self.owner.id,
+            media_id=self.movie.id,
+            completed=True,
+            watched_at=watched_at,
+        ))
+        await self.db.commit()
+
+        stats = await reconcile_cloud_watch_events(
+            self.db,
+            user_id=self.owner.id,
+            provider='trakt',
+            new_media_ids={self.movie.id},
+        )
+
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(stats['applied'], 1)
+        self.assertEqual(entry.status, 'completed')
+        self.assertEqual(entry.finish_date, watched_at.date())
+
+    async def test_unordered_cloud_watch_preserves_local_status_and_creates_conflict(self):
+        from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+        from core.cloud_reconciliation import cloud_push_is_approved
+
+        await self.save(self.movie, status='dropped')
+        self.db.add(CloudBaseline(
+            user_id=self.owner.id,
+            provider='simkl',
+            approved=True,
+            snapshot={},
+        ))
+        self.db.add(WatchEvent(
+            user_id=self.owner.id,
+            media_id=self.movie.id,
+            completed=True,
+            watched_at=None,
+        ))
+        await self.db.commit()
+
+        stats = await reconcile_cloud_watch_events(
+            self.db,
+            user_id=self.owner.id,
+            provider='simkl',
+            new_media_ids={self.movie.id},
+        )
+
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        review = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.provider == 'simkl',
+            SyncReview.kind == 'cloud_conflict',
+        ))).scalar_one()
+        self.assertEqual(stats['conflicts'], 1)
+        self.assertEqual(entry.status, 'dropped')
+        self.assertEqual(review.previous_status, 'dropped')
+        self.assertEqual(review.proposed_status, 'completed')
+        self.assertFalse(await cloud_push_is_approved(self.db, self.owner.id, 'simkl'))
+
     async def test_title_community_average_excludes_private_profiles(self):
         await self.save(self.movie, status='completed', manual_score=8)
         self.db.add(TrackedEntry(

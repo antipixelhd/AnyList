@@ -1356,6 +1356,12 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             # other connections; users push explicitly per-service (the "Push" buttons).
             from core.tracking_import import import_tracking_history
             stats["tracked_entries"] = await import_tracking_history(db, user_id)
+            from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+            history_reconciliation = await reconcile_cloud_watch_events(
+                db, user_id=user_id, provider="trakt", new_media_ids=_new_watched
+            )
+            stats["tracking_updates"] = history_reconciliation["applied"]
+            stats["tracking_conflicts"] = history_reconciliation["conflicts"]
             from core.cloud_reconciliation import record_cloud_import
             await record_cloud_import(db, user_id, "trakt", stats)
             await db.execute(
