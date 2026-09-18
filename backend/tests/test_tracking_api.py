@@ -17,8 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from db import get_db
 from dependencies import get_current_user, get_optional_user
-from models import User, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, Rating, Show, MediaServerConnection
-from models.base import MediaType, PrivacyLevel
+from models import User, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
+from models.base import CollectionSource, MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity
 from routers.tracking import router
 
@@ -142,6 +142,145 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res = await self.client.get(f'/tracking/title/{self.movie.id}')
         self.assertEqual(res.json()['community_average'], 9)
         self.assertEqual(res.json()['community_count'], 2)
+
+    async def test_stream_library_removal_is_scoped_to_the_observed_connection(self):
+        from routers.sync import _remove_stream_collection_sources
+
+        nuvio_connection = MediaServerConnection(
+            user_id=self.owner.id,
+            type='nuvio',
+            name='Nuvio source',
+            url='https://nuvio.invalid',
+            token='nuvio-test-token',
+            server_user_id='1',
+        )
+        stremio_connection = MediaServerConnection(
+            user_id=self.owner.id,
+            type='stremio',
+            name='Stremio source',
+            url='https://api.strem.io',
+            token='stremio-test-token',
+        )
+        self.db.add_all([nuvio_connection, stremio_connection])
+        await self.db.flush()
+        collection = Collection(user_id=self.owner.id, media_id=self.movie.id)
+        self.db.add(collection)
+        await self.db.flush()
+        self.db.add_all([
+            CollectionFile(
+                collection_id=collection.id,
+                connection_id=nuvio_connection.id,
+                source=CollectionSource.nuvio,
+                source_id='1:tt-fixture',
+            ),
+            CollectionFile(
+                collection_id=collection.id,
+                connection_id=stremio_connection.id,
+                source=CollectionSource.stremio,
+                source_id=f'{stremio_connection.id}:tt-fixture',
+            ),
+        ])
+        await self.db.commit()
+
+        removed = await _remove_stream_collection_sources(
+            self.db,
+            self.owner.id,
+            nuvio_connection.id,
+            source=CollectionSource.nuvio,
+            removed_ids=set(),
+            complete_snapshot_source_ids=set(),
+        )
+        await self.db.flush()
+        self.assertEqual(removed, set())
+        self.assertIsNotNone(await self.db.get(Collection, collection.id))
+        files = (await self.db.execute(
+            select(CollectionFile).where(CollectionFile.collection_id == collection.id)
+        )).scalars().all()
+        self.assertEqual([row.source for row in files], [CollectionSource.stremio])
+
+        removed = await _remove_stream_collection_sources(
+            self.db,
+            self.owner.id,
+            stremio_connection.id,
+            source=CollectionSource.stremio,
+            removed_ids=set(),
+            complete_snapshot_source_ids=set(),
+        )
+        await self.db.flush()
+        self.assertEqual(removed, {self.movie.id})
+        self.assertIsNone(await self.db.get(Collection, collection.id))
+
+    async def test_stream_library_fanout_requires_approved_source_and_target(self):
+        from routers.sync import _fan_out_streaming_library_changes
+
+        source = MediaServerConnection(
+            user_id=self.owner.id,
+            type='nuvio',
+            name='Nuvio source',
+            url='https://nuvio.invalid',
+            token='source-token',
+            server_user_id='1',
+        )
+        target = MediaServerConnection(
+            user_id=self.owner.id,
+            type='stremio',
+            name='Stremio target',
+            url='https://api.strem.io',
+            token='target-token',
+            push_collection=True,
+        )
+        self.db.add_all([source, target])
+        await self.db.flush()
+        source_baseline = StreamBaseline(
+            connection_id=source.id,
+            user_id=self.owner.id,
+            approved=False,
+            snapshot={},
+        )
+        target_baseline = StreamBaseline(
+            connection_id=target.id,
+            user_id=self.owner.id,
+            approved=True,
+            snapshot={},
+        )
+        self.db.add_all([source_baseline, target_baseline])
+        await self.db.commit()
+
+        with patch('routers.sync._push_stremio_connection', AsyncMock()) as push:
+            await _fan_out_streaming_library_changes(
+                self.db,
+                self.owner.id,
+                source.id,
+                new_collected_ids={self.movie.id},
+                removed_collected_ids=set(),
+                api_key=None,
+            )
+            push.assert_not_awaited()
+
+            source_baseline.approved = True
+            target_baseline.approved = False
+            await self.db.commit()
+            await _fan_out_streaming_library_changes(
+                self.db,
+                self.owner.id,
+                source.id,
+                new_collected_ids={self.movie.id},
+                removed_collected_ids=set(),
+                api_key=None,
+            )
+            push.assert_not_awaited()
+
+            target_baseline.approved = True
+            await self.db.commit()
+            await _fan_out_streaming_library_changes(
+                self.db,
+                self.owner.id,
+                source.id,
+                new_collected_ids={self.movie.id},
+                removed_collected_ids=set(),
+                api_key=None,
+            )
+            push.assert_awaited_once()
 
     async def test_title_exposes_available_catalogue_details(self):
         self.movie.original_title = 'Original Fixture Film'

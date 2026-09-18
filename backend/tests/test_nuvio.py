@@ -967,10 +967,8 @@ class NuvioNormalizationTests(unittest.TestCase):
 
 class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_push_merges_instead_of_replacing_remote_library(self) -> None:
-        """Regression test: a scheduled/full push only knows the current local
-        library, not what changed since last time, so it must never drop a
-        remote-only item it can't account for — only the real-time delta push
-        (on an actual local removal) may do that."""
+        """A first full push must merge the local library without dropping
+        remote-only items that Media Tracker has never managed."""
         conn = SimpleNamespace(
             id=4,
             user_id=7,
@@ -981,6 +979,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             push_collection=True,
             push_watched=False,
             push_playback=False,
+            stremio_pushed_library_ids=None,
         )
         user_settings = SimpleNamespace(tmdb_api_key="tmdb-key")
 
@@ -1053,6 +1052,76 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             {item["content_id"] for item in pushed_items},
             {"tmdb:1", "tt9999999"},
         )
+        self.assertEqual(conn.stremio_pushed_library_ids, ["tmdb:1"])
+
+    async def test_full_push_retries_only_previously_managed_removals(self) -> None:
+        conn = SimpleNamespace(
+            id=4,
+            user_id=7,
+            type="nuvio",
+            url="https://api.nuvio.tv",
+            token="old-refresh",
+            server_user_id="1",
+            push_collection=True,
+            push_watched=False,
+            push_playback=False,
+            stremio_pushed_library_ids=["tmdb:1", "tmdb:gone"],
+        )
+        user_settings = SimpleNamespace(tmdb_api_key="tmdb-key")
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    _Result(scalars=[99]),
+                    _Result(scalars=[conn]),
+                    _Result(rows=[]),
+                    _Result(scalars=[user_settings]),
+                    None,
+                    None,
+                ]
+            ),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True)),
+        )
+        pushed_items: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(200, json={
+                    "access_token": "access-token",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                })
+            if request.url.path.endswith("/sync_pull_library"):
+                return httpx.Response(200, json=[
+                    {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
+                    {"content_id": "tmdb:gone", "content_type": "movie", "name": "Removed locally"},
+                    {"content_id": "tt9999999", "content_type": "movie", "name": "Remote only"},
+                ])
+            if request.url.path.endswith("/sync_push_library"):
+                pushed_items.extend(json.loads(request.content)["p_items"])
+                return httpx.Response(204)
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with (
+            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("routers.sync._build_nuvio_library_items", AsyncMock(return_value=[
+                {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
+            ])),
+            patch.object(
+                nuvio.httpx,
+                "AsyncClient",
+                side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+            ),
+        ):
+            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+
+        self.assertEqual(
+            {item["content_id"] for item in pushed_items},
+            {"tmdb:1", "tt9999999"},
+        )
+        self.assertEqual(conn.stremio_pushed_library_ids, ["tmdb:1"])
 
 
 if __name__ == "__main__":

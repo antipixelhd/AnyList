@@ -54,6 +54,8 @@ class MediaServerConnection(Base):
     # Stremio account datastore sync state
     stremio_pull_cursor_at     : Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     stremio_full_sync_done     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # IDs successfully managed by Media Tracker on a Stremio/Nuvio connection.
+    # The legacy column name is retained for migration compatibility.
     stremio_pushed_library_ids : Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     # Plex watchlist ↔ Scrob list sync (Plex connections only)

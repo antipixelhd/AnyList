@@ -883,7 +883,142 @@ async def _push_nuvio_library_delta(
             removed_content_ids=set(removals),
             on_refresh=_persist_refresh,
         )
+    # This connection-scoped set records only library IDs Media Tracker has
+    # successfully managed. A failed delta leaves it unchanged, so the next
+    # full/scheduled push can retry removals without touching remote-only rows.
+    conn.stremio_pushed_library_ids = sorted(items_by_id)
+    await db.commit()
     return True
+
+
+async def _fan_out_streaming_library_changes(
+    db: AsyncSession,
+    user_id: int,
+    exclude_connection_id: int,
+    *,
+    new_collected_ids: set[int],
+    removed_collected_ids: set[int],
+    api_key: str | None,
+) -> None:
+    """Mirror an observed library delta to the user's other streaming accounts.
+
+    Library membership is deliberately separate from tracked-list state. Only
+    Stremio/Nuvio destinations with collection push enabled participate, and
+    every destination must already have an approved first reconciliation.
+    """
+    changed_media_ids = set(new_collected_ids) | set(removed_collected_ids)
+    if not changed_media_ids:
+        return
+
+    result = await db.execute(
+        select(MediaServerConnection).where(
+            MediaServerConnection.user_id == user_id,
+            MediaServerConnection.id != exclude_connection_id,
+            MediaServerConnection.type.in_(("stremio", "nuvio")),
+            MediaServerConnection.push_collection.is_(True),
+        )
+    )
+    targets = result.scalars().all()
+    if not targets:
+        return
+
+    from core.tracking_snapshot import require_stream_reconciliation
+
+    source_connection = await db.get(MediaServerConnection, exclude_connection_id)
+    if source_connection is None:
+        return
+    try:
+        await require_stream_reconciliation(db, source_connection)
+    except HTTPException:
+        logger.info(
+            "Streaming library mirror held until source reconciliation: connection %s",
+            exclude_connection_id,
+        )
+        return
+
+    nuvio_items: list[dict] | None = None
+    media_by_id = {
+        media.id: media
+        for media in await _select_in_chunks(
+            db,
+            lambda chunk: select(Media).where(Media.id.in_(chunk)),
+            list(changed_media_ids),
+        )
+    }
+    shows_by_tmdb: dict[int, Show] = {}
+    if any(target.type == "nuvio" for target in targets):
+        series_tmdb_ids = {
+            media.tmdb_id
+            for media in media_by_id.values()
+            if media.media_type == MediaType.series and media.tmdb_id is not None
+        }
+        if series_tmdb_ids:
+            shows = await _select_in_chunks(
+                db,
+                lambda chunk: select(Show).where(Show.tmdb_id.in_(chunk)),
+                list(series_tmdb_ids),
+            )
+            shows_by_tmdb = {
+                show.tmdb_id: show
+                for show in shows
+                if show.tmdb_id is not None
+            }
+        await _ensure_nuvio_imdb_ids(
+            list(media_by_id.values()),
+            {},
+            api_key,
+            shows_by_tmdb,
+        )
+    for target in targets:
+        try:
+            await require_stream_reconciliation(db, target)
+        except HTTPException:
+            logger.info(
+                "Streaming library mirror held for reconciliation: connection %s",
+                target.id,
+            )
+            continue
+
+        try:
+            if target.type == "stremio":
+                await _push_stremio_connection(
+                    db,
+                    target,
+                    user_id,
+                    api_key=api_key,
+                    changed_media_ids=changed_media_ids,
+                )
+                continue
+
+            if nuvio_items is None:
+                nuvio_items = await _build_nuvio_library_items(
+                    db,
+                    user_id,
+                    api_key=api_key,
+                )
+            changed_content_ids = {
+                content_id
+                for media_id in changed_media_ids
+                if (media := media_by_id.get(media_id)) is not None
+                if (
+                    content_id := _nuvio_library_content_id(
+                        media,
+                        shows_by_tmdb.get(media.tmdb_id),
+                    )
+                )
+            }
+            if changed_content_ids:
+                await _push_nuvio_library_delta(
+                    db,
+                    target,
+                    nuvio_items,
+                    changed_content_ids,
+                )
+        except Exception:
+            logger.exception(
+                "Streaming library mirror failed for connection %s",
+                target.id,
+            )
 
 
 
@@ -4479,6 +4614,7 @@ async def _run_nuvio_sync(
                 )
                 is not None
             ]
+            unresolved_library_records = len(library_records) - len(normalized_library)
             normalized_watched = [
                 normalized
                 for record in watched_records
@@ -4611,6 +4747,35 @@ async def _run_nuvio_sync(
             if progress_records:
                 await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
 
+            complete_library_source_ids = (
+                {str(item["Id"]) for _, item in normalized_library}
+                if conn.sync_collection
+                and not unresolved_library_records
+                and not movie_limit
+                and not show_limit
+                else None
+            )
+            removed_collected_ids = await _remove_stream_collection_sources(
+                db,
+                user_id,
+                conn.id,
+                source=CollectionSource.nuvio,
+                removed_ids=set(),
+                complete_snapshot_source_ids=complete_library_source_ids,
+            )
+
+            if new_collected_ids or removed_collected_ids:
+                # Commit local truth before attempting any external write.
+                await db.commit()
+                await _fan_out_streaming_library_changes(
+                    db,
+                    user_id,
+                    conn.id,
+                    new_collected_ids=new_collected_ids,
+                    removed_collected_ids=removed_collected_ids,
+                    api_key=tmdb_api_key,
+                )
+
             if conn.sync_playback and conn.sync_watched and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 await observe_stream_snapshot(db, conn, library_records, watched_records, progress_records, tmdb_ids,
@@ -4618,8 +4783,8 @@ async def _run_nuvio_sync(
                 from core.stream_actions import dispatch_stream_actions
                 await dispatch_stream_actions(db, user_id)
 
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            # Tracking/watch changes remain local until their own confirmation rules
+            # allow export. Verified streaming-library deltas are mirrored separately.
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
@@ -4845,29 +5010,27 @@ async def _stremio_records(
     return library_records, watched_records, progress_records, removed_ids
 
 
-async def _remove_stremio_collection_sources(
+async def _remove_stream_collection_sources(
     db: AsyncSession,
     user_id: int,
     connection_id: int,
     *,
+    source: CollectionSource,
     removed_ids: set[str],
-    complete_snapshot_ids: set[str] | None,
+    complete_snapshot_source_ids: set[str] | None,
 ) -> set[int]:
+    """Remove membership proven absent for this exact source connection."""
     result = await db.execute(
         select(CollectionFile, Collection.media_id)
         .join(Collection, Collection.id == CollectionFile.collection_id)
         .where(
             Collection.user_id == user_id,
-            CollectionFile.source == CollectionSource.stremio,
+            CollectionFile.source == source,
             CollectionFile.connection_id == connection_id,
         )
     )
     removed_media_ids: set[int] = set()
-    expected = (
-        {f"{connection_id}:{content_id}" for content_id in complete_snapshot_ids}
-        if complete_snapshot_ids is not None
-        else None
-    )
+    expected = complete_snapshot_source_ids
     explicit = {f"{connection_id}:{content_id}" for content_id in removed_ids}
     for collection_file, media_id in result.all():
         should_remove = collection_file.source_id in explicit
@@ -4889,6 +5052,30 @@ async def _remove_stremio_collection_sources(
                 await db.delete(collection)
                 removed_media_ids.add(media_id)
     return removed_media_ids
+
+
+async def _remove_stremio_collection_sources(
+    db: AsyncSession,
+    user_id: int,
+    connection_id: int,
+    *,
+    removed_ids: set[str],
+    complete_snapshot_ids: set[str] | None,
+) -> set[int]:
+    """Compatibility wrapper for Stremio's connection-prefixed source IDs."""
+    expected = (
+        {f"{connection_id}:{content_id}" for content_id in complete_snapshot_ids}
+        if complete_snapshot_ids is not None
+        else None
+    )
+    return await _remove_stream_collection_sources(
+        db,
+        user_id,
+        connection_id,
+        source=CollectionSource.stremio,
+        removed_ids=removed_ids,
+        complete_snapshot_source_ids=expected,
+    )
 
 
 async def _pull_stremio_items(
@@ -5116,14 +5303,25 @@ async def _run_stremio_sync(
                 removed_ids=removed_ids,
                 complete_snapshot_ids=complete_snapshot_ids,
             )
+            if new_collected_ids or removed_collected_ids:
+                # Commit local truth before attempting any external write.
+                await db.commit()
+                await _fan_out_streaming_library_changes(
+                    db,
+                    user_id,
+                    conn.id,
+                    new_collected_ids=new_collected_ids,
+                    removed_collected_ids=removed_collected_ids,
+                    api_key=tmdb_api_key,
+                )
             if conn.sync_playback and conn.sync_watched and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 await observe_stream_snapshot(db, conn, library_records, watched_records, progress_records, tmdb_ids,
                     complete=complete_snapshot, touched={str(item['_id']) for item in items})
                 from core.stream_actions import dispatch_stream_actions
                 await dispatch_stream_actions(db, user_id)
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            # Tracking/watch changes remain local until their own confirmation rules
+            # allow export. Verified streaming-library deltas are mirrored separately.
             conn.stremio_pull_cursor_at = pull_started_at
             conn.stremio_full_sync_done = True
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
@@ -6416,6 +6614,19 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if conn.push_collection
                     else []
                 )
+                current_library_ids = {
+                    str(item["content_id"])
+                    for item in library_items
+                }
+                previously_managed_library_ids = set(
+                    conn.stremio_pushed_library_ids or []
+                )
+                removed_library_ids = (
+                    previously_managed_library_ids - current_library_ids
+                    if conn.push_collection
+                    and conn.stremio_pushed_library_ids is not None
+                    else set()
+                )
                 watched_items = (
                     await _build_nuvio_watched_items(db, user_id, api_key=api_key)
                     if conn.push_watched
@@ -6444,19 +6655,18 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     # this single-use refresh token while this one waited.
                     await db.refresh(conn)
                     if conn.push_collection:
-                        # Merge rather than replace: a full/scheduled push only knows
-                        # the current local library, not what changed since last time,
-                        # so it must never drop remote-only items it can't account for.
-                        # Real removals still propagate through the real-time delta
-                        # push (_push_nuvio_library_delta) when an item is uncollected.
+                        # Remove only IDs a previous successful Media Tracker push
+                        # managed. Remote-only rows remain untouched, while a failed
+                        # real-time delta remains retryable on this scheduled push.
                         await nuvio.merge_library(
                             conn.url,
                             conn.token,
                             _nuvio_profile_id(conn),
                             additions=library_items,
-                            removed_content_ids=set(),
+                            removed_content_ids=removed_library_ids,
                             on_refresh=_persist_refresh,
                         )
+                        conn.stremio_pushed_library_ids = sorted(current_library_ids)
                     if watched_items or progress_items:
                         await nuvio.push_sync_items(
                             conn.url,
