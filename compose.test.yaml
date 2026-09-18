@@ -1,0 +1,45 @@
+name: media-tracker-test
+
+services:
+  database:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    init: true
+    env_file: .env.test
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - database-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: .
+      args:
+        APP_VERSION: test
+    restart: unless-stopped
+    init: true
+    env_file: .env.test
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      SECRET_KEY: ${SECRET_KEY}
+      ENABLE_REGISTRATIONS: "false"
+      SERVER_URL: ${SERVER_URL}
+      TZ: Europe/Berlin
+    ports:
+      - "${TEST_BIND_ADDRESS:-127.0.0.1}:${TEST_PORT:-7460}:7330"
+    volumes:
+      - app-data:/app/backend/data
+
+volumes:
+  database-data:
+  app-data:
