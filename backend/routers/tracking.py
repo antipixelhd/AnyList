@@ -1,5 +1,5 @@
 """Tracked lists are independent of connected streaming-library membership."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -111,7 +111,9 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .order_by(StreamAction.id).limit(100))).all()
     pending=await db.scalar(select(func.count()).select_from(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.state=='pending'))
     return {'pending':pending,'outbound':[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions],
-        'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+        'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
+                    'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
+                    'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
 
 
 class ReviewResolution(BaseModel):
@@ -138,6 +140,30 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         baseline.approved=True
     elif event.kind=='outbound_pending':
         raise HTTPException(409,'This operation requires the connection dispatcher; it cannot be marked successful manually')
+    elif event.kind=='rating_conflict':
+        if body.action=='change':raise HTTPException(422,'Use the title editor to choose a different rating')
+        if event.proposed_score is None or event.previous_score is None:raise HTTPException(409,'This rating conflict is incomplete; import the provider again')
+        if body.action=='confirm':
+            entry=(await db.execute(select(TrackedEntry).where(
+                TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
+            if entry:
+                if event.season_number is None:
+                    entry.manual_score=event.proposed_score
+                    entry.rating_mode='manual'
+                else:
+                    entry.season_scores={**(entry.season_scores or {}),str(event.season_number):event.proposed_score}
+                db.add(TrackingActivity(user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
+            rating_query=select(Rating).where(Rating.user_id==viewer.id,Rating.media_id==event.media_id,
+                Rating.episode_order.is_(None))
+            rating_query=rating_query.where(Rating.season_number.is_(None)) if event.season_number is None else rating_query.where(Rating.season_number==event.season_number)
+            rating=(await db.execute(rating_query)).scalar_one_or_none()
+            if rating:
+                rating.rating=event.proposed_score
+                rating.rated_at=datetime.now(timezone.utc).replace(tzinfo=None)
+            else:
+                db.add(Rating(user_id=viewer.id,media_id=event.media_id,season_number=event.season_number,
+                    rating=event.proposed_score,rated_at=datetime.now(timezone.utc).replace(tzinfo=None)))
     elif event.kind=='deletion_conflict':
         if body.action=='change':raise HTTPException(422,'Retry deletion or keep the remote history')
         from models.tracking import StreamAction
@@ -147,7 +173,6 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         for action in actions:
             action.last_error=None
             if body.action=='confirm':
-                from datetime import timezone
                 action.payload={**action.payload,'deleted_at':datetime.now(timezone.utc).isoformat()}
                 action.state='pending'
             else:

@@ -155,6 +155,149 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))).scalars().all()
         self.assertEqual(len(reviews), 1)
 
+    async def test_ambiguous_cloud_rating_stays_local_until_resolved(self):
+        from core.cloud_rating_reconciliation import reconcile_cloud_rating
+
+        response = await self.save(self.movie, status='completed', manual_score=8.5)
+        self.assertEqual(response.status_code, 200, response.text)
+        rating = (await self.db.execute(select(Rating).where(
+            Rating.user_id == self.owner.id,
+            Rating.media_id == self.movie.id,
+            Rating.season_number.is_(None),
+        ))).scalar_one()
+        existing = {(self.movie.id, None): rating}
+        changed = {}
+
+        echo = await reconcile_cloud_rating(
+            self.db,
+            provider='trakt',
+            user_id=self.owner.id,
+            media=self.movie,
+            season_number=None,
+            remote_score=9,
+            remote_rated_at=datetime(2027, 1, 1),
+            existing=existing,
+            changed=changed,
+        )
+        self.assertEqual(echo, 'skipped')
+        self.assertEqual(rating.rating, 8.5)
+
+        outcome = await reconcile_cloud_rating(
+            self.db,
+            provider='trakt',
+            user_id=self.owner.id,
+            media=self.movie,
+            season_number=None,
+            remote_score=6,
+            remote_rated_at=None,
+            existing=existing,
+            changed=changed,
+        )
+        await self.db.commit()
+        self.assertEqual(outcome, 'conflict')
+        self.assertEqual(rating.rating, 8.5)
+        review = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.kind == 'rating_conflict',
+        ))).scalar_one()
+        self.assertEqual(review.previous_score, 8.5)
+        self.assertEqual(review.proposed_score, 6)
+
+        recent = await self.client.get('/tracking/recent-events')
+        self.assertEqual(recent.status_code, 200, recent.text)
+        event = next(item for item in recent.json()['results'] if item['id'] == review.id)
+        self.assertEqual(event['previous_score'], 8.5)
+        self.assertEqual(event['proposed_score'], 6)
+
+        resolved = await self.client.post(
+            f'/tracking/recent-events/{review.id}',
+            json={'action': 'confirm'},
+        )
+        self.assertEqual(resolved.status_code, 200, resolved.text)
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(entry.manual_score, 6)
+        await self.db.refresh(rating)
+        self.assertEqual(rating.rating, 6)
+
+    async def test_newer_cloud_rating_applies_but_calculated_show_requires_review(self):
+        from core.cloud_rating_reconciliation import reconcile_cloud_rating
+
+        movie_response = await self.save(self.movie, manual_score=8)
+        self.assertEqual(movie_response.status_code, 200, movie_response.text)
+        movie_rating = (await self.db.execute(select(Rating).where(
+            Rating.user_id == self.owner.id,
+            Rating.media_id == self.movie.id,
+            Rating.season_number.is_(None),
+        ))).scalar_one()
+        movie_rating.rated_at = datetime(2026, 1, 1)
+        changed = {}
+        outcome = await reconcile_cloud_rating(
+            self.db,
+            provider='mdblist',
+            user_id=self.owner.id,
+            media=self.movie,
+            season_number=None,
+            remote_score=7,
+            remote_rated_at=datetime(2027, 1, 1),
+            existing={(self.movie.id, None): movie_rating},
+            changed=changed,
+        )
+        self.assertEqual(outcome, 'applied')
+        self.assertEqual(changed, {(self.movie.id, None): 7})
+        movie_entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(movie_entry.manual_score, 7)
+
+        show_response = await self.save(
+            self.show,
+            rating_mode='average',
+            season_scores={'1': 6, '2': 8},
+        )
+        self.assertEqual(show_response.status_code, 200, show_response.text)
+        show_rating = (await self.db.execute(select(Rating).where(
+            Rating.user_id == self.owner.id,
+            Rating.media_id == self.show.id,
+            Rating.season_number.is_(None),
+        ))).scalar_one()
+        show_rating.rated_at = datetime(2026, 1, 1)
+        outcome = await reconcile_cloud_rating(
+            self.db,
+            provider='mdblist',
+            user_id=self.owner.id,
+            media=self.show,
+            season_number=None,
+            remote_score=9,
+            remote_rated_at=datetime(2027, 1, 1),
+            existing={(self.show.id, None): show_rating},
+            changed={},
+        )
+        self.assertEqual(outcome, 'conflict')
+        show_entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.show.id,
+        ))).scalar_one()
+        self.assertEqual(show_entry.rating_mode, 'average')
+        self.assertEqual(show_rating.rating, 7)
+        review = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.media_id == self.show.id,
+            SyncReview.kind == 'rating_conflict',
+        ))).scalar_one()
+        resolved = await self.client.post(
+            f'/tracking/recent-events/{review.id}',
+            json={'action': 'confirm'},
+        )
+        self.assertEqual(resolved.status_code, 200, resolved.text)
+        await self.db.refresh(show_entry)
+        self.assertEqual(show_entry.rating_mode, 'manual')
+        self.assertEqual(show_entry.manual_score, 9)
+        self.assertEqual(show_entry.season_scores, {'1': 6, '2': 8})
+
     async def test_title_community_average_excludes_private_profiles(self):
         await self.save(self.movie, status='completed', manual_score=8)
         self.db.add(TrackedEntry(

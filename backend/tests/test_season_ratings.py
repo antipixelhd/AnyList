@@ -17,6 +17,7 @@ from routers.sync import _fan_out_changes_to_other_connections
 def _scalar_result(items: list) -> MagicMock:
     result = MagicMock()
     result.scalars.return_value.all.return_value = items
+    result.scalar_one_or_none.return_value = items[0] if len(items) == 1 else None
     return result
 
 
@@ -320,7 +321,7 @@ class SeasonRatingImportTests(unittest.IsolatedAsyncioTestCase):
             begin_nested=MagicMock(return_value=transaction),
             add=MagicMock(),
         )
-        stats = {"ratings": 0, "skipped": 0, "errors": 0}
+        stats = {"ratings": 0, "rating_conflicts": 0, "skipped": 0, "errors": 0}
         payload = {
             "seasons": [
                 {

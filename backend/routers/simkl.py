@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import simkl as simkl_client
+from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
 from db import get_db, engine
@@ -312,7 +313,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             _gs = _gs_result.scalar_one_or_none()
             api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
 
-            stats: dict[str, int] = {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
+            stats: dict[str, int] = {"movies": 0, "episodes": 0, "ratings": 0, "rating_conflicts": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
             _new_watched: set[int] = set()
             _new_ratings: RatingChanges = {}
 
@@ -449,13 +450,13 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     ratings_data = {}
 
                 rat_res = await db.execute(
-                    select(Rating.media_id).where(
+                    select(Rating).where(
                         Rating.user_id == user_id,
                         Rating.season_number.is_(None),
                         Rating.episode_order.is_(None),
                     )
                 )
-                existing_rated: set[int] = {row[0] for row in rat_res}
+                existing_ratings = {(rating.media_id, None): rating for rating in rat_res.scalars().all()}
 
                 for item in ratings_data.get("movies", []):
                     movie_data = item.get("movie", {})
@@ -469,11 +470,24 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                             media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
                             if not media:
                                 continue
-                            if media.id not in existing_rated:
-                                db.add(Rating(user_id=user_id, media_id=media.id, rating=float(rating_val)))
-                                existing_rated.add(media.id)
-                                _new_ratings[(media.id, None)] = float(rating_val)
+                            from core.cloud_rating_reconciliation import reconcile_cloud_rating
+                            outcome = await reconcile_cloud_rating(
+                                db,
+                                provider="simkl",
+                                user_id=user_id,
+                                media=media,
+                                season_number=None,
+                                remote_score=float(rating_val),
+                                remote_rated_at=_parse_watched_at(item.get("user_rated_at")),
+                                existing=existing_ratings,
+                                changed=_new_ratings,
+                            )
+                            if outcome == "applied":
                                 stats["ratings"] += 1
+                            elif outcome == "conflict":
+                                stats["rating_conflicts"] += 1
+                            else:
+                                stats["skipped"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Simkl movie rating tmdb=%s: %s", tmdb_id, exc)
                         stats["errors"] += 1
@@ -488,11 +502,24 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     try:
                         async with db.begin_nested():
                             media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
-                            if media.id not in existing_rated:
-                                db.add(Rating(user_id=user_id, media_id=media.id, rating=float(rating_val)))
-                                existing_rated.add(media.id)
-                                _new_ratings[(media.id, None)] = float(rating_val)
+                            from core.cloud_rating_reconciliation import reconcile_cloud_rating
+                            outcome = await reconcile_cloud_rating(
+                                db,
+                                provider="simkl",
+                                user_id=user_id,
+                                media=media,
+                                season_number=None,
+                                remote_score=float(rating_val),
+                                remote_rated_at=_parse_watched_at(item.get("user_rated_at")),
+                                existing=existing_ratings,
+                                changed=_new_ratings,
+                            )
+                            if outcome == "applied":
                                 stats["ratings"] += 1
+                            elif outcome == "conflict":
+                                stats["rating_conflicts"] += 1
+                            else:
+                                stats["skipped"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Simkl show rating tmdb=%s: %s", tmdb_id, exc)
                         stats["errors"] += 1
@@ -570,6 +597,8 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             # to other connections. Users push explicitly per-service (the "Push"
             # buttons), so a bulk pull of thousands of items doesn't unexpectedly
             # blast them out everywhere else at once.
+            from core.tracking_import import import_tracking_history
+            stats["tracked_entries"] = await import_tracking_history(db, user_id)
             from core.cloud_reconciliation import record_cloud_import
             await record_cloud_import(db, user_id, "simkl", stats)
             await db.execute(
@@ -640,6 +669,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
+            await require_cloud_reconciliation(db, user_id, "simkl")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running)
             )
@@ -865,7 +895,6 @@ async def push_simkl(
         raise HTTPException(status_code=400, detail="Simkl is not connected")
     if not settings.simkl_push_watched and not settings.simkl_push_ratings:
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Simkl' push flags first")
-    from core.cloud_reconciliation import require_cloud_reconciliation
     await require_cloud_reconciliation(db, current_user.id, "simkl")
     job = SyncJob(user_id=current_user.id, source=CollectionSource.simkl, status=SyncStatus.pending, job_type="push")
     db.add(job)

@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
+from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from core.rewatch import record_rewatch_progress
@@ -452,6 +453,12 @@ def _trakt_rated_at(value: str | None) -> datetime:
     return parsed
 
 
+def _optional_trakt_rated_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return _trakt_rated_at(value)
+
+
 def _apply_imported_rating(
     db: AsyncSession,
     user_id: int,
@@ -622,6 +629,7 @@ async def _apply_trakt_import(
     history_start: datetime | None,
     history_end: datetime,
     window_minutes: int = DEFAULT_DEDUP_WINDOW_MINUTES,
+    reconcile_provider: str | None = None,
 ) -> tuple[dict, int, bool, set[int], RatingChanges]:
     """Fetches (from `source`) and applies watched history, ratings, and lists.
 
@@ -633,7 +641,7 @@ async def _apply_trakt_import(
     """
     from routers.sync import SyncCancelled, _raise_if_cancelled
 
-    stats = {"movies": 0, "episodes": 0, "ratings": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
+    stats = {"movies": 0, "episodes": 0, "ratings": 0, "rating_conflicts": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
     _new_watched: set[int] = set()
     _new_ratings: RatingChanges = {}
     watched_processed = 0
@@ -885,7 +893,26 @@ async def _apply_trakt_import(
                         if not media:
                             stats["skipped"] += 1
                             continue
-                        if _apply_imported_rating(
+                        if reconcile_provider:
+                            from core.cloud_rating_reconciliation import reconcile_cloud_rating
+                            outcome = await reconcile_cloud_rating(
+                                db,
+                                provider=reconcile_provider,
+                                user_id=user_id,
+                                media=media,
+                                season_number=season_number,
+                                remote_score=float(item["rating"]),
+                                remote_rated_at=_optional_trakt_rated_at(item.get("rated_at")),
+                                existing=existing_ratings,
+                                changed=_new_ratings,
+                            )
+                            if outcome == "applied":
+                                stats["ratings"] += 1
+                            elif outcome == "conflict":
+                                stats["rating_conflicts"] += 1
+                            else:
+                                stats["skipped"] += 1
+                        elif _apply_imported_rating(
                             db,
                             user_id,
                             media,
@@ -1314,6 +1341,7 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
                 history_start,
                 history_end,
                 dedup_window_from_settings(settings),
+                reconcile_provider="trakt",
             )
 
             if settings.trakt_sync_watched and not history_had_errors:
@@ -1326,6 +1354,8 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             print(_trakt_import_summary(job_id, "sync", stats))
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.tracking_import import import_tracking_history
+            stats["tracked_entries"] = await import_tracking_history(db, user_id)
             from core.cloud_reconciliation import record_cloud_import
             await record_cloud_import(db, user_id, "trakt", stats)
             await db.execute(
@@ -1612,6 +1642,9 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
+            # Background runners are also invoked by the scheduler. Keep the
+            # reconciliation barrier here so no caller can bypass the API gate.
+            await require_cloud_reconciliation(db, user_id, "trakt")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running)
             )
@@ -2094,7 +2127,6 @@ async def push_trakt(
     if not (settings.trakt_push_watched or settings.trakt_push_ratings
             or settings.trakt_push_collection or settings.trakt_push_dropped):
         raise HTTPException(status_code=400, detail="Enable 'Scrob → Trakt' push flags first")
-    from core.cloud_reconciliation import require_cloud_reconciliation
     await require_cloud_reconciliation(db, current_user.id, "trakt")
     job = SyncJob(user_id=current_user.id, source=CollectionSource.trakt, status=SyncStatus.pending, job_type="push")
     db.add(job)

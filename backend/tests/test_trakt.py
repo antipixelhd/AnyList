@@ -26,6 +26,20 @@ from routers import trakt as trakt_router
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
+class _ApprovedCloudPushMixin:
+    """Runner tests exercise payload behavior after reconciliation approval."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        patcher = patch.object(
+            trakt_router,
+            "require_cloud_reconciliation",
+            AsyncMock(return_value=None),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
 class TraktClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_history_movies_fetches_every_page(self) -> None:
         requested_pages: list[int] = []
@@ -614,7 +628,7 @@ class EnsureValidTraktTokenTests(unittest.IsolatedAsyncioTestCase):
             await trakt_router.ensure_valid_trakt_token(db, self._settings(trakt_access_token=None))
 
 
-class TraktHistorySafetyTests(unittest.IsolatedAsyncioTestCase):
+class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTestCase):
     def test_incremental_window_overlaps_cursor(self) -> None:
         cursor = datetime(2026, 7, 21, 10, 0, 0)
         cutoff = datetime(2026, 7, 21, 11, 0, 0)
@@ -991,7 +1005,7 @@ class TraktHistorySafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(get_movies.await_args.kwargs["end_at"])
 
 
-class TraktDroppedReconcileTests(unittest.IsolatedAsyncioTestCase):
+class TraktDroppedReconcileTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTestCase):
     """#329: the scheduled push must reconcile dropped shows Trakt is missing -
     the one-shot push at drop time is fire-and-forget and nothing else retried."""
 
@@ -1068,7 +1082,7 @@ class TraktDroppedReconcileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.job_updates[-1]["status"], SyncStatus.completed)
 
 
-class TraktRatingsPushTests(unittest.IsolatedAsyncioTestCase):
+class TraktRatingsPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTestCase):
     """#327: the ratings push must batch into /sync/ratings array requests and
     dedup against what Trakt already has, not fire one POST per rating."""
 
@@ -1178,7 +1192,7 @@ class RemoteCollectionKeyTests(unittest.TestCase):
         })
 
 
-class TraktCollectionPushTests(unittest.IsolatedAsyncioTestCase):
+class TraktCollectionPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTestCase):
     """#327: the collection push must dedup against GET /sync/collection so a
     steady-state run re-sends nothing instead of re-POSTing the whole library."""
 

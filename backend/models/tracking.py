@@ -61,6 +61,9 @@ class SyncReview(Base):
     state: Mapped[str] = mapped_column(String(16), default="pending")
     previous_status: Mapped[str | None] = mapped_column(String(16))
     proposed_status: Mapped[str | None] = mapped_column(String(16))
+    previous_score: Mapped[float | None] = mapped_column(Float)
+    proposed_score: Mapped[float | None] = mapped_column(Float)
+    season_number: Mapped[int | None] = mapped_column(Integer)
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

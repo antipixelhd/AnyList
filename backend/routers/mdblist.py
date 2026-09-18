@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
+from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes
@@ -59,6 +60,23 @@ def _utc_naive(value: Any) -> datetime:
             return datetime.utcnow()
     else:
         return datetime.utcnow()
+    if parsed.tzinfo:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _utc_naive_optional(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = dt_parser.isoparse(value)
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
     if parsed.tzinfo:
         return parsed.astimezone(timezone.utc).replace(tzinfo=None)
     return parsed
@@ -561,28 +579,24 @@ async def _import_ratings(
                         stats["skipped"] += 1
                         continue
 
-                    key = (media.id, season_number)
-                    current = existing.get(key)
-                    rated_at = _utc_naive(entry.get("rated_at"))
-                    from core.rating_projection import is_projected_echo
-                    if current and (current.rating == rating or is_projected_echo(current.rating, rating)):
-                        stats["skipped"] += 1
-                        continue
-                    if current:
-                        current.rating = rating
-                        current.rated_at = rated_at
+                    from core.cloud_rating_reconciliation import reconcile_cloud_rating
+                    outcome = await reconcile_cloud_rating(
+                        db,
+                        provider="mdblist",
+                        user_id=user_id,
+                        media=media,
+                        season_number=season_number,
+                        remote_score=rating,
+                        remote_rated_at=_utc_naive_optional(entry.get("rated_at")),
+                        existing=existing,
+                        changed=changed,
+                    )
+                    if outcome == "applied":
+                        stats["ratings"] += 1
+                    elif outcome == "conflict":
+                        stats["rating_conflicts"] += 1
                     else:
-                        current = Rating(
-                            user_id=user_id,
-                            media_id=media.id,
-                            season_number=season_number,
-                            rating=rating,
-                            rated_at=rated_at,
-                        )
-                        db.add(current)
-                        existing[key] = current
-                    changed[key] = rating
-                    stats["ratings"] += 1
+                        stats["skipped"] += 1
             except Exception as exc:
                 logger.warning("Error importing MDBList %s rating: %s", kind, exc)
                 stats["errors"] += 1
@@ -700,6 +714,7 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
             stats = {
                 "watched": 0,
                 "ratings": 0,
+                "rating_conflicts": 0,
                 "lists": 0,
                 "watchlist_added": 0,
                 "watchlist_removed": 0,
@@ -732,6 +747,8 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
 
             # A pull only populates scrob's own data — it never automatically pushes to
             # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.tracking_import import import_tracking_history
+            stats["tracked_entries"] = await import_tracking_history(db, user_id)
             from core.cloud_reconciliation import record_cloud_import
             await record_cloud_import(db, user_id, "mdblist", stats)
             await db.execute(
@@ -795,6 +812,7 @@ async def run_mdblist_push(user_id: int, job_id: int) -> None:
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with session_factory() as db:
         try:
+            await require_cloud_reconciliation(db, user_id, "mdblist")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.running)
             )
@@ -1093,7 +1111,6 @@ async def push_mdblist(
     if not any((settings.mdblist_push_watched, settings.mdblist_push_ratings, settings.mdblist_push_watchlist,
                 settings.mdblist_push_collection, settings.mdblist_push_dropped)):
         raise HTTPException(status_code=400, detail="Enable at least one MDBList push option")
-    from core.cloud_reconciliation import require_cloud_reconciliation
     await require_cloud_reconciliation(db, current_user.id, "mdblist")
 
     job = SyncJob(
