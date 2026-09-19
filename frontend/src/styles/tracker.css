@@ -124,3 +124,12 @@ body.tracker{font-size:14px;line-height:1.55}
 .settings-content .section-headline{font-size:15px;font-weight:600}
 @media(max-width:650px){.profile-identity h1{font-size:20px}.status-section h2{font-size:18px}.page-intro h1{font-size:23px}.entry-head.combined-row>span:last-child{display:none}}
 @media(prefers-reduced-motion:reduce){.connection-queue>summary>.ui-icon:last-child,.review-utilities>summary>.ui-icon:last-child{transition:none}}
+
+/* On touch and phone layouts the whole cover remains the edit target without a permanent overlay. */
+@media(hover:none),(max-width:650px){
+  .entry-thumbnail .row-menu,.grid-view .entry-thumbnail .row-menu{inset:0;width:100%;height:100%;padding:0;opacity:1;background:transparent;color:transparent;border-radius:3px}
+  .entry-thumbnail .row-menu .ui-icon{opacity:0;transition:opacity .12s}
+  .entry-thumbnail .row-menu:focus,.entry-thumbnail .row-menu:active{background:#228fcbdc;color:var(--bright)}
+  .entry-thumbnail .row-menu:focus .ui-icon,.entry-thumbnail .row-menu:active .ui-icon{opacity:1}
+}
+@media(prefers-reduced-motion:reduce){.entry-thumbnail .row-menu .ui-icon{transition:none}}
