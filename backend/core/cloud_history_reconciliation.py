@@ -17,7 +17,25 @@ def _naive_utc(value: datetime | None) -> datetime | None:
     return value
 
 
-async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status):
+def _date_value(value: date | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _history_changes(entry, *, proposed_status, proposed_start, proposed_finish, proposed_progress):
+    fields = []
+    proposals = (
+        ("status", entry.status, proposed_status),
+        ("start_date", _date_value(entry.start_date), _date_value(proposed_start)),
+        ("finish_date", _date_value(entry.finish_date), _date_value(proposed_finish)),
+        ("progress", entry.progress, proposed_progress),
+    )
+    for field, previous, proposed in proposals:
+        if proposed is not None and previous != proposed:
+            fields.append({"field": field, "previous": previous, "proposed": proposed})
+    return fields
+
+
+async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status, changes):
     pending = (await db.execute(select(SyncReview).where(
         SyncReview.user_id == user_id,
         SyncReview.provider == provider,
@@ -34,11 +52,33 @@ async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status)
             kind="cloud_conflict",
             previous_status=entry.status,
             proposed_status=proposed_status,
+            payload={"changes": changes},
             message=(
-                f"{label}: new watch history suggests {proposed_status}, "
-                "but its time cannot be ordered against your local edit. Your local status was kept."
+                f"{label}: imported watch history differs from your local title data, "
+                "but its time cannot be ordered against your local edit. Your local values were kept."
             ),
         ))
+    else:
+        pending.proposed_status = proposed_status
+        pending.payload = {"changes": changes}
+
+
+async def _add_applied_notification(db, *, user_id, provider, entry, previous_status, changes):
+    if not changes:
+        return
+    label = {"trakt": "Trakt", "simkl": "Simkl", "mdblist": "MDBList"}.get(provider, provider)
+    db.add(SyncReview(
+        user_id=user_id,
+        media_id=entry.media_id,
+        provider=provider,
+        kind="cloud_update",
+        state="confirmed",
+        previous_status=previous_status,
+        proposed_status=entry.status,
+        priority="low",
+        payload={"changes": changes},
+        message=f"{label}: newer watch history updated this title.",
+    ))
 
 
 async def reconcile_cloud_watch_events(
@@ -91,12 +131,17 @@ async def reconcile_cloud_watch_events(
             (_naive_utc(event.watched_at) for event, _ in item["events"] if event.watched_at),
             default=None,
         )
+        earliest_at = min(
+            (_naive_utc(event.watched_at) for event, _ in item["events"] if event.watched_at),
+            default=None,
+        )
         local_at = _naive_utc(entry.updated_at)
         media = item["media"]
         proposed_status = "completed" if media.media_type == MediaType.movie else "watching"
         released = []
         watched_ids: set[int] = set()
         inferred_previous = []
+        proposed_progress = entry.progress
         if media.media_type == MediaType.series:
             show = next((shows.get(child.show_id) for _, child in item["events"] if child.show_id), None)
             if show:
@@ -125,6 +170,20 @@ async def reconcile_cloud_watch_events(
                 )
                 proposed_status = "completed" if complete else "watching"
 
+        proposed_start = entry.start_date
+        proposed_finish = entry.finish_date
+        if earliest_at and media.media_type == MediaType.series:
+            proposed_start = earliest_at.date()
+        if latest_at and proposed_status == "completed":
+            proposed_finish = latest_at.date()
+        changes = _history_changes(
+            entry,
+            proposed_status=proposed_status,
+            proposed_start=proposed_start,
+            proposed_finish=proposed_finish,
+            proposed_progress=proposed_progress,
+        )
+
         if entry.status == "completed":
             # First release never reopens a completed title merely because it
             # was watched again or gained later episodes.
@@ -142,7 +201,14 @@ async def reconcile_cloud_watch_events(
             continue
         reliably_newer = bool(latest_at and local_at and latest_at > local_at)
         reliably_older = bool(latest_at and local_at and latest_at < local_at)
-        if not initial_import and not reliably_newer:
+        empty_local = (
+            entry.status == "planning"
+            and not entry.progress
+            and entry.start_date is None
+            and entry.finish_date is None
+        )
+        may_apply = reliably_newer or (initial_import and empty_local)
+        if not may_apply:
             if reliably_older:
                 stats["preserved"] += 1
             else:
@@ -152,11 +218,13 @@ async def reconcile_cloud_watch_events(
                     provider=provider,
                     entry=entry,
                     proposed_status=proposed_status,
+                    changes=changes,
                 )
                 stats["conflicts"] += 1
             continue
 
-        changed = entry.status != proposed_status
+        previous_status = entry.status
+        changed = previous_status != proposed_status
         for episode in inferred_previous:
             db.add(WatchEvent(
                 user_id=user_id,
@@ -166,14 +234,10 @@ async def reconcile_cloud_watch_events(
                 watched_at=None,
             ))
         if released:
-            entry.progress = len(watched_ids) + len(inferred_previous)
+            entry.progress = proposed_progress
         entry.status = proposed_status
-        if latest_at:
-            watched_date = latest_at.date()
-            if proposed_status == "watching" and entry.start_date is None:
-                entry.start_date = watched_date
-            if proposed_status == "completed" and entry.finish_date is None:
-                entry.finish_date = watched_date
+        entry.start_date = proposed_start
+        entry.finish_date = proposed_finish
         if changed and not initial_import:
             db.add(TrackingActivity(
                 user_id=user_id,
@@ -181,6 +245,15 @@ async def reconcile_cloud_watch_events(
                 status=entry.status,
                 score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
             ))
+        if not initial_import:
+            await _add_applied_notification(
+                db,
+                user_id=user_id,
+                provider=provider,
+                entry=entry,
+                previous_status=previous_status,
+                changes=changes,
+            )
         stats["applied"] += 1
     await db.commit()
     return stats

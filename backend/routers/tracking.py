@@ -287,6 +287,22 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             pending=(await db.execute(select(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.media_id==event.media_id,SyncReview.kind=='outbound_pending'))).scalars().all()
             if marker and not marker.pending_connections:
                 for review in pending:review.state='corrected'
+    elif event.kind=='cloud_conflict':
+        entry=(await db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
+        if not entry:raise HTTPException(409,'The tracked entry no longer exists')
+        if body.action not in {'confirm','keep','change'}:raise HTTPException(422,'Resolve or keep this imported history')
+        if body.action!='keep':
+            changes=(event.payload or {}).get('changes') or []
+            for change in changes:
+                field=change.get('field');value=change.get('proposed')
+                if field=='status':entry.status=body.status.value if body.action=='change' and body.status else value
+                elif field=='start_date':entry.start_date=date.fromisoformat(value) if value else None
+                elif field=='finish_date':entry.finish_date=date.fromisoformat(value) if value else None
+                elif field=='progress' and value is not None:entry.progress=max(0,int(value))
+            if body.action=='change' and body.status:entry.status=body.status.value
+            db.add(TrackingActivity(user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
     else:
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
         if not entry:raise HTTPException(409,'The tracked entry no longer exists')

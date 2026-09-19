@@ -40,7 +40,7 @@ async def require_cloud_reconciliation(db, user_id: int, provider: str) -> Cloud
         CloudBaseline.provider == provider,
     ))).scalar_one_or_none()
     if not baseline or not baseline.approved:
-        raise HTTPException(409, "Run an import and confirm its summary in Recent events before pushing to this provider")
+        raise HTTPException(409, "Run an import and confirm its summary in Notifications before pushing to this provider")
     unresolved = (await db.execute(select(SyncReview.id).where(
         SyncReview.user_id == user_id,
         SyncReview.provider == provider,
@@ -48,7 +48,7 @@ async def require_cloud_reconciliation(db, user_id: int, provider: str) -> Cloud
         SyncReview.kind.in_(["rating_conflict", "cloud_conflict", "unmatched_import"]),
     ))).first()
     if unresolved:
-        raise HTTPException(409, "Resolve this provider's conflicts in Recent events before pushing")
+        raise HTTPException(409, "Resolve this provider's conflicts in Notifications before pushing")
     return baseline
 
 

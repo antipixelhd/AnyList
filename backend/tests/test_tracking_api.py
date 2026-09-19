@@ -375,6 +375,18 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats['applied'], 1)
         self.assertEqual(entry.status, 'completed')
         self.assertEqual(entry.finish_date, watched_at.date())
+        notification = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.provider == 'trakt',
+            SyncReview.kind == 'cloud_update',
+        ))).scalar_one()
+        self.assertEqual(notification.state, 'confirmed')
+        self.assertEqual(notification.priority, 'low')
+        self.assertIn({
+            'field': 'finish_date',
+            'previous': None,
+            'proposed': watched_at.date().isoformat(),
+        }, notification.payload['changes'])
 
     async def test_unordered_cloud_watch_preserves_local_status_and_creates_conflict(self):
         from core.cloud_history_reconciliation import reconcile_cloud_watch_events
@@ -416,6 +428,74 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review.previous_status, 'dropped')
         self.assertEqual(review.proposed_status, 'completed')
         self.assertFalse(await cloud_push_is_approved(self.db, self.owner.id, 'simkl'))
+
+    async def test_first_cloud_import_preserves_ambiguous_existing_history(self):
+        from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+
+        await self.save(self.movie, status='dropped', progress=1)
+        self.db.add(WatchEvent(
+            user_id=self.owner.id,
+            media_id=self.movie.id,
+            completed=True,
+            watched_at=None,
+        ))
+        await self.db.commit()
+
+        stats = await reconcile_cloud_watch_events(
+            self.db,
+            user_id=self.owner.id,
+            provider='trakt',
+            new_media_ids={self.movie.id},
+        )
+
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        review = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.provider == 'trakt',
+            SyncReview.kind == 'cloud_conflict',
+        ))).scalar_one()
+        self.assertEqual(stats['conflicts'], 1)
+        self.assertEqual(entry.status, 'dropped')
+        self.assertEqual(entry.progress, 1)
+        self.assertIn({'field': 'status', 'previous': 'dropped', 'proposed': 'completed'}, review.payload['changes'])
+
+    async def test_cloud_history_resolution_applies_reviewed_fields_together(self):
+        await self.save(self.movie, status='paused', progress=1)
+        review = SyncReview(
+            user_id=self.owner.id,
+            media_id=self.movie.id,
+            provider='simkl',
+            kind='cloud_conflict',
+            previous_status='paused',
+            proposed_status='completed',
+            message='Fixture field conflict',
+            payload={'changes': [
+                {'field': 'status', 'previous': 'paused', 'proposed': 'completed'},
+                {'field': 'finish_date', 'previous': None, 'proposed': '2026-09-18'},
+                {'field': 'progress', 'previous': 1, 'proposed': 8},
+            ]},
+        )
+        self.db.add(review)
+        await self.db.commit()
+
+        response = await self.client.post(
+            f'/tracking/recent-events/{review.id}',
+            json={'action': 'confirm'},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        await self.db.refresh(review)
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(review.state, 'confirmed')
+        self.assertEqual(entry.status, 'completed')
+        self.assertEqual(entry.finish_date, date(2026, 9, 18))
+        self.assertEqual(entry.progress, 8)
 
     async def test_title_omits_instance_community_average(self):
         await self.save(self.movie, status='completed', manual_score=8)

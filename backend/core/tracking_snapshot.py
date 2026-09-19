@@ -52,13 +52,13 @@ async def require_stream_reconciliation(db, conn):
     baseline = await db.get(StreamBaseline, conn.id)
     if not baseline or not baseline.approved:
         from fastapi import HTTPException
-        raise HTTPException(409, 'Run a full import and confirm its summary in Recent events before pushing to this connection')
+        raise HTTPException(409, 'Run a full import and confirm its summary in Notifications before pushing to this connection')
     unresolved = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,
         SyncReview.connection_id == conn.id, SyncReview.state == 'pending',
         SyncReview.kind.in_(['conflict','uncertain_removal','deletion_conflict'])))).first()
     if unresolved:
         from fastapi import HTTPException
-        raise HTTPException(409, 'Resolve this connection’s conflicts in Recent events before pushing')
+        raise HTTPException(409, 'Resolve this connection’s conflicts in Notifications before pushing')
 
 
 async def apply_series_observation(db, user_id, media, entry, row, finished):
