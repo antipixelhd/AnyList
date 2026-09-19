@@ -134,7 +134,7 @@ async def get_optional_user(
 async def get_current_user_or_api_key(
     db: AsyncSession = Depends(get_db),
     jwt_user: Optional[User] = Depends(get_optional_user),
-    api_key: Optional[str] = Query(None, description="Scrob API key, as an alternative to a JWT Bearer token"),
+    api_key: Optional[str] = Query(None, description="Media Tracker API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> User:
     """Same as get_current_user, but also accepts a Scrob API key (query param or
@@ -160,7 +160,7 @@ async def get_current_user_or_api_key(
 async def get_optional_user_or_api_key(
     db: AsyncSession = Depends(get_db),
     jwt_user: Optional[User] = Depends(get_optional_user),
-    api_key: Optional[str] = Query(None, description="Scrob API key, as an alternative to a JWT Bearer token"),
+    api_key: Optional[str] = Query(None, description="Media Tracker API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> Optional[User]:
     """Same as get_current_user_or_api_key, but returns None instead of raising

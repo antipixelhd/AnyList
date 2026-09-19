@@ -1,7 +1,7 @@
 {
-  "name": "Scrob",
-  "short_name": "Scrob",
-  "description": "Self-hosted media tracking — your personal Letterboxd + Trakt",
+  "name": "Media Tracker",
+  "short_name": "Media Tracker",
+  "description": "Private, self-hosted movie and series tracking",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -35,14 +35,14 @@
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Scrob — Media Tracker"
+      "label": "Media Tracker"
     },
     {
       "src": "/web-app-manifest-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Scrob — Media Tracker"
+      "label": "Media Tracker"
     }
   ],
   "categories": ["entertainment", "lifestyle"]

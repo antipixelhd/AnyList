@@ -1,11 +1,11 @@
-// Scrob — Service Worker
+// Media Tracker service worker
 // Strategy:
 //   - Static assets (JS/CSS/fonts/icons): NetworkFirst, cached for offline fallback
 //   - TMDB / Proxy images (posters, backdrops, rating posters): bypass service worker (native HTTP cache)
 //   - /api/proxy/*: NetworkOnly — library data must always be fresh
 //   - Navigation (HTML pages): NetworkFirst, offline fallback if all fail
 
-const SHELL_CACHE  = 'scrob-shell-v2';
+const SHELL_CACHE  = 'media-tracker-shell-v3';
 
 // ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {

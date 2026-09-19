@@ -1,6 +1,7 @@
 ---
-import Base from "../layouts/Base.astro";
+import Tracker from "../layouts/Tracker.astro";
 import { connectionIconHtml } from "../lib/connectionIcons";
+import "../styles/global.css";
 
 Astro.response.headers.set("Cache-Control", "no-store");
 
@@ -10,218 +11,99 @@ const creditGroups: { label: string; services: { name: string; type: string; url
     services: [
       { name: "TMDB", type: "themoviedatabase", url: "https://www.themoviedb.org" },
       { name: "TheTVDB", type: "tvdb", url: "https://thetvdb.com" },
+      { name: "MDBList", type: "mdblist", url: "https://mdblist.com" },
     ],
   },
   {
-    label: "Media servers & catalogs",
+    label: "Media players and servers",
     services: [
+      { name: "Stremio", type: "stremio", url: "https://www.stremio.com" },
+      { name: "Nuvio", type: "nuvio", url: "https://nuvio.tv" },
       { name: "Plex", type: "plex", url: "https://www.plex.tv" },
       { name: "Jellyfin", type: "jellyfin", url: "https://jellyfin.org" },
       { name: "Emby", type: "emby", url: "https://emby.media" },
       { name: "Kodi", type: "kodi", url: "https://kodi.tv" },
-      { name: "Nuvio", type: "nuvio", url: "https://nuvio.tv" },
-      { name: "Stremio", type: "stremio", url: "https://www.stremio.com" },
-      { name: "ARVIO", type: "arvio", url: "https://arvio.tv" },
     ],
   },
   {
-    label: "Trackers",
+    label: "Tracking services",
     services: [
       { name: "Trakt", type: "trakt", url: "https://trakt.tv" },
       { name: "Simkl", type: "simkl", url: "https://simkl.com" },
-      { name: "MDBList", type: "mdblist", url: "https://mdblist.com" },
       { name: "Bingebase", type: "bingebase", url: "https://bingebase.com" },
-    ],
-  },
-  {
-    label: "Library automation",
-    services: [
-      { name: "Radarr", type: "radarr", url: "https://radarr.video" },
-      { name: "Sonarr", type: "sonarr", url: "https://sonarr.tv" },
     ],
   },
 ];
 
-const currentVersion = process.env.APP_VERSION ?? 'dev';
-
-let latestVersion: string | null = null;
-let releaseUrl: string | null = null;
-let updateAvailable = false;
-
-function isNewer(latest: string, current: string): boolean {
-  const parse = (v: string) => v.split('.').map(Number);
-  const [lMaj, lMin, lPat] = parse(latest);
-  const [cMaj, cMin, cPat] = parse(current);
-  if (lMaj !== cMaj) return lMaj > cMaj;
-  if (lMin !== cMin) return lMin > cMin;
-  return lPat > cPat;
-}
-
-if (currentVersion !== 'dev') {
-  try {
-    const res = await fetch('https://api.github.com/repos/ellite/scrob/releases/latest', {
-      headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'scrob-app' },
-      signal: AbortSignal.timeout(3000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      latestVersion = (data.tag_name as string)?.replace(/^v/, '') ?? null;
-      releaseUrl = data.html_url ?? null;
-      if (latestVersion) {
-        updateAvailable = isNewer(latestVersion, currentVersion);
-      }
-    }
-  } catch {
-    // best-effort — silently skip if GitHub is unreachable
-  }
-}
+const currentVersion = process.env.APP_VERSION ?? "development";
 ---
 
-<Base title="About">
-  <div class="max-w-2xl mx-auto py-8">
-    <div class="flex items-center gap-4 mb-8">
-      <img src="/scrob.png" alt="Scrob Logo" class="w-16 h-16 object-contain" />
+<Tracker title="About">
+  <main class="mx-auto max-w-4xl px-5 py-10 md:px-8 md:py-14">
+    <header class="mb-10 flex items-center gap-5">
+      <span aria-hidden="true" class="inline-flex h-16 w-16 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-indigo-500 text-2xl font-black tracking-[-0.12em] text-white shadow-xl shadow-sky-950/30">M<span class="text-sky-100">t</span></span>
       <div>
-        <h1 class="page-title">Scrob</h1>
-        <p class="text-zinc-500 text-sm mt-0.5">Version {currentVersion}</p>
+        <p class="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-sky-400">Self-hosted media tracking</p>
+        <h1 class="page-title">Media Tracker</h1>
+        <p class="mt-1 text-sm text-zinc-500">Build {currentVersion}</p>
       </div>
-    </div>
+    </header>
 
-    {updateAvailable && (
-      <a
-        href={releaseUrl!}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="flex items-center justify-between gap-3 mb-6 px-4 py-3 rounded-lg bg-blue-950 border border-blue-700 text-blue-300 hover:bg-blue-900 transition-colors group"
-      >
-        <div class="flex items-center gap-3">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-          <span>
-            Version <strong class="text-blue-200">{latestVersion}</strong> is available
-            <span class="text-blue-500 ml-1">- view changelog</span>
-          </span>
-        </div>
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-50 group-hover:opacity-100 transition-opacity shrink-0"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-      </a>
-    )}
-
-    <div class="space-y-6 text-zinc-400 leading-relaxed">
-      <p>
-        Scrob - Open Source, Self-hosted media tracking app. It syncs your libraries from Jellyfin, Plex, and Emby,
-        tracks your watch history, ratings, and personal lists - Your own private Letterboxd + Trakt.
-      </p>
-
-      <div>
-        <h2 class="section-headline mb-6">Links</h2>
-        <div class="space-y-2">
-          <a
-            href="https://github.com/ellite/scrob"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors group"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="shrink-0">
-              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
-            </svg>
-            <span>GitHub - ellite/scrob</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-          </a>
-          <a
-            href="https://github.com/ellite/scrob/issues"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors group"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            <span>Issues &amp; Requests</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-          </a>
-          <a
-            href="https://github.com/ellite/scrob/blob/main/LICENSE.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors group"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-              <polyline points="10 9 9 9 8 9"/>
-            </svg>
-            <span>License - GNU GPL v3</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-          </a>
-          <a
-            href="https://henrique.pt"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="flex items-center gap-2 text-zinc-400 hover:text-zinc-100 transition-colors group"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
-            <span>Author - Henrique.pt</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-0 group-hover:opacity-50 transition-opacity"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-          </a>
-        </div>
-      </div>
-
-      <div>
-        <h2 class="section-headline mb-2">Credits</h2>
-        <p class="text-sm text-zinc-500 mb-6">
-          Scrob connects to the following third-party services through their
-          publicly documented APIs. It is an independent project and is not
-          affiliated with, endorsed by, or certified by any of them.
+    <div class="space-y-8 text-zinc-400 leading-relaxed">
+      <section class="rounded-md border border-zinc-800 bg-zinc-900/55 p-6 md:p-8">
+        <h2 class="mb-3 text-lg font-semibold text-zinc-100">One place for the titles you watch</h2>
+        <p class="m-0 max-w-2xl text-sm md:text-[15px]">
+          Media Tracker combines movie and series lists, half-point ratings, episode progress,
+          profiles, following, and provider synchronization in a private service for you and
+          the people you invite.
         </p>
-        <div class="space-y-5">
+      </section>
+
+      <section>
+        <h2 class="section-headline mb-3">Project</h2>
+        <p class="mb-4 text-sm">
+          Media Tracker is built from the open-source Scrob project and remains licensed under
+          the GNU General Public License v3. The interface and tracking model have been adapted
+          for whole-show lists, season ratings, private profiles, social activity, and reviewed
+          synchronization decisions.
+        </p>
+        <div class="flex flex-wrap gap-3 text-sm">
+          <a href="https://github.com/ellite/scrob" target="_blank" rel="noopener noreferrer" class="rounded border border-zinc-700 bg-zinc-900 px-4 py-2 text-zinc-300 transition-colors hover:border-sky-500 hover:text-sky-300">Scrob upstream</a>
+          <a href="https://github.com/ellite/scrob/blob/main/LICENSE.md" target="_blank" rel="noopener noreferrer" class="rounded border border-zinc-700 bg-zinc-900 px-4 py-2 text-zinc-300 transition-colors hover:border-sky-500 hover:text-sky-300">GNU GPL v3</a>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-headline mb-2">Connected services</h2>
+        <p class="mb-6 text-sm text-zinc-500">
+          Connections are optional. Availability depends on the administrator configuration and
+          each service's supported fields.
+        </p>
+        <div class="space-y-6">
           {creditGroups.map((group) => (
             <div>
-              <h3 class="text-xs font-bold uppercase tracking-widest text-zinc-600 mb-2">{group.label}</h3>
-              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <h3 class="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">{group.label}</h3>
+              <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {group.services.map((service) => (
-                  <a
-                    href={service.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 hover:bg-zinc-900 transition-colors"
-                  >
-                    <span class="flex shrink-0 items-center [&_svg]:size-5! [&_span]:size-5! [&_span]:text-[8px]! [&_span]:rounded-md!">
-                      <Fragment set:html={connectionIconHtml(service.type)} />
-                    </span>
-                    <span class="text-sm truncate">{service.name}</span>
+                  <a href={service.url} target="_blank" rel="noopener noreferrer" class="flex items-center gap-2.5 rounded border border-zinc-800 bg-zinc-900/45 px-3 py-2.5 text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100">
+                    <span class="flex shrink-0 items-center [&_svg]:size-5! [&_span]:size-5! [&_span]:rounded-md! [&_span]:text-[8px]!"><Fragment set:html={connectionIconHtml(service.type)} /></span>
+                    <span class="truncate text-sm">{service.name}</span>
                   </a>
                 ))}
               </div>
             </div>
           ))}
         </div>
-      </div>
+      </section>
 
-      <div class="pt-4 border-t border-zinc-800 text-xs text-zinc-600 space-y-2">
-        <p>Built with Astro, FastAPI, and PostgreSQL.</p>
+      <footer class="space-y-2 border-t border-zinc-800 pt-6 text-xs text-zinc-600">
+        <p>Built with Astro, FastAPI, PostgreSQL, Tailwind CSS, and Font Awesome.</p>
         <p>
-          This product uses the TMDB API but is not endorsed or certified by
-          <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer" class="text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors">TMDB</a>.
-          Metadata is also provided by
-          <a href="https://thetvdb.com" target="_blank" rel="noopener noreferrer" class="text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition-colors">TheTVDB</a>.
+          This product uses the TMDB API but is not endorsed or certified by TMDB. Metadata may
+          also be provided by TheTVDB. All service names, logos, and trademarks belong to their
+          respective owners and identify interoperability only.
         </p>
-        <p>
-          All product names, logos, brands, and trademarks shown in Scrob are
-          the property of their respective owners and are used only to identify
-          the services Scrob interoperates with. Their use does not imply any
-          affiliation with or endorsement by them.
-        </p>
-      </div>
+      </footer>
     </div>
-  </div>
-</Base>
+  </main>
+</Tracker>

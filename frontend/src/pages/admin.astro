@@ -1123,7 +1123,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         throw new Error(data.detail || 'Backup failed');
       }
       const cd = res.headers.get('Content-Disposition');
-      const filename = cd?.match(/filename="([^"]+)"/)?.[1] ?? 'scrob_backup.bak';
+      const filename = cd?.match(/filename="([^"]+)"/)?.[1] ?? 'media_tracker_backup.bak';
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

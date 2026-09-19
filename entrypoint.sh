@@ -26,5 +26,5 @@ echo "Running database migrations..."
 cd /app/backend
 gosu scrob .venv/bin/python -m alembic upgrade head
 
-echo "Starting Scrob (frontend :7330, backend 127.0.0.1:${BACKEND_PORT})..."
+echo "Starting Media Tracker (frontend :7330, backend 127.0.0.1:${BACKEND_PORT})..."
 exec gosu scrob /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

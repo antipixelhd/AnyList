@@ -784,7 +784,7 @@ from core.config import settings
 # API docs (docs_url/redoc_url/openapi_url) are disabled here and re-added below behind
 # require_admin — the schema reveals the full endpoint surface and exact app version,
 # which shouldn't be public on a self-hosted instance that may be internet-facing.
-app = FastAPI(title="Scrob", version=settings.app_version, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Media Tracker", version=settings.app_version, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
@@ -846,5 +846,5 @@ async def health():
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception:
-        return JSONResponse(status_code=503, content={"status": "error", "app": "Scrob"})
-    return {"status": "ok", "app": "Scrob"}
+        return JSONResponse(status_code=503, content={"status": "error", "app": "Media Tracker"})
+    return {"status": "ok", "app": "Media Tracker"}
