@@ -417,7 +417,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review.proposed_status, 'completed')
         self.assertFalse(await cloud_push_is_approved(self.db, self.owner.id, 'simkl'))
 
-    async def test_title_community_average_excludes_private_profiles(self):
+    async def test_title_omits_instance_community_average(self):
         await self.save(self.movie, status='completed', manual_score=8)
         self.db.add(TrackedEntry(
             user_id=self.friend.id,
@@ -429,8 +429,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         res = await self.client.get(f'/tracking/title/{self.movie.id}')
         self.assertEqual(res.status_code, 200, res.text)
-        self.assertEqual(res.json()['community_average'], 8)
-        self.assertEqual(res.json()['community_count'], 1)
+        self.assertNotIn('community_average', res.json())
+        self.assertNotIn('community_count', res.json())
 
         friend_profile = (await self.db.execute(
             select(UserProfileData).where(UserProfileData.user_id == self.friend.id)
@@ -438,8 +438,66 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         friend_profile.privacy_level = PrivacyLevel.public
         await self.db.commit()
         res = await self.client.get(f'/tracking/title/{self.movie.id}')
-        self.assertEqual(res.json()['community_average'], 9)
-        self.assertEqual(res.json()['community_count'], 2)
+        self.assertNotIn('community_average', res.json())
+
+    async def test_release_preferences_default_and_patch(self):
+        initial=await self.client.get('/tracking/preferences')
+        self.assertEqual(initial.status_code,200,initial.text)
+        self.assertEqual(initial.json(),{
+            'auto_confirm':False,'combine_lists':True,
+            'low_priority_notifications':True,'low_priority_retention_days':7,
+        })
+        changed=await self.client.patch('/tracking/preferences',json={
+            'combine_lists':False,'low_priority_notifications':False,'low_priority_retention_days':14,
+        })
+        self.assertEqual(changed.status_code,200,changed.text)
+        self.assertFalse(changed.json()['combine_lists'])
+        self.assertEqual(changed.json()['low_priority_retention_days'],14)
+
+    async def test_resolved_low_priority_notification_disappears_after_seen(self):
+        review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='playback_removed',state='confirmed',message='Applied automatically')
+        self.db.add(review);await self.db.commit()
+        recent=await self.client.get('/tracking/recent-events')
+        self.assertEqual([row['id'] for row in recent.json()['results']],[review.id])
+        seen=await self.client.post('/tracking/recent-events/seen',json={'ids':[review.id]})
+        self.assertEqual(seen.status_code,200,seen.text)
+        recent=await self.client.get('/tracking/recent-events')
+        self.assertEqual(recent.json()['results'],[])
+
+    async def test_combined_list_and_anime_visibility_are_presentation_only(self):
+        anime=Media(title='Fixture Anime',media_type=MediaType.series,tmdb_data={
+            'genres':['Animation'],'original_language':'ja','origin_country':['JP'],
+        })
+        self.db.add(anime);await self.db.flush()
+        self.db.add_all([
+            TrackedEntry(user_id=self.owner.id,media_id=self.movie.id,status='completed'),
+            TrackedEntry(user_id=self.owner.id,media_id=self.show.id,status='watching'),
+            TrackedEntry(user_id=self.owner.id,media_id=anime.id,status='watching'),
+        ]);await self.db.commit()
+        combined=await self.client.get(f'/tracking/profile/{self.owner.username}/all')
+        self.assertEqual({row['title'] for row in combined.json()['entries']},{'Fixture Film','Fixture Show'})
+        self.assertTrue(combined.json()['combine_lists'])
+        self.assertIsNotNone(await self.db.get(TrackedEntry,(await self.db.execute(select(TrackedEntry.id).where(TrackedEntry.media_id==anime.id))).scalar_one()))
+        settings=await self.db.get(GlobalSettings,1)
+        if settings is None:
+            settings=GlobalSettings(id=1)
+            self.db.add(settings)
+        settings.show_anime=True;await self.db.commit()
+        combined=await self.client.get(f'/tracking/profile/{self.owner.username}/all')
+        self.assertIn('Fixture Anime',{row['title'] for row in combined.json()['entries']})
+
+    async def test_public_people_search_and_one_way_follow(self):
+        profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
+        profile.privacy_level=PrivacyLevel.public;profile.display_name='Public Friend';await self.db.commit()
+        search=await self.client.get('/tracking/people-search?q=Public')
+        self.assertEqual(search.status_code,200,search.text)
+        self.assertEqual(search.json()['results'][0]['username'],self.friend.username)
+        follow=await self.client.post(f'/tracking/people/{self.friend.username}/follow')
+        self.assertEqual(follow.status_code,200,follow.text)
+        person=await self.client.get(f'/tracking/people/{self.friend.username}')
+        self.assertTrue(person.json()['following'])
+        unfollow=await self.client.delete(f'/tracking/people/{self.friend.username}/follow')
+        self.assertEqual(unfollow.status_code,200,unfollow.text)
 
     async def test_stream_library_removal_is_scoped_to_the_observed_connection(self):
         from routers.sync import _remove_stream_collection_sources

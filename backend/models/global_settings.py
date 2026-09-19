@@ -34,6 +34,7 @@ class GlobalSettings(Base):
     image_cache_limit_gb         : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     enable_logged_out_navigation : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     disable_comments             : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
+    show_anime                   : Mapped[bool]          = mapped_column(Boolean, nullable=False, server_default="false")
     # Stable X-Plex-Client-Identifier for this Scrob instance. Generated on first
     # use of "Login with Plex"; kept forever so Plex keeps recognising the device.
     plex_client_identifier       : Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

@@ -13,7 +13,7 @@ from dependencies import get_current_user, get_optional_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline
+from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore
 
 router = APIRouter()
 
@@ -83,37 +83,104 @@ async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get
 
 
 class PreferencePatch(BaseModel):
-    auto_confirm: bool
+    auto_confirm: bool | None = None
+    combine_lists: bool | None = None
+    low_priority_notifications: bool | None = None
+    low_priority_retention_days: int | None = Field(None, ge=1, le=90)
 
 
 @router.get('/preferences')
 async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     row=await db.get(TrackingPreferences,viewer.id)
-    return {'auto_confirm': bool(row and row.auto_confirm)}
+    return {
+        'auto_confirm': bool(row and row.auto_confirm),
+        'combine_lists': True if row is None else row.combine_lists,
+        'low_priority_notifications': True if row is None else row.low_priority_notifications,
+        'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
+    }
 
 
 @router.patch('/preferences')
 async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     row=await db.get(TrackingPreferences,viewer.id)
     if not row: row=TrackingPreferences(user_id=viewer.id);db.add(row)
-    row.auto_confirm=body.auto_confirm
+    for name in body.model_fields_set:
+        setattr(row,name,getattr(body,name))
     await db.commit()
-    return {'auto_confirm':row.auto_confirm}
+    return await preferences(db,viewer)
+
+
+def review_priority(review: SyncReview) -> str:
+    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import'}:
+        return 'high'
+    if review.kind == 'outbound_pending':
+        return 'medium'
+    return review.priority or 'low'
 
 
 @router.get('/recent-events')
 async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    rows=(await db.execute(select(SyncReview,Media).outerjoin(Media,Media.id==SyncReview.media_id).where(SyncReview.user_id==viewer.id).order_by(SyncReview.created_at.desc()).limit(100))).all()
+    prefs=await db.get(TrackingPreferences,viewer.id)
+    retention=prefs.low_priority_retention_days if prefs else 7
+    cutoff=datetime.utcnow()-timedelta(days=retention)
+    expiring=(await db.execute(select(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.dismissed_at.is_(None),
+        SyncReview.state!='pending',SyncReview.created_at<cutoff))).scalars().all()
+    for review in expiring:
+        if review_priority(review)=='low':review.dismissed_at=datetime.utcnow()
+    query=select(SyncReview,Media).outerjoin(Media,Media.id==SyncReview.media_id).where(
+        SyncReview.user_id==viewer.id,SyncReview.dismissed_at.is_(None)).order_by(SyncReview.created_at.desc()).limit(100)
+    rows=(await db.execute(query)).all()
+    if prefs and not prefs.low_priority_notifications:
+        rows=[row for row in rows if review_priority(row[0])!='low' or row[0].state=='pending']
     from models.tracking import StreamAction
     actions=(await db.execute(select(StreamAction,Media,MediaServerConnection).join(Media,Media.id==StreamAction.media_id)
         .join(MediaServerConnection,MediaServerConnection.id==StreamAction.connection_id)
         .where(StreamAction.user_id==viewer.id,StreamAction.state.in_(['pending','conflict']))
         .order_by(StreamAction.id).limit(100))).all()
-    pending=await db.scalar(select(func.count()).select_from(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.state=='pending'))
+    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')
+    await db.commit()
     return {'pending':pending,'outbound':[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions],
         'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
+                    'priority':review_priority(r),'dismissible':r.state!='pending','payload':r.payload or {},
                     'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+
+
+class SeenReviews(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=100)
+
+
+@router.post('/recent-events/seen')
+async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    rows=(await db.execute(select(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.id.in_(body.ids)))).scalars().all()
+    now=datetime.utcnow()
+    for row in rows:
+        row.seen_at=now
+        if row.state!='pending' and review_priority(row)=='low':row.dismissed_at=now
+    await db.commit()
+    return {'seen':len(rows)}
+
+
+@router.delete('/recent-events/{event_id}')
+async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    row=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id))).scalar_one_or_none()
+    if not row:raise HTTPException(404,'Event not found')
+    if row.state=='pending':raise HTTPException(409,'Resolve this event before dismissing it')
+    row.dismissed_at=datetime.utcnow();await db.commit()
+    return {'dismissed':True}
+
+
+@router.get('/provider-ignores')
+async def provider_ignores(db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    rows=(await db.execute(select(ProviderIgnore).where(ProviderIgnore.user_id==viewer.id).order_by(ProviderIgnore.provider,ProviderIgnore.title))).scalars().all()
+    return {'results':[{'id':r.id,'provider':r.provider,'external_key':r.external_key,'title':r.title,'created_at':r.created_at} for r in rows]}
+
+
+@router.delete('/provider-ignores/{ignore_id}')
+async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    result=await db.execute(delete(ProviderIgnore).where(ProviderIgnore.id==ignore_id,ProviderIgnore.user_id==viewer.id))
+    if not result.rowcount:raise HTTPException(404,'Ignored item not found')
+    await db.commit();return {'removed':True}
 
 
 class ReviewResolution(BaseModel):
@@ -202,15 +269,51 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
 async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
+    if not await anime_is_visible(db):entries=[row for row in entries if not is_anime(row[1])]
     following_ids = (await db.execute(select(Follow.following_id).where(Follow.follower_id == user.id))).scalars().all()
     followers_ids = (await db.execute(select(Follow.follower_id).where(Follow.following_id == user.id))).scalars().all()
     people = (await db.execute(select(User, UserProfileData).join(UserProfileData, UserProfileData.user_id == User.id).where(User.id.in_(set(following_ids + followers_ids)), UserProfileData.privacy_level == PrivacyLevel.public))).all()
     visible = [{"username":u.username, "display_name":p.display_name or u.username, "following":u.id in following_ids, "follower":u.id in followers_ids} for u,p in people]
+    prefs=await db.get(TrackingPreferences,user.id)
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),"has_avatar":bool(user.profile and user.profile.avatar_path),
+        "combine_lists":True if prefs is None else prefs.combine_lists,
         "counts":{"movies":sum(m.media_type==MediaType.movie for e,m in entries),"series":sum(m.media_type==MediaType.series for e,m in entries),
                   "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids)},
         "favorites":[media_data(m) for e,m in entries if e.favorite],"people":visible}
+
+
+@router.get('/people-search')
+async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    term=q.strip()
+    if not term:return {'results':[]}
+    rows=(await db.execute(select(User,UserProfileData).join(UserProfileData,UserProfileData.user_id==User.id).where(
+        UserProfileData.privacy_level==PrivacyLevel.public,
+        or_(User.username.ilike(f'%{term}%'),UserProfileData.display_name.ilike(f'%{term}%'))
+    ).order_by(User.username).limit(24))).all()
+    followed=set((await db.execute(select(Follow.following_id).where(Follow.follower_id==viewer.id,
+        Follow.following_id.in_([u.id for u,_ in rows])))).scalars()) if rows else set()
+    return {'results':[{'id':u.id,'username':u.username,'display_name':p.display_name or u.username,
+        'bio':p.bio,'has_avatar':bool(p.avatar_path),'following':u.id in followed,'owner':u.id==viewer.id} for u,p in rows]}
+
+
+@router.post('/people/{username}/follow')
+async def follow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    target=(await db.execute(select(User).join(UserProfileData,UserProfileData.user_id==User.id).where(
+        User.username==username,UserProfileData.privacy_level==PrivacyLevel.public))).scalar_one_or_none()
+    if not target:raise HTTPException(404,'Public profile not found')
+    if target.id==viewer.id:raise HTTPException(422,'You cannot follow yourself')
+    exists=(await db.execute(select(Follow.id).where(Follow.follower_id==viewer.id,Follow.following_id==target.id))).scalar_one_or_none()
+    if not exists:db.add(Follow(follower_id=viewer.id,following_id=target.id));await db.commit()
+    return {'following':True}
+
+
+@router.delete('/people/{username}/follow')
+async def unfollow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    target=(await db.execute(select(User).where(User.username==username))).scalar_one_or_none()
+    if not target:raise HTTPException(404,'Profile not found')
+    await db.execute(delete(Follow).where(Follow.follower_id==viewer.id,Follow.following_id==target.id));await db.commit()
+    return {'following':False}
 
 
 @router.get("/library")
@@ -268,6 +371,19 @@ async def profile_access(db, username, viewer):
     return user, owner
 
 
+def is_anime(media: Media) -> bool:
+    data=media.tmdb_data or {}
+    genres={str(g if isinstance(g,str) else g.get('name','')).lower() for g in data.get('genres',[]) if isinstance(g,(str,dict))}
+    countries={str(value).upper() for value in data.get('origin_country',[]) if value}
+    countries.update(str(value.get('iso_3166_1','')).upper() for value in data.get('production_countries',[]) if isinstance(value,dict))
+    return 'animation' in genres and (data.get('original_language')=='ja' or 'JP' in countries)
+
+
+async def anime_is_visible(db: AsyncSession) -> bool:
+    settings=await db.get(GlobalSettings,1)
+    return bool(settings and settings.show_anime)
+
+
 def media_data(media):
     data = media.tmdb_data or {}
     regular_seasons = [
@@ -295,6 +411,7 @@ def media_data(media):
         "last_air_date": data.get("last_air_date"),
         "release_status": media.status or data.get('status'), "genres": [g if isinstance(g, str) else g["name"] for g in data.get("genres", []) if isinstance(g, str) or (isinstance(g, dict) and g.get("name"))],
         "tmdb_id": media.tmdb_id, "tvdb_id": media.tvdb_id, "imdb_id": media.imdb_id,
+        "is_anime": is_anime(media),
     }
 
 
@@ -312,16 +429,18 @@ def entry_data(entry, media, owner=False):
 
 
 @router.get("/profile/{username}/{media_type}")
-async def profile_list(username: str, media_type: Literal["movie", "series"], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     user, owner = await profile_access(db, username, viewer)
-    rows = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(
-        TrackedEntry.user_id == user.id, Media.media_type == MediaType(media_type)
-    ).order_by(Media.title))).all()
+    query=select(TrackedEntry,Media).join(Media,Media.id==TrackedEntry.media_id).where(TrackedEntry.user_id==user.id)
+    if media_type=='all':query=query.where(Media.media_type.in_([MediaType.movie,MediaType.series]))
+    else:query=query.where(Media.media_type==MediaType(media_type))
+    rows=(await db.execute(query.order_by(Media.title))).all()
+    if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
     following = False
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
     entries = [entry_data(e, m, owner) for e, m in rows]
-    if media_type == 'series':
+    if media_type in ('series','all'):
         # One batched query for all catalogue episode IDs; don't confuse status
         # Completed with history covering newly released episodes.
         catalogue_ids = {episode_id for _, m in rows for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
@@ -331,16 +450,19 @@ async def profile_list(username: str, media_type: Literal["movie", "series"], db
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user.id,
             WatchEvent.media_id.in_([r.id for r in released]), WatchEvent.completed.is_(True)))).scalars()) if released else set()
         for result, (_, media) in zip(entries, rows):
+            if media.media_type != MediaType.series:
+                continue
             ids = set((media.tmdb_data or {}).get('tracking_episode_ids', []))
             if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
                 title_episodes = [r.id for r in released if r.tmdb_id in ids]
                 result['released_episodes'] = len(title_episodes)
                 result['unwatched_episodes'] = sum(episode_id not in watched for episode_id in title_episodes)
                 result['progress'] = len(title_episodes) - result['unwatched_episodes']
+    prefs=await db.get(TrackingPreferences,user.id)
     return {
         "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
                     "bio": user.profile.bio if user.profile else None, "has_avatar": bool(user.profile and user.profile.avatar_path)},
-        "owner": owner, "following": following,
+        "owner": owner, "following": following,"combine_lists":True if prefs is None else prefs.combine_lists,
         "entries": entries,
     }
 
@@ -348,7 +470,9 @@ async def profile_list(username: str, media_type: Literal["movie", "series"], db
 @router.get("/catalog")
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)
+    show_anime=await anime_is_visible(db)
     rows = (await db.execute(select(Media).where(Media.media_type == MediaType(media_type), Media.title.ilike(f"%{q[:200]}%")).order_by(Media.title).limit(80))).scalars().all()
+    if not show_anime:rows=[m for m in rows if not is_anime(m)]
     results = [media_data(m) for m in rows]
     notice = None
     if q.strip():
@@ -361,7 +485,9 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 remote = await search(q.strip()[:200], api_key=key)
                 known = {m.tmdb_id for m in rows if m.tmdb_id}
                 for item in remote.get('results', []):
-                    if item['id'] in known or item.get('adult'):
+                    candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
+                    candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
+                    if item['id'] in known or item.get('adult') or (not show_anime and is_anime(candidate)):
                         continue
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
                         'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
@@ -402,6 +528,8 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
+    if is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404,"Title not found")
     # Logged-out visitors only read the shared cache. Signed-in visits may
     # refresh stale scores using the user's key, then the administrator key.
     if viewer:
@@ -430,27 +558,9 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
         released = [e for e in episodes if e.season_number == season.get('season_number')]
         season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
         season['watched_count'] = sum(e.id in watched for e in released)
-    community_entries = (await db.execute(
-        select(TrackedEntry)
-        .join(UserProfileData, UserProfileData.user_id == TrackedEntry.user_id)
-        .where(
-            TrackedEntry.media_id == media.id,
-            UserProfileData.privacy_level == PrivacyLevel.public,
-        )
-    )).scalars().all()
-    community_scores = [
-        score for public_entry in community_entries
-        if (score := effective_score(
-            public_entry.rating_mode,
-            public_entry.manual_score,
-            public_entry.season_scores,
-        )) is not None
-    ]
     return {**media_data(media), "entry": entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
-            "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None,
-            "community_average": sum(community_scores) / len(community_scores) if community_scores else None,
-            "community_count": len(community_scores)}
+            "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 
 
 @router.post('/title/{media_id}/refresh-episodes')
@@ -616,4 +726,5 @@ async def activity(db: AsyncSession = Depends(get_db), viewer: User = Depends(ge
         .join(User, User.id == TrackingActivity.user_id).outerjoin(UserProfileData, UserProfileData.user_id == User.id)
         .where(or_(User.id == viewer.id, (User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public)))
         .order_by(TrackingActivity.created_at.desc()).limit(60))).all()
+    if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
     return {"results": [{"username": u.username, "status": a.status, "score": a.score, "created_at": a.created_at, "media": media_data(m)} for a, m, u in rows]}

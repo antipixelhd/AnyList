@@ -48,6 +48,9 @@ class TrackingPreferences(Base):
     __tablename__ = "tracking_preferences"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     auto_confirm: Mapped[bool] = mapped_column(Boolean, default=False)
+    combine_lists: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    low_priority_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    low_priority_retention_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
 
 
 class SyncReview(Base):
@@ -65,6 +68,21 @@ class SyncReview(Base):
     proposed_score: Mapped[float | None] = mapped_column(Float)
     season_number: Mapped[int | None] = mapped_column(Integer)
     message: Mapped[str] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(16), default="low", server_default="low")
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ProviderIgnore(Base):
+    __tablename__ = "tracking_provider_ignores"
+    __table_args__ = (UniqueConstraint("user_id", "provider", "external_key", name="uq_tracking_provider_ignore"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False)
+    external_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

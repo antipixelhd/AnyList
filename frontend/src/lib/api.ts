@@ -345,6 +345,7 @@ export interface GlobalSettings {
   image_cache_limit_gb: number | null;
   enable_logged_out_navigation: boolean;
   disable_comments: boolean;
+  show_anime: boolean;
 }
 
 export interface MediaRequestItem {
