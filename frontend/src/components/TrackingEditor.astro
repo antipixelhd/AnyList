@@ -19,7 +19,7 @@ import Icon from './Icon.astro';
       <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
       <label class="wide" id="rating-mode-field">Show score<select name="rating_mode"><option value="manual">Keep a separate show rating</option><option value="average">Average my rated seasons</option></select><span class="hint" id="calculated-score"></span></label>
       <label class="wide">Notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
-      <label class="wide checkbox"><input type="checkbox" name="mark_released_watched"/>Mark all released episodes watched when completing</label>
+      <p class="wide hint">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
@@ -68,7 +68,6 @@ import Icon from './Icon.astro';
       poster.src = artwork(title.poster, 'w342'); poster.alt = title.poster ? `${title.title} poster` : ''; poster.hidden = !title.poster;
       backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
       for (const name of ['status','manual_score','progress','start_date','finish_date','rewatch_count','notes','rating_mode']) field(name).value = current[name] ?? '';
-      field('mark_released_watched').checked = true;
       field('progress').disabled = title.type === 'movie';
       document.querySelector<HTMLElement>('#rating-mode-field')!.hidden = title.type !== 'series';
       updateMode();
@@ -110,7 +109,6 @@ import Icon from './Icon.astro';
         body.confirm_rollback = true;
       }
     }
-    body.mark_released_watched = status === 'completed' && current.status !== 'completed' && field('mark_released_watched').checked;
     submit.disabled = true;
     try {
       const response = await fetch(`/api/proxy/tracking/entry/${current.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

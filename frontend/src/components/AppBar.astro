@@ -44,13 +44,37 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
     <div class="account-nav">
       {user ? <>
         <a class:list={{active: pathname.startsWith('/user/')}} href={profile}>{user.display_name || user.username}</a>
-        <a class:list={{'appbar-icon-link': true, active: pathname === '/recent-events'}} href="/recent-events" aria-label={notificationLabel} aria-current={pathname === '/recent-events' ? 'page' : undefined}>
+        <a class:list={{'appbar-icon-link': true, active: pathname === '/recent-events'}} href="/recent-events" aria-label={notificationLabel} aria-current={pathname === '/recent-events' ? 'page' : undefined} data-notification-link>
           <Icon name="bell" />
-          {quietNotifications > 0 && <span class="notification-badge notification-badge-quiet" aria-hidden="true">{quietNotifications > 99 ? '99+' : quietNotifications}</span>}
-          {attentionNotifications > 0 && <span class="notification-badge notification-badge-attention" aria-hidden="true">{attentionNotifications > 99 ? '99+' : attentionNotifications}</span>}
+          <span class="notification-badge notification-badge-quiet" aria-hidden="true" data-notification-quiet hidden={quietNotifications===0}>{quietNotifications > 99 ? '99+' : quietNotifications}</span>
+          <span class="notification-badge notification-badge-attention" aria-hidden="true" data-notification-attention hidden={attentionNotifications===0}>{attentionNotifications > 99 ? '99+' : attentionNotifications}</span>
         </a>
         <a class:list={{'appbar-icon-link': true, active: ['/settings','/user-settings','/connections','/admin'].includes(pathname)}} href="/settings" aria-label="Settings" aria-current={['/settings','/user-settings','/connections','/admin'].includes(pathname) ? 'page' : undefined}><Icon name="gear" /></a>
+        <form method="POST" action="/logout" class="appbar-signout"><button class="appbar-icon-link" type="submit" aria-label="Sign out"><Icon name="sign-out" /></button></form>
       </> : <a href="/login">Sign in</a>}
     </div>
   </div>
 </header>
+{user && <script>
+  const link = document.querySelector<HTMLElement>('[data-notification-link]');
+  const quietBadge = document.querySelector<HTMLElement>('[data-notification-quiet]');
+  const attentionBadge = document.querySelector<HTMLElement>('[data-notification-attention]');
+  const renderBadge = (badge: HTMLElement | null, count: number) => {
+    if (!badge) return;
+    badge.hidden = count === 0;
+    badge.textContent = count > 99 ? '99+' : String(count);
+  };
+  async function refreshNotificationBadge() {
+    try {
+      const response = await fetch('/api/proxy/tracking/recent-events');
+      if (!response.ok) return;
+      const notifications = await response.json();
+      const attention = (notifications.results ?? []).filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
+      const quiet = Math.max(0, (notifications.results?.length ?? 0) + (notifications.outbound?.length ?? 0) - attention);
+      renderBadge(quietBadge, quiet);
+      renderBadge(attentionBadge, attention);
+      if (link) link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread');
+    } catch { /* Keep the last known server-rendered count during a transient failure. */ }
+  }
+  document.addEventListener('media-tracker:notifications-changed', refreshNotificationBadge);
+</script>}

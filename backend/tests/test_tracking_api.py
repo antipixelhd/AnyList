@@ -1000,7 +1000,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             res=await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['episodes'],2)
-        res=await self.save(self.show,mark_released_watched=True)
+        res=await self.save(self.show,status='completed')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['progress'],1)
         rows=(await self.db.execute(select(Media).join(WatchEvent,WatchEvent.media_id==Media.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()
@@ -1008,6 +1008,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         # A newly released episode appears as unwatched without moving the
         # completed entry back into Watching.
         future=(await self.db.execute(select(Media).where(Media.tmdb_id==987654311))).scalar_one()
+        future.season_number=2
         future.release_date=date.today().isoformat()
         await self.db.commit()
         res=await self.client.get(f'/tracking/profile/{self.owner.username}/series')
@@ -1015,7 +1016,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'],'completed')
         self.assertEqual(result['progress'],1)
         self.assertEqual(result['released_episodes'],2)
-        self.assertEqual(result['unwatched_episodes'],1)
+        self.assertEqual(result['new_seasons'],1)
+        res=await self.save(self.show,status='watching')
+        self.assertEqual(res.status_code,200,res.text)
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
+        self.assertEqual(result['new_seasons'],0)
 
     async def test_incomplete_metadata_does_not_enable_progress(self):
         self.show.tmdb_id=987654318

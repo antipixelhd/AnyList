@@ -513,7 +513,7 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
         # One batched query for all catalogue episode IDs; don't confuse status
         # Completed with history covering newly released episodes.
         catalogue_ids = {episode_id for _, m in rows for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
-        released = (await db.execute(select(Media.id, Media.tmdb_id).where(Media.media_type == MediaType.episode,
+        released = (await db.execute(select(Media.id, Media.tmdb_id, Media.season_number).where(Media.media_type == MediaType.episode,
             Media.tmdb_id.in_(catalogue_ids), Media.season_number > 0, Media.release_date.is_not(None),
             Media.release_date <= date.today().isoformat()))).all() if catalogue_ids else []
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user.id,
@@ -525,8 +525,9 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
             if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
                 title_episodes = [r.id for r in released if r.tmdb_id in ids]
                 result['released_episodes'] = len(title_episodes)
-                result['unwatched_episodes'] = sum(episode_id not in watched for episode_id in title_episodes)
-                result['progress'] = len(title_episodes) - result['unwatched_episodes']
+                unwatched = [r for r in released if r.tmdb_id in ids and r.id not in watched]
+                result['progress'] = len(title_episodes) - len(unwatched)
+                result['new_seasons'] = len({r.season_number for r in unwatched}) if result['status'] == 'completed' else 0
     prefs=await db.get(TrackingPreferences,user.id)
     return {
         "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
@@ -740,11 +741,12 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             setattr(entry, name, value)
     if body.season_scores is not None:
         entry.season_scores = {**entry.season_scores, **body.season_scores}
-    if body.progress is not None or body.mark_released_watched:
+    completing_series = media.media_type == MediaType.series and status == 'completed' and previous != 'completed'
+    if body.progress is not None or body.mark_released_watched or completing_series:
         if media.media_type == MediaType.series and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
             raise HTTPException(409, 'Refresh episode metadata on the title page before changing progress')
         episodes = await released_episodes(db, media)
-        target = len(episodes) if body.mark_released_watched else body.progress
+        target = len(episodes) if body.mark_released_watched or completing_series else body.progress
         if not episodes or target > len(episodes):
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]

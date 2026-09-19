@@ -143,6 +143,7 @@ body.tracker{font-size:14px;line-height:1.55}
 .account-nav{display:flex;align-items:center;justify-self:end;gap:16px;font-size:13px;white-space:nowrap}
 .appbar-icon-link{position:relative;width:34px;height:34px;display:grid;place-items:center;border-radius:50%;color:#9db1c9;transition:background-color .15s,color .15s}
 .appbar-icon-link:hover,.appbar-icon-link:focus-visible,.appbar-icon-link.active{background:#1d3448;color:var(--blue)}
+.appbar-signout{margin:0;display:flex}.appbar-signout .appbar-icon-link{border:0;background:transparent}.appbar-signout .appbar-icon-link:hover,.appbar-signout .appbar-icon-link:focus-visible{background:#1d3448;color:var(--blue)}
 .notification-badge{position:absolute;min-width:17px;height:17px;padding:0 4px;border-radius:9px;display:grid;place-items:center;font-size:9px;line-height:1;font-weight:700;color:white;box-shadow:0 0 0 2px #142131}
 .notification-badge-quiet{right:-5px;top:-3px;background:#42647f;color:#d7e5f1}
 .notification-badge-attention{right:-6px;bottom:-3px;background:#e85d7d}

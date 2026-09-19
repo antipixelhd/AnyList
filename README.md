@@ -55,7 +55,9 @@ Run backend tests against the dedicated local database:
 ```powershell
 $env:SECRET_KEY = 'test-secret'
 $env:DATABASE_URL = 'postgresql+asyncpg://media_tracker:local-development-only@127.0.0.1:55438/media_tracker_test'
-.\.venv\Scripts\python.exe -m unittest discover -s backend\tests -q
+$env:TRACKING_TEST_DATABASE_URL = $env:DATABASE_URL
+Push-Location backend
+try { & ..\.venv\Scripts\python.exe -m unittest discover -s tests -q } finally { Pop-Location }
 ```
 
 Build the production frontend:
