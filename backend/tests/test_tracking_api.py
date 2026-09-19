@@ -1003,6 +1003,41 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.save(self.show,progress=1)
         self.assertEqual(res.status_code,409,res.text)
 
+    async def test_tvdb_native_refresh_preserves_original_episode_positions(self):
+        self.show.tvdb_id = 7654321
+        canonical = Show(title='Fixture Show', tvdb_id=7654321, canonical_source='tvdb')
+        self.db.add(canonical)
+        await self.db.commit()
+        series = {'id': 7654321, 'name': 'Fixture Show', 'seasons': [
+            {'number': 1, 'type': {'type': 'official'}, 'episodeCount': 2},
+        ]}
+        episodes = [
+            {'id': 7101, 'seasonNumber': 1, 'number': 1, 'name': 'One', 'aired': '2020-01-01'},
+            {'id': 7102, 'seasonNumber': 1, 'number': 2, 'name': 'Two', 'aired': '2020-01-08'},
+        ]
+        with patch('routers.media.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
+             patch('routers.shows.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
+             patch('core.tvdb.get_series', new=AsyncMock(return_value=series)), \
+             patch('core.tvdb.get_series_episodes', new=AsyncMock(return_value=episodes)):
+            response = await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
+        self.assertEqual(response.status_code, 200, response.text)
+        rows = (await self.db.execute(select(Media).where(
+            Media.show_id == canonical.id, Media.media_type == MediaType.episode,
+        ).order_by(Media.episode_number))).scalars().all()
+        self.assertEqual([(row.tvdb_id, row.season_number, row.episode_number) for row in rows], [
+            (7101, 1, 1), (7102, 1, 2),
+        ])
+
+        rows[0].season_number = 2
+        await self.db.commit()
+        with patch('routers.media.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
+             patch('routers.shows.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
+             patch('core.tvdb.get_series', new=AsyncMock(return_value=series)), \
+             patch('core.tvdb.get_series_episodes', new=AsyncMock(return_value=episodes)):
+            rejected = await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertIn('history was preserved', rejected.json()['detail'])
+
     async def test_stream_push_requires_review_and_blocks_unresolved_conflicts(self):
         from core.tracking_snapshot import require_stream_reconciliation
         from fastapi import HTTPException
