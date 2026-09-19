@@ -499,6 +499,8 @@ async def _show_metadata_refresher():
                     select(GlobalSettings).where(GlobalSettings.id == 1)
                 )).scalar_one_or_none()
                 api_key = gs.tmdb_api_key if gs else None
+                tvdb_key = gs.tvdb_api_key if gs else None
+                tvdb_pin = gs.tvdb_subscriber_pin if gs else None
                 if not check_tmdb_key(api_key):
                     api_key = (await db.execute(
                         select(UserSettings.tmdb_api_key)
@@ -512,13 +514,34 @@ async def _show_metadata_refresher():
                         .where(UserSettings.tmdb_api_key.isnot(None))
                         .limit(1)
                     )).scalar_one_or_none()
-                if not check_tmdb_key(api_key):
-                    log.info("Show metadata refresher: no TMDB key configured anywhere, skipping")
+                if not tvdb_key:
+                    tvdb_row = (await db.execute(
+                        select(UserSettings.tvdb_api_key, UserSettings.tvdb_subscriber_pin)
+                        .join(User, User.id == UserSettings.user_id)
+                        .where(UserSettings.tvdb_api_key.isnot(None), User.is_admin.is_(True))
+                        .limit(1)
+                    )).first()
+                    if tvdb_row:
+                        tvdb_key, tvdb_pin = tvdb_row
+                if not tvdb_key:
+                    tvdb_row = (await db.execute(
+                        select(UserSettings.tvdb_api_key, UserSettings.tvdb_subscriber_pin)
+                        .where(UserSettings.tvdb_api_key.isnot(None))
+                        .limit(1)
+                    )).first()
+                    if tvdb_row:
+                        tvdb_key, tvdb_pin = tvdb_row
+                if tvdb_key:
+                    from core import tvdb as tvdb_client
+                    tvdb_client.set_subscriber_pin(tvdb_key, tvdb_pin)
+                if not check_tmdb_key(api_key) and not tvdb_key:
+                    log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     continue
 
-                all_shows = (await db.execute(
-                    select(Show).where(Show.tmdb_id.isnot(None))
-                )).scalars().all()
+                all_shows = (
+                    (await db.execute(select(Show).where(Show.tmdb_id.isnot(None)))).scalars().all()
+                    if check_tmdb_key(api_key) else []
+                )
                 shows = [
                     s for s in all_shows
                     if (s.tmdb_data or {}).get("source") != "tvdb" and not _snapshot_is_fresh(s)
@@ -549,7 +572,7 @@ async def _show_metadata_refresher():
                     f"Show metadata refresher: refreshed {refreshed}/{len(shows)} stale shows, "
                     f"{revived} revived"
                 )
-                catalogue = await refresh_tracked_catalogues(db, api_key)
+                catalogue = await refresh_tracked_catalogues(db, api_key, tvdb_api_key=tvdb_key)
                 log.info(
                     "Tracking catalogue refresher: refreshed "
                     f"{catalogue['refreshed']} series / {catalogue['episodes']} episodes, "

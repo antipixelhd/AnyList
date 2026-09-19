@@ -399,6 +399,34 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'failed': 0,
         })
 
+    async def test_scheduled_catalogue_refresh_includes_tvdb_native_series(self):
+        from core.tracking_metadata import refresh_tracked_catalogues
+
+        self.show.tvdb_id = 7654301
+        canonical = Show(
+            title='Fixture Show', tvdb_id=self.show.tvdb_id,
+            canonical_source='tvdb', status='Continuing',
+        )
+        self.db.add(canonical)
+        await self.save(self.show, status='watching')
+        await self.db.commit()
+
+        with patch(
+            'core.tracking_metadata.hydrate_tracking_episodes',
+            AsyncMock(return_value=8),
+        ) as hydrate:
+            stats = await refresh_tracked_catalogues(
+                self.db, None, tvdb_api_key='tvdb-key',
+            )
+
+        hydrate.assert_awaited_once_with(self.db, self.show, None, 'tvdb-key')
+        self.assertEqual(stats, {
+            'refreshed': 1,
+            'episodes': 8,
+            'skipped': 0,
+            'failed': 0,
+        })
+
     async def test_newer_cloud_watch_completion_updates_existing_entry(self):
         from core.cloud_history_reconciliation import reconcile_cloud_watch_events
 
