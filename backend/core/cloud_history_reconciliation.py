@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from core.tracking_rules import effective_score
 from core.status_provenance import mark_status_change, status_changed_at
+from core.web_push import queue_sync_completion_rating
 from models import Media, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import CloudBaseline, SyncReview, TrackedEntry, TrackingActivity
@@ -247,6 +248,10 @@ async def reconcile_cloud_watch_events(
                 status=entry.status,
                 score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
             ))
+            if entry.status == "completed":
+                await queue_sync_completion_rating(
+                    db, user_id=user_id, media=media, entry=entry, source=provider,
+                )
         if not initial_import:
             await _add_applied_notification(
                 db,

@@ -19,8 +19,9 @@ from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key
 from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction
+from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
 from routers.tracking import router
+from routers.push import router as push_router
 from routers.comments import router as comments_router
 from routers.profile import router as profile_router
 
@@ -48,7 +49,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             self.db.add(settings)
         await self.db.commit()
         self.viewer = self.owner
-        app=FastAPI(); app.include_router(router,prefix='/tracking'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile')
+        app=FastAPI(); app.include_router(router,prefix='/tracking'); app.include_router(push_router,prefix='/push'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile')
         async def session(): yield self.db
         app.dependency_overrides[get_db]=session
         app.dependency_overrides[get_current_user]=lambda:self.viewer
@@ -154,6 +155,38 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(res.json()['finish_date'])
         res=await self.save(self.movie,status='completed')
         self.assertIsNone(res.json()['finish_date'])
+        prompts=(await self.db.execute(select(SyncReview).where(SyncReview.kind=='rating_needed'))).scalars().all()
+        self.assertEqual(prompts,[])
+
+    async def test_web_push_subscription_is_scoped_to_current_user(self):
+        body={'endpoint':'https://push.example.test/subscription/fixture','keys':{'p256dh':'p'*80,'auth':'a'*24}}
+        created=await self.client.post('/push/subscriptions',json=body)
+        self.assertEqual(created.status_code,200,created.text)
+        status=await self.client.get('/push/status')
+        self.assertEqual(status.json(),{'enabled':True,'subscriptions':1})
+        row=(await self.db.execute(select(WebPushSubscription))).scalar_one()
+        self.assertEqual(row.user_id,self.owner.id)
+        removed=await self.client.request('DELETE','/push/subscriptions',json=body)
+        self.assertEqual(removed.status_code,200,removed.text)
+        self.assertFalse((await self.client.get('/push/status')).json()['enabled'])
+
+    async def test_rating_push_dispatches_cover_and_deep_link_once(self):
+        from core.web_push import dispatch_rating_pushes
+        self.movie.poster_path='/fixture-poster.jpg'
+        self.db.add_all([
+            TrackedEntry(user_id=self.owner.id,media_id=self.movie.id,status='completed',rating_mode='manual',season_scores={},progress=0,favorite=False,rewatch_count=0),
+            WebPushSubscription(user_id=self.owner.id,endpoint='https://push.example.test/fixture',p256dh='p'*80,auth='a'*24),
+            SyncReview(user_id=self.owner.id,media_id=self.movie.id,provider='trakt',kind='rating_needed',state='confirmed',priority='low',message='Fixture Film completed. Rate now!',payload={'push_state':'pending','delivered_subscription_ids':[]}),
+        ])
+        await self.db.commit()
+        with patch('core.web_push.asyncio.to_thread',new=AsyncMock()) as deliver:
+            stats=await dispatch_rating_pushes(self.db)
+            await dispatch_rating_pushes(self.db)
+        self.assertEqual(stats['sent'],1)
+        deliver.assert_awaited_once()
+        payload=deliver.await_args.args[2]
+        self.assertEqual(payload['url'],f'/title/{self.movie.id}?rate=1')
+        self.assertEqual(payload['icon'],'https://image.tmdb.org/t/p/w500/fixture-poster.jpg')
 
     async def test_zero_clears_score_and_activity_groups(self):
         await self.save(self.movie,manual_score=8,status='watching')
@@ -472,6 +505,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'previous': None,
             'proposed': watched_at.date().isoformat(),
         }, notification.payload['changes'])
+        prompt = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.kind == 'rating_needed',
+        ))).scalar_one()
+        self.assertEqual(prompt.state, 'confirmed')
+        self.assertEqual(prompt.payload['push_state'], 'pending')
 
     async def test_unordered_cloud_watch_preserves_local_status_and_creates_conflict(self):
         from core.cloud_history_reconciliation import reconcile_cloud_watch_events

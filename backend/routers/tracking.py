@@ -777,6 +777,9 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
         from core.stream_actions import queue_restorations
         await queue_restorations(db,viewer.id,media)
     score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+    if score is not None:
+        from core.web_push import resolve_rating_prompts
+        await resolve_rating_prompts(db, user_id=viewer.id, media_id=media_id)
     scores = {None: score, **{int(k): v for k, v in entry.season_scores.items()}}
     for season, value in scores.items():
         row = (await db.execute(select(Rating).where(Rating.user_id == viewer.id, Rating.media_id == media_id, Rating.season_number == season, Rating.episode_order.is_(None)))).scalar_one_or_none()

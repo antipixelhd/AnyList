@@ -3,6 +3,7 @@ import '../styles/global.css';
 import '../styles/tracker.css';
 import Icon from '../components/Icon.astro';
 import AppBar from '../components/AppBar.astro';
+import PwaRuntime from '../components/PwaRuntime.astro';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
@@ -24,6 +25,8 @@ if (user?.is_admin) {
     <meta name="theme-color" content="#0b1622" />
     <title>{title} · Media Tracker</title>
     <link rel="icon" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
   </head>
   <body class="tracker settings-app">
     <a class="skip-link" href="#settings-content">Skip to settings</a>
@@ -52,5 +55,6 @@ if (user?.is_admin) {
       <main id="settings-content" class="settings-content"><slot /></main>
     </div>
     <footer class="page-footer">Media Tracker <span>Keep a little history of the stories you love.</span></footer>
+    <PwaRuntime />
   </body>
 </html>

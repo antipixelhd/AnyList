@@ -137,6 +137,18 @@ async def submit_rating(
         )
         db.add(rating)
 
+    if media_type in (MediaType.movie, MediaType.series) and effective_season is None:
+        from models.tracking import TrackedEntry
+        from core.web_push import resolve_rating_prompts
+        entry = (await db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == current_user.id,
+            TrackedEntry.media_id == media.id,
+        ))).scalar_one_or_none()
+        if entry is not None:
+            entry.rating_mode = "manual"
+            entry.manual_score = body.rating or None
+        await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id)
+
     await db.commit()
     await db.refresh(rating)
     # A rating made under a non-aired ordering isn't pushed to external

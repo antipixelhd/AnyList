@@ -1,0 +1,12 @@
+<script>
+  async function registerMediaTrackerServiceWorker() {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext) return null;
+    try {
+      return await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    } catch (error) {
+      console.warn('Media Tracker service worker registration failed', error);
+      return null;
+    }
+  }
+  registerMediaTrackerServiceWorker();
+</script>

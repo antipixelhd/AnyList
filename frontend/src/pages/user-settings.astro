@@ -237,6 +237,18 @@ const COUNTRIES = [
         </label>
       </section>
 
+      <!-- Device notifications -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">Device notifications</h2>
+        </div>
+        <div class="setting-switch-row push-notification-setting">
+          <span><strong>Completion rating reminders</strong><small>Notify this Windows or Android device when a sync completes an unrated movie or series.</small></span>
+          <button id="push-notifications-toggle" type="button" class="button-secondary">Checking…</button>
+        </div>
+        <p id="push-notifications-status" class="setting-help" role="status">Requires the installed PWA or a supported browser and notification permission.</p>
+      </section>
+
       <!-- Region -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -625,6 +637,67 @@ const COUNTRIES = [
         combineLists.disabled = false;
       }
     });
+
+    // Completion-rating Web Push is enrolled per browser/PWA installation.
+    const pushButton = document.getElementById('push-notifications-toggle') as HTMLButtonElement | null;
+    const pushStatus = document.getElementById('push-notifications-status') as HTMLElement | null;
+    const decodeKey = (value: string) => {
+      const padded = value + '='.repeat((4 - value.length % 4) % 4);
+      const bytes = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from(bytes, char => char.charCodeAt(0));
+    };
+    const subscriptionBody = (subscription: PushSubscription) => subscription.toJSON();
+    async function pushRegistration() {
+      if (!('serviceWorker' in navigator)) throw new Error('This browser does not support PWA notifications.');
+      return navigator.serviceWorker.ready;
+    }
+    async function refreshPushState() {
+      if (!pushButton) return;
+      if (!window.isSecureContext || !('Notification' in window) || !('PushManager' in window)) {
+        pushButton.textContent = 'Unavailable'; pushButton.disabled = true;
+        if (pushStatus) pushStatus.textContent = 'Push notifications need a supported browser over HTTPS.';
+        return;
+      }
+      try {
+        const registration = await pushRegistration();
+        const subscription = await registration.pushManager.getSubscription();
+        pushButton.dataset.enabled = subscription ? 'true' : 'false';
+        pushButton.textContent = subscription ? 'Disable on this device' : 'Enable on this device';
+        pushButton.disabled = Notification.permission === 'denied';
+        if (pushStatus) pushStatus.textContent = Notification.permission === 'denied'
+          ? 'Notifications are blocked in this browser. Allow them in site settings first.'
+          : subscription ? 'This device will receive rating reminders.' : 'No notifications are sent until you enable this device.';
+      } catch (cause) {
+        pushButton.textContent = 'Try again';
+        if (pushStatus) pushStatus.textContent = cause instanceof Error ? cause.message : 'Could not inspect notification support.';
+      }
+    }
+    pushButton?.addEventListener('click', async () => {
+      pushButton.disabled = true;
+      try {
+        const registration = await pushRegistration();
+        const current = await registration.pushManager.getSubscription();
+        if (current) {
+          await fetch('/api/proxy/push/subscriptions', { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify(subscriptionBody(current)) });
+          await current.unsubscribe();
+        } else {
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+          const keyResponse = await fetch('/api/proxy/push/vapid-public-key');
+          if (!keyResponse.ok) throw new Error('Could not load notification configuration.');
+          const { public_key } = await keyResponse.json();
+          const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeKey(public_key) });
+          const response = await fetch('/api/proxy/push/subscriptions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(subscriptionBody(subscription)) });
+          if (!response.ok) { await subscription.unsubscribe(); throw new Error('Could not enable notifications for this device.'); }
+        }
+      } catch (cause) {
+        if (pushStatus) pushStatus.textContent = cause instanceof Error ? cause.message : 'Could not change notification settings.';
+      } finally {
+        pushButton.disabled = false;
+        await refreshPushState();
+      }
+    });
+    refreshPushState();
 
     const saveBtn = document.getElementById('save-btn') as HTMLButtonElement | null;
     saveBtn?.addEventListener('click', async () => {

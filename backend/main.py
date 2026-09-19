@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import engine, Base
 import models # noqa: F401
-from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar
+from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar, push
 
 from core.access_log import install as install_access_log_redaction
 install_access_log_redaction()
@@ -340,6 +340,21 @@ async def _stream_action_retry_scheduler():
             await _dispatch_pending_stream_actions_once()
         except Exception as error:
             print(f"Stream action retry scheduler error: {type(error).__name__}")
+
+
+async def _rating_push_scheduler():
+    """Deliver queued completion-rating prompts while the PWA is closed."""
+    from db import async_sessionmaker
+    from core.web_push import dispatch_rating_pushes
+
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    while True:
+        await asyncio.sleep(30)
+        try:
+            async with factory() as db:
+                await dispatch_rating_pushes(db)
+        except Exception as error:
+            print(f"Rating push scheduler error: {type(error).__name__}")
 
 
 async def _emby_progress_poller():
@@ -740,6 +755,7 @@ async def lifespan(app: FastAPI):
 
     scheduler_task = asyncio.create_task(_auto_sync_scheduler())
     stream_action_task = asyncio.create_task(_stream_action_retry_scheduler())
+    rating_push_task = asyncio.create_task(_rating_push_scheduler())
     watchlist_task = asyncio.create_task(_watchlist_poller())
     manual_session_task = asyncio.create_task(_manual_session_completer())
     emby_progress_task = asyncio.create_task(_emby_progress_poller())
@@ -749,6 +765,7 @@ async def lifespan(app: FastAPI):
 
     scheduler_task.cancel()
     stream_action_task.cancel()
+    rating_push_task.cancel()
     watchlist_task.cancel()
     manual_session_task.cancel()
     emby_progress_task.cancel()
@@ -759,6 +776,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await stream_action_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await rating_push_task
     except asyncio.CancelledError:
         pass
     try:
@@ -823,6 +844,7 @@ app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 app.include_router(media.router, prefix="/media", tags=["media"])
 app.include_router(history.router, prefix="/history", tags=["history"])
 app.include_router(ratings.router, prefix="/ratings", tags=["ratings"])
+app.include_router(push.router, prefix="/push", tags=["push"])
 app.include_router(sync.router, prefix="/sync", tags=["sync"])
 app.include_router(shows.router, prefix="/shows", tags=["shows"])
 app.include_router(lists.router, prefix="/lists", tags=["lists"])

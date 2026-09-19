@@ -11,6 +11,7 @@ from models.tracking import StreamBaseline, SyncReview, TrackedEntry, TrackingPr
 from core.tracking_rules import effective_score, observed_status, default_dates
 from core.tracking_import import import_tracking_history
 from core.status_provenance import mark_status_change, provider_changed_at, status_changed_at
+from core.web_push import queue_sync_completion_rating
 
 
 def _active(rows):
@@ -210,6 +211,10 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             if entry.status != previous_status:
                 db.add(TrackingActivity(user_id=conn.user_id,media_id=media.id,status=entry.status,
                     score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
+                if not first and entry.status == 'completed':
+                    await queue_sync_completion_rating(
+                        db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
+                    )
     resume={**previous.get('resume',{})}
     for key in removed:
         if not completed_progress(old_active[key],completed):resume[key]=old_active[key]

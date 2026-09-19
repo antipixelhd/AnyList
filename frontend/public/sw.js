@@ -5,7 +5,7 @@
 //   - /api/proxy/*: NetworkOnly — library data must always be fresh
 //   - Navigation (HTML pages): NetworkFirst, offline fallback if all fail
 
-const SHELL_CACHE  = 'media-tracker-shell-v3';
+const SHELL_CACHE  = 'media-tracker-shell-v4';
 
 // ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
@@ -63,6 +63,36 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(networkFirstWithOffline(request));
     return;
   }
+});
+
+// ── Completion rating notifications ──────────────────────────────────────────
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data?.json() ?? {}; } catch { payload = { body: event.data?.text() }; }
+  const title = payload.title || 'Media Tracker';
+  event.waitUntil(self.registration.showNotification(title, {
+    body: payload.body || `${title} completed. Rate now!`,
+    icon: payload.icon || '/web-app-manifest-192x192.png',
+    badge: payload.badge || '/favicon-96x96.png',
+    image: payload.image || undefined,
+    tag: payload.tag || 'media-tracker-rating',
+    renotify: true,
+    data: { url: payload.url || '/recent-events' },
+    actions: [{ action: 'rate', title: 'Rate now' }],
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/recent-events', self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if ('navigate' in client) await client.navigate(target);
+      return client.focus();
+    }
+    return self.clients.openWindow(target);
+  })());
 });
 
 // ── Strategies ────────────────────────────────────────────────────────────────
