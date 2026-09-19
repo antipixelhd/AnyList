@@ -81,6 +81,19 @@ foreach ($service in @(
                 $parentRecord = $records | Where-Object { $_.id -eq $child.ParentProcessId } | Select-Object -First 1
                 $parent = Get-Process -Id $child.ParentProcessId -ErrorAction SilentlyContinue
                 if ($parentRecord -and $parent -and $parent.StartTime.ToUniversalTime().ToString('o') -eq $parentRecord.started) { $owned=@($parentRecord) }
+                # A venv/node launcher can exit before a partial startup writes
+                # its child PID. Adopt only this project's exact dedicated
+                # listener so a retry can recover without touching other apps.
+                if (!$owned) {
+                    $isBackend = $service.port -eq 7341 -and $child.CommandLine -like "*$projectRoot*uvicorn main:app*--port 7341*"
+                    $isFrontend = $service.port -eq 7340 -and $child.CommandLine -like "*node_modules/astro/bin/astro.mjs dev*--port 7340*"
+                    if ($isBackend -or $isFrontend) {
+                        $listenerProcess = Get-Process -Id $listenerId
+                        $adopted = @{ id=$listenerProcess.Id; started=$listenerProcess.StartTime.ToUniversalTime().ToString('o') }
+                        $records += $adopted
+                        $owned = @($adopted)
+                    }
+                }
             }
         }
         if (!$owned) { throw "Port $($service.port) is occupied by another process. Stop it before starting Media Tracker." }
