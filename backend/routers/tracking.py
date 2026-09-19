@@ -134,6 +134,11 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     rows=(await db.execute(query)).all()
     if prefs and not prefs.low_priority_notifications:
         rows=[row for row in rows if review_priority(row[0])!='low' or row[0].state=='pending']
+    # A direct local edit is already understood by the user. Its delivery can
+    # still need attention, but that belongs to the operational connection
+    # queue rather than the provider-change review inbox.
+    outbound_review_rows=[row for row in rows if row[0].kind=='outbound_pending']
+    rows=[row for row in rows if row[0].kind!='outbound_pending']
     from models.tracking import StreamAction
     actions=(await db.execute(select(StreamAction,Media,MediaServerConnection).join(Media,Media.id==StreamAction.media_id)
         .join(MediaServerConnection,MediaServerConnection.id==StreamAction.connection_id)
@@ -141,7 +146,10 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .order_by(StreamAction.id).limit(100))).all()
     pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')
     await db.commit()
-    return {'pending':pending,'outbound':[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions],
+    outbound=[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions]
+    outbound.extend({'id':f'review-{r.id}','title':m.title if m else 'Deleted entry','connection':'Connected services',
+        'state':'pending','attempts':0,'error':None} for r,m in outbound_review_rows)
+    return {'pending':pending,'outbound':outbound,
         'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
                     'priority':review_priority(r),'dismissible':r.state!='pending','payload':r.payload or {},

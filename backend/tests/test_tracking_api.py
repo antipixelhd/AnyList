@@ -464,6 +464,25 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         recent=await self.client.get('/tracking/recent-events')
         self.assertEqual(recent.json()['results'],[])
 
+    async def test_local_delivery_state_stays_out_of_provider_review_inbox(self):
+        review=SyncReview(
+            user_id=self.owner.id,
+            media_id=self.movie.id,
+            kind='outbound_pending',
+            state='pending',
+            message='Local tracking data was deleted.',
+        )
+        self.db.add(review);await self.db.commit()
+
+        recent=await self.client.get('/tracking/recent-events')
+        self.assertEqual(recent.status_code,200,recent.text)
+        payload=recent.json()
+        self.assertEqual(payload['pending'],0)
+        self.assertEqual(payload['results'],[])
+        self.assertEqual(len(payload['outbound']),1)
+        self.assertEqual(payload['outbound'][0]['title'],self.movie.title)
+        self.assertEqual(payload['outbound'][0]['connection'],'Connected services')
+
     async def test_unmatched_provider_item_can_be_matched_or_ignored(self):
         from core.provider_matching import record_unmatched_import, provider_override
         from core.cloud_reconciliation import require_cloud_reconciliation
