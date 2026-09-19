@@ -16,11 +16,13 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from db import get_db
-from dependencies import get_current_user, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key
 from models import User, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch
 from routers.tracking import router
+from routers.comments import router as comments_router
+from routers.profile import router as profile_router
 
 
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
@@ -41,13 +43,18 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         settings = await self.db.get(GlobalSettings,1)
         if settings:
             settings.enable_logged_out_navigation = False
-            await self.db.commit()
+        else:
+            settings = GlobalSettings(id=1, enable_logged_out_navigation=False)
+            self.db.add(settings)
+        await self.db.commit()
         self.viewer = self.owner
-        app=FastAPI(); app.include_router(router,prefix='/tracking')
+        app=FastAPI(); app.include_router(router,prefix='/tracking'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile')
         async def session(): yield self.db
         app.dependency_overrides[get_db]=session
         app.dependency_overrides[get_current_user]=lambda:self.viewer
+        app.dependency_overrides[get_current_user_or_api_key]=lambda:self.viewer
         app.dependency_overrides[get_optional_user]=lambda:self.viewer
+        app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
         self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test')
 
     async def asyncTearDown(self):
@@ -67,6 +74,56 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status_code,200,res.text)
         self.assertNotIn('notes',res.json()['entries'][0])
         self.assertFalse(res.json()['owner'])
+
+    async def test_anonymous_comment_reads_follow_instance_access_switch(self):
+        self.viewer = None
+        blocked = await self.client.get('/comments', params={'media_type': 'movie', 'tmdb_id': 1})
+        self.assertEqual(blocked.status_code, 401, blocked.text)
+
+        settings = await self.db.get(GlobalSettings, 1)
+        settings.enable_logged_out_navigation = True
+        await self.db.commit()
+        allowed = await self.client.get('/comments', params={'media_type': 'movie', 'tmdb_id': 1})
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+
+    async def test_public_profile_does_not_name_private_social_connections(self):
+        self.db.add(Follow(follower_id=self.friend.id, following_id=self.owner.id))
+        settings = await self.db.get(GlobalSettings, 1)
+        settings.enable_logged_out_navigation = True
+        await self.db.commit()
+
+        self.viewer = None
+        public = await self.client.get(f'/profile/{self.owner.id}')
+        self.assertEqual(public.status_code, 200, public.text)
+        self.assertEqual(public.json()['follower_count'], 1)
+        self.assertEqual(public.json()['followers'], [])
+
+        self.viewer = self.owner
+        owner = await self.client.get(f'/profile/{self.owner.id}')
+        self.assertEqual(owner.status_code, 200, owner.text)
+        self.assertEqual(len(owner.json()['followers']), 1)
+        self.assertEqual(owner.json()['followers'][0]['id'], self.friend.id)
+
+    async def test_profile_search_and_follow_hide_legacy_private_profiles(self):
+        friend_profile = await self.db.scalar(
+            select(UserProfileData).where(UserProfileData.user_id == self.friend.id)
+        )
+        friend_profile.privacy_level = PrivacyLevel.friends_only
+        await self.db.commit()
+
+        hidden = await self.client.get('/profile/search', params={'q': self.friend.username})
+        self.assertEqual(hidden.status_code, 200, hidden.text)
+        self.assertEqual(hidden.json()['results'], [])
+        blocked = await self.client.post(f'/profile/{self.friend.id}/follow')
+        self.assertEqual(blocked.status_code, 404, blocked.text)
+
+        friend_profile.privacy_level = PrivacyLevel.public
+        await self.db.commit()
+        visible = await self.client.get('/profile/search', params={'q': self.friend.username})
+        self.assertEqual(visible.status_code, 200, visible.text)
+        self.assertEqual(visible.json()['results'][0]['id'], self.friend.id)
+        followed = await self.client.post(f'/profile/{self.friend.id}/follow')
+        self.assertEqual(followed.status_code, 200, followed.text)
 
     async def test_season_average_and_manual_restoration(self):
         self.assertEqual((await self.save(self.show,manual_score=9)).status_code,200)

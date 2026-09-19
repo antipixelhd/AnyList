@@ -45,6 +45,10 @@ async def list_comments(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
+    if current_user is None:
+        settings = await db.get(GlobalSettings, 1)
+        if not (settings and settings.enable_logged_out_navigation):
+            raise HTTPException(status_code=401, detail="Sign in to view comments")
     query = (
         select(Comment)
         .join(User, Comment.user_id == User.id)

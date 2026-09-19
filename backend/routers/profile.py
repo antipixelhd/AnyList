@@ -461,7 +461,7 @@ async def get_avatar(
 
     ext = path.suffix.lstrip(".")
     media_type = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/jpeg")
-    return FileResponse(str(path), media_type=media_type, headers={"Cache-Control": "public, max-age=3600"})
+    return FileResponse(str(path), media_type=media_type, headers={"Cache-Control": "private, no-store"})
 
 
 @router.get("/search")
@@ -471,7 +471,7 @@ async def search_users(
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Unlike viewing a single profile/list by ID, this is a directory-style
-    enumeration of every public/friends_only user matching a pattern, so it
+    enumeration of every public user matching a pattern, so it
     stays behind real authentication regardless of the enable_logged_out_navigation
     toggle, there's no anonymous "browse all public users" use case to support."""
     if len(q.strip()) < 1:
@@ -485,7 +485,7 @@ async def search_users(
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
         .where(
             (User.username.ilike(pattern)) | (UserProfileData.display_name.ilike(pattern)),
-            (UserProfileData.privacy_level.in_([PrivacyLevel.public, PrivacyLevel.friends_only]))
+            (UserProfileData.privacy_level == PrivacyLevel.public)
             | (User.id == current_user.id),
         )
         .order_by(User.username)
@@ -574,9 +574,13 @@ async def follow_user(
 ):
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You cannot follow yourself.")
-    target = await db.execute(select(User).where(User.id == user_id))
+    target = await db.execute(
+        select(User)
+        .join(UserProfileData, UserProfileData.user_id == User.id)
+        .where(User.id == user_id, UserProfileData.privacy_level == PrivacyLevel.public)
+    )
     if not target.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(status_code=404, detail="Public profile not found.")
     existing = await db.execute(
         select(Follow).where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
     )
@@ -810,7 +814,7 @@ async def get_public_profile(
     following_count = following_count_q.scalar_one()
 
     # Preview: up to 8 of each, with display_name and avatar
-    followers_q = await db.execute(
+    followers_stmt = (
         select(User, UserProfileData)
         .join(Follow, Follow.follower_id == User.id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
@@ -818,6 +822,9 @@ async def get_public_profile(
         .order_by(Follow.created_at.desc())
         .limit(8)
     )
+    if not (is_owner or is_admin):
+        followers_stmt = followers_stmt.where(UserProfileData.privacy_level == PrivacyLevel.public)
+    followers_q = await db.execute(followers_stmt)
     followers_preview = [
         {
             "id": u.id,
@@ -827,7 +834,7 @@ async def get_public_profile(
         for u, p in followers_q.all()
     ]
 
-    following_q = await db.execute(
+    following_stmt = (
         select(User, UserProfileData)
         .join(Follow, Follow.following_id == User.id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
@@ -835,6 +842,9 @@ async def get_public_profile(
         .order_by(Follow.created_at.desc())
         .limit(8)
     )
+    if not (is_owner or is_admin):
+        following_stmt = following_stmt.where(UserProfileData.privacy_level == PrivacyLevel.public)
+    following_q = await db.execute(following_stmt)
     following_preview = [
         {
             "id": u.id,
@@ -932,8 +942,8 @@ async def get_public_profile(
         "avatar_url": f"/profile/avatar/{user.id}" if (profile and profile.avatar_path) else None,
         "bio": profile.bio if profile else None,
         "country": profile.country if profile else None,
-        "movie_genres": profile.movie_genres if profile else [],
-        "show_genres": profile.show_genres if profile else [],
+        "movie_genres": (profile.movie_genres or []) if profile else [],
+        "show_genres": (profile.show_genres or []) if profile else [],
         "created_at": user.created_at,
         "total_watched": total_watched,
         "total_collected": total_collected,
