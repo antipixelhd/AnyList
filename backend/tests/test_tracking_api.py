@@ -1207,6 +1207,34 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-series':self.show.tmdb_id})
         self.assertEqual(entry.status,'completed')
 
+    async def test_tvdb_native_series_observation_uses_canonical_positions(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        self.show.tmdb_id=987654300
+        self.show.tvdb_id=7654300
+        self.show.tmdb_data={'tracking_catalogue_refreshed_at':'fixture','tracking_catalogue_provider':'tvdb'}
+        show=Show(title='TVDB fixture',tmdb_id=self.show.tmdb_id,tvdb_id=self.show.tvdb_id,canonical_source='tvdb')
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
+        self.db.add_all([show,conn]);await self.db.flush()
+        episodes=[]
+        for number in (1,2,3):
+            episode=Media(title=f'Episode {number}',media_type=MediaType.episode,show_id=show.id,
+                tvdb_id=7200+number,season_number=1,episode_number=number,release_date='2020-01-01')
+            self.db.add(episode);episodes.append(episode)
+        await self.db.commit()
+        await self.save(self.show,status='watching')
+        await observe_stream_snapshot(self.db,conn,[],[],[],{})
+        baseline=await self.db.get(StreamBaseline,conn.id)
+        baseline.observed_at=datetime.now()+timedelta(seconds=1);await self.db.commit()
+        row={'content_id':'tt-tvdb-series','content_type':'series','season':1,'episode':3,'position':95,'duration':100}
+        await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-tvdb-series':self.show.tmdb_id})
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.show.id))).scalar_one()
+        self.assertEqual(entry.progress,3)
+        self.assertEqual(entry.status,'completed')
+        watched=set((await self.db.execute(select(WatchEvent.media_id).where(
+            WatchEvent.user_id==self.owner.id,WatchEvent.completed.is_(True)))).scalars())
+        self.assertEqual(watched,{episode.id for episode in episodes})
+
     async def test_correcting_to_watching_restores_saved_progress_once(self):
         from core.stream_actions import dispatch_stream_actions
         from models.tracking import StreamAction

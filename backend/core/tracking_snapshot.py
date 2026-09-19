@@ -4,7 +4,7 @@ This layer never treats a first/partial snapshot as a destructive removal and
 does not perform network writes. Provider dispatch remains a separate step.
 """
 from datetime import date, datetime, timezone
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from models import Media, User, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingActivity, TrackingDeletion
@@ -63,8 +63,13 @@ async def require_stream_reconciliation(db, conn):
 
 async def apply_series_observation(db, user_id, media, entry, row, finished):
     """Advance cumulative regular episodes only with a verified matching order."""
-    show=(await db.execute(select(Show).where(Show.tmdb_id==media.tmdb_id))).scalar_one_or_none() if media.tmdb_id else None
-    if not show or show.canonical_source!='tmdb':return False
+    identities=[]
+    if media.tmdb_id:
+        identities.append(Show.tmdb_id==media.tmdb_id)
+    if media.tvdb_id:
+        identities.append(Show.tvdb_id==media.tvdb_id)
+    show=(await db.execute(select(Show).where(or_(*identities)))).scalars().first() if identities else None
+    if not show:return False
     episodes=(await db.execute(select(Media).where(Media.show_id==show.id,Media.media_type==MediaType.episode,
         Media.season_number>0,Media.release_date.is_not(None),Media.release_date<=date.today().isoformat())
         .order_by(Media.season_number,Media.episode_number))).scalars().all()
