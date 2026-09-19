@@ -46,7 +46,8 @@ COPY --from=frontend-builder /app/frontend/package.json ./
 # ── Entrypoint & supervisor config ────────────────────────────────────────────
 COPY entrypoint.sh /entrypoint.sh
 COPY supervisord.conf /etc/supervisor/conf.d/scrob.conf
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh \
+    && chmod +x /entrypoint.sh
 
 EXPOSE 7330
 

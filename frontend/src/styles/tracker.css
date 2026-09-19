@@ -18,6 +18,14 @@
 .grid-view .entry-thumbnail .row-menu{inset:auto 6px 6px auto;width:36px;height:32px;opacity:1}
 @media(max-width:900px){.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 50px 60px}}
 @media(max-width:650px){.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 35px 55px}.entry-thumbnail{width:40px;height:56px}.grid-view .entry-thumbnail{height:210px}}
+
+/* Keep the compact list proportions close to AniList's narrower reading
+   column while preserving the existing responsive breakpoints. */
+.list-shell{max-width:1180px;grid-template-columns:200px minmax(0,1fr);gap:34px;padding-left:24px;padding-right:24px}
+.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 82px 100px 64px;gap:12px;padding-left:18px;padding-right:18px}
+.entry-title{gap:14px}
+@media(max-width:900px){.list-shell{grid-template-columns:180px minmax(0,1fr);gap:24px}.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 50px 60px 40px;gap:8px;padding-left:14px;padding-right:14px}}
+@media(max-width:650px){.list-shell{display:block;padding-left:16px;padding-right:16px}.entry-head,.entry-row{grid-template-columns:minmax(0,1fr) 35px 55px;gap:8px;padding-left:10px;padding-right:10px}}
 @media(hover:none){.entry-thumbnail .row-menu{inset:auto 0 0;height:28px;opacity:1}}
 @media(prefers-reduced-motion:reduce){#cover-preview{animation:none}.row-menu{transition:none}}
 

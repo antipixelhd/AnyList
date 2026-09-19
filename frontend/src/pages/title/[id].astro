@@ -81,7 +81,6 @@ const dateLabel = (value: string | null) => value
           </nav>
 
           <section class="score-overview" aria-label="Ratings">
-            <div><span>Community</span><strong>{scoreLabel(title.community_average)}</strong><small>{title.community_count ? `${title.community_count} public rating${title.community_count === 1 ? '' : 's'}` : 'No public ratings'}</small></div>
             <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
             <div><span>TMDB</span><strong>{scoreLabel(title.tmdb_score)}</strong><small>Provider score</small></div>
             <div><span>IMDb</span><strong>{scoreLabel(title.imdb_score)}</strong><small>IMDb users</small></div>

@@ -674,7 +674,9 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
   searchInput?.addEventListener('focus', () => {
     setTimeout(() => {
       const y = searchInput.getBoundingClientRect().top + window.scrollY - 10;
-      window.scrollTo({ top: y, behavior: 'smooth' });
+      // Keep focus accessible without jolting the viewport during navigation
+      // or client-side list updates.
+      window.scrollTo({ top: y, behavior: 'auto' });
     }, 100);
   });
 
