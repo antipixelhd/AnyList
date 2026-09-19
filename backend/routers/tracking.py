@@ -105,7 +105,9 @@ async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_
     row=await db.get(TrackingPreferences,viewer.id)
     if not row: row=TrackingPreferences(user_id=viewer.id);db.add(row)
     for name in body.model_fields_set:
-        setattr(row,name,getattr(body,name))
+        value=getattr(body,name)
+        if value is None:raise HTTPException(422,f'{name} cannot be null')
+        setattr(row,name,value)
     await db.commit()
     return await preferences(db,viewer)
 

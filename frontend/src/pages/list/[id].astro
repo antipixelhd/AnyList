@@ -671,15 +671,6 @@ const sonarrUrl = `${origin}/api/proxy/sonarr-compat/${list?.id}`;
   let activeFilter = 'all';
   let searchAbortController = null;
 
-  searchInput?.addEventListener('focus', () => {
-    setTimeout(() => {
-      const y = searchInput.getBoundingClientRect().top + window.scrollY - 10;
-      // Keep focus accessible without jolting the viewport during navigation
-      // or client-side list updates.
-      window.scrollTo({ top: y, behavior: 'auto' });
-    }, 100);
-  });
-
   document.querySelectorAll('.search-filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       activeFilter = btn.getAttribute('data-filter');

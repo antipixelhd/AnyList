@@ -44,7 +44,7 @@ async def provider_override(db, *, user_id: int, provider: str, kind: str, entry
         ProviderIgnore.user_id == user_id,
         ProviderIgnore.provider == provider,
         ProviderIgnore.external_key == external_key,
-    ))).first() is not None
+    ))).scalar_one_or_none() is not None
     if ignored:
         return None, True, external_key, title
     match = (await db.execute(select(ProviderMatch).where(

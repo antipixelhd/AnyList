@@ -214,8 +214,8 @@ if (me.totp_enabled) {
         </form>
       </section>
 
-      <!-- Display Settings -->
-      <section>
+      <!-- Legacy Scrob home/history controls are retained for data compatibility only. -->
+      <section hidden>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Display Settings</h2>
         <div class="space-y-6">
           <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
@@ -393,8 +393,8 @@ if (me.totp_enabled) {
         </div>
       </section>
 
-      <!-- Experimental Features -->
-      <section>
+      <!-- Legacy playback experiments are not part of Media Tracker. -->
+      <section hidden>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Experimental Features</h2>
         <div class="space-y-6">
           <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
@@ -417,7 +417,7 @@ if (me.totp_enabled) {
       </section>
 
       <!-- Maintenance -->
-      <section>
+      <section hidden>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Maintenance</h2>
         <div class="space-y-3 max-w-xl">
           <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
@@ -799,7 +799,7 @@ if (me.totp_enabled) {
       </section>
 
       <!-- Data Management -->
-      <section>
+      <section hidden>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Data Management</h2>
         <div class="flex flex-col gap-4">
           <div class="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">

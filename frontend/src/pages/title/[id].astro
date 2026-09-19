@@ -80,13 +80,17 @@ const dateLabel = (value: string | null) => value
             <a href="#social">Social</a>
           </nav>
 
-          <section class="score-overview" aria-label="Ratings">
-            <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
-            <div><span>TMDB</span><strong>{scoreLabel(title.tmdb_score)}</strong><small>Provider score</small></div>
-            <div><span>IMDb</span><strong>{scoreLabel(title.imdb_score)}</strong><small>IMDb users</small></div>
-            <div><span>RT Critics</span><strong>{percentLabel(title.rt_critic_score)}</strong><small>Tomatometer</small></div>
-            <div><span>RT Audience</span><strong>{percentLabel(title.rt_audience_score)}</strong><small>Audience score</small></div>
-            <div><span>Your score</span><strong>{scoreLabel(title.entry?.score ?? null)}</strong><small>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></div>
+          <section class="ratings-overview" aria-label="Ratings">
+            <div class="personal-scores">
+              <div><span>Your score</span><strong>{scoreLabel(title.entry?.score ?? null)}</strong><small>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></div>
+              <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
+            </div>
+            <div class="provider-scores" aria-label="External ratings">
+              <div><span>TMDB</span><strong>{scoreLabel(title.tmdb_score)}</strong></div>
+              <div><span>IMDb</span><strong>{scoreLabel(title.imdb_score)}</strong></div>
+              <div><span>RT Critics</span><strong>{percentLabel(title.rt_critic_score)}</strong></div>
+              <div><span>RT Audience</span><strong>{percentLabel(title.rt_audience_score)}</strong></div>
+            </div>
           </section>
 
           <section class="detail-section synopsis-section" id="overview">
