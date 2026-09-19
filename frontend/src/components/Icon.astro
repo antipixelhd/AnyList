@@ -1,0 +1,100 @@
+---
+import { icon } from '@fortawesome/fontawesome-svg-core';
+import {
+  faArrowRight,
+  faArrowsRotate,
+  faBell,
+  faCalendarDays,
+  faCheck,
+  faChevronDown,
+  faCircleExclamation,
+  faCircleCheck,
+  faCircleInfo,
+  faClock,
+  faEllipsis,
+  faEye,
+  faEyeSlash,
+  faArrowUpRightFromSquare,
+  faFilm,
+  faFloppyDisk,
+  faGear,
+  faGlobe,
+  faHeart,
+  faInbox,
+  faLink,
+  faList,
+  faLock,
+  faMagnifyingGlass,
+  faPen,
+  faPlug,
+  faPlay,
+  faRotateLeft,
+  faSliders,
+  faTableCellsLarge,
+  faStar,
+  faTrash,
+  faTriangleExclamation,
+  faUser,
+  faXmark,
+  type IconDefinition,
+} from '@fortawesome/free-solid-svg-icons';
+
+const icons: Record<string, IconDefinition> = {
+  'arrow-right': faArrowRight,
+  'arrows-rotate': faArrowsRotate,
+  bell: faBell,
+  calendar: faCalendarDays,
+  check: faCheck,
+  'circle-check': faCircleCheck,
+  'chevron-down': faChevronDown,
+  error: faCircleExclamation,
+  info: faCircleInfo,
+  clock: faClock,
+  ellipsis: faEllipsis,
+  eye: faEye,
+  'eye-slash': faEyeSlash,
+  external: faArrowUpRightFromSquare,
+  film: faFilm,
+  save: faFloppyDisk,
+  gear: faGear,
+  globe: faGlobe,
+  heart: faHeart,
+  inbox: faInbox,
+  link: faLink,
+  list: faList,
+  lock: faLock,
+  search: faMagnifyingGlass,
+  edit: faPen,
+  plug: faPlug,
+  play: faPlay,
+  undo: faRotateLeft,
+  sliders: faSliders,
+  grid: faTableCellsLarge,
+  star: faStar,
+  trash: faTrash,
+  warning: faTriangleExclamation,
+  user: faUser,
+  close: faXmark,
+};
+
+interface Props {
+  name: keyof typeof icons | string;
+  label?: string;
+  class?: string;
+  fixedWidth?: boolean;
+  rotate?: number;
+}
+
+const { name, label, class: className = '', fixedWidth = false, rotate } = Astro.props;
+const definition = icons[name];
+if (!definition) throw new Error(`Unknown Font Awesome icon: ${name}`);
+const attributes: Record<string, string> = label
+  ? { role: 'img', 'aria-label': label }
+  : { 'aria-hidden': 'true', focusable: 'false' };
+const rendered = icon(definition, {
+  attributes,
+  classes: ['ui-icon-svg', ...(fixedWidth ? ['ui-icon-fixed'] : []), ...className.split(' ').filter(Boolean)],
+  transform: rotate ? { rotate } : undefined,
+});
+---
+<span class="ui-icon" set:html={rendered.html.join('')} />

@@ -1,8 +1,15 @@
 ---
 import {statuses} from '../lib/tracker';
+import Icon from './Icon.astro';
 ---
 <dialog class="editor" id="tracking-editor" aria-labelledby="editor-title">
-  <div class="editor-header"><h2 id="editor-title">Edit entry</h2><button type="button" class="editor-close" aria-label="Close editor">×</button></div>
+  <div class="editor-hero">
+    <img id="editor-backdrop" class="editor-backdrop" alt="" />
+    <div class="editor-hero-shade"></div>
+    <img id="editor-poster" class="editor-poster" alt="" />
+    <div class="editor-heading"><span id="editor-media-type">Entry</span><h2 id="editor-title">Edit entry</h2></div>
+    <button type="button" class="editor-close editor-icon-button" aria-label="Close editor"><Icon name="close" /></button>
+  </div>
   <form id="tracking-form">
     <div class="editor-fields">
       <label>Status<select name="status">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select></label>
@@ -11,26 +18,40 @@ import {statuses} from '../lib/tracker';
       <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
       <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
       <label class="wide" id="rating-mode-field">Show score<select name="rating_mode"><option value="manual">Keep a separate show rating</option><option value="average">Average my rated seasons</option></select><span class="hint" id="calculated-score"></span></label>
-      <label class="wide">Personal notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
+      <label class="wide">Notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
       <label class="wide checkbox"><input type="checkbox" name="mark_released_watched"/>Mark all released episodes watched when completing</label>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
-    <div class="editor-actions"><label class="checkbox"><input type="checkbox" name="favorite"/>Favorite</label><div><button type="button" class="button-secondary editor-close">Cancel</button> <button type="submit" class="button-primary">Save</button></div></div>
-    <div style="text-align:right;margin-top:24px"><button type="button" class="button-secondary" id="delete-tracked-entry" style="color:#ef9fb2">Delete entry</button></div>
+    <div class="editor-actions">
+      <button type="button" class="button-danger" id="delete-tracked-entry"><Icon name="trash" />Delete entry</button>
+      <button type="submit" class="button-primary"><Icon name="save" />Save</button>
+    </div>
   </form>
 </dialog>
 <script>
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
   let current: any = null;
+  let initialState = '';
+  let opener: HTMLElement | null = null;
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
+  const formState = () => JSON.stringify(Array.from(new FormData(form).entries()));
+  const isDirty = () => !!current && initialState !== '' && formState() !== initialState;
+  const artwork = (path: string | null | undefined, size: string) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/${size}${path}` : (path || '');
+  const closeEditor = () => {
+    if (!dialog.open) return;
+    if (isDirty() && !confirm('Discard your unsaved changes?')) return;
+    dialog.close();
+  };
   document.addEventListener('click', async (event) => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
     if (!button) return;
     error.hidden = true;
     form.reset();
     current = null;
+    initialState = '';
+    opener = button;
     dialog.showModal();
     document.querySelector('#editor-title')!.textContent = 'Loading entry…';
     form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = true;
@@ -41,12 +62,17 @@ import {statuses} from '../lib/tracker';
       current = {id:title.id, type:title.type, ...(title.entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null})};
       document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !title.entry;
       document.querySelector('#editor-title')!.textContent = title.title;
+      document.querySelector('#editor-media-type')!.textContent = title.type === 'series' ? 'TV series' : 'Movie';
+      const poster = document.querySelector<HTMLImageElement>('#editor-poster')!;
+      const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
+      poster.src = artwork(title.poster, 'w342'); poster.alt = title.poster ? `${title.title} poster` : ''; poster.hidden = !title.poster;
+      backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
       for (const name of ['status','manual_score','progress','start_date','finish_date','rewatch_count','notes','rating_mode']) field(name).value = current[name] ?? '';
-      field('favorite').checked = !!current.favorite;
       field('mark_released_watched').checked = true;
       field('progress').disabled = title.type === 'movie';
       document.querySelector<HTMLElement>('#rating-mode-field')!.hidden = title.type !== 'series';
       updateMode();
+      initialState = formState();
       form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = false;
     } catch(e) { error.textContent = (e as Error).message; error.hidden = false; }
   });
@@ -56,7 +82,10 @@ import {statuses} from '../lib/tracker';
     document.querySelector('#calculated-score')!.textContent = average ? `Calculated score: ${current?.score == null ? 'Unrated' : Number(current.score.toFixed(1))}. Only explicitly rated seasons count.` : '';
   }
   field('rating_mode').addEventListener('change', updateMode);
-  dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', () => dialog.close()));
+  dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
+  dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
+  dialog.addEventListener('close', () => { current = null; initialState = ''; opener?.focus(); opener = null; });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
@@ -67,7 +96,7 @@ import {statuses} from '../lib/tracker';
     error.hidden = true;
     const submit = form.querySelector<HTMLButtonElement>('[type=submit]')!;
     const status = field('status').value;
-    const body: any = {status, favorite:field('favorite').checked, notes:field('notes').value,
+    const body: any = {status, notes:field('notes').value,
       rewatch_count:Number(field('rewatch_count').value || 0), rating_mode:field('rating_mode').value};
     if (!field('manual_score').disabled) body.manual_score = Number(field('manual_score').value || 0);
     for (const name of ['start_date','finish_date']) {

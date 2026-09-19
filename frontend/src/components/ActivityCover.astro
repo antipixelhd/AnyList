@@ -1,8 +1,9 @@
 ---
 import {artwork} from '../lib/tracker';
+import Icon from './Icon.astro';
 const {media}=Astro.props;
 const source=artwork(media?.poster);
 ---
 {media?<a class="event-cover" href={`/title/${media.id}`} aria-label={`View ${media.title}`}>
-  {source?<img src={source} alt="" loading="lazy"/>:<span class="cover-placeholder" aria-hidden="true">▶</span>}
-</a>:<div class="event-cover connection-cover" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16a14 14 0 0 1 24-2l4 4M40 9v9h-9M36 32a14 14 0 0 1-24 2l-4-4M8 39v-9h9"/></svg></div>}
+  {source?<img src={source} alt="" loading="lazy"/>:<span class="cover-placeholder"><Icon name="play" /></span>}
+</a>:<div class="event-cover connection-cover" aria-hidden="true"><Icon name="arrows-rotate" /></div>}

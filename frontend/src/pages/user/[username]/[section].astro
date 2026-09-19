@@ -2,6 +2,7 @@
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import TrackingEditor from '../../../components/TrackingEditor.astro';
+import Icon from '../../../components/Icon.astro';
 import {tracker, statuses, artwork, scoreLabel} from '../../../lib/tracker';
 const {username, section} = Astro.params;
 if (!['movies','series','list'].includes(section!)) return Astro.redirect('/404');
@@ -20,7 +21,7 @@ const profile = `/user/${encodeURIComponent(username!)}`;
     <div class="list-shell">
       <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters">Filters & sorting</button>
       <aside class="filters" id="list-filters" aria-label="List filters">
-        <input id="list-search" type="search" placeholder="⌕  Filter titles" aria-label="Search this list"/>
+        <label class="filter-search"><Icon name="search"/><input id="list-search" type="search" placeholder="Filter titles" aria-label="Search this list"/></label>
         <h2>Lists</h2><div class="status-filters"><button data-status="all" class="selected">All <span>{entries.length}</span></button>{statuses.map(([s,label])=><button data-status={s}>{label}<span>{entries.filter((e:any)=>e.status===s).length}</span></button>)}</div>
         <h2>Filters</h2><select id="genre-filter" aria-label="Genre"><option value="">All genres</option>{genres.map(g=><option>{g}</option>)}</select>
         <select id="year-filter" aria-label="Release year"><option value="">All years</option>{years.map(y=><option>{y}</option>)}</select>
@@ -28,12 +29,12 @@ const profile = `/user/${encodeURIComponent(username!)}`;
         <h2>Sort</h2><select id="sort-filter" aria-label="Sort list"><option value="title">Title</option><option value="score">Score</option><option value="progress">Progress</option><option value="updated">Recently updated</option></select>
         <button class="button-secondary" id="reset-filters">Reset filters</button>
       </aside>
-      <div class="list-content"><div class="list-toolbar"><span id="result-count" aria-live="polite">{entries.length} entries</span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list">☷</button><button data-view="grid" aria-pressed="false" aria-label="Cover grid">▦</button></div></div>
+      <div class="list-content"><div class="list-toolbar"><span id="result-count" aria-live="polite">{entries.length} entries</span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
       <div id="entry-groups">
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return group.length > 0 && <section class="status-section" data-group={status}><h2>{label} <span>{group.length}</span></h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span>Title</span><span>Score</span><span>Progress</span>{isCombined&&<span>Type</span>}</div>
         {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
-          <div class="entry-title"><div class="entry-thumbnail" data-preview-src={artwork(entry.poster)}>{artwork(entry.poster) ? <img class="entry-cover" src={artwork(entry.poster)} alt="" loading="lazy"/> : <span class="entry-cover"/>}{data.owner&&<button class="row-menu" data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}>•••</button>}</div><a href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite">♥</span>}</a></div>
+          <div class="entry-title"><div class="entry-thumbnail" data-preview-src={artwork(entry.poster)}>{artwork(entry.poster) ? <img class="entry-cover" src={artwork(entry.poster)} alt="" loading="lazy"/> : <span class="entry-cover"/>}{data.owner&&<button class="row-menu" data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><a href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a></div>
           <span class="entry-score">{scoreLabel(entry.score)}</span><span class="entry-progress">{entry.type==='movie' ? entry.status==='completed'?'Watched':'—' : entry.released_episodes===undefined?entry.progress:`${entry.progress}/${entry.released_episodes}`} {entry.status==='completed'&&entry.unwatched_episodes>0&&<small class="unwatched-indicator">{entry.unwatched_episodes} unwatched</small>}</span>{isCombined&&<span class="entry-type">{entry.type==='movie'?'Movie':'Series'}</span>}
         </article>)}
       </div></section>})}

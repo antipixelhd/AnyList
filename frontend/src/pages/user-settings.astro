@@ -1,12 +1,14 @@
 ---
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
+import { tracker } from "../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
 
 const { token } = Astro.locals;
-const [profileData, me] = await Promise.all([
+const [profileData, me, trackingPrefs] = await Promise.all([
   api.profile.get(token!).catch(() => null),
   api.auth.me(token!),
+  tracker('preferences', token!).catch(() => ({ combine_lists: true })),
 ]);
 
 const prefs: UserPreferences = {
@@ -222,6 +224,17 @@ const COUNTRIES = [
             </label>
           ))}
         </div>
+      </section>
+
+      <!-- List presentation -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">List presentation</h2>
+        </div>
+        <label class="setting-switch-row" for="combine-lists">
+          <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
+          <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
+        </label>
       </section>
 
       <!-- Region -->
@@ -594,6 +607,25 @@ const COUNTRIES = [
     });
 
     // Save
+    const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
+    combineLists?.addEventListener('change', async () => {
+      combineLists.disabled = true;
+      try {
+        const response = await fetch('/api/proxy/tracking/preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ combine_lists: combineLists.checked }),
+        });
+        if (!response.ok) throw new Error('Could not update your list presentation.');
+        showMessage('List presentation updated.');
+      } catch (error) {
+        combineLists.checked = !combineLists.checked;
+        showMessage(error instanceof Error ? error.message : 'Could not update your list presentation.', 'error');
+      } finally {
+        combineLists.disabled = false;
+      }
+    });
+
     const saveBtn = document.getElementById('save-btn') as HTMLButtonElement | null;
     saveBtn?.addEventListener('click', async () => {
       saveBtn.disabled = true;

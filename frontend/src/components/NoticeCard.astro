@@ -1,0 +1,39 @@
+---
+import Icon from './Icon.astro';
+
+interface Props {
+  variant?: 'default' | 'info' | 'warning' | 'danger' | 'success';
+  icon?: string;
+  title: string;
+  href?: string;
+  source?: string;
+  badge?: string;
+  message?: string;
+  image?: string | null;
+  dismissibleId?: number;
+}
+
+const {
+  variant = 'default',
+  icon = variant === 'danger' ? 'error' : variant === 'warning' ? 'warning' : variant === 'success' ? 'check' : 'info',
+  title,
+  href,
+  source,
+  badge,
+  message,
+  image,
+  dismissibleId,
+} = Astro.props;
+---
+<article class:list={['notice-card', `notice-${variant}`]} data-auto-seen={dismissibleId}>
+  <div class:list={['notice-visual', { 'has-image': !!image }]}>
+    {image ? <img src={image} alt="" loading="lazy" /> : <Icon name={icon} />}
+  </div>
+  <div class="notice-content">
+    {(source || badge) && <div class="notice-meta">{source && <span>{source}</span>}{badge && <strong>{badge}</strong>}</div>}
+    <h2>{href ? <a href={href}>{title}</a> : title}</h2>
+    {message && <p>{message}</p>}
+    <slot name="detail" />
+    <div class="notice-actions"><slot name="actions" /></div>
+  </div>
+</article>

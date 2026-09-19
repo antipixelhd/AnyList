@@ -3,6 +3,7 @@ import { ClientRouter } from 'astro:transitions';
 import '../styles/global.css';
 import '../styles/tracker.css';
 import {tracker} from '../lib/tracker';
+import Icon from '../components/Icon.astro';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
@@ -11,13 +12,13 @@ const pathname = Astro.url.pathname;
 let combineLists=true;
 if(user){try{combineLists=(await tracker('preferences',Astro.locals.token)).combine_lists!==false;}catch{}}
 const settingsLinks = [
-  { href: '/user-settings', label: 'Profile', description: 'Identity and privacy' },
-  { href: '/settings', label: 'Account', description: 'Preferences and security' },
-  { href: '/connections', label: 'Connections', description: 'Sync providers and imports' },
-  { href: '/recent-events', label: 'Recent events', description: 'Review inferred changes' },
+  { href: '/user-settings', label: 'Profile', description: 'Identity and privacy', icon: 'user' },
+  { href: '/settings', label: 'Account', description: 'Preferences and security', icon: 'gear' },
+  { href: '/connections', label: 'Connections', description: 'Sync providers and imports', icon: 'plug' },
+  { href: '/recent-events', label: 'Recent events', description: 'Review inferred changes', icon: 'inbox' },
 ];
 if (user?.is_admin) {
-  settingsLinks.push({ href: '/admin', label: 'Administration', description: 'Instance access and defaults' });
+  settingsLinks.push({ href: '/admin', label: 'Administration', description: 'Instance access and defaults', icon: 'sliders' });
 }
 ---
 <!doctype html>
@@ -66,8 +67,8 @@ if (user?.is_admin) {
           const active = pathname === item.href;
           return (
             <a href={item.href} class:list={{ active }} aria-current={active ? 'page' : undefined}>
-              <strong>{item.label}</strong>
-              <span>{item.description}</span>
+              <Icon name={item.icon} fixedWidth />
+              <span class="settings-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
             </a>
           );
         })}

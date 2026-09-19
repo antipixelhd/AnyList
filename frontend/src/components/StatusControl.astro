@@ -1,9 +1,10 @@
 ---
 import {statuses} from '../lib/tracker';
+import Icon from './Icon.astro';
 const {mediaId,status,type}=Astro.props;
 ---
 <div class="status-control" data-status-control data-media={mediaId}>
-  <div class="status-split"><button class="button-primary" data-edit-entry={mediaId}>{statuses.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" aria-label="Quick status actions" aria-expanded="false" aria-controls="quick-status-options">⌄</button></div>
+  <div class="status-split"><button class="button-primary" data-edit-entry={mediaId}>{statuses.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" aria-label="Quick status actions" aria-expanded="false" aria-controls="quick-status-options"><Icon name="chevron-down" /></button></div>
   <div class="status-options" id="quick-status-options" hidden>
     <button data-quick-status="completed">Set as Completed</button>
     <button data-quick-status="watching">Set as Watching</button>
@@ -22,6 +23,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
   const options=control.querySelector<HTMLElement>('.status-options')!;
   const error=control.querySelector<HTMLElement>('.status-error')!;
   const dialog=control.querySelector<HTMLDialogElement>('dialog')!;
+  dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close('cancel');});
   const close=()=>{options.hidden=true;arrow.setAttribute('aria-expanded','false');};
   arrow.addEventListener('click',()=>{options.hidden=!options.hidden;arrow.setAttribute('aria-expanded',String(!options.hidden));});
   arrow.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();options.hidden=false;arrow.setAttribute('aria-expanded','true');options.querySelector('button')?.focus();}});
