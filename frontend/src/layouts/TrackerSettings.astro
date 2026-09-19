@@ -1,21 +1,16 @@
 ---
-import { ClientRouter } from 'astro:transitions';
 import '../styles/global.css';
 import '../styles/tracker.css';
-import {tracker} from '../lib/tracker';
 import Icon from '../components/Icon.astro';
+import AppBar from '../components/AppBar.astro';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
-const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
 const pathname = Astro.url.pathname;
-let combineLists=true;
-if(user){try{combineLists=(await tracker('preferences',Astro.locals.token)).combine_lists!==false;}catch{}}
 const settingsLinks = [
   { href: '/user-settings', label: 'Profile', description: 'Identity and privacy', icon: 'user' },
   { href: '/settings', label: 'Account', description: 'Preferences and security', icon: 'gear' },
   { href: '/connections', label: 'Connections', description: 'Sync providers and imports', icon: 'plug' },
-  { href: '/recent-events', label: 'Recent events', description: 'Review inferred changes', icon: 'inbox' },
 ];
 if (user?.is_admin) {
   settingsLinks.push({ href: '/admin', label: 'Administration', description: 'Instance access and defaults', icon: 'sliders' });
@@ -29,29 +24,10 @@ if (user?.is_admin) {
     <meta name="theme-color" content="#0b1622" />
     <title>{title} · Media Tracker</title>
     <link rel="icon" href="/favicon.svg" />
-    <ClientRouter />
   </head>
   <body class="tracker settings-app">
     <a class="skip-link" href="#settings-content">Skip to settings</a>
-    <header class="topbar">
-      <a class="brand" href="/home" aria-label="Media Tracker home">
-        <span class="brand-mark" aria-hidden="true">M<span>t</span></span>
-        <span>Media Tracker</span>
-      </a>
-      <nav aria-label="Main navigation">
-        <a href="/home">Home</a>
-        {combineLists?<a href={`${profile}/list`}>Movie/Series List</a>:<><a href={`${profile}/movies`}>Movie List</a><a href={`${profile}/series`}>Series List</a></>}
-        <a href="/browse">Browse</a>
-      </nav>
-      <div class="account-nav">
-        {user ? (
-          <>
-            <a href={profile}>{user.display_name || user.username}</a>
-            <a class="active" href="/settings" aria-current="page">Settings</a>
-          </>
-        ) : <a href="/login">Sign in</a>}
-      </div>
-    </header>
+    <AppBar />
 
     <div class="settings-heading">
       <div>

@@ -90,7 +90,7 @@ body.settings-app{--color-bg-page:var(--bg);--color-bg-card:var(--panel);--color
 .mobile-filter-toggle{display:none!important}
 @media(max-width:650px){.mobile-filter-toggle{display:inline-flex!important}}
 
-/* Recent events keeps the decision stream full width; secondary tools stay collapsed below it. */
+/* Notifications keeps the decision stream full width; secondary tools stay collapsed below it. */
 .review-dashboard .dashboard-columns{display:block}
 .connection-queue{border:1px solid #203347;border-radius:5px;background:#111e2c;overflow:hidden}
 .connection-queue>summary,.review-utilities>summary{list-style:none;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text)}
@@ -133,3 +133,18 @@ body.tracker{font-size:14px;line-height:1.55}
   .entry-thumbnail .row-menu:focus .ui-icon,.entry-thumbnail .row-menu:active .ui-icon{opacity:1}
 }
 @media(prefers-reduced-motion:reduce){.entry-thumbnail .row-menu .ui-icon{transition:none}}
+
+/* Stable shared app bar: fixed geometry keeps navigation aligned on every page. */
+.topbar{height:72px;padding:0;background:#142131;display:block}
+.appbar-inner{width:min(100%,1420px);height:100%;margin:auto;padding:0 28px;display:grid;grid-template-columns:minmax(190px,1fr) auto minmax(190px,1fr);align-items:center;gap:28px}
+.appbar-nav{display:flex;align-items:center;justify-content:center;gap:30px;font-weight:600;font-size:13px;white-space:nowrap}
+.topbar a.active{color:var(--blue)}
+.account-nav{display:flex;align-items:center;justify-self:end;gap:16px;font-size:13px;white-space:nowrap}
+.appbar-icon-link{position:relative;width:34px;height:34px;display:grid;place-items:center;border-radius:50%;color:#9db1c9;transition:background-color .15s,color .15s}
+.appbar-icon-link:hover,.appbar-icon-link:focus-visible,.appbar-icon-link.active{background:#1d3448;color:var(--blue)}
+.notification-badge{position:absolute;min-width:17px;height:17px;padding:0 4px;border-radius:9px;display:grid;place-items:center;font-size:9px;line-height:1;font-weight:700;color:white;box-shadow:0 0 0 2px #142131}
+.notification-badge-quiet{right:-5px;top:-3px;background:#42647f;color:#d7e5f1}
+.notification-badge-attention{right:-6px;bottom:-3px;background:#e85d7d}
+@media(max-width:900px){.appbar-inner{grid-template-columns:minmax(52px,1fr) auto minmax(150px,1fr);padding:0 20px;gap:15px}.appbar-nav{gap:20px}}
+@media(max-width:650px){.topbar{height:108px;min-height:0;padding:0}.appbar-inner{padding:9px 16px 7px;grid-template-columns:minmax(44px,1fr) auto;grid-template-rows:42px 42px;column-gap:10px;row-gap:4px}.brand{grid-column:1;grid-row:1}.account-nav{grid-column:2;grid-row:1;gap:9px}.account-nav>a:first-child{max-width:110px;overflow:hidden;text-overflow:ellipsis}.appbar-nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:space-around;font-size:12px;gap:8px}.appbar-icon-link{width:32px;height:32px}}
+@media(prefers-reduced-motion:reduce){.appbar-icon-link{transition:none}}

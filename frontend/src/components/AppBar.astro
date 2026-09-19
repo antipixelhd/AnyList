@@ -1,0 +1,56 @@
+---
+import Icon from './Icon.astro';
+import {tracker} from '../lib/tracker';
+
+const {user, token} = Astro.locals;
+const pathname = Astro.url.pathname;
+const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
+let combineLists = true;
+let quietNotifications = 0;
+let attentionNotifications = 0;
+
+if (user) {
+  const [preferenceResult, notificationResult] = await Promise.allSettled([
+    tracker('preferences', token),
+    tracker('recent-events', token),
+  ]);
+  if (preferenceResult.status === 'fulfilled') combineLists = preferenceResult.value.combine_lists !== false;
+  if (notificationResult.status === 'fulfilled') {
+    const notifications = notificationResult.value;
+    attentionNotifications = (notifications.results ?? []).filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
+    quietNotifications = Math.max(0, (notifications.results?.length ?? 0) + (notifications.outbound?.length ?? 0) - attentionNotifications);
+  }
+}
+
+const notificationTotal = quietNotifications + attentionNotifications;
+const notificationLabel = notificationTotal
+  ? `Notifications: ${attentionNotifications} need attention, ${quietNotifications} other`
+  : 'Notifications: none unread';
+const active = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+---
+<header class="topbar">
+  <div class="appbar-inner">
+    <a class="brand" href="/home" aria-label="Media Tracker home">
+      <span class="brand-mark" aria-hidden="true">M<span>t</span></span>
+      <span>Media Tracker</span>
+    </a>
+    <nav class="appbar-nav" aria-label="Main navigation">
+      <a href="/home" class:list={{active: active('/home')}} aria-current={active('/home') ? 'page' : undefined}>Home</a>
+      {combineLists
+        ? <a href={`${profile}/list`} class:list={{active: pathname.includes('/list')}} aria-current={pathname.includes('/list') ? 'page' : undefined}>Movie/Series List</a>
+        : <><a href={`${profile}/movies`} class:list={{active: pathname.includes('/movies')}} aria-current={pathname.includes('/movies') ? 'page' : undefined}>Movie List</a><a href={`${profile}/series`} class:list={{active: pathname.includes('/series')}} aria-current={pathname.includes('/series') ? 'page' : undefined}>Series List</a></>}
+      <a href="/browse" class:list={{active: active('/browse')}} aria-current={active('/browse') ? 'page' : undefined}>Browse</a>
+    </nav>
+    <div class="account-nav">
+      {user ? <>
+        <a class:list={{active: pathname.startsWith('/user/')}} href={profile}>{user.display_name || user.username}</a>
+        <a class:list={{'appbar-icon-link': true, active: pathname === '/recent-events'}} href="/recent-events" aria-label={notificationLabel} aria-current={pathname === '/recent-events' ? 'page' : undefined}>
+          <Icon name="bell" />
+          {quietNotifications > 0 && <span class="notification-badge notification-badge-quiet" aria-hidden="true">{quietNotifications > 99 ? '99+' : quietNotifications}</span>}
+          {attentionNotifications > 0 && <span class="notification-badge notification-badge-attention" aria-hidden="true">{attentionNotifications > 99 ? '99+' : attentionNotifications}</span>}
+        </a>
+        <a class:list={{'appbar-icon-link': true, active: ['/settings','/user-settings','/connections','/admin'].includes(pathname)}} href="/settings" aria-label="Settings" aria-current={['/settings','/user-settings','/connections','/admin'].includes(pathname) ? 'page' : undefined}><Icon name="gear" /></a>
+      </> : <a href="/login">Sign in</a>}
+    </div>
+  </div>
+</header>

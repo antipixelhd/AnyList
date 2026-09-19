@@ -1,5 +1,5 @@
 ---
-import TrackerSettings from '../layouts/TrackerSettings.astro';
+import Tracker from '../layouts/Tracker.astro';
 import TrackingEditor from '../components/TrackingEditor.astro';
 import NoticeCard from '../components/NoticeCard.astro';
 import Icon from '../components/Icon.astro';
@@ -11,8 +11,8 @@ const eventSource=(event:any)=>event.provider ? `${event.provider} sync` : event
 const eventVariant=(event:any)=>event.state==='pending'?(event.kind.includes('conflict')||event.kind==='unmatched_import'?'warning':'info'):(event.state==='corrected'?'info':'success');
 const eventIcon=(event:any)=>event.kind==='unmatched_import'?'search':event.kind.includes('conflict')?'warning':event.kind==='playback_removed'?'arrows-rotate':event.state==='pending'?'inbox':'check';
 ---
-<TrackerSettings title="Recent events"><div class="review-dashboard">
-  <header class="page-intro"><div><span class="eyebrow">Private sync inbox</span><h1>Recent events {events.pending>0&&<span class="count-pill">{events.pending}</span>}</h1><p>Provider changes and decisions that still need you.</p></div></header>
+<Tracker title="Notifications"><div class="page-width review-dashboard">
+  <header class="page-intro"><div><span class="eyebrow">Your updates</span><h1>Notifications {events.pending>0&&<span class="count-pill">{events.pending}</span>}</h1><p>Connection activity, inferred changes, and decisions that need your attention.</p></div></header>
   <p id="event-error" class="error-message" role="alert" hidden={!error}>{error}</p>
   <div class="dashboard-columns"><section aria-label="Connection notifications">
     {events.outbound?.length>0&&<details class="connection-queue"><summary><span><Icon name="arrows-rotate"/><strong>Pending connection updates</strong></span><span class="count-pill">{events.outbound.length}</span><Icon name="chevron-down"/></summary><div class="notice-list compact">{events.outbound.map((action:any)=><NoticeCard variant={action.state==='conflict'?'warning':'info'} icon="arrows-rotate" title={action.title} source={action.connection} badge={action.state} message={action.error||`${action.attempts} ${action.attempts===1?'attempt':'attempts'}`} />)}</div></details>}
@@ -26,7 +26,7 @@ const eventIcon=(event:any)=>event.kind==='unmatched_import'?'search':event.kind
     <label class="retention-field"><span>Keep low-priority notifications</span><select data-pref="low_priority_retention_days"><option value="1" selected={prefs.low_priority_retention_days===1}>1 day</option><option value="7" selected={prefs.low_priority_retention_days===7}>7 days</option><option value="14" selected={prefs.low_priority_retention_days===14}>14 days</option><option value="30" selected={prefs.low_priority_retention_days===30}>30 days</option></select></label>
   </section><section class="shortcut-panel"><h2>Ignored imports</h2><p>Entries ignored during provider matching can be restored here.</p>{ignores.length?<div class="ignore-list">{ignores.map((item:any)=><div><span><strong>{item.title||item.external_key}</strong><small>{item.provider}</small></span><button class="button-secondary" data-unignore={item.id}>Restore</button></div>)}</div>:<p class="section-empty">No ignored provider entries.</p>}</section>
   <section class="shortcut-panel"><h2>Existing watch history</h2><p>Import existing history and ratings. Streaming-library membership stays separate.</p><button class="button-secondary" id="import-history">Import existing history</button><p id="import-result" role="status"></p></section></div></details>
-</div><TrackingEditor/></TrackerSettings>
+</div><TrackingEditor/></Tracker>
 <script>
 const error=document.querySelector<HTMLElement>('#event-error')!;
 async function request(path:string,body:any={},method='POST'){const response=await fetch(`/api/proxy/tracking/${path}`,{method,headers:{'Content-Type':'application/json'},body:method==='DELETE'?undefined:JSON.stringify(body)});if(!response.ok){const data=await response.json();throw new Error(typeof data.detail==='string'?data.detail:'Could not save this change.');}return response.json();}
