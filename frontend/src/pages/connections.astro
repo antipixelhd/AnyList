@@ -3941,7 +3941,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
     setupTraktExportImport();
 
-    // Scrob data export import
+    // Media Tracker and compatible Scrob data export import
     function setupScrobExportImport() {
       const dropzone = document.getElementById('scrob-import-dropzone') as HTMLDivElement | null;
       const fileInput = document.getElementById('scrob_export_file') as HTMLInputElement | null;

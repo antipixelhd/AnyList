@@ -137,7 +137,7 @@ async def get_current_user_or_api_key(
     api_key: Optional[str] = Query(None, description="Media Tracker API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> User:
-    """Same as get_current_user, but also accepts a Scrob API key (query param or
+    """Same as get_current_user, but also accepts a Media Tracker API key (query param or
     X-Api-Key header) — the same key already used by webhooks and the Radarr/Sonarr
     compat endpoints — for callers that can't hold a JWT (e.g. external scripts)."""
     if jwt_user:

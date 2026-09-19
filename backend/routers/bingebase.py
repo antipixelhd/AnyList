@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 async def run_bingebase_push(user_id: int, job_id: int) -> None:
-    """Push all historical watched events from Scrob DB to Bingebase Webhook URL."""
+    """Push all historical watched events from Media Tracker to the Bingebase webhook."""
     from db import AsyncSessionLocal
     from routers.sync import SyncCancelled, _raise_if_cancelled
     from routers.webhooks import _maybe_bingebase_scrobble

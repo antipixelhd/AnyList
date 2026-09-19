@@ -221,7 +221,7 @@ async def backup_database(_: User = Depends(require_admin)):
 
         payload = buf.getvalue()
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        filename = f"scrob_backup_{timestamp}.bak"
+        filename = f"media_tracker_backup_{timestamp}.bak"
         return Response(
             content=payload,
             media_type="application/octet-stream",
