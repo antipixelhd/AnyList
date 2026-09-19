@@ -19,7 +19,7 @@ from db import get_db
 from dependencies import get_current_user, get_optional_user
 from models import User, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline
+from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch
 from routers.tracking import router
 
 
@@ -463,6 +463,44 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen.status_code,200,seen.text)
         recent=await self.client.get('/tracking/recent-events')
         self.assertEqual(recent.json()['results'],[])
+
+    async def test_unmatched_provider_item_can_be_matched_or_ignored(self):
+        from core.provider_matching import record_unmatched_import, provider_override
+        from core.cloud_reconciliation import require_cloud_reconciliation
+
+        entry={'movie':{'title':'Provider Film','ids':{'imdb':'tt1234567'}}}
+        self.db.add(CloudBaseline(user_id=self.owner.id,provider='mdblist',approved=True,snapshot={}))
+        self.assertTrue(await record_unmatched_import(
+            self.db,user_id=self.owner.id,provider='mdblist',kind='movies',entry=entry
+        ))
+        await self.db.commit()
+        review=(await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id==self.owner.id,SyncReview.kind=='unmatched_import'
+        ))).scalar_one()
+        with self.assertRaises(Exception):
+            await require_cloud_reconciliation(self.db,self.owner.id,'mdblist')
+        matched=await self.client.post(f'/tracking/recent-events/{review.id}',json={
+            'action':'match','media_id':self.movie.id,
+        })
+        self.assertEqual(matched.status_code,200,matched.text)
+        media,ignored,external_key,_=await provider_override(
+            self.db,user_id=self.owner.id,provider='mdblist',kind='movies',entry=entry
+        )
+        self.assertEqual(media.id,self.movie.id);self.assertFalse(ignored)
+        self.assertTrue(external_key.startswith('movies:imdb:'))
+        await require_cloud_reconciliation(self.db,self.owner.id,'mdblist')
+
+        second={'show':{'title':'Ignore Me','ids':{'simkl':42}}}
+        await record_unmatched_import(self.db,user_id=self.owner.id,provider='simkl',kind='shows',entry=second)
+        await self.db.commit()
+        review=(await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id==self.owner.id,SyncReview.provider=='simkl',SyncReview.kind=='unmatched_import'
+        ))).scalar_one()
+        ignored_response=await self.client.post(f'/tracking/recent-events/{review.id}',json={'action':'ignore'})
+        self.assertEqual(ignored_response.status_code,200,ignored_response.text)
+        self.assertIsNotNone((await self.db.execute(select(ProviderIgnore).where(
+            ProviderIgnore.user_id==self.owner.id,ProviderIgnore.provider=='simkl'
+        ))).scalar_one_or_none())
 
     async def test_combined_list_and_anime_visibility_are_presentation_only(self):
         anime=Media(title='Fixture Anime',media_type=MediaType.series,tmdb_data={

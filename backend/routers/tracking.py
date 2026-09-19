@@ -13,7 +13,7 @@ from dependencies import get_current_user, get_optional_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore
+from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch
 
 router = APIRouter()
 
@@ -184,8 +184,9 @@ async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db),v
 
 
 class ReviewResolution(BaseModel):
-    action: Literal['confirm','keep','change']
+    action: Literal['confirm','keep','change','match','ignore']
     status: TrackingStatus | None = None
+    media_id: int | None = None
 
 
 @router.post('/recent-events/{event_id}')
@@ -205,6 +206,32 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             CloudBaseline.user_id==viewer.id,CloudBaseline.provider==event.provider))).scalar_one_or_none()
         if not baseline:raise HTTPException(409,'Import this provider again')
         baseline.approved=True
+    elif event.kind=='unmatched_import':
+        external_key=(event.payload or {}).get('external_key')
+        title=(event.payload or {}).get('title')
+        if not event.provider or not external_key:raise HTTPException(409,'This unmatched import is incomplete; import the provider again')
+        if body.action=='ignore':
+            existing=(await db.execute(select(ProviderIgnore).where(
+                ProviderIgnore.user_id==viewer.id,ProviderIgnore.provider==event.provider,
+                ProviderIgnore.external_key==external_key))).scalar_one_or_none()
+            if not existing:db.add(ProviderIgnore(user_id=viewer.id,provider=event.provider,external_key=external_key,title=title))
+            event.state='corrected'
+        elif body.action=='match':
+            if body.media_id is None:raise HTTPException(422,'Choose a catalogue title')
+            media=await db.get(Media,body.media_id)
+            if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Catalogue title not found')
+            existing=(await db.execute(select(ProviderMatch).where(
+                ProviderMatch.user_id==viewer.id,ProviderMatch.provider==event.provider,
+                ProviderMatch.external_key==external_key))).scalar_one_or_none()
+            if existing:
+                existing.media_id=media.id;existing.title=title
+            else:
+                db.add(ProviderMatch(user_id=viewer.id,provider=event.provider,external_key=external_key,media_id=media.id,title=title))
+            event.media_id=media.id
+            event.state='corrected'
+        else:raise HTTPException(422,'Match this import or ignore it for this provider')
+        await db.commit()
+        return {'state':event.state}
     elif event.kind=='outbound_pending':
         raise HTTPException(409,'This operation requires the connection dispatcher; it cannot be marked successful manually')
     elif event.kind=='rating_conflict':

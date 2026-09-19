@@ -45,7 +45,7 @@ async def require_cloud_reconciliation(db, user_id: int, provider: str) -> Cloud
         SyncReview.user_id == user_id,
         SyncReview.provider == provider,
         SyncReview.state == "pending",
-        SyncReview.kind.in_(["rating_conflict", "cloud_conflict"]),
+        SyncReview.kind.in_(["rating_conflict", "cloud_conflict", "unmatched_import"]),
     ))).first()
     if unresolved:
         raise HTTPException(409, "Resolve this provider's conflicts in Recent events before pushing")

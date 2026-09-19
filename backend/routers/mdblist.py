@@ -257,15 +257,24 @@ async def _resolve_media(
     api_key: str | None,
     external_cache: dict[tuple[str, str], int | None],
 ) -> Media | None:
+    from core.provider_matching import provider_override, record_unmatched_import
+    user_id = external_cache.get(("__media_tracker__", "user_id"))
+    if user_id is not None:
+        override, ignored, _external_key, _external_title = await provider_override(
+            db, user_id=user_id, provider="mdblist", kind=kind, entry=entry
+        )
+        if override or ignored:
+            return override
     data = _entry_data(kind, entry)
     title = str(data.get("title") or data.get("name") or "")
+    media = None
     if kind == "movies":
         tmdb_id = await _resolve_external_tmdb_id(data, "movie", api_key, external_cache)
-        return await _get_or_create_movie_media(db, tmdb_id, title, api_key) if tmdb_id else None
-    if kind == "shows":
+        media = await _get_or_create_movie_media(db, tmdb_id, title, api_key) if tmdb_id else None
+    elif kind == "shows":
         tmdb_id = await _resolve_external_tmdb_id(data, "tv", api_key, external_cache)
-        return await _get_or_create_series_media(db, tmdb_id, title, api_key) if tmdb_id else None
-    if kind == "episodes":
+        media = await _get_or_create_series_media(db, tmdb_id, title, api_key) if tmdb_id else None
+    elif kind == "episodes":
         show_tmdb_id, season, episode, _ = _episode_identity(entry)
         if show_tmdb_id is None:
             episode_data = _entry_data("episodes", entry)
@@ -274,15 +283,15 @@ async def _resolve_media(
                 show_tmdb_id = await _resolve_external_tmdb_id(
                     show_data, "tv", api_key, external_cache
                 )
-        if show_tmdb_id is None or season is None or episode is None:
-            return None
-        show = await _get_or_create_show(db, show_tmdb_id, "", api_key)
-        if not show:
-            return None
-        return await _get_or_create_episode_media(
-            db, show.id, show_tmdb_id, season, episode, api_key
-        )
-    return None
+        if show_tmdb_id is not None and season is not None and episode is not None:
+            show = await _get_or_create_show(db, show_tmdb_id, "", api_key)
+            if show:
+                media = await _get_or_create_episode_media(
+                    db, show.id, show_tmdb_id, season, episode, api_key
+                )
+    if media is None and user_id is not None:
+        await record_unmatched_import(db, user_id=user_id, provider="mdblist", kind=kind, entry=entry)
+    return media
 
 
 def _empty_payload() -> dict[str, list[dict[str, Any]]]:
@@ -550,23 +559,30 @@ async def _import_ratings(
                 async with db.begin_nested():
                     season_number: int | None = None
                     if kind == "seasons":
+                        from core.provider_matching import provider_override, record_unmatched_import
+                        media, ignored, _external_key, _external_title = await provider_override(
+                            db, user_id=user_id, provider="mdblist", kind=kind, entry=entry
+                        )
                         show_data, season_number = _season_identity(entry)
-                        show_tmdb_id = await _resolve_external_tmdb_id(
-                            show_data,
-                            "tv",
-                            api_key,
-                            external_cache,
-                        )
-                        media = (
-                            await _get_or_create_series_media(
-                                db,
-                                show_tmdb_id,
-                                str(show_data.get("title") or ""),
+                        if media is None and not ignored:
+                            show_tmdb_id = await _resolve_external_tmdb_id(
+                                show_data,
+                                "tv",
                                 api_key,
+                                external_cache,
                             )
-                            if show_tmdb_id and season_number is not None
-                            else None
-                        )
+                            media = (
+                                await _get_or_create_series_media(
+                                    db,
+                                    show_tmdb_id,
+                                    str(show_data.get("title") or ""),
+                                    api_key,
+                                )
+                                if show_tmdb_id and season_number is not None
+                                else None
+                            )
+                            if media is None:
+                                await record_unmatched_import(db, user_id=user_id, provider="mdblist", kind=kind, entry=entry)
                     else:
                         media = await _resolve_media(
                             db,
@@ -723,7 +739,9 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
             }
             new_watched: set[int] = set()
             new_ratings: RatingChanges = {}
-            external_cache: dict[tuple[str, str], int | None] = {}
+            external_cache: dict[tuple[str, str], int | None] = {
+                ("__media_tracker__", "user_id"): user_id,
+            }
 
             if "watched" in snapshots:
                 new_watched = await _import_watched(

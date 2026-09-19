@@ -86,6 +86,18 @@ class ProviderIgnore(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ProviderMatch(Base):
+    __tablename__ = "tracking_provider_matches"
+    __table_args__ = (UniqueConstraint("user_id", "provider", "external_key", name="uq_tracking_provider_match"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False)
+    external_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class StreamBaseline(Base):
     __tablename__ = "tracking_baselines"
     connection_id: Mapped[int] = mapped_column(ForeignKey("media_server_connections.id", ondelete="CASCADE"), primary_key=True)

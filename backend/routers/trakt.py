@@ -418,6 +418,25 @@ async def _get_or_create_series_media(
     return media
 
 
+async def _resolve_trakt_title(db, user_id: int, kind: str, entry: dict, api_key: str | None) -> Media | None:
+    """Resolve a top-level Trakt movie/show, honoring durable user matches."""
+    from core.provider_matching import provider_override, record_unmatched_import
+    plural = "movies" if kind == "movie" else "shows"
+    media, ignored, _key, _title = await provider_override(
+        db, user_id=user_id, provider="trakt", kind=plural, entry=entry
+    )
+    if media or ignored:
+        return media
+    data = entry.get(kind, {})
+    tmdb_id = data.get("ids", {}).get("tmdb")
+    if tmdb_id:
+        creator = _get_or_create_movie_media if kind == "movie" else _get_or_create_series_media
+        media = await creator(db, tmdb_id, data.get("title", ""), api_key)
+    if media is None:
+        await record_unmatched_import(db, user_id=user_id, provider="trakt", kind=plural, entry=entry)
+    return media
+
+
 async def _get_or_create_person_media(db: AsyncSession, tmdb_id: int, name: str, api_key: str | None) -> Media | None:
     result = await db.execute(
         select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.person)
@@ -688,14 +707,11 @@ async def _apply_trakt_import(
             movie_data = item.get("movie", {})
             tmdb_id = movie_data.get("ids", {}).get("tmdb")
             try:
-                if not tmdb_id:
-                    stats["skipped"] += 1
-                    continue
                 try:
                     async with db.begin_nested():
-                        media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                        media = await _resolve_trakt_title(db, user_id, "movie", item, api_key)
                         if not media:
-                            stats["errors"] += 1
+                            stats["skipped"] += 1
                             continue
                         # A dateless play (submitted with watched_at="unknown", which Trakt
                         # silently stores/returns as the Unix epoch — see
@@ -756,6 +772,14 @@ async def _apply_trakt_import(
         plays_by_show: dict[int, list[dict]] = {}
         for entry in history_episodes:
             show_tmdb_id = entry.get("show", {}).get("ids", {}).get("tmdb")
+            if not show_tmdb_id:
+                from core.provider_matching import provider_override, record_unmatched_import
+                mapped, ignored, _key, _title = await provider_override(
+                    db, user_id=user_id, provider="trakt", kind="shows", entry={"show": entry.get("show", {})}
+                )
+                show_tmdb_id = mapped.tmdb_id if mapped else None
+                if not show_tmdb_id and not ignored:
+                    await record_unmatched_import(db, user_id=user_id, provider="trakt", kind="shows", entry={"show": entry.get("show", {})})
             if show_tmdb_id:
                 plays_by_show.setdefault(show_tmdb_id, []).append(entry)
             else:
@@ -849,18 +873,7 @@ async def _apply_trakt_import(
                     async with db.begin_nested():
                         season_number: int | None = None
                         if kind == "movies":
-                            movie_data = item.get("movie", {})
-                            tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                            media = (
-                                await _get_or_create_movie_media(
-                                    db,
-                                    tmdb_id,
-                                    movie_data.get("title", ""),
-                                    api_key,
-                                )
-                                if tmdb_id
-                                else None
-                            )
+                            media = await _resolve_trakt_title(db, user_id, "movie", item, api_key)
                         elif kind == "episodes":
                             show_data = item.get("show", {})
                             show_tmdb_id = show_data.get("ids", {}).get("tmdb")
@@ -876,19 +889,9 @@ async def _apply_trakt_import(
                                     )
                         else:
                             show_data = item.get("show", {})
-                            tmdb_id = show_data.get("ids", {}).get("tmdb")
                             if kind == "seasons":
                                 season_number = item.get("season", {}).get("number")
-                            media = (
-                                await _get_or_create_series_media(
-                                    db,
-                                    tmdb_id,
-                                    show_data.get("title", ""),
-                                    api_key,
-                                )
-                                if tmdb_id and (kind != "seasons" or season_number is not None)
-                                else None
-                            )
+                            media = await _resolve_trakt_title(db, user_id, "show", item, api_key) if kind != "seasons" or season_number is not None else None
 
                         if not media:
                             stats["skipped"] += 1
@@ -1018,23 +1021,15 @@ async def _apply_trakt_import(
                 media: Media | None = None
                 try:
                     if item_type == "movie":
-                        movie_data = entry.get("movie", {})
-                        tmdb_id_item = movie_data.get("ids", {}).get("tmdb")
-                        if not tmdb_id_item:
-                            continue
                         async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id_item, movie_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "movie", entry, api_key)
                         if media and media.id not in movies_existing:
                             db.add(ListItem(list_id=movies_list.id, media_id=media.id))
                             movies_existing.add(media.id)
                             stats["list_items"] += 1
                     elif item_type == "show":
-                        show_data = entry.get("show", {})
-                        tmdb_id_item = show_data.get("ids", {}).get("tmdb")
-                        if not tmdb_id_item:
-                            continue
                         async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, tmdb_id_item, show_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "show", entry, api_key)
                         if media and media.id not in shows_existing:
                             db.add(ListItem(list_id=shows_list.id, media_id=media.id))
                             shows_existing.add(media.id)
@@ -1068,19 +1063,11 @@ async def _apply_trakt_import(
                 media: Media | None = None
                 try:
                     if item_type == "movie":
-                        movie_data = entry.get("movie", {})
-                        tmdb_id_item = movie_data.get("ids", {}).get("tmdb")
-                        if not tmdb_id_item:
-                            continue
                         async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id_item, movie_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "movie", entry, api_key)
                     elif item_type == "show":
-                        show_data = entry.get("show", {})
-                        tmdb_id_item = show_data.get("ids", {}).get("tmdb")
-                        if not tmdb_id_item:
-                            continue
                         async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, tmdb_id_item, show_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "show", entry, api_key)
                     else:
                         continue
 
@@ -1145,27 +1132,19 @@ async def _apply_trakt_import(
                 season_number: int | None = None
                 try:
                     if item_type == "movie":
-                        movie_data = entry.get("movie", {})
-                        tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                        if not tmdb_id:
-                            continue
                         async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "movie", entry, api_key)
                     elif item_type == "show":
-                        show_data = entry.get("show", {})
-                        tmdb_id = show_data.get("ids", {}).get("tmdb")
-                        if not tmdb_id:
-                            continue
                         async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "show", entry, api_key)
                     elif item_type == "season":
                         show_data = entry.get("show", {})
                         show_tmdb_id = show_data.get("ids", {}).get("tmdb")
                         season_number = entry.get("season", {}).get("number")
-                        if not show_tmdb_id or season_number is None:
+                        if season_number is None:
                             continue
                         async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, show_tmdb_id, show_data.get("title", ""), api_key)
+                            media = await _resolve_trakt_title(db, user_id, "show", entry, api_key)
                     elif item_type == "episode":
                         show_data = entry.get("show", {})
                         show_tmdb_id = show_data.get("ids", {}).get("tmdb")

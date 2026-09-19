@@ -198,6 +198,25 @@ async def _get_or_create_series_media(db: AsyncSession, tmdb_id: int, title: str
     return media
 
 
+async def _resolve_simkl_title(db, user_id: int, kind: str, entry: dict, api_key: str | None) -> Media | None:
+    """Resolve a top-level Simkl movie/show, honoring durable user matches."""
+    from core.provider_matching import provider_override, record_unmatched_import
+    plural = "movies" if kind == "movie" else "shows"
+    media, ignored, _key, _title = await provider_override(
+        db, user_id=user_id, provider="simkl", kind=plural, entry=entry
+    )
+    if media or ignored:
+        return media
+    data = entry.get(kind, {})
+    tmdb_id = data.get("ids", {}).get("tmdb")
+    if tmdb_id:
+        creator = _get_or_create_movie_media if kind == "movie" else _get_or_create_series_media
+        media = await creator(db, int(tmdb_id), data.get("title", ""), api_key)
+    if media is None:
+        await record_unmatched_import(db, user_id=user_id, provider="simkl", kind=plural, entry=entry)
+    return media
+
+
 async def _get_or_create_episode_media(
     db: AsyncSession,
     show_id: int,
@@ -337,15 +356,11 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         continue
                     movie_data = item.get("movie", {})
                     tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        stats["skipped"] += 1
-                        continue
-                    tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                            media = await _resolve_simkl_title(db, user_id, "movie", item, api_key)
                             if not media:
-                                stats["errors"] += 1
+                                stats["skipped"] += 1
                                 continue
                             if media.id not in existing_watched:
                                 watched_at = _parse_watched_at(item.get("last_watched_at"))
@@ -378,8 +393,16 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     show_data  = show_entry.get("show", {})
                     show_tmdb_id = show_data.get("ids", {}).get("tmdb")
                     if not show_tmdb_id:
-                        stats["skipped"] += 1
-                        continue
+                        from core.provider_matching import provider_override, record_unmatched_import
+                        mapped, ignored, _key, _title = await provider_override(
+                            db, user_id=user_id, provider="simkl", kind="shows", entry=show_entry
+                        )
+                        show_tmdb_id = mapped.tmdb_id if mapped else None
+                        if not show_tmdb_id and not ignored:
+                            await record_unmatched_import(db, user_id=user_id, provider="simkl", kind="shows", entry=show_entry)
+                        if not show_tmdb_id:
+                            stats["skipped"] += 1
+                            continue
                     show_tmdb_id = int(show_tmdb_id)
 
                     seasons = show_entry.get("seasons") or []
@@ -462,12 +485,11 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     movie_data = item.get("movie", {})
                     tmdb_id = movie_data.get("ids", {}).get("tmdb")
                     rating_val = _simkl_rating_value(item)
-                    if not tmdb_id or not rating_val:
+                    if not rating_val:
                         continue
-                    tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                            media = await _resolve_simkl_title(db, user_id, "movie", item, api_key)
                             if not media:
                                 continue
                             from core.cloud_rating_reconciliation import reconcile_cloud_rating
@@ -496,12 +518,13 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     show_data = item.get("show", {})
                     tmdb_id = show_data.get("ids", {}).get("tmdb")
                     rating_val = _simkl_rating_value(item)
-                    if not tmdb_id or not rating_val:
+                    if not rating_val:
                         continue
-                    tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
+                            media = await _resolve_simkl_title(db, user_id, "show", item, api_key)
+                            if not media:
+                                continue
                             from core.cloud_rating_reconciliation import reconcile_cloud_rating
                             outcome = await reconcile_cloud_rating(
                                 db,
@@ -552,12 +575,9 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 for item in plantowatch_movies:
                     movie_data = item.get("movie", {})
                     tmdb_id = movie_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        continue
-                    tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media = await _get_or_create_movie_media(db, tmdb_id, movie_data.get("title", ""), api_key)
+                            media = await _resolve_simkl_title(db, user_id, "movie", item, api_key)
                         if media and media.id not in wl_existing:
                             db.add(ListItem(list_id=watchlist.id, media_id=media.id))
                             wl_existing.add(media.id)
@@ -569,12 +589,9 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 for item in plantowatch_shows:
                     show_data = item.get("show", {})
                     tmdb_id = show_data.get("ids", {}).get("tmdb")
-                    if not tmdb_id:
-                        continue
-                    tmdb_id = int(tmdb_id)
                     try:
                         async with db.begin_nested():
-                            media = await _get_or_create_series_media(db, tmdb_id, show_data.get("title", ""), api_key)
+                            media = await _resolve_simkl_title(db, user_id, "show", item, api_key)
                         if media and media.id not in wl_existing:
                             db.add(ListItem(list_id=watchlist.id, media_id=media.id))
                             wl_existing.add(media.id)
