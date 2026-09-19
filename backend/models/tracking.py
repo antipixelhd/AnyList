@@ -21,6 +21,11 @@ class TrackedEntry(Base):
     start_date: Mapped[date | None] = mapped_column(Date)
     finish_date: Mapped[date | None] = mapped_column(Date)
     rewatch_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Provenance for ordering provider observations against an explicit local
+    # status decision.  ``updated_at`` also changes for notes, scores and
+    # favourites, so it cannot safely answer which side last changed status.
+    status_source: Mapped[str | None] = mapped_column(String(64))
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
@@ -127,6 +132,21 @@ class StreamAction(Base):
     action: Mapped[str] = mapped_column(String(24))
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
     state: Mapped[str] = mapped_column(String(16), default='pending')
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CloudAction(Base):
+    """A durable local decision waiting to be acknowledged by a cloud tracker."""
+    __tablename__ = "tracking_cloud_actions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(24), index=True)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"))
+    action: Mapped[str] = mapped_column(String(24))
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    state: Mapped[str] = mapped_column(String(16), default="pending")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

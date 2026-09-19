@@ -11,9 +11,10 @@ from sqlalchemy.orm import selectinload
 from db import get_db
 from dependencies import get_current_user, get_optional_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
+from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch
+from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, CloudAction
 
 router = APIRouter()
 
@@ -31,10 +32,12 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
         if media.tvdb_id:terms.append(Show.tvdb_id==media.tvdb_id)
         if terms:show_ids=set((await db.execute(select(Show.id).where(or_(*terms)))).scalars())
         if show_ids:ids.update((await db.execute(select(Media.id).where(Media.show_id.in_(show_ids)))).scalars())
+    episodes=(await db.execute(select(Media).where(Media.id.in_(ids),Media.media_type==MediaType.episode))).scalars().all()
     for model in (WatchEvent,PlaybackProgress,PlaybackSession,Rating,TrackingActivity,SyncReview,TrackedEntry):
         await db.execute(delete(model).where(model.user_id==viewer.id,model.media_id.in_(ids)))
     from models.tracking import StreamAction
     await db.execute(delete(StreamAction).where(StreamAction.user_id==viewer.id,StreamAction.media_id.in_(ids)))
+    await db.execute(delete(CloudAction).where(CloudAction.user_id==viewer.id,CloudAction.media_id.in_(ids)))
     await db.execute(delete(ListItem).where(ListItem.media_id.in_(ids),ListItem.list_id.in_(select(List.id).where(List.user_id==viewer.id))))
     if show_ids:await db.execute(delete(ShowRewatch).where(ShowRewatch.user_id==viewer.id,ShowRewatch.show_id.in_(show_ids)))
     settings=(await db.execute(select(UserSettings).where(UserSettings.user_id==viewer.id))).scalar_one_or_none()
@@ -60,17 +63,18 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
         snapshot['watched'] = [key for key in snapshot.get('watched', [])
             if not any(key.startswith(content_id + ':') for content_id in removed_keys)]
         baseline.snapshot=snapshot
-    connections=(await db.execute(select(MediaServerConnection.id).where(MediaServerConnection.user_id==viewer.id))).scalars().all()
+    connections=(await db.execute(select(MediaServerConnection.id).where(
+        MediaServerConnection.user_id==viewer.id,
+        MediaServerConnection.type.in_(['stremio','nuvio'])))).scalars().all()
     pending=[f'connection:{i}' for i in connections]
-    if settings:
-        for provider in ('trakt','simkl','mdblist','bingebase'):
-            if any(getattr(settings,f'{provider}_{suffix}',None) for suffix in ('access_token','api_key')):pending.append(provider)
     marker=(await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id==media_id))).scalar_one_or_none()
     if not marker:marker=TrackingDeletion(user_id=viewer.id,media_id=media_id);db.add(marker)
-    marker.pending_connections=pending
     marker.deleted_at=datetime.utcnow()
     from core.stream_actions import queue_resets
+    from core.cloud_actions import queue_cloud_resets
     await queue_resets(db,viewer.id,media,marker.deleted_at)
+    pending.extend(await queue_cloud_resets(db,viewer.id,media,episodes))
+    marker.pending_connections=list(pending)
     if pending:db.add(SyncReview(user_id=viewer.id,media_id=media_id,kind='outbound_pending',message='Local tracking data was deleted. Connected-service resets are pending; streaming-library membership is preserved.'))
     await db.commit()
     return {'deleted':True,'pending_connections':len(pending),'library_preserved':True}
@@ -147,6 +151,11 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')
     await db.commit()
     outbound=[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions]
+    cloud_actions=(await db.execute(select(CloudAction,Media).join(Media,Media.id==CloudAction.media_id)
+        .where(CloudAction.user_id==viewer.id,CloudAction.state.in_(['pending','conflict']))
+        .order_by(CloudAction.id).limit(100))).all()
+    outbound.extend({'id':f'cloud-{a.id}','title':m.title,'connection':a.provider.title(),
+        'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m in cloud_actions)
     outbound.extend({'id':f'review-{r.id}','title':m.title if m else 'Deleted entry','connection':'Connected services',
         'state':'pending','attempts':0,'error':None} for r,m in outbound_review_rows)
     return {'pending':pending,'outbound':outbound,
@@ -292,15 +301,21 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
         if not entry:raise HTTPException(409,'The tracked entry no longer exists')
         if body.action not in {'confirm','keep','change'}:raise HTTPException(422,'Resolve or keep this imported history')
+        status_changed = False
         if body.action!='keep':
             changes=(event.payload or {}).get('changes') or []
             for change in changes:
                 field=change.get('field');value=change.get('proposed')
-                if field=='status':entry.status=body.status.value if body.action=='change' and body.status else value
+                if field=='status':
+                    entry.status=body.status.value if body.action=='change' and body.status else value
+                    status_changed = True
                 elif field=='start_date':entry.start_date=date.fromisoformat(value) if value else None
                 elif field=='finish_date':entry.finish_date=date.fromisoformat(value) if value else None
                 elif field=='progress' and value is not None:entry.progress=max(0,int(value))
-            if body.action=='change' and body.status:entry.status=body.status.value
+            if body.action=='change' and body.status:
+                entry.status=body.status.value
+                status_changed = True
+            if status_changed:mark_status_change(entry,'local')
             db.add(TrackingActivity(user_id=viewer.id,media_id=entry.media_id,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
     else:
@@ -309,6 +324,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         status=body.status.value if body.action=='change' and body.status else event.previous_status if body.action=='keep' else event.proposed_status
         if not status:raise HTTPException(422,'Choose a status')
         entry.status=status
+        mark_status_change(entry,'local')
         if status=='watching':
             from core.stream_actions import queue_restorations
             await queue_restorations(db,viewer.id,await db.get(Media,entry.media_id))
@@ -706,6 +722,7 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
         entry = TrackedEntry(user_id=viewer.id, media_id=media_id, status="planning", rating_mode="manual", season_scores={}, progress=0, favorite=False, rewatch_count=0)
         db.add(entry)
     fields = body.model_fields_set
+    local_status_decision = 'status' in fields
     if body.season_scores is not None and media.media_type != MediaType.series:
         raise HTTPException(422, "Movies do not have season ratings")
     if body.rating_mode == 'average' and media.media_type != MediaType.series:
@@ -747,6 +764,12 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             from core.tracking_rules import observed_status
             entry.status = observed_status(previous, target == len(episodes), True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, date.today())
+            local_status_decision = entry.status != previous
+    if local_status_decision:
+        mark_status_change(entry, 'local')
+    if previous == 'watching' and entry.status != 'watching':
+        from core.stream_actions import queue_local_dismissals
+        await queue_local_dismissals(db, viewer.id, media)
     # Mirror the effective value into the existing provider-facing rating rows.
     if entry.status=='watching' and previous!='watching':
         from core.stream_actions import queue_restorations

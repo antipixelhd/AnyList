@@ -8,6 +8,7 @@ from models import Media, WatchEvent, PlaybackProgress, Rating, Show, User
 from models.base import MediaType
 from models.tracking import TrackedEntry, TrackingDeletion
 from core.tracking_rules import observed_status
+from core.status_provenance import mark_status_change
 
 
 async def import_tracking_history(db, user_id: int):
@@ -69,11 +70,13 @@ async def import_tracking_history(db, user_id: int):
             count=last+1 if last>=0 else count
             complete=bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') and episodes and count==len(episodes))
         status=observed_status(None,complete,item['playing'] or count>0)
-        db.add(TrackedEntry(user_id=user_id,media_id=media_id,status=status,progress=count,
+        entry=TrackedEntry(user_id=user_id,media_id=media_id,status=status,progress=count,
             manual_score=item['scores'].get(None),rating_mode='manual' if None in item['scores'] or not item['scores'] else 'average',
             season_scores={str(k):v for k,v in item['scores'].items() if k is not None},
             start_date=min(item['dates']) if item['dates'] and not (media.media_type==MediaType.movie and complete) else None,
-            finish_date=max(item['dates']) if complete and item['dates'] else None))
+            finish_date=max(item['dates']) if complete and item['dates'] else None)
+        mark_status_change(entry,'history-import')
+        db.add(entry)
         added+=1
     await db.commit()
     return added

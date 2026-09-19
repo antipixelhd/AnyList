@@ -301,8 +301,9 @@ async def _manual_session_completer():
 async def _dispatch_pending_stream_actions_once(session_factory=None):
     """Retry durable streaming writes independently of provider pull schedules."""
     from db import async_sessionmaker
-    from models.tracking import StreamAction
+    from models.tracking import StreamAction, CloudAction
     from core.stream_actions import dispatch_stream_actions
+    from core.cloud_actions import dispatch_cloud_actions
 
     factory = session_factory or async_sessionmaker(
         engine,
@@ -310,12 +311,10 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
         class_=AsyncSession,
     )
     async with factory() as db:
-        result = await db.execute(
-            select(StreamAction.user_id)
-            .where(StreamAction.state == "pending")
-            .distinct()
-            .order_by(StreamAction.user_id)
-        )
+        pending_users = select(StreamAction.user_id).where(StreamAction.state == "pending").union(
+            select(CloudAction.user_id).where(CloudAction.state == "pending")
+        ).subquery()
+        result = await db.execute(select(pending_users.c.user_id).order_by(pending_users.c.user_id))
         user_ids = list(result.scalars().all())
 
     # Use one transaction per user. dispatch_stream_actions locks the user and
@@ -324,6 +323,7 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
         try:
             async with factory() as db:
                 await dispatch_stream_actions(db, user_id)
+                await dispatch_cloud_actions(db, user_id)
         except Exception as error:
             # One unavailable connection must not prevent another user's writes
             # from being retried on this tick. Remote error bodies are not logged.

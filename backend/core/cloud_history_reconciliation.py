@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select
 
 from core.tracking_rules import effective_score
+from core.status_provenance import mark_status_change, status_changed_at
 from models import Media, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import CloudBaseline, SyncReview, TrackedEntry, TrackingActivity
@@ -135,7 +136,7 @@ async def reconcile_cloud_watch_events(
             (_naive_utc(event.watched_at) for event, _ in item["events"] if event.watched_at),
             default=None,
         )
-        local_at = _naive_utc(entry.updated_at)
+        local_at = status_changed_at(entry)
         media = item["media"]
         proposed_status = "completed" if media.media_type == MediaType.movie else "watching"
         released = []
@@ -236,6 +237,7 @@ async def reconcile_cloud_watch_events(
         if released:
             entry.progress = proposed_progress
         entry.status = proposed_status
+        mark_status_change(entry, provider, latest_at)
         entry.start_date = proposed_start
         entry.finish_date = proposed_finish
         if changed and not initial_import:

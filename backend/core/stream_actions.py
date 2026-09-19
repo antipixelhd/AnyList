@@ -129,10 +129,15 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
                 {'p_profile_id': profile, 'p_keys': [key]})
 
 
-async def queue_dismissals(db, source, media):
-    targets = (await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id == source.user_id,
-        MediaServerConnection.id != source.id, MediaServerConnection.type.in_(['stremio', 'nuvio']),
-        MediaServerConnection.push_playback.is_(True)))).scalars().all()
+async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
+    filters = [
+        MediaServerConnection.user_id == user_id,
+        MediaServerConnection.type.in_(['stremio', 'nuvio']),
+        MediaServerConnection.push_playback.is_(True),
+    ]
+    if exclude_connection_id is not None:
+        filters.append(MediaServerConnection.id != exclude_connection_id)
+    targets = (await db.execute(select(MediaServerConnection).where(*filters))).scalars().all()
     for conn in targets:
         baseline = await db.get(StreamBaseline, conn.id)
         if not baseline:
@@ -143,8 +148,18 @@ async def queue_dismissals(db, source, media):
             pending = (await db.execute(select(StreamAction.id).where(StreamAction.connection_id == conn.id,
                 StreamAction.media_id == media.id, StreamAction.state == 'pending', StreamAction.action == 'dismiss'))).first()
             if not pending:
-                db.add(StreamAction(user_id=source.user_id,connection_id=conn.id,media_id=media.id,
+                db.add(StreamAction(user_id=user_id,connection_id=conn.id,media_id=media.id,
                     action='dismiss',payload=dict(record)))
+
+
+async def queue_dismissals(db, source, media):
+    """Mirror an inferred provider removal to the user's other stream accounts."""
+    await _queue_dismissals(db, source.user_id, media, exclude_connection_id=source.id)
+
+
+async def queue_local_dismissals(db, user_id, media):
+    """An explicit local status change wins over every connected stream account."""
+    await _queue_dismissals(db, user_id, media)
 
 
 async def queue_restorations(db, user_id, media):
@@ -182,12 +197,13 @@ async def dispatch_stream_actions(db, user_id):
         conn = await db.get(MediaServerConnection, action.connection_id)
         if not conn or action.action not in ('dismiss','restore','reset'):
             continue
-        if action.action=='reset':
-            if not (conn.push_playback and conn.push_watched):continue
-        elif not conn.push_playback:continue
+        # An explicit confirmed deletion is authoritative and is not an
+        # ordinary optional mirroring preference. It still waits for the
+        # connection's reviewed first-import baseline below.
+        if action.action!='reset' and not conn.push_playback:continue
         entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == action.media_id))).scalar_one_or_none()
         deleted = (await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id == user_id, TrackingDeletion.media_id == action.media_id))).scalar_one_or_none()
-        valid_statuses = ('watching',) if action.action == 'restore' else ('paused','dropped')
+        valid_statuses = ('watching',) if action.action == 'restore' else ('planning','paused','dropped','completed')
         invalid=(not deleted or entry is not None) if action.action=='reset' else (deleted or not entry or entry.status not in valid_statuses)
         if invalid:
             action.state = 'cancelled'; action.payload = {}

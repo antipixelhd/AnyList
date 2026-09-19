@@ -10,6 +10,7 @@ from models.base import MediaType
 from models.tracking import StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingActivity, TrackingDeletion
 from core.tracking_rules import effective_score, observed_status, default_dates
 from core.tracking_import import import_tracking_history
+from core.status_provenance import mark_status_change, provider_changed_at, status_changed_at
 
 
 def _active(rows):
@@ -154,7 +155,8 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
         pending=(await db.execute(select(SyncReview.id).where(SyncReview.user_id==conn.user_id,SyncReview.media_id==media.id,SyncReview.state=='pending',SyncReview.kind.in_(['playback_removed','conflict'])))).first()
         if pending:continue
         # A local edit since the prior source observation has uncertain ordering.
-        conflict=bool(entry.updated_at and baseline.observed_at and entry.updated_at>baseline.observed_at)
+        changed_at=status_changed_at(entry)
+        conflict=bool(changed_at and baseline.observed_at and changed_at>baseline.observed_at)
         proposed='dropped' if media.media_type==MediaType.movie else 'paused'
         auto_confirm = bool(preferences and preferences.auto_confirm and not conflict and baseline.approved)
         db.add(SyncReview(user_id=conn.user_id,connection_id=conn.id,media_id=media.id,kind='conflict' if conflict else 'playback_removed',state='confirmed' if auto_confirm else 'pending',
@@ -162,6 +164,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             message=f'{conn.name}: playback disappeared without a matching completion. '+('A newer local edit was preserved; choose the correct status.' if conflict else f'Marked {proposed}. Review the change or add a rating.')))
         if not conflict:
             entry.status=proposed
+            mark_status_change(entry,f'{conn.type}:{conn.id}')
             from core.stream_actions import queue_dismissals
             await queue_dismissals(db, conn, media)
             if auto_confirm:
@@ -188,7 +191,8 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             previous_status = entry.status
             is_complete = media.media_type == MediaType.movie and row in new_completed
             # A newer local correction takes precedence over inferred history too.
-            local_change=media.id in existing_ids and entry.updated_at and baseline.observed_at and entry.updated_at>baseline.observed_at
+            changed_at=status_changed_at(entry)
+            local_change=media.id in existing_ids and changed_at and baseline.observed_at and changed_at>baseline.observed_at
             if media.media_type==MediaType.series and not local_change:
                 is_complete=await apply_series_observation(db,conn.user_id,media,entry,row,row in new_completed)
             proposed = observed_status(previous_status, is_complete, True)
@@ -198,6 +202,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
                     message=f'{conn.name}: new playback overlaps a newer local edit. Your local status was preserved.'))
                 continue
             entry.status = proposed
+            mark_status_change(entry,f'{conn.type}:{conn.id}',provider_changed_at(row))
             entry.start_date, entry.finish_date = default_dates(previous_status, entry.status, entry.start_date, entry.finish_date, date.today())
             if media.id not in existing_ids:
                 if entry.status=='watching' and entry.start_date is None:entry.start_date=date.today()

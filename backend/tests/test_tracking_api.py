@@ -17,9 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key
-from models import User, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
+from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch
+from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction
 from routers.tracking import router
 from routers.comments import router as comments_router
 from routers.profile import router as profile_router
@@ -1119,6 +1119,71 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         baseline.approved=True;await self.db.commit()
         with self.assertRaises(HTTPException):await require_stream_reconciliation(self.db,conn)
 
+    async def test_empty_first_connection_cannot_override_or_fan_out_local_status(self):
+        from core.tracking_snapshot import observe_stream_snapshot, require_stream_reconciliation
+        from models.tracking import StreamAction
+        from fastapi import HTTPException
+
+        self.movie.tmdb_id=987654301
+        await self.save(self.movie,status='watching')
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fresh empty account',
+            url='https://example.test',token='fixture',push_playback=True)
+        self.db.add(conn);await self.db.commit()
+
+        await observe_stream_snapshot(self.db,conn,[],[],[],{})
+
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        baseline=await self.db.get(StreamBaseline,conn.id)
+        actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id))).scalars().all()
+        self.assertEqual(entry.status,'watching')
+        self.assertEqual(entry.status_source,'local')
+        self.assertFalse(baseline.approved)
+        self.assertEqual(actions,[])
+        with self.assertRaises(HTTPException):await require_stream_reconciliation(self.db,conn)
+
+    async def test_explicit_local_pause_queues_playback_removal_for_every_stream_account(self):
+        from models.tracking import StreamAction
+
+        self.movie.tmdb_id=987654302
+        await self.save(self.movie,status='watching')
+        connections=[]
+        for index,kind in enumerate(('stremio','nuvio'),start=1):
+            conn=MediaServerConnection(user_id=self.owner.id,type=kind,name=f'{kind} fixture',
+                url='https://example.test',token='fixture',server_user_id='1',push_playback=True)
+            self.db.add(conn);connections.append(conn)
+        await self.db.flush()
+        for index,conn in enumerate(connections,start=1):
+            key=f'tt-local-{index}'
+            record={'content_id':key,'content_type':'movie','position':30,'duration':100}
+            self.db.add(StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+                snapshot={'progress':{key:record},'mappings':{key:self.movie.tmdb_id},'library':[]}))
+        await self.db.commit()
+
+        result=await self.save(self.movie,status='paused')
+        self.assertEqual(result.status_code,200,result.text)
+
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.action=='dismiss'))).scalars().all()
+        self.assertEqual(entry.status_source,'local')
+        self.assertIsNotNone(entry.status_changed_at)
+        self.assertEqual({action.connection_id for action in actions},{conn.id for conn in connections})
+
+    async def test_non_status_local_edit_does_not_rewrite_status_provenance(self):
+        await self.save(self.movie,status='paused')
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        changed_at=entry.status_changed_at
+
+        result=await self.save(self.movie,notes='Private note')
+        self.assertEqual(result.status_code,200,result.text)
+        await self.db.refresh(entry)
+        self.assertEqual(entry.status_source,'local')
+        self.assertEqual(entry.status_changed_at,changed_at)
+
     async def test_incremental_snapshot_preserves_untouched_titles(self):
         from core.tracking_snapshot import observe_stream_snapshot
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
@@ -1260,7 +1325,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         from core.stream_actions import dispatch_stream_actions,RemotePlaybackChanged
         from models.tracking import StreamAction
         self.movie.tmdb_id=987654312
-        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=True,push_watched=True)
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=False,push_watched=False)
         self.db.add(conn);await self.db.commit()
         await self.save(self.movie,status='completed',manual_score=8)
         baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
@@ -1286,5 +1351,39 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marker.pending_connections,[])
         self.assertEqual(action.payload,{})
         self.assertEqual(baseline.snapshot['library'],['tt-delete'])
+
+    async def test_local_deletion_cloud_reset_waits_for_first_import_approval(self):
+        from core.cloud_actions import dispatch_cloud_actions
+
+        self.movie.tmdb_id=987654299
+        self.db.add(UserSettings(user_id=self.owner.id,mdblist_api_key='fixture-key'))
+        self.db.add(CloudBaseline(user_id=self.owner.id,provider='mdblist',approved=False,snapshot={}))
+        await self.db.commit()
+        await self.save(self.movie,status='completed',manual_score=8)
+
+        result=await self.client.delete(f'/tracking/entry/{self.movie.id}?confirmed=true')
+        self.assertEqual(result.status_code,200,result.text)
+        action=(await self.db.execute(select(CloudAction).where(
+            CloudAction.user_id==self.owner.id))).scalar_one()
+        marker=(await self.db.execute(select(TrackingDeletion).where(
+            TrackingDeletion.user_id==self.owner.id))).scalar_one()
+        self.assertEqual(marker.pending_connections,['mdblist'])
+
+        operations=(
+            patch('core.cloud_actions.mdblist.remove_watched',AsyncMock()),
+            patch('core.cloud_actions.mdblist.remove_ratings',AsyncMock()),
+            patch('core.cloud_actions.mdblist.remove_watchlist',AsyncMock()),
+        )
+        with operations[0] as watched,operations[1] as ratings,operations[2] as watchlist:
+            await dispatch_cloud_actions(self.db,self.owner.id)
+            watched.assert_not_awaited();ratings.assert_not_awaited();watchlist.assert_not_awaited()
+            baseline=(await self.db.execute(select(CloudBaseline).where(
+                CloudBaseline.user_id==self.owner.id,CloudBaseline.provider=='mdblist'))).scalar_one()
+            baseline.approved=True;await self.db.commit()
+            await dispatch_cloud_actions(self.db,self.owner.id)
+            watched.assert_awaited_once();ratings.assert_awaited_once();watchlist.assert_awaited_once()
+        self.assertEqual(action.state,'applied')
+        self.assertEqual(action.payload,{})
+        self.assertEqual(marker.pending_connections,[])
 
 if __name__=='__main__': unittest.main()
