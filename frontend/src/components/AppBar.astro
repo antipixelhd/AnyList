@@ -18,7 +18,9 @@ if (user) {
   if (notificationResult.status === 'fulfilled') {
     const notifications = notificationResult.value;
     attentionNotifications = (notifications.results ?? []).filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
-    quietNotifications = Math.max(0, (notifications.results?.length ?? 0) + (notifications.outbound?.length ?? 0) - attentionNotifications);
+    // Operational delivery jobs stay visible in the collapsed connection queue,
+    // but they are not user notifications and must not light up the app bar.
+    quietNotifications = Math.max(0, (notifications.results?.length ?? 0) - attentionNotifications);
   }
 }
 
@@ -70,7 +72,7 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
       if (!response.ok) return;
       const notifications = await response.json();
       const attention = (notifications.results ?? []).filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
-      const quiet = Math.max(0, (notifications.results?.length ?? 0) + (notifications.outbound?.length ?? 0) - attention);
+      const quiet = Math.max(0, (notifications.results?.length ?? 0) - attention);
       renderBadge(quietBadge, quiet);
       renderBadge(attentionBadge, attention);
       if (link) link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread');
