@@ -511,3 +511,11 @@ The desktop editor hero, poster, field heights, spacing and action area were con
 Home now reads the signed-in user's tracking presentation preference. Combined mode shows one **Movie/Series List** shortcut; separate mode shows **Movies** and **Series**. The shared primary-button hover/focus state keeps dark readable text on the brighter blue background, repairing the disappearing text on **Find people** and **Find your next title**.
 
 The overall result total above the first status group is visually removed from personal and public lists. Its live filtered-result announcement remains as screen-reader-only feedback, and the compact/grid switch stays right-aligned. The production Astro build passes. Authenticated browser QA confirmed the combined shortcut, final hover colors of `rgb(7, 19, 29)` on `rgb(102, 199, 246)`, a 1px assistive-only result-count box, and `flex-end` toolbar alignment.
+
+## App-bar control and scroll corrections (2026-09-20)
+
+The profile action now uses a square avatar container. Its border is transparent at rest, including on profile and Settings routes, and the blue outline is reserved for hover and keyboard focus. Fast search uses the same unfilled icon-control shape as Settings and Notifications with the shared blue accent. At phone widths the control is absent and Ctrl/Cmd+K cannot open its dialog.
+
+Desktop scroll handling now begins hiding the 72px app bar after the first ordinary downward scroll beyond the top threshold, while any meaningful upward scroll reveals it. Top-of-page, keyboard-focus and reduced-motion protections remain. The Settings and tracker shells already share `AppBar`; 1440×900 measurements confirmed identical Fast-search `(1166, 19, 34×34)` and profile `(1216, 18, 36×36)` bounds on both pages.
+
+The production Astro build passes. Browser QA confirmed the transparent/blue Fast-search treatment, 4px avatar radius and transparent resting border, full `-72px` hide after one 120px scroll, upward reveal after 40px, and a 390×844 phone layout with no Fast-search activation or horizontal overflow.

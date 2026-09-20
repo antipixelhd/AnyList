@@ -2,7 +2,7 @@
 import Icon from './Icon.astro';
 const { combineLists = true } = Astro.props;
 ---
-<button class="appbar-icon-link" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>
+<button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>
 <dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
   <h1 class="sr-only" id="quick-search-heading">Fast search</h1>
   <div class="quick-search-bar">
@@ -125,6 +125,7 @@ const { combineLists = true } = Astro.props;
     } finally { if (controller === current) resultShell?.setAttribute('aria-busy','false'); }
   }
   function open() {
+    if (matchMedia('(max-width:650px)').matches) return;
     if (!dialog?.open) dialog?.showModal();
     requestAnimationFrame(() => input?.focus());
     setMobileCategory();

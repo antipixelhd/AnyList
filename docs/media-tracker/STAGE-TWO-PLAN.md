@@ -297,7 +297,7 @@ Implementation progress: the desktop quick editor is condensed to one 1440×900 
 - On desktop, one ordinary wheel/trackpad scroll action is enough to start hiding the app bar. Preserve the existing upward reveal, top-of-page, keyboard-focus, and reduced-motion rules.
 - Correct the app-bar/Fast-search alignment on Settings pages so the control occupies the same area and coordinates as on the tracker pages.
 
-Implementation progress: Home's **Your lists** shortcuts now read the signed-in user's combined-list preference and render either one Movie/Series List link or distinct Movies and Series links. Primary buttons now retain deliberate dark-on-light contrast on hover and keyboard focus, fixing both reported Home CTA failures. The app-bar and Settings-shell items remain open.
+Implementation complete: Home's **Your lists** shortcuts now read the signed-in user's combined-list preference and render either one Movie/Series List link or distinct Movies and Series links. Primary buttons retain deliberate dark-on-light contrast on hover and keyboard focus, fixing both reported Home CTA failures. The app-bar avatar uses a square container with a transparent resting border and blue hover/focus outline; Fast search is an unfilled blue icon action, and one ordinary desktop scroll hides the bar while upward scroll reveals it. Fast search is absent and keyboard-inert on phone widths. Settings and tracker pages use the same shared app bar, with browser measurements confirming identical control coordinates.
 
 ### Pending connection delivery state
 

@@ -121,8 +121,9 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       const currentY = Math.max(0, window.scrollY);
       const delta = currentY - previousY;
       const ownsFocus = keyboardFocus && appbar.contains(document.activeElement);
+      const hideAfter = matchMedia('(max-width:650px)').matches ? appbar.offsetHeight : 16;
       if (currentY <= 16 || delta < -4 || ownsFocus) reveal();
-      else if (delta > 6 && currentY > appbar.offsetHeight) appbar.classList.add('appbar-hidden');
+      else if (delta > 6 && currentY > hideAfter) appbar.classList.add('appbar-hidden');
       previousY = currentY;
       scheduled = false;
     };
