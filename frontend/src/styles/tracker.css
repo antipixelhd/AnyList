@@ -141,6 +141,7 @@ body.tracker{font-size:14px;line-height:1.55}
 .appbar-nav{display:flex;align-items:center;justify-content:center;gap:30px;font-weight:600;font-size:13px;white-space:nowrap}
 .topbar a.active{color:var(--blue)}
 .account-nav{display:flex;align-items:center;justify-self:end;gap:16px;font-size:13px;white-space:nowrap}
+.profile-action{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:linear-gradient(135deg,#28516d,#1b3349);border:2px solid transparent;color:var(--bright);font-weight:800;transition:border-color .15s ease,transform .15s ease}.profile-action img{width:100%;height:100%;object-fit:cover}.profile-action:hover,.profile-action:focus-visible,.profile-action.active{border-color:var(--blue);color:var(--bright)}.profile-action:hover{transform:translateY(-1px)}
 .appbar-icon-link{position:relative;width:34px;height:34px;display:grid;place-items:center;border-radius:50%;color:#9db1c9;transition:background-color .15s,color .15s}
 .appbar-icon-link:hover,.appbar-icon-link:focus-visible,.appbar-icon-link.active{background:#1d3448;color:var(--blue)}
 .appbar-signout{margin:0;display:flex}.appbar-signout .appbar-icon-link{border:0;background:transparent}.appbar-signout .appbar-icon-link:hover,.appbar-signout .appbar-icon-link:focus-visible{background:#1d3448;color:var(--blue)}
@@ -148,8 +149,8 @@ body.tracker{font-size:14px;line-height:1.55}
 .notification-badge-quiet{right:-5px;top:-3px;background:#42647f;color:#d7e5f1}
 .notification-badge-attention{right:-6px;bottom:-3px;background:#e85d7d}
 @media(max-width:900px){.appbar-inner{grid-template-columns:minmax(52px,1fr) auto minmax(150px,1fr);padding:0 20px;gap:15px}.appbar-nav{gap:20px}}
-@media(max-width:650px){.topbar{height:108px;min-height:0;padding:0}.appbar-inner{padding:9px 16px 7px;grid-template-columns:minmax(44px,1fr) auto;grid-template-rows:42px 42px;column-gap:10px;row-gap:4px}.brand{grid-column:1;grid-row:1}.account-nav{grid-column:2;grid-row:1;gap:9px}.account-nav>a:first-child{max-width:110px;overflow:hidden;text-overflow:ellipsis}.appbar-nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:space-around;font-size:12px;gap:8px}.appbar-icon-link{width:32px;height:32px}}
-@media(prefers-reduced-motion:reduce){.appbar-icon-link,.topbar{transition:none}}
+@media(max-width:650px){.topbar{height:108px;min-height:0;padding:0}.appbar-inner{padding:9px 16px 7px;grid-template-columns:minmax(44px,1fr) auto;grid-template-rows:42px 42px;column-gap:10px;row-gap:4px}.brand{grid-column:1;grid-row:1}.account-nav{grid-column:2;grid-row:1;gap:9px}.appbar-nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:space-around;font-size:12px;gap:8px}.appbar-icon-link{width:32px;height:32px}.profile-action{width:34px;height:34px}}
+@media(prefers-reduced-motion:reduce){.appbar-icon-link,.profile-action,.topbar{transition:none}}
 /* Shared half-point quick rating used by lists, title pages, and notifications. */
 .quick-rating-dialog{width:min(94vw,620px);padding:0;border:1px solid var(--border);border-radius:18px;background:var(--panel);color:var(--text);box-shadow:0 30px 90px #000b;overflow:hidden}
 .quick-rating-dialog::backdrop{background:#07111dcc;backdrop-filter:blur(5px)}

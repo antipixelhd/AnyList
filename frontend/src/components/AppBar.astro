@@ -1,6 +1,7 @@
 ---
 import Icon from './Icon.astro';
 import {tracker} from '../lib/tracker';
+import {api} from '../lib/api';
 
 const {user, token} = Astro.locals;
 const pathname = Astro.url.pathname;
@@ -8,11 +9,13 @@ const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
 let combineLists = true;
 let quietNotifications = 0;
 let attentionNotifications = 0;
+let avatarUrl: string | null = null;
 
 if (user) {
-  const [preferenceResult, notificationResult] = await Promise.allSettled([
+  const [preferenceResult, notificationResult, profileResult] = await Promise.allSettled([
     tracker('preferences', token),
     tracker('recent-events', token),
+    api.profile.get(token!),
   ]);
   if (preferenceResult.status === 'fulfilled') combineLists = preferenceResult.value.combine_lists !== false;
   if (notificationResult.status === 'fulfilled') {
@@ -22,6 +25,7 @@ if (user) {
     // but they are not user notifications and must not light up the app bar.
     quietNotifications = Math.max(0, (notifications.results?.length ?? 0) - attentionNotifications);
   }
+  if (profileResult.status === 'fulfilled' && profileResult.value.avatar_url) avatarUrl = `/api/proxy${profileResult.value.avatar_url}`;
 }
 
 const notificationTotal = quietNotifications + attentionNotifications;
@@ -45,7 +49,11 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
     </nav>
     <div class="account-nav">
       {user ? <>
-        <a class:list={{active: pathname.startsWith('/user/')}} href={profile}>{user.display_name || user.username}</a>
+        <a class:list={{'profile-action': true, active: pathname.startsWith('/user/')}} href={profile} aria-label={`Open ${user.display_name || user.username}'s profile`}>
+          {avatarUrl
+            ? <img src={avatarUrl} alt="" />
+            : <span aria-hidden="true">{(user.display_name || user.username).slice(0,1).toUpperCase()}</span>}
+        </a>
         <a class:list={{'appbar-icon-link': true, active: pathname === '/recent-events'}} href="/recent-events" aria-label={notificationLabel} aria-current={pathname === '/recent-events' ? 'page' : undefined} data-notification-link>
           <Icon name="bell" />
           <span class="notification-badge notification-badge-quiet" aria-hidden="true" data-notification-quiet hidden={quietNotifications===0}>{quietNotifications > 99 ? '99+' : quietNotifications}</span>
