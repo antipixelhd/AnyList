@@ -327,6 +327,8 @@ Implementation complete for available media types: Fast search opens as a compac
 - For the profile/list shell, study only the top desktop 16:9 viewport rather than copying the entire page. Match its relationships for logo placement, app-bar height and typography, the gradient between app bar and profile navigation, avatar position aligned with the filter rail, narrower profile-navigation height, and a filter rail shifted left to give the list more width. Preserve AnyList identity and the already accepted mobile adaptations.
 - Rework Stats toward the reference's visual hierarchy. Repeated generic cards should not carry the layout; use icons, whitespace, alignment, type size/weight, restrained separators, and charts to make groups feel intentional while retaining every accepted statistic and accessible text alternative.
 
+Profile/list shell progress: a measured first-viewport pass now aligns the avatar with the navigation edge and filter rail, narrows the profile navigation, widens the list column, and condenses desktop rows to 52px while retaining 44px square artwork in 54px phone rows. `UI-REFERENCE.md` records the reproducible geometry and the live AniList row/Stats rendering limitation. Stats visual redesign and final cross-page typography/density review remain open.
+
 ### Detail, legacy UI, and authentication surfaces
 
 - Split the title-detail Favorite action from a new Library action. Favorite continues to mean personal preference. Library quickly adds/removes streaming-library membership through the existing Stremio/Nuvio delivery workflow. The UI must identify pending/failed delivery and cannot claim remote success before the applicable connection writes succeed; implementation must make the affected connected libraries clear.

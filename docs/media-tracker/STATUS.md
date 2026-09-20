@@ -4,6 +4,12 @@ Updated 2026-09-20. Release one is complete, validated locally, and deployed to 
 
 Owner review of deployed build `504c687` produced a new mandatory Phase Two backlog. The current deployment remains a verified baseline but is no longer eligible for final approval. `STAGE-TWO-PLAN.md` now requires a condensed rating-aware quick editor, denser lists and corrected shell styling, grouped multi-provider delivery state, repaired connected-completion notifications/activity, desktop-only AniList-style Fast search, an AniList-measured layout/Stats pass, distinct Favorite and streaming-Library actions, legacy Scrob-UI removal, an AnyList login redesign, and ratings attached to Rated activity. No application code was changed in the documentation checkpoint that recorded these findings.
 
+## Measured profile shell and compact list pass (2026-09-20)
+
+The first-viewport AniList comparison measured its 1440×900 CSS-pixel top shell at 100% zoom and device scale factor 1. The live profile navigation was 46px high and its 160px avatar ended at that navigation boundary. AniList's list and Stats content did not render usable geometry in this browser session, so their oversized artwork/rows were excluded as density evidence; `UI-REFERENCE.md` records the limitation and the measured shell coordinates.
+
+AnyList now uses a coordinated profile gradient, avatar/filter alignment, 46px desktop profile navigation, a wider list column, denser filter controls, 52px desktop rows with 38px square artwork, and 54px phone rows with 44px artwork. The filter-search icon retains its 34px input inset. Browser inspection of the authenticated local preview confirmed no horizontal overflow at 390×844, 2560×1440, or 3840×2160; at 4K the centered shell remains 1340px wide. The phone screenshot and desktop screenshot were visually reviewed. This is local evidence for the profile/list slice only; Stats redesign, final deployment, physical-device checks and owner acceptance remain open.
+
 ## Stage Two implementation started
 
 The user authorized the consolidated Stage Two contract in STAGE-TWO-PLAN.md. The first correctness slice fixes quick-rating mode safety, half-star rendering, close-control consistency, live list sort metadata, stale editor responses, series-only fields on movie editors, and calculated season-average previews. Current Headless UI packages support React and Vue rather than Astro directly, so the project retains Astro-native shared components instead of adding a UI runtime solely for primitives.

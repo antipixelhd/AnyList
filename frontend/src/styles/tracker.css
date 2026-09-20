@@ -233,3 +233,27 @@ body.tracker{font-size:14px;line-height:1.55}
 @keyframes quick-search-results-enter{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:650px){.quick-search-dialog{display:none}}
 @media(prefers-reduced-motion:reduce){.quick-search-dialog,.quick-search-card{animation:none}}
+
+/* Profile shell and compact lists share a measured desktop alignment. */
+.profile-hero{height:258px;background:linear-gradient(115deg,#26384d 0%,#1d3047 53%,#17283d 100%)}
+.profile-identity{max-width:1340px;padding:98px 24px 0;gap:26px}
+.profile-avatar{width:160px;height:160px}
+.profile-tabs{min-height:46px;gap:38px;font-size:13px}
+.profile-tabs a{padding:11px 0}
+.list-shell{max-width:1340px;grid-template-columns:190px minmax(0,1fr);gap:30px;margin-top:30px;padding:0 24px}
+.list-toolbar{margin-bottom:16px}
+.filters{gap:8px}
+.filters h2{margin:10px 0 0}
+.filters .filter-search input,.filters .filter-control select{min-height:40px;padding:8px 12px}
+.filters .filter-search input{padding-left:34px}
+.status-filters button{padding:5px 10px;line-height:1.35}
+.status-section{margin-bottom:30px}
+.status-section h2{font-size:18px;margin:0 0 10px 18px}
+.entry-table{padding:8px 0}
+.entry-head,.entry-row{padding:6px 18px}
+.entry-head{min-height:36px}
+.entry-row{min-height:52px}
+.entry-thumbnail{width:38px;height:38px}
+.entry-title{gap:12px}
+@media(max-width:900px){.profile-hero{height:230px}.profile-identity{padding-top:90px}.profile-avatar{width:140px;height:140px}.list-shell{grid-template-columns:180px minmax(0,1fr);gap:24px}.entry-head,.entry-row{padding-left:14px;padding-right:14px}}
+@media(max-width:650px){.profile-hero{height:180px}.profile-identity{padding:45px 20px 0;gap:18px}.profile-avatar{width:105px;height:105px}.profile-tabs{min-height:50px;gap:24px;padding:0 18px;overflow-x:auto}.profile-tabs a{padding:13px 0}.list-shell{display:block;margin:24px auto;padding:0 16px}.filters{gap:12px}.status-filters button{min-height:44px;padding:9px 12px}.entry-row{min-height:54px;padding:5px 10px}.entry-head{padding:7px 10px}.entry-thumbnail{width:44px;height:44px}.status-section h2{margin-left:4px}}
