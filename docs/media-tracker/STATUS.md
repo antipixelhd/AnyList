@@ -519,3 +519,9 @@ The profile action now uses a square avatar container. Its border is transparent
 Desktop scroll handling now begins hiding the 72px app bar after the first ordinary downward scroll beyond the top threshold, while any meaningful upward scroll reveals it. Top-of-page, keyboard-focus and reduced-motion protections remain. The Settings and tracker shells already share `AppBar`; 1440×900 measurements confirmed identical Fast-search `(1166, 19, 34×34)` and profile `(1216, 18, 36×36)` bounds on both pages.
 
 The production Astro build passes. Browser QA confirmed the transparent/blue Fast-search treatment, 4px avatar radius and transparent resting border, full `-72px` hide after one 120px scroll, upward reveal after 40px, and a 390×844 phone layout with no Fast-search activation or horizontal overflow.
+
+## Desktop Fast-search composition (2026-09-20)
+
+Fast search now opens as a compact, animated field positioned near the top of the desktop viewport. Before input it renders no results or placeholder card. A query hides the previous cards immediately, debounces, searches Movies and Series concurrently, then shows the populated category cards together. Combined-list mode uses one narrower Movies & Series card; separate mode uses individual Movies and Series cards, omitting either one when empty. Empty and failed searches show a small explicit status, and successful searches announce counts to assistive technology. Escape/backdrop dismissal, stale-request cancellation and reduced-motion support remain.
+
+The production Astro build passes. Authenticated browser QA at 1440×900 confirmed a field-only 68px opening, concurrent `severance` results, a no-match query with zero visible cards, and Movies plus Series cards after temporarily disabling combination on the disposable preview account. Its original combined preference was restored afterward. A 390×844 check from the prior app-bar slice confirmed Fast search cannot open on phone.

@@ -319,6 +319,8 @@ Implementation complete: the established-connection completion path now treats a
 - After a response, reveal the available category cards together. Render a card only when that category has results. Movies and Series use separate cards or one combined Movies & Series card according to the searching user's preference; future Games and Books get their own cards when those media types exist.
 - Make the dialog/search surface smaller and position the input higher so category cards have deliberate space and separation. Preserve live fuzzy search, stale-request cancellation, loading/error/empty semantics, keyboard focus, Escape/backdrop dismissal, reduced motion, and no submit button.
 
+Implementation complete for available media types: Fast search opens as a compact animated input with no results surface. A settled query fetches Movies and Series together, then reveals only populated cards in the signed-in user's combined or separate presentation. New input hides stale cards immediately; empty/error feedback remains explicit and a screen-reader result count announces success. The phone control and shortcut are disabled; future Games/Books cards remain tied to adding those catalogue types in a later release.
+
 ### AniList-guided visual pass
 
 - Before changing layout constants, use `agent-browser` to measure the live references at [AniList list](https://anilist.co/user/antipixel/animelist) and [AniList stats overview](https://anilist.co/user/antipixel/stats/anime/overview). Record viewport, browser scaling, and measured geometry so the comparison is reproducible.
