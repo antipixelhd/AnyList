@@ -86,7 +86,7 @@ Status: active implementation, 2026-09-20. The user authorized Stage Two after c
 - Profile Overview no longer repeats Social connections or an Edit profile action. It now shows compact Movie, Series, current Completed, and average-score highlights, followed by that profile owner's recent activity and favorites.
 - Home now contains followed public profiles only. The viewer's own updates live on their profile, and following someone remains one-way; being followed does not add a person to the feed.
 - Activity cards give the action/status more visual weight, reduce cover dominance, link through the title itself, and omit the redundant View title text action. Rating chips remain on the same card when present.
-- This completes feed ownership and the initial Overview composition. The accepted per-person/show/UTC-day progress aggregation and finished-season semantics remain a later activity-model slice; this UI currently renders the existing stored activity records.
+- This completes feed ownership and the initial Overview composition. The later `mt014` activity-model slice now merges progress and ratings into one per-person/title/UTC-day card, raises interleaved cards by their latest update, reports episode progress, and reserves Finished for fully released and fully watched seasons.
 - Verification: all 55 tracking API tests passed against disposable PostgreSQL, including explicit followed-public-only Home results and owner activity on Profile. The production build passed. Authenticated browser QA confirmed four Overview highlights, owner activity, favorites, no Social/Edit profile blocks, an empty Home feed despite owner activity when no profiles are followed, and no horizontal overflow at 390×844.
 
 ## Accepted direction

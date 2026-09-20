@@ -2,10 +2,10 @@
 
 Status: release-one implementation completed and validated on 2026-09-19. See RELEASE-AUDIT.md and STATUS.md for scope and evidence.
 
-Stage two is in an active design interview as of 2026-09-20. Read STAGE-TWO-PLAN.md for the user's accepted maturity direction and STAGE-TWO-REVIEW.md for current findings. The owner's explicit review of the verified build is the final acceptance gate; games/books remain deferred.
+Stage two is in final acceptance as of 2026-09-20. Read STAGE-TWO-PLAN.md for the accepted contract and implementation evidence, and STAGE-TWO-REVIEW.md for the historical baseline findings. The owner's Google-authenticated review and physical Android/iPhone checks remain the final acceptance gates; games/books remain deferred.
 
-The stage-two interview is now consolidated and awaiting final confirmation of shared understanding. See the concluding implementation contract in STAGE-TWO-PLAN.md, including the resolved status-based date defaults and the mandatory post-core-approval checkpoint for optional season features.
-Updated: 2026-09-18.
+The Stage Two contract is accepted and implemented. See STAGE-TWO-PLAN.md for the consolidated requirements and PUBLIC-READY-GATES.md for the remaining review evidence, including the mandatory post-core-approval checkpoint for optional season features.
+Updated: 2026-09-20.
 
 This is the durable handoff for this project. Read DECISIONS.md and GLOSSARY.md with this document. Explicit accepted decisions override recommendations and older conversation statements. Unresolved items must not silently become requirements.
 
