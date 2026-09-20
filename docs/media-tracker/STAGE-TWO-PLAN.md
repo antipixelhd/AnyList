@@ -268,3 +268,9 @@ Implementation authorization was received after the consolidated contract. Conti
 - The choice happens in the shared TMDB detail wrapper, so catalogue imports, metadata refreshes, show creation and tracker enrichment receive the same poster. Live search/trending cards retain their normal poster until a title receives a full lookup; they never incur a per-card image request.
 - A bounded `scripts/backfill_textless_posters.py` maintenance command upgrades already tracked movie/series rows without adding request fan-out to profiles and lists. It supports one-media and limited-batch runs.
 - Verification: 68 focused TMDB/enrichment tests and the complete 1,137-test backend suite passed; the production Astro build passed. A real TMDB backfill changed Project Hail Mary from its localized poster to a language-neutral candidate, and authenticated browser QA confirmed the 500px image loaded successfully on the title page.
+
+### Standalone public repository
+
+- AnyList is published as the standalone public repository [antipixelhd/AnyList](https://github.com/antipixelhd/AnyList), with the complete Scrob history, GPLv3 license, upstream attribution, modification notice, and canonical product/verification documents retained in-tree.
+- The publication audit scanned 2,754 historical text blobs across 604 commits. No private keys or account/provider-token formats were found; the four JWT-shaped matches are the upstream ARVIO public anonymous application key and historical rotations. Only `.env.example` appears in sensitive-path history, while runtime credentials and local state remain ignored.
+- Inherited release and container workflows are manual and target only this repository's GHCR namespace. Read-only PostgreSQL backend and Astro frontend CI runs on `main` and pull requests and supports manual dispatch. The local-reference `origin` remains untouched; the public repository is a separate `github` remote.
