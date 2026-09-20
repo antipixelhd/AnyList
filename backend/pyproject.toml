@@ -43,3 +43,8 @@ dependencies = [
     "pyotp>=2.9.0",
     "slowapi>=0.1.9",
 ]
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+]
