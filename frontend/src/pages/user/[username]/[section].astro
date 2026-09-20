@@ -138,9 +138,10 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();groups.classList.toggle('grid-view',button.dataset.view==='grid');document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
     const mobileToggle=document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
     const filters=document.querySelector<HTMLElement>('#list-filters')!;
-    function setFiltersOpen(open:boolean){filters.classList.toggle('open',open);mobileToggle.setAttribute('aria-expanded',String(open));if(open)filters.querySelector<HTMLElement>('input,select,button')?.focus();else mobileToggle.focus();}
+    function setFiltersOpen(open:boolean){filters.classList.toggle('open',open);mobileToggle.setAttribute('aria-expanded',String(open));if(open)input('list-search').focus();else mobileToggle.focus();}
     mobileToggle.addEventListener('click',()=>setFiltersOpen(!filters.classList.contains('open')));
     document.querySelector('[data-close-filters]')!.addEventListener('click',()=>setFiltersOpen(false));
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);});
     document.addEventListener('media-tracker:rating-changed', filter);
     filter();
   }

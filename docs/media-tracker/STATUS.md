@@ -16,6 +16,8 @@ The scroll-direction app bar now distinguishes keyboard focus from pointer/touch
 
 Browse live-search recovery no longer leaves stale Trending copy and cards visible after a failed query or exposes the browser's raw network error. The current request owns the result region's busy state; superseded requests cannot clear a newer loading state. Failure now presents a stable Search/Browse unavailable heading, retry guidance, and a consistent user-facing error.
 
+Opening phone Filters & sorting now focuses the title filter instead of the panel's Close action. Escape closes the panel and returns focus to its disclosure, matching the explicit close path.
+
 Verification for this slice: `npm run build` passed with the existing upstream deprecation, empty-chunk, and bundle-size warnings; `scripts/verify_local_preview.py` passed for both local accounts; authenticated headless browser checks covered the ordinary quick-rating dialog and the calculated-average override/cancel interaction. No score or provider state was changed during the browser check.
 
 The next correctness slice aligns anonymous routing with the current public profile surface (`list`, `social`, future `stats`, and the combined-list API) and makes inherited `friends_only` profiles private across both tracker and legacy profile endpoints, even for mutual follows. The focused regression passed and the frontend build remained green. The full tracking file must run only against a clean disposable database: using the populated preview database makes its scheduled catalogue tests count real preview titles outside their fixture.
