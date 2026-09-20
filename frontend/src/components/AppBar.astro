@@ -35,6 +35,19 @@ const notificationLabel = notificationTotal
   ? `Notifications: ${attentionNotifications} need attention, ${quietNotifications} other`
   : 'Notifications: none unread';
 const active = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+const listItems = combineLists
+  ? [{href: `${profile}/list`, label: 'Movie/Series List', active: pathname.includes('/list')}]
+  : [
+      {href: `${profile}/movies`, label: 'Movie List', active: pathname.includes('/movies')},
+      {href: `${profile}/series`, label: 'Series List', active: pathname.includes('/series')},
+    ];
+const primaryItems = [
+  {href: '/home', label: 'Home', active: active('/home')},
+  ...listItems,
+  {href: '/browse', label: 'Browse', active: active('/browse')},
+];
+const mobileSection = primaryItems.find(item => item.active)?.label
+  || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : pathname.includes('settings') ? 'Settings' : 'Browse');
 ---
 <header class="topbar" data-appbar>
   <div class="appbar-inner">
@@ -43,12 +56,14 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
       <span>AnyList</span>
     </a>
     <nav class="appbar-nav" aria-label="Main navigation">
-      <a href="/home" class:list={{active: active('/home')}} aria-current={active('/home') ? 'page' : undefined}>Home</a>
-      {combineLists
-        ? <a href={`${profile}/list`} class:list={{active: pathname.includes('/list')}} aria-current={pathname.includes('/list') ? 'page' : undefined}>Movie/Series List</a>
-        : <><a href={`${profile}/movies`} class:list={{active: pathname.includes('/movies')}} aria-current={pathname.includes('/movies') ? 'page' : undefined}>Movie List</a><a href={`${profile}/series`} class:list={{active: pathname.includes('/series')}} aria-current={pathname.includes('/series') ? 'page' : undefined}>Series List</a></>}
-      <a href="/browse" class:list={{active: active('/browse')}} aria-current={active('/browse') ? 'page' : undefined}>Browse</a>
+      {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
+    <details class="mobile-appbar-menu" data-mobile-appbar-menu>
+      <summary aria-label={`${mobileSection}. Open main navigation`}><span>{mobileSection}</span><Icon name="chevron-down" /></summary>
+      <nav aria-label="Mobile main navigation">
+        {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}>{item.label}</a>)}
+      </nav>
+    </details>
     <div class="account-nav">
       {user ? <>
         <QuickSearch combineLists={combineLists} />
@@ -115,4 +130,11 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
     appbar.addEventListener('focusin', reveal);
     window.addEventListener('pageshow', () => { previousY = Math.max(0, window.scrollY); reveal(); });
   }
+  const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
+  document.addEventListener('pointerdown', event => {
+    if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
+  });
+  document.addEventListener('focusin', event => {
+    if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
+  });
 </script>

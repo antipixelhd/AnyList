@@ -1,10 +1,119 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
+import {api} from '../lib/api';
 import {tracker,artwork} from '../lib/tracker';
+
 const type = Astro.url.searchParams.get('type')==='series'?'series':'movie';
-const q = Astro.url.searchParams.get('q')||'';
-let results:any[]=[],error='',notice='';
-try{const response=await tracker(`catalog?${new URLSearchParams({media_type:type,q})}`,Astro.locals.token);results=response.results;notice=response.notice||'';}catch(e){error=(e as Error).message;}
+const q = Astro.url.searchParams.get('q')?.trim()||'';
+let results:any[]=[],error='',notice='',trending=!q;
+const normalize = (item:any) => ({
+  id:item.id??null,tmdb_id:item.tmdb_id??null,type:item.type?.value||item.type||type,
+  title:item.title,poster:item.poster??item.poster_path??null,
+  year:(item.year||item.release_date||'').slice(0,4),adult:item.adult===true,
+});
+const unique = (items:any[]) => {
+  const seen=new Set<string>();
+  return items.filter(item=>{
+    const key=`${item.type}:${item.title.toLocaleLowerCase()}:${item.year}`;
+    if(seen.has(key))return false;seen.add(key);return true;
+  });
+};
+try{
+  if(q){
+    const response=await tracker(`catalog?${new URLSearchParams({media_type:type,q})}`,Astro.locals.token);
+    results=unique(response.results.map(normalize));notice=response.notice||'';
+  }else{
+    try{
+      const response=type==='movie'?await api.media.trendingMovies(1,Astro.locals.token):await api.media.trendingShows(1,Astro.locals.token);
+      results=unique(response.results.map(normalize).filter((item:any)=>!item.adult));
+    }catch{results=[];}
+    if(!results.length){
+      const fallback=await tracker(`catalog?${new URLSearchParams({media_type:type})}`,Astro.locals.token);
+      results=unique(fallback.results.map(normalize));trending=false;
+      notice='Trending is temporarily unavailable. Showing the local catalogue.';
+    }
+  }
+}catch(e){error=(e as Error).message;}
+const heading=q?'Search results':trending?`Trending ${type==='movie'?'movies':'series'}`:`Browse ${type==='movie'?'movies':'series'}`;
+const intro=q?`Live results for “${q}”.`:'See what people are watching now.';
 ---
-<Tracker title="Browse"><div class="page-width"><h1>Find your next story</h1><p>Explore your catalogue of movies and series.</p><form class="browse-form"><input type="search" name="q" placeholder="Search titles…" value={q} aria-label="Search titles"/><select name="type" aria-label="Media type"><option value="movie" selected={type==='movie'}>Movies</option><option value="series" selected={type==='series'}>Series</option></select><button class="button-primary">Search</button></form>
-{notice&&<p role="status">{notice}</p>}{error?<p class="error-message">{error}</p>:results.length?<div class="card-grid">{results.map(m=><a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h2>{m.title}</h2><small>{m.year}</small></a>)}</div>:<div class="empty-state"><h2>No matching titles</h2><p>Try a title search above.</p></div>}</div></Tracker>
+<Tracker title="Browse"><div class="page-width browse-page">
+  <header class="browse-heading"><span class="eyebrow">Browse</span><h1 data-browse-heading>{heading}</h1><p data-browse-intro>{intro}</p></header>
+  <form class="browse-form" role="search" data-browse-form>
+    <label class="sr-only" for="browse-query">Search titles</label><input id="browse-query" type="search" name="q" placeholder="Search titles…" value={q} autocomplete="off"/>
+    <label class="sr-only" for="browse-type">Media type</label><select id="browse-type" name="type"><option value="movie" selected={type==='movie'}>Movies</option><option value="series" selected={type==='series'}>Series</option></select>
+    <button class="sr-only" type="submit">Search</button>
+  </form>
+  <p class="browse-status" role="status" aria-live="polite" data-browse-status>{notice}</p>
+  {error?<p class="error-message" data-browse-error>{error}</p>:<p class="error-message" data-browse-error hidden></p>}
+  <div class="card-grid" data-browse-results hidden={results.length===0}>{results.map(m=><a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{artwork(m.poster)?<img src={artwork(m.poster)} alt="" loading="lazy"/>:<span class="media-card-placeholder" aria-hidden="true">{m.title.slice(0,1)}</span>}<h2>{m.title}</h2><small>{m.year}</small></a>)}</div>
+  <div class="empty-state" data-browse-empty hidden={results.length>0}><h2>No matching titles</h2><p>Try another title or media type.</p></div>
+</div></Tracker>
+<script>
+  const form=document.querySelector<HTMLFormElement>('[data-browse-form]');
+  const query=form?.querySelector<HTMLInputElement>('[name=q]');
+  const typeSelect=form?.querySelector<HTMLSelectElement>('[name=type]');
+  const heading=document.querySelector<HTMLElement>('[data-browse-heading]');
+  const intro=document.querySelector<HTMLElement>('[data-browse-intro]');
+  const status=document.querySelector<HTMLElement>('[data-browse-status]');
+  const error=document.querySelector<HTMLElement>('[data-browse-error]');
+  const grid=document.querySelector<HTMLElement>('[data-browse-results]');
+  const empty=document.querySelector<HTMLElement>('[data-browse-empty]');
+  let timer:number|undefined;
+  let controller:AbortController|undefined;
+
+  const posterUrl=(value:string|null)=>value?.startsWith('/')?`https://image.tmdb.org/t/p/w342${value}`:value||'';
+  const normalize=(item:any,type:string)=>({
+    id:item.id??null,tmdb_id:item.tmdb_id??null,type:item.type?.value||item.type||type,
+    title:item.title,poster:item.poster??item.poster_path??null,
+    year:String(item.year||item.release_date||'').slice(0,4),adult:item.adult===true,
+  });
+  const unique=(items:any[])=>{
+    const seen=new Set<string>();
+    return items.filter(item=>{const key=`${item.type}:${item.title.toLocaleLowerCase()}:${item.year}`;if(seen.has(key))return false;seen.add(key);return true;});
+  };
+  const render=(items:any[])=>{
+    if(!grid||!empty)return;
+    grid.replaceChildren();
+    for(const item of items){
+      const card=document.createElement('a');card.className='media-card';
+      card.href=item.id?`/title/${item.id}`:`/discover-title?type=${encodeURIComponent(item.type)}&id=${item.tmdb_id}`;
+      const image=posterUrl(item.poster);
+      if(image){const img=document.createElement('img');img.src=image;img.alt='';img.loading='lazy';card.append(img);}
+      else{const placeholder=document.createElement('span');placeholder.className='media-card-placeholder';placeholder.ariaHidden='true';placeholder.textContent=item.title.slice(0,1);card.append(placeholder);}
+      const title=document.createElement('h2');title.textContent=item.title;card.append(title);
+      const year=document.createElement('small');year.textContent=item.year;card.append(year);grid.append(card);
+    }
+    grid.hidden=items.length===0;empty.hidden=items.length>0;
+  };
+  async function load(){
+    if(!query||!typeSelect)return;
+    controller?.abort();controller=new AbortController();
+    const term=query.value.trim();const type=typeSelect.value;
+    if(status)status.textContent='Loading…';if(error)error.hidden=true;
+    const params=new URLSearchParams();if(term)params.set('q',term);if(type==='series')params.set('type','series');
+    history.replaceState(null,'',`${location.pathname}${params.size?`?${params}`:''}`);
+    try{
+      let response:Response;let payload:any;let isTrending=!term;
+      if(term){response=await fetch(`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:type,q:term})}`,{signal:controller.signal});payload=await response.json();if(!response.ok)throw new Error('Unable to load titles. Please try again.');}
+      else{response=await fetch(`/api/proxy/media/trending/${type==='movie'?'movies':'shows'}?page=1`,{signal:controller.signal});payload=response.ok?await response.json():{results:[]};}
+      let items=unique((payload.results||[]).map((item:any)=>normalize(item,type)).filter((item:any)=>!item.adult));
+      let message=payload.notice||'';
+      if(!term&&!items.length){
+        const fallback=await fetch(`/api/proxy/tracking/catalog?media_type=${type}`,{signal:controller.signal});
+        if(!fallback.ok)throw new Error('Unable to load titles. Please try again.');
+        items=unique((await fallback.json()).results.map((item:any)=>normalize(item,type)));isTrending=false;
+        message='Trending is temporarily unavailable. Showing the local catalogue.';
+      }
+      render(items);if(heading)heading.textContent=term?'Search results':`${isTrending?'Trending':'Browse'} ${type==='movie'?'movies':'series'}`;
+      if(intro)intro.textContent=term?`Live results for “${term}”.`:'See what people are watching now.';
+      if(status)status.textContent=message;
+    }catch(reason){
+      if((reason as Error).name==='AbortError')return;
+      if(status)status.textContent='';if(error){error.hidden=false;error.textContent=(reason as Error).message;}
+    }
+  }
+  form?.addEventListener('submit',event=>{event.preventDefault();void load();});
+  query?.addEventListener('input',()=>{window.clearTimeout(timer);timer=window.setTimeout(()=>void load(),280);});
+  typeSelect?.addEventListener('change',()=>void load());
+</script>
