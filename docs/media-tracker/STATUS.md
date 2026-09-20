@@ -18,6 +18,12 @@ Browse live-search recovery no longer leaves stale Trending copy and cards visib
 
 Opening phone Filters & sorting now focuses the title filter instead of the panel's Close action. Escape closes the panel and returns focus to its disclosure, matching the explicit close path.
 
+Phone icon controls now use practical touch targets without enlarging their glyphs: app-bar actions, avatar, list/grid switch, compact-row edit and rating actions, linked titles, next-episode progress, and attention-prompt actions are 40–44 CSS pixels. The compact list retains square artwork and its dense row rhythm.
+
+Quick rating retains its ten-star half-fill display on phones but no longer asks touch users to hit 13.5-pixel half-star regions. A native 0.5-step score selector provides an accurate 44-pixel touch control, while desktop keeps the direct 20-target star interaction. The phone close action is also 44×44.
+
+Authenticated browser verification covered the phone dialog at 390 and 320 CSS pixels with no horizontal overflow, a temporary 8.5 save and removal, and live row-label updates. At desktop width the phone selector is hidden and all 20 direct half-star targets remain available.
+
 Verification for this slice: `npm run build` passed with the existing upstream deprecation, empty-chunk, and bundle-size warnings; `scripts/verify_local_preview.py` passed for both local accounts; authenticated headless browser checks covered the ordinary quick-rating dialog and the calculated-average override/cancel interaction. No score or provider state was changed during the browser check.
 
 The next correctness slice aligns anonymous routing with the current public profile surface (`list`, `social`, future `stats`, and the combined-list API) and makes inherited `friends_only` profiles private across both tracker and legacy profile endpoints, even for mutual follows. The focused regression passed and the frontend build remained green. The full tracking file must run only against a clean disposable database: using the populated preview database makes its scheduled catalogue tests count real preview titles outside their fixture.
