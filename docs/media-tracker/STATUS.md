@@ -449,3 +449,7 @@ The audit scanned 2,754 historical text blobs across 604 commits and found no pr
 ## Public CI bootstrap repair (2026-09-20)
 
 The first public CI runs exposed two missing test-environment prerequisites. `aiosqlite` is now an explicit locked development dependency, and the backend job installs the development group. The backend tests require a migrated disposable PostgreSQL schema, so CI now runs `alembic upgrade head` against its dedicated test database before discovery. The dependency lock check and complete local backend suite pass: 1,137 tests, 57 expected skips. The frontend CI job passed on public commit `08af76d`; backend CI on that commit still failed because it had no migration step. The migration repair is committed locally and needs a new public CI run before claiming a green release gate.
+
+## Final release identity sweep (2026-09-20)
+
+The last outbound webhook user agent now identifies as `AnyList/1.0`. The PWA registration helper and quick-rating browser hook also use the final name. A source search found no remaining `MediaTracker` product strings in active backend/frontend code; the generic “media trackers” section comment is unrelated to the old brand. All 138 webhook tests and the production Astro build pass.

@@ -329,7 +329,7 @@ async def _maybe_bingebase_scrobble(
             "Percentage": progress,
         }
 
-        headers = {"User-Agent": "MediaTracker/1.0", "Content-Type": "application/json"}
+        headers = {"User-Agent": "AnyList/1.0", "Content-Type": "application/json"}
         if settings.bingebase_api_key:
             headers["Authorization"] = f"Bearer {settings.bingebase_api_key}"
 
