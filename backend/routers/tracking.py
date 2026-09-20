@@ -559,6 +559,58 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     }
 
 
+@router.get("/profile/{username}/stats/summary")
+async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
+                        year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db),
+                        viewer: User | None = Depends(get_optional_user)):
+    """Current list totals plus documented viewing statistics for a profile."""
+    user, owner = await profile_access(db, username, viewer)
+    query = select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(
+        TrackedEntry.user_id == user.id, Media.media_type.in_([MediaType.movie, MediaType.series]))
+    if media_type != "all": query = query.where(Media.media_type == MediaType(media_type))
+    entries = (await db.execute(query)).all()
+    if not await anime_is_visible(db): entries = [row for row in entries if not is_anime(row[1])]
+    statuses = {status.value: 0 for status in TrackingStatus}
+    scores, genres = [], {}
+    for entry, media in entries:
+        statuses[entry.status] = statuses.get(entry.status, 0) + 1
+        score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+        if score: scores.append(float(score))
+        for genre in media_data(media)["genres"]: genres[genre] = genres.get(genre, 0) + 1
+
+    events = (await db.execute(select(WatchEvent, Media).join(Media, Media.id == WatchEvent.media_id).where(
+        WatchEvent.user_id == user.id, WatchEvent.completed.is_(True),
+        Media.media_type.in_([MediaType.movie, MediaType.episode])))).all()
+    if media_type == "movie": events = [row for row in events if row[1].media_type == MediaType.movie]
+    elif media_type == "series": events = [row for row in events if row[1].media_type == MediaType.episode]
+    if year is not None: events = [row for row in events if row[0].watched_at and row[0].watched_at.year == year]
+    movies = {media.id for _, media in events if media.media_type == MediaType.movie}
+    episodes = {media.id for _, media in events if media.media_type == MediaType.episode}
+    shows = {media.show_id for _, media in events if media.media_type == MediaType.episode and media.show_id}
+    seasons = {(media.show_id, media.season_number) for _, media in events if media.media_type == MediaType.episode and media.show_id and (media.season_number or 0) > 0}
+    documented_plays = sum(max(event.play_count or 1, 1) for event, _ in events)
+    dated = [(event, media) for event, media in events if event.watched_at]
+    estimated_minutes = sum((media.runtime or 0) * max(event.play_count or 1, 1) for event, media in dated)
+    activity = {}
+    for event, media in dated:
+        bucket = activity.setdefault(event.watched_at.strftime("%Y-%m"), {"movies": 0, "episodes": 0})
+        bucket["movies" if media.media_type == MediaType.movie else "episodes"] += max(event.play_count or 1, 1)
+    distribution = {step / 2: 0 for step in range(1, 21)}
+    for score in scores: distribution[score] = distribution.get(score, 0) + 1
+    prefs = await db.get(TrackingPreferences, user.id)
+    return {"profile":{"id":user.id,"username":user.username,"display_name":user.display_name,
+                       "bio":user.profile.bio if user.profile else None,"has_avatar":bool(user.profile and user.profile.avatar_path)},
+            "owner":owner,"combine_lists":True if prefs is None else prefs.combine_lists,"media_type":media_type,"year":year,
+            "current":{"total":len(entries),"statuses":statuses},
+            "viewing":{"unique_titles":len(movies)+len(shows),"unique_movies":len(movies),"unique_episodes":len(episodes),
+                       "unique_seasons":len(seasons),"repeat_views":max(0,documented_plays-len(movies)-len(episodes)),
+                       "estimated_watch_minutes":estimated_minutes},
+            "scores":{"average":round(sum(scores)/len(scores),1) if scores else None,"rated":len(scores),
+                      "distribution":[{"score":score,"count":count} for score,count in distribution.items()]},
+            "genres":[{"genre":genre,"count":count} for genre,count in sorted(genres.items(),key=lambda item:(-item[1],item[0]))],
+            "activity":[{"month":month,**counts} for month,counts in sorted(activity.items())]}
+
+
 @router.get("/catalog")
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)

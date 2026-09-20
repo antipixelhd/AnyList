@@ -1,0 +1,74 @@
+---
+import Tracker from '../../../layouts/Tracker.astro';
+import ProfileHeader from '../../../components/ProfileHeader.astro';
+import {tracker} from '../../../lib/tracker';
+const {username} = Astro.params;
+let data:any=null,error='';
+try { data=await tracker(`profile/${encodeURIComponent(username!)}/stats/summary`,Astro.locals.token); }
+catch(cause){ error=(cause as Error).message; }
+const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).slice(0,4)))].sort().reverse();
+---
+<Tracker title={`${username}'s Statistics`}>
+{data?<>
+  <ProfileHeader profile={{...data.profile,owner:data.owner,combine_lists:data.combine_lists}} active="stats"/>
+  <div class="page-width stats-page" id="profile-stats" data-username={username} data-initial={JSON.stringify(data)}>
+    <header class="stats-heading"><div><span class="eyebrow">Profile insights</span><h1>Statistics</h1><p>Current list totals and documented viewing history.</p></div>
+      <div class="stats-controls"><div class="stats-segment" aria-label="Media type">{[['all','All'],['movie','Movies'],['series','Series']].map(([value,label])=><button type="button" data-stats-media={value} aria-pressed={value==='all'}>{label}</button>)}</div>
+      <label><span>Viewing period</span><select id="stats-year"><option value="">All time</option>{years.map(year=><option value={year}>{year}</option>)}</select></label></div>
+    </header>
+    <p class="stats-error error-message" role="alert" hidden></p>
+    <section class="stats-highlights" aria-label="Highlights">
+      <article><span>Current titles</span><strong data-stat="current"></strong><small>Current list total</small></article>
+      <article><span>Viewed titles</span><strong data-stat="titles"></strong><small>Unique documented titles</small></article>
+      <article><span>Episodes / seasons</span><strong data-stat="episodes"></strong><small data-stat="seasons"></small></article>
+      <article><span>Estimated watch time</span><strong data-stat="time"></strong><small>Known viewing dates and runtimes</small></article>
+      <article><span>Average score</span><strong data-stat="average"></strong><small data-stat="rated"></small></article>
+      <article><span>Repeat views</span><strong data-stat="repeats"></strong><small>Documented plays beyond unique items</small></article>
+    </section>
+    <section class="stats-grid">
+      <article class="stats-panel"><div><span class="eyebrow">Current list</span><h2>Titles by status</h2></div><div class="status-stat-list" data-status-list></div></article>
+      <article class="stats-panel"><div><span class="eyebrow">Scores</span><h2>Score distribution</h2></div><div class="chart-frame"><canvas id="score-chart"></canvas></div><p class="chart-summary" data-score-summary></p></article>
+      <article class="stats-panel"><div><span class="eyebrow">Viewing history</span><h2>Activity over time</h2></div><div class="chart-frame chart-wide"><canvas id="activity-chart"></canvas></div><p class="chart-summary">Unknown-dated history is excluded from this chart.</p></article>
+      <article class="stats-panel"><div><span class="eyebrow">Current list</span><h2>Top genres</h2></div><div class="chart-frame chart-wide"><canvas id="genre-chart"></canvas></div><p class="chart-summary" data-genre-summary></p></article>
+    </section>
+  </div>
+</>:<div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
+</Tracker>
+
+<script>
+import Chart from 'chart.js/auto';
+const root=document.querySelector<HTMLElement>('#profile-stats');
+if(root){
+  let data=JSON.parse(root.dataset.initial||'{}');
+  let media='all';
+  const charts:Chart[]=[];
+  const text=(name:string,value:string)=>{const node=root.querySelector<HTMLElement>(`[data-stat="${name}"]`);if(node)node.textContent=value;};
+  const duration=(minutes:number)=>minutes?minutes>=60?`${Math.floor(minutes/60).toLocaleString()}h ${minutes%60}m`:`${minutes}m`:'0m';
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  Chart.defaults.color='#8fa5bb'; Chart.defaults.font.family='Inter, Segoe UI, sans-serif';
+  function render(next:any){
+    data=next; charts.splice(0).forEach(chart=>chart.destroy());
+    text('current',String(data.current.total)); text('titles',String(data.viewing.unique_titles));
+    text('episodes',`${data.viewing.unique_episodes} / ${data.viewing.unique_seasons}`); text('seasons','Unique episodes / seasons');
+    text('time',duration(data.viewing.estimated_watch_minutes)); text('average',data.scores.average==null?'—':`${Number(data.scores.average).toFixed(1)} / 10`);
+    text('rated',`${data.scores.rated} rated ${data.scores.rated===1?'title':'titles'}`); text('repeats',String(data.viewing.repeat_views));
+    const labels:{[key:string]:string}={watching:'Watching',completed:'Completed',paused:'Paused',dropped:'Dropped',planning:'Plan to watch'};
+    root.querySelector('[data-status-list]')!.innerHTML=Object.entries(data.current.statuses).map(([key,value])=>`<div><span>${labels[key]||key}</span><strong>${value}</strong><i style="--status-width:${data.current.total?Number(value)/data.current.total*100:0}%"></i></div>`).join('');
+    const common={responsive:true,maintainAspectRatio:false,animation:reduced?false:{duration:220},plugins:{legend:{display:false}}};
+    charts.push(new Chart(root.querySelector<HTMLCanvasElement>('#score-chart')!,{type:'bar',data:{labels:data.scores.distribution.map((x:any)=>x.score),datasets:[{data:data.scores.distribution.map((x:any)=>x.count),backgroundColor:'#3db4f2',borderRadius:3}]},options:{...common,scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}}}));
+    charts.push(new Chart(root.querySelector<HTMLCanvasElement>('#activity-chart')!,{type:'line',data:{labels:data.activity.map((x:any)=>x.month),datasets:[{label:'Movies',data:data.activity.map((x:any)=>x.movies),borderColor:'#3db4f2',backgroundColor:'#3db4f233',fill:true,tension:.3},{label:'Episodes',data:data.activity.map((x:any)=>x.episodes),borderColor:'#818cf8',backgroundColor:'#818cf822',fill:true,tension:.3}]},options:{...common,plugins:{legend:{display:true,labels:{boxWidth:10}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}}}));
+    const genres=data.genres.slice(0,8);
+    charts.push(new Chart(root.querySelector<HTMLCanvasElement>('#genre-chart')!,{type:'bar',data:{labels:genres.map((x:any)=>x.genre),datasets:[{data:genres.map((x:any)=>x.count),backgroundColor:'#5d79df',borderRadius:3}]},options:{...common,indexAxis:'y',scales:{x:{beginAtZero:true,ticks:{precision:0}},y:{grid:{display:false}}}}}));
+    root.querySelector<HTMLElement>('[data-score-summary]')!.textContent=data.scores.rated?`${data.scores.rated} current ratings with an average of ${Number(data.scores.average).toFixed(1)}.`:'No current ratings.';
+    root.querySelector<HTMLElement>('[data-genre-summary]')!.textContent=genres.length?genres.map((x:any)=>`${x.genre} ${x.count}`).join(' · '):'No genre data.';
+  }
+  async function load(){
+    const year=(root.querySelector<HTMLSelectElement>('#stats-year')!).value;
+    const error=root.querySelector<HTMLElement>('.stats-error')!; error.hidden=true; root.setAttribute('aria-busy','true');
+    try{const response=await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(root.dataset.username!)}/stats/summary?media_type=${media}${year?`&year=${year}`:''}`);if(!response.ok)throw new Error('Unable to load these statistics.');render(await response.json());}
+    catch(cause){error.textContent=cause instanceof Error?cause.message:'Unable to load these statistics.';error.hidden=false;}finally{root.removeAttribute('aria-busy');}
+  }
+  root.querySelectorAll<HTMLButtonElement>('[data-stats-media]').forEach(button=>button.addEventListener('click',()=>{media=button.dataset.statsMedia!;root.querySelectorAll('[data-stats-media]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));load();}));
+  root.querySelector('#stats-year')?.addEventListener('change',load); render(data);
+}
+</script>

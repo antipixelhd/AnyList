@@ -221,10 +221,56 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         results=(await self.client.get('/tracking/activity')).json()['results']
         self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
 
+    async def test_profile_stats_separate_current_totals_from_dated_viewing(self):
+        self.movie.runtime = 100
+        self.movie.tmdb_data = {'genres': [{'name': 'Drama'}]}
+        self.show.tmdb_data = {'genres': [{'name': 'Mystery'}]}
+        canonical_show = Show(title='Fixture Show', tmdb_id=98765)
+        self.db.add(canonical_show); await self.db.flush()
+        episode = Media(title='Fixture Episode', media_type=MediaType.episode, show_id=canonical_show.id,
+                        season_number=1, episode_number=1, runtime=45)
+        self.db.add_all([
+            episode,
+            TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='completed', manual_score=8,
+                         rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=9),
+            TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='watching', manual_score=7.5,
+                         rating_mode='manual', season_scores={}, progress=1, favorite=False, rewatch_count=5),
+        ])
+        await self.db.flush()
+        self.db.add_all([
+            WatchEvent(user_id=self.owner.id, media_id=self.movie.id, completed=True,
+                       watched_at=datetime(2025, 5, 4), play_count=2),
+            WatchEvent(user_id=self.owner.id, media_id=episode.id, completed=True,
+                       watched_at=datetime(2026, 1, 2), play_count=1),
+            WatchEvent(user_id=self.owner.id, media_id=episode.id, completed=True,
+                       watched_at=None, play_count=1),
+        ])
+        await self.db.commit()
+
+        result = (await self.client.get(f'/tracking/profile/{self.owner.username}/stats/summary')).json()
+        self.assertEqual(result['current']['statuses']['completed'], 1)
+        self.assertEqual(result['current']['statuses']['watching'], 1)
+        self.assertEqual(result['viewing']['unique_titles'], 2)
+        self.assertEqual(result['viewing']['unique_episodes'], 1)
+        self.assertEqual(result['viewing']['unique_seasons'], 1)
+        self.assertEqual(result['viewing']['repeat_views'], 2)
+        self.assertEqual(result['viewing']['estimated_watch_minutes'], 245)
+        self.assertEqual(result['scores']['average'], 7.8)
+        self.assertEqual([item['genre'] for item in result['genres']], ['Drama', 'Mystery'])
+        self.assertEqual([item['month'] for item in result['activity']], ['2025-05', '2026-01'])
+
+        year = (await self.client.get(f'/tracking/profile/{self.owner.username}/stats/summary', params={'year': 2026})).json()
+        self.assertEqual(year['current']['total'], 2)
+        self.assertEqual(year['viewing']['unique_titles'], 1)
+        self.assertEqual(year['viewing']['estimated_watch_minutes'], 45)
+        self.assertEqual(year['activity'], [{'month': '2026-01', 'movies': 0, 'episodes': 1}])
+
     async def test_private_profile_denied_even_to_an_admin_viewer(self):
         self.owner.is_admin=True
         res=await self.client.get(f'/tracking/profile/{self.friend.username}/movie')
         self.assertEqual(res.status_code,403)
+        stats=await self.client.get(f'/tracking/profile/{self.friend.username}/stats/summary')
+        self.assertEqual(stats.status_code,403)
 
     async def test_private_followed_scores_excluded(self):
         self.db.add(Follow(follower_id=self.owner.id,following_id=self.friend.id))
