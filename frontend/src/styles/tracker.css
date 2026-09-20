@@ -136,7 +136,7 @@ body.tracker{font-size:14px;line-height:1.55}
 @media(prefers-reduced-motion:reduce){.entry-thumbnail .row-menu .ui-icon{transition:none}}
 
 /* Stable shared app bar: fixed geometry keeps navigation aligned on every page. */
-.topbar{height:72px;padding:0;background:#142131;display:block}
+.topbar{position:sticky;top:0;z-index:60;height:72px;padding:0;background:#142131;display:block;transform:translateY(0);transition:transform .22s ease,box-shadow .22s ease;box-shadow:0 2px 14px #07111d20;will-change:transform}.topbar.appbar-hidden{transform:translateY(-100%)}
 .appbar-inner{width:min(100%,1420px);height:100%;margin:auto;padding:0 28px;display:grid;grid-template-columns:minmax(190px,1fr) auto minmax(190px,1fr);align-items:center;gap:28px}
 .appbar-nav{display:flex;align-items:center;justify-content:center;gap:30px;font-weight:600;font-size:13px;white-space:nowrap}
 .topbar a.active{color:var(--blue)}
@@ -149,7 +149,7 @@ body.tracker{font-size:14px;line-height:1.55}
 .notification-badge-attention{right:-6px;bottom:-3px;background:#e85d7d}
 @media(max-width:900px){.appbar-inner{grid-template-columns:minmax(52px,1fr) auto minmax(150px,1fr);padding:0 20px;gap:15px}.appbar-nav{gap:20px}}
 @media(max-width:650px){.topbar{height:108px;min-height:0;padding:0}.appbar-inner{padding:9px 16px 7px;grid-template-columns:minmax(44px,1fr) auto;grid-template-rows:42px 42px;column-gap:10px;row-gap:4px}.brand{grid-column:1;grid-row:1}.account-nav{grid-column:2;grid-row:1;gap:9px}.account-nav>a:first-child{max-width:110px;overflow:hidden;text-overflow:ellipsis}.appbar-nav{grid-column:1/-1;grid-row:2;width:100%;justify-content:space-around;font-size:12px;gap:8px}.appbar-icon-link{width:32px;height:32px}}
-@media(prefers-reduced-motion:reduce){.appbar-icon-link{transition:none}}
+@media(prefers-reduced-motion:reduce){.appbar-icon-link,.topbar{transition:none}}
 /* Shared half-point quick rating used by lists, title pages, and notifications. */
 .quick-rating-dialog{width:min(94vw,620px);padding:0;border:1px solid var(--border);border-radius:18px;background:var(--panel);color:var(--text);box-shadow:0 30px 90px #000b;overflow:hidden}
 .quick-rating-dialog::backdrop{background:#07111dcc;backdrop-filter:blur(5px)}

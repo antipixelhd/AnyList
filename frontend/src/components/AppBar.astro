@@ -30,7 +30,7 @@ const notificationLabel = notificationTotal
   : 'Notifications: none unread';
 const active = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 ---
-<header class="topbar">
+<header class="topbar" data-appbar>
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="Media Tracker home">
       <span class="brand-mark" aria-hidden="true">M<span>t</span></span>
@@ -80,3 +80,28 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
   }
   document.addEventListener('media-tracker:notifications-changed', refreshNotificationBadge);
 </script>}
+<script>
+  const appbar = document.querySelector<HTMLElement>('[data-appbar]');
+  if (appbar) {
+    let previousY = Math.max(0, window.scrollY);
+    let scheduled = false;
+    const reveal = () => appbar.classList.remove('appbar-hidden');
+    const update = () => {
+      const currentY = Math.max(0, window.scrollY);
+      const delta = currentY - previousY;
+      const ownsFocus = appbar.contains(document.activeElement);
+      if (currentY <= 16 || delta < -4 || ownsFocus) reveal();
+      else if (delta > 6 && currentY > appbar.offsetHeight) appbar.classList.add('appbar-hidden');
+      previousY = currentY;
+      scheduled = false;
+    };
+    window.addEventListener('scroll', () => {
+      if (!scheduled) {
+        scheduled = true;
+        requestAnimationFrame(update);
+      }
+    }, { passive: true });
+    appbar.addEventListener('focusin', reveal);
+    window.addEventListener('pageshow', () => { previousY = Math.max(0, window.scrollY); reveal(); });
+  }
+</script>
