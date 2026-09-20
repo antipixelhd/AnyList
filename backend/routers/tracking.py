@@ -519,6 +519,11 @@ def activity_data(rows, *, include_user=False, limit=12):
             }
         else:
             grouped[key]["payload"] = merge_activity_payload(grouped[key]["payload"], activity.payload)
+    for activity in grouped.values():
+        if activity["score"] is None:
+            # Legacy rows can claim a rating change without retaining a score.
+            # Do not publish a false "Rated" event when the value is unknowable.
+            activity["payload"]["rating_changed"] = False
     return list(grouped.values())[:limit]
 
 

@@ -493,3 +493,9 @@ An established Stremio/Nuvio snapshot could import a newly watched title into tr
 Snapshot reconciliation now records a title first seen after the approved baseline as a new transition. An unrated Completed title creates one persistent `rating_needed` record and one completion activity; repeated polling remains idempotent, and first-import flood suppression is unchanged. For a newly tracked series, activity counts the imported cumulative progress instead of reporting a zero-episode change.
 
 A disposable PostgreSQL regression reproduces the reported **The Death of Robin Hood** Stremio manual-sync path and verifies Completed status, one unresolved Stremio rating prompt, one completion activity, and duplicate suppression across a repeated snapshot. The focused four-test safety set and all 58 `TrackingApiTests` pass. Live-provider confirmation remains part of owner verification.
+
+## Truthful rating activity labels (2026-09-20)
+
+Rating-only activity now includes the saved value directly in its action label, such as `Rated 7.5 / 10`, as well as the existing score pill. Activity serialization clears an inconsistent legacy `rating_changed` claim when its row has no score, so rows such as the reported local Interstellar record fall back to their actual status/update instead of displaying a rating that does not exist. Valid scored events and combined progress/rating cards retain their rating data.
+
+The focused three-test activity set and all 59 PostgreSQL-backed `TrackingApiTests` pass. The production Astro build also passes.

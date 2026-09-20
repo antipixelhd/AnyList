@@ -226,6 +226,25 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]['payload']['episodes_watched'],1)
         self.assertTrue(results[0]['payload']['rating_changed'])
 
+    async def test_activity_never_claims_rated_without_a_score(self):
+        friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
+        friend_profile.privacy_level=PrivacyLevel.public
+        self.db.add_all([
+            Follow(follower_id=self.owner.id,following_id=self.friend.id),
+            TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='completed',score=None,
+                payload={'rating_changed':True}),
+            TrackingActivity(user_id=self.friend.id,media_id=self.show.id,status='watching',score=7.5,
+                payload={'rating_changed':True}),
+        ])
+        await self.db.commit()
+
+        results=(await self.client.get('/tracking/activity')).json()['results']
+        by_media={row['media']['id']:row for row in results}
+        self.assertIsNone(by_media[self.movie.id]['score'])
+        self.assertFalse(by_media[self.movie.id]['payload']['rating_changed'])
+        self.assertEqual(by_media[self.show.id]['score'],7.5)
+        self.assertTrue(by_media[self.show.id]['payload']['rating_changed'])
+
     async def test_daily_activity_merges_interleaved_progress_rating_and_finished_seasons(self):
         self.show.tmdb_id = 456789
         self.show.tmdb_data = {
