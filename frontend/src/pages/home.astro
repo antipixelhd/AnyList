@@ -2,7 +2,7 @@
 import Tracker from '../layouts/Tracker.astro';
 import ActivityCover from '../components/ActivityCover.astro';
 import Icon from '../components/Icon.astro';
-import {tracker,scoreLabel,statuses} from '../lib/tracker';
+import {tracker,scoreLabel,activityLabel,activityTime} from '../lib/tracker';
 let activities:any[]=[],error='',pending:number|null=null;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const [activityResult,eventResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token)]);
@@ -10,14 +10,13 @@ if(activityResult.status==='fulfilled')activities=activityResult.value.results;
 else error=activityResult.reason.message;
 if(eventResult.status==='fulfilled')pending=eventResult.value.pending;
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
-function timestamp(value:string){return /(?:Z|[+-]\d\d:\d\d)$/.test(value)?value:value+'Z';}
 ---
 <Tracker title="Home"><div class="page-width dashboard">
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse">Find your next title</a></header>
   <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading"><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   {error?<p class="error-message" role="alert">{error}</p>:activities.length?activities.map(a=><article class="visual-event">
-    <ActivityCover media={a.media}/><div class="event-body"><div class="event-meta"><a href={`/user/${encodeURIComponent(a.username)}`}>{a.username}</a><time datetime={timestamp(a.created_at)}>{new Date(timestamp(a.created_at)).toLocaleDateString('en-GB')}</time></div>
-    <p class="event-summary">{a.status==='completed'?'Completed':a.status==='planning'?'Plans to watch':statuses.find(([s])=>s===a.status)?.[1]}</p><h3><a href={`/title/${a.media.id}`}>{a.media.title}</a></h3>
+    <ActivityCover media={a.media}/><div class="event-body"><div class="event-meta"><a href={`/user/${encodeURIComponent(a.username)}`}>{a.username}</a><time datetime={activityTime(a.created_at).datetime}>{activityTime(a.created_at).label}</time></div>
+    <p class="event-summary">{activityLabel(a)}</p><h3><a href={`/title/${a.media.id}`}>{a.media.title}</a></h3>
     {a.score!=null&&<div class="event-footer"><span class="score-pill" aria-label={`Rated ${scoreLabel(a.score)} out of 10`}><Icon name="star" /> {scoreLabel(a.score)}<small>/10</small></span></div>}</div>
   </article>):<div class="empty-state"><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
   </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events"><span class="eyebrow">Notifications</span><strong>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>

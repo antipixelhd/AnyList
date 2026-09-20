@@ -13,7 +13,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/
 
 import httpx
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key
@@ -213,13 +213,63 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_home_activity_contains_followed_public_profiles_only(self):
         owner_activity=TrackingActivity(user_id=self.owner.id,media_id=self.movie.id,status='watching',score=None)
-        friend_activity=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='completed',score=8)
+        friend_activity=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='watching',score=None,
+            payload={'episodes_watched':1},created_at=datetime.utcnow()-timedelta(hours=1))
+        friend_latest=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='completed',score=8,
+            payload={'rating_changed':True},created_at=datetime.utcnow())
         friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
         friend_profile.privacy_level=PrivacyLevel.public
-        self.db.add_all([owner_activity,friend_activity,Follow(follower_id=self.owner.id,following_id=self.friend.id)])
+        self.db.add_all([owner_activity,friend_activity,friend_latest,Follow(follower_id=self.owner.id,following_id=self.friend.id)])
         await self.db.commit()
         results=(await self.client.get('/tracking/activity')).json()['results']
         self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
+        self.assertEqual(results[0]['payload']['episodes_watched'],1)
+        self.assertTrue(results[0]['payload']['rating_changed'])
+
+    async def test_daily_activity_merges_interleaved_progress_rating_and_finished_seasons(self):
+        self.show.tmdb_id = 456789
+        self.show.tmdb_data = {
+            'tracking_catalogue_refreshed_at': '2026-01-01T00:00:00',
+            'tracking_episode_ids': [9101, 9102, 9201, 9202],
+            'seasons': [
+                {'season_number': 1, 'episode_count': 2},
+                {'season_number': 2, 'episode_count': 3},
+            ],
+        }
+        canonical = Show(title='Fixture Show', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical); await self.db.flush()
+        episodes = [
+            Media(title='S1E1', media_type=MediaType.episode, tmdb_id=9101, show_id=canonical.id, season_number=1, episode_number=1, release_date='2025-01-01'),
+            Media(title='S1E2', media_type=MediaType.episode, tmdb_id=9102, show_id=canonical.id, season_number=1, episode_number=2, release_date='2025-01-02'),
+            Media(title='S2E1', media_type=MediaType.episode, tmdb_id=9201, show_id=canonical.id, season_number=2, episode_number=1, release_date='2026-01-01'),
+            Media(title='S2E2', media_type=MediaType.episode, tmdb_id=9202, show_id=canonical.id, season_number=2, episode_number=2, release_date='2026-01-02'),
+        ]
+        self.db.add_all(episodes); await self.db.commit()
+
+        self.assertEqual((await self.save(self.show, status='watching', progress=1)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, status='watching')).status_code, 200)
+        self.assertEqual((await self.save(self.show, manual_score=8)).status_code, 200)
+        self.assertEqual((await self.save(self.show, progress=4)).status_code, 200)
+
+        rows = (await self.db.execute(select(TrackingActivity).where(
+            TrackingActivity.user_id == self.owner.id, TrackingActivity.media_id == self.show.id))).scalars().all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].score, 8)
+        self.assertEqual(rows[0].payload['episodes_watched'], 4)
+        self.assertEqual(rows[0].payload['position'], 'S2E2')
+        self.assertEqual(rows[0].payload['finished_seasons'], [1])
+        self.assertTrue(rows[0].payload['rating_changed'])
+        self.assertTrue(rows[0].payload['status_changed'])
+
+        # Rating first and a later status update still produce one daily card.
+        await self.db.execute(delete(TrackingActivity).where(TrackingActivity.media_id == self.movie.id))
+        await self.db.commit()
+        self.assertEqual((await self.save(self.movie, manual_score=7.5)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, status='paused')).status_code, 200)
+        movie_rows = (await self.db.execute(select(TrackingActivity).where(TrackingActivity.media_id == self.movie.id))).scalars().all()
+        self.assertEqual(len(movie_rows), 1)
+        self.assertTrue(movie_rows[0].payload['rating_changed'])
+        self.assertTrue(movie_rows[0].payload['status_changed'])
 
     async def test_profile_stats_separate_current_totals_from_dated_viewing(self):
         self.movie.runtime = 100
@@ -582,6 +632,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))).scalar_one()
         self.assertEqual(prompt.state, 'confirmed')
         self.assertEqual(prompt.payload['push_state'], 'pending')
+        activity = (await self.db.execute(select(TrackingActivity).where(
+            TrackingActivity.user_id == self.owner.id,
+            TrackingActivity.media_id == self.movie.id,
+        ))).scalars().all()
+        self.assertEqual(len(activity), 1)
+        self.assertEqual(activity[0].status, 'completed')
+        self.assertTrue(activity[0].payload['status_changed'])
 
     async def test_unordered_cloud_watch_preserves_local_status_and_creates_conflict(self):
         from core.cloud_history_reconciliation import reconcile_cloud_watch_events
@@ -1407,6 +1464,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         baseline.observed_at=datetime.now()+timedelta(seconds=1);await self.db.commit()
         await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-series':self.show.tmdb_id})
         self.assertEqual(entry.status,'completed')
+        activity=(await self.db.execute(select(TrackingActivity).where(
+            TrackingActivity.user_id==self.owner.id,TrackingActivity.media_id==self.show.id))).scalars().all()
+        self.assertEqual(len(activity),1)
+        self.assertEqual(activity[0].payload['episodes_watched'],3)
+        self.assertEqual(activity[0].payload['position'],'S2E1')
 
     async def test_tvdb_native_series_observation_uses_canonical_positions(self):
         from core.tracking_snapshot import observe_stream_snapshot

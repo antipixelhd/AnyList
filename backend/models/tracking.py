@@ -36,6 +36,7 @@ class TrackingActivity(Base):
     media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(16))
     score: Mapped[float | None] = mapped_column(Float)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

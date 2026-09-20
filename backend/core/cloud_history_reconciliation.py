@@ -8,7 +8,7 @@ from core.status_provenance import mark_status_change, status_changed_at
 from core.web_push import queue_sync_completion_rating
 from models import Media, Show, WatchEvent
 from models.base import MediaType
-from models.tracking import CloudBaseline, SyncReview, TrackedEntry, TrackingActivity
+from models.tracking import CloudBaseline, SyncReview, TrackedEntry
 
 
 def _naive_utc(value: datetime | None) -> datetime | None:
@@ -226,6 +226,7 @@ async def reconcile_cloud_watch_events(
             continue
 
         previous_status = entry.status
+        previous_progress = entry.progress
         changed = previous_status != proposed_status
         for episode in inferred_previous:
             db.add(WatchEvent(
@@ -241,13 +242,17 @@ async def reconcile_cloud_watch_events(
         mark_status_change(entry, provider, latest_at)
         entry.start_date = proposed_start
         entry.finish_date = proposed_finish
+        progress_changed = entry.progress != previous_progress
+        if (changed or progress_changed) and not initial_import:
+            from core.activity import record_daily_activity, series_activity_details
+            position, finished = await series_activity_details(db, media, entry.progress)
+            await record_daily_activity(
+                db,user_id=user_id,media_id=root_id,status=entry.status,
+                score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
+                episodes_watched=max(0,entry.progress-previous_progress),progress=entry.progress,
+                position=position,finished_seasons=finished,status_changed=changed,
+            )
         if changed and not initial_import:
-            db.add(TrackingActivity(
-                user_id=user_id,
-                media_id=root_id,
-                status=entry.status,
-                score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
-            ))
             if entry.status == "completed":
                 await queue_sync_completion_rating(
                     db, user_id=user_id, media=media, entry=entry, source=provider,

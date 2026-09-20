@@ -267,8 +267,9 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
                     entry.rating_mode='manual'
                 else:
                     entry.season_scores={**(entry.season_scores or {}),str(event.season_number):event.proposed_score}
-                db.add(TrackingActivity(user_id=viewer.id,media_id=entry.media_id,status=entry.status,
-                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
+                from core.activity import record_daily_activity
+                await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),rating_changed=True)
             rating_query=select(Rating).where(Rating.user_id==viewer.id,Rating.media_id==event.media_id,
                 Rating.episode_order.is_(None))
             rating_query=rating_query.where(Rating.season_number.is_(None)) if event.season_number is None else rating_query.where(Rating.season_number==event.season_number)
@@ -318,8 +319,11 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
                 entry.status=body.status.value
                 status_changed = True
             if status_changed:mark_status_change(entry,'local')
-            db.add(TrackingActivity(user_id=viewer.id,media_id=entry.media_id,status=entry.status,
-                score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
+            from core.activity import record_daily_activity, series_activity_details
+            position, finished = await series_activity_details(db, await db.get(Media, entry.media_id), entry.progress)
+            await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
+                progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed)
     else:
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
         if not entry:raise HTTPException(409,'The tracked entry no longer exists')
@@ -330,7 +334,9 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         if status=='watching':
             from core.stream_actions import queue_restorations
             await queue_restorations(db,viewer.id,await db.get(Media,entry.media_id))
-        db.add(TrackingActivity(user_id=viewer.id,media_id=entry.media_id,status=status,score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
+        from core.activity import record_daily_activity
+        await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=status,
+            score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True)
     event.state='confirmed' if body.action=='confirm' else 'corrected'
     await db.commit()
     return {'state':event.state}
@@ -347,7 +353,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     visible = [{"username":u.username, "display_name":p.display_name or u.username, "following":u.id in following_ids, "follower":u.id in followers_ids} for u,p in people]
     scores = [score for entry, _ in entries if (score := effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)) is not None]
     activity_rows = (await db.execute(select(TrackingActivity, Media).join(Media, Media.id == TrackingActivity.media_id)
-        .where(TrackingActivity.user_id == user.id).order_by(TrackingActivity.created_at.desc()).limit(12))).all()
+        .where(TrackingActivity.user_id == user.id).order_by(TrackingActivity.created_at.desc()).limit(60))).all()
     if not await anime_is_visible(db):
         activity_rows = [row for row in activity_rows if not is_anime(row[1])]
     prefs=await db.get(TrackingPreferences,user.id)
@@ -359,7 +365,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
                   "favorites":sum(e.favorite for e,m in entries),"rated":len(scores)},
         "average_score":round(sum(scores)/len(scores),1) if scores else None,
         "favorites":[media_data(m) for e,m in entries if e.favorite],"people":visible,
-        "recent_activity":[{"status":a.status,"score":a.score,"created_at":a.created_at,"media":media_data(m)} for a,m in activity_rows]}
+        "recent_activity":activity_data(activity_rows,limit=12)}
 
 
 @router.get('/people-search')
@@ -492,6 +498,28 @@ def media_data(media):
         "tmdb_id": media.tmdb_id, "tvdb_id": media.tvdb_id, "imdb_id": media.imdb_id,
         "is_anime": is_anime(media),
     }
+
+
+def activity_data(rows, *, include_user=False, limit=12):
+    """Collapse legacy and current rows into one newest-first UTC-day card."""
+    from core.activity import merge_activity_payload
+    grouped = {}
+    for row in rows:
+        activity, media = row[0], row[1]
+        user = row[2] if include_user else None
+        key = (user.id if user else activity.user_id, media.id, activity.created_at.date())
+        if key not in grouped:
+            grouped[key] = {
+                **({"username": user.username} if user else {}),
+                "status": activity.status,
+                "score": activity.score,
+                "payload": dict(activity.payload or {}),
+                "created_at": activity.created_at,
+                "media": media_data(media),
+            }
+        else:
+            grouped[key]["payload"] = merge_activity_payload(grouped[key]["payload"], activity.payload)
+    return list(grouped.values())[:limit]
 
 
 def entry_data(entry, media, owner=False):
@@ -797,6 +825,7 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
     previous = entry.status if entry else None
+    old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
     if entry is None:
         # An explicit user edit re-adds a previously deleted entry. Imports never
@@ -825,6 +854,7 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             setattr(entry, name, value)
     if body.season_scores is not None:
         entry.season_scores = {**entry.season_scores, **body.season_scores}
+    episodes = []
     completing_series = media.media_type == MediaType.series and status == 'completed' and previous != 'completed'
     if body.progress is not None or body.mark_released_watched or completing_series:
         if media.media_type == MediaType.series and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
@@ -876,13 +906,13 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             row.rating, row.rated_at = value, datetime.utcnow()
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
-    if previous != entry.status or old_score != score:
-        recent = (await db.execute(select(TrackingActivity).where(TrackingActivity.user_id == viewer.id, TrackingActivity.media_id == media_id,
-            TrackingActivity.created_at >= datetime.utcnow() - timedelta(minutes=5)).order_by(TrackingActivity.created_at.desc()).limit(1))).scalar_one_or_none()
-        if recent:
-            recent.status, recent.score, recent.created_at = entry.status, score, datetime.utcnow()
-        else:
-            db.add(TrackingActivity(user_id=viewer.id, media_id=media_id, status=entry.status, score=score))
+    progress_changed = entry.progress != old_progress
+    if previous != entry.status or old_score != score or progress_changed:
+        from core.activity import record_daily_activity, series_activity_details
+        position, finished = await series_activity_details(db, media, entry.progress)
+        await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
+            episodes_watched=max(0, entry.progress-old_progress), progress=entry.progress if media.media_type == MediaType.series else None,
+            position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
     await db.commit()
     await db.refresh(entry)
     return entry_data(entry, media, True)
@@ -896,4 +926,4 @@ async def activity(db: AsyncSession = Depends(get_db), viewer: User = Depends(ge
         .where((User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public))
         .order_by(TrackingActivity.created_at.desc()).limit(60))).all()
     if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
-    return {"results": [{"username": u.username, "status": a.status, "score": a.score, "created_at": a.created_at, "media": media_data(m)} for a, m, u in rows]}
+    return {"results": activity_data(rows,include_user=True,limit=60)}

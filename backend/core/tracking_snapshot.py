@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import or_, select
 from models import Media, User, Show, WatchEvent
 from models.base import MediaType
-from models.tracking import StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingActivity, TrackingDeletion
+from models.tracking import StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingDeletion
 from core.tracking_rules import effective_score, observed_status, default_dates
 from core.tracking_import import import_tracking_history
 from core.status_provenance import mark_status_change, provider_changed_at, status_changed_at
@@ -169,8 +169,9 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             from core.stream_actions import queue_dismissals
             await queue_dismissals(db, conn, media)
             if auto_confirm:
-                db.add(TrackingActivity(user_id=conn.user_id,media_id=media.id,status=proposed,
-                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
+                from core.activity import record_daily_activity
+                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=proposed,
+                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True)
     # Only changed observations advance an existing tracked entry. Repeated
     # polling must not restore cleared dates or reinterpret the same playback.
     if not first:
@@ -190,6 +191,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             if pending:
                 continue
             previous_status = entry.status
+            previous_progress = entry.progress
             is_complete = media.media_type == MediaType.movie and row in new_completed
             # A newer local correction takes precedence over inferred history too.
             changed_at=status_changed_at(entry)
@@ -208,9 +210,15 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             if media.id not in existing_ids:
                 if entry.status=='watching' and entry.start_date is None:entry.start_date=date.today()
                 if entry.status=='completed' and entry.finish_date is None:entry.finish_date=date.today()
+            progress_changed = entry.progress != previous_progress
+            if entry.status != previous_status or progress_changed:
+                from core.activity import record_daily_activity, series_activity_details
+                position, finished = await series_activity_details(db, media, entry.progress)
+                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
+                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
+                    episodes_watched=max(0,entry.progress-previous_progress),progress=entry.progress,
+                    position=position,finished_seasons=finished,status_changed=entry.status != previous_status)
             if entry.status != previous_status:
-                db.add(TrackingActivity(user_id=conn.user_id,media_id=media.id,status=entry.status,
-                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)))
                 if not first and entry.status == 'completed':
                     await queue_sync_completion_rating(
                         db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
