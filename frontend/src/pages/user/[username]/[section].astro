@@ -20,15 +20,17 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
   {data ? <>
     <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following}} active={section}/>
     <div class="list-shell">
-      <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters">Filters & sorting</button>
+      <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters"><Icon name="sliders"/> <span>Filters & sorting</span><span id="mobile-filter-count" class="filter-count" hidden>0</span></button>
       <aside class="filters" id="list-filters" aria-label="List filters">
+        <div class="mobile-filter-heading"><strong>Filters & sorting</strong><button type="button" class="button-quiet" data-close-filters aria-label="Close filters"><Icon name="close"/></button></div>
         <label class="filter-search"><Icon name="search"/><input id="list-search" type="search" placeholder="Filter titles" aria-label="Search this list"/></label>
         <h2>Lists</h2><div class="status-filters"><button data-status="all" class="selected">All <span>{entries.length}</span></button>{statuses.map(([s,label])=><button data-status={s}>{label}<span>{entries.filter((e:any)=>e.status===s).length}</span></button>)}</div>
-        <h2>Filters</h2><select id="genre-filter" aria-label="Genre"><option value="">All genres</option>{genres.map(g=><option>{g}</option>)}</select>
-        <select id="year-filter" aria-label="Release year"><option value="">All years</option>{years.map(y=><option>{y}</option>)}</select>
-        <select id="favorite-filter" aria-label="Favorites"><option value="">All entries</option><option value="yes">Favorites only</option></select>
-        <h2>Sort</h2><select id="sort-filter" aria-label="Sort list"><option value="title" selected={viewerPrefs.default_sort==='title'}>Title</option><option value="score" selected={viewerPrefs.default_sort==='score'}>Score</option><option value="progress" selected={viewerPrefs.default_sort==='progress'}>Progress</option><option value="updated" selected={viewerPrefs.default_sort==='updated'}>Recently updated</option></select>
-        <button class="button-secondary" id="reset-filters">Reset filters</button>
+        <h2>Filters</h2>
+        <label class="filter-control"><span>Genre</span><select id="genre-filter"><option value="">All genres</option>{genres.map(g=><option>{g}</option>)}</select></label>
+        <label class="filter-control"><span>Release year</span><select id="year-filter"><option value="">All years</option>{years.map(y=><option>{y}</option>)}</select></label>
+        <label class="filter-control"><span>Favorites</span><select id="favorite-filter"><option value="">All entries</option><option value="yes">Favorites only</option></select></label>
+        <h2>Sort</h2><label class="filter-control"><span>Order</span><select id="sort-filter"><option value="title" selected={viewerPrefs.default_sort==='title'}>Title</option><option value="score" selected={viewerPrefs.default_sort==='score'}>Score</option><option value="progress" selected={viewerPrefs.default_sort==='progress'}>Progress</option><option value="updated" selected={viewerPrefs.default_sort==='updated'}>Recently updated</option></select></label>
+        <button class="button-secondary" id="reset-filters" data-default-sort={viewerPrefs.default_sort}>Reset filters</button>
       </aside>
       <div class="list-content"><div class="list-toolbar"><span id="result-count" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
       <div id="entry-groups">
@@ -98,6 +100,16 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
   if (groups) {
     let status = 'all';
     const input = (id:string) => document.getElementById(id) as HTMLInputElement;
+    const resetButton=document.querySelector<HTMLButtonElement>('#reset-filters')!;
+    const defaultSort=resetButton.dataset.defaultSort||'title';
+    const mobileCount=document.querySelector<HTMLElement>('#mobile-filter-count')!;
+    function updateFilterControls() {
+      const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',input('year-filter').value!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
+      mobileCount.textContent=String(active);
+      mobileCount.hidden=active===0;
+      resetButton.disabled=active===0;
+      document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.status===status)));
+    }
     function filter() {
       hidePreview();
       let count = 0;
@@ -118,12 +130,17 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
       });
       document.querySelector('#result-count')!.textContent=`${count} entries`;
       (document.querySelector('#list-empty') as HTMLElement).hidden=count>0;
+      updateFilterControls();
     }
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));
-    document.querySelector('#reset-filters')!.addEventListener('click',()=>{['list-search','genre-filter','year-filter','favorite-filter'].forEach(id=>input(id).value='');input('sort-filter').value='title';document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
+    resetButton.addEventListener('click',()=>{['list-search','genre-filter','year-filter','favorite-filter'].forEach(id=>input(id).value='');input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();groups.classList.toggle('grid-view',button.dataset.view==='grid');document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
-    document.querySelector('.mobile-filter-toggle')!.addEventListener('click',event=>{const open=document.querySelector('#list-filters')!.classList.toggle('open');(event.currentTarget as HTMLElement).setAttribute('aria-expanded',String(open));});
+    const mobileToggle=document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
+    const filters=document.querySelector<HTMLElement>('#list-filters')!;
+    function setFiltersOpen(open:boolean){filters.classList.toggle('open',open);mobileToggle.setAttribute('aria-expanded',String(open));if(open)filters.querySelector<HTMLElement>('input,select,button')?.focus();else mobileToggle.focus();}
+    mobileToggle.addEventListener('click',()=>setFiltersOpen(!filters.classList.contains('open')));
+    document.querySelector('[data-close-filters]')!.addEventListener('click',()=>setFiltersOpen(false));
     document.addEventListener('media-tracker:rating-changed', filter);
     filter();
   }
