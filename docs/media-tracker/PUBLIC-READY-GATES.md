@@ -13,4 +13,25 @@ This is the current Stage Two release checklist. `STAGE-TWO-PLAN.md` is the acce
 | GitHub progress tracking | The repository and canonical in-tree plan/status exist. [Public-ready core milestone](https://github.com/antipixelhd/AnyList/milestone/1) and four gate issues now exist. | Link evidence and close issues only after proof. |
 | Owner acceptance | Review of deployed build `504c687` produced a new mandatory backlog on 2026-09-20. | Complete and redeploy the owner-discovered backlog before requesting another Google-authenticated/physical-phone review or explicit core approval; [issue #4](https://github.com/antipixelhd/AnyList/issues/4). |
 
+## Owner findings handoff (2026-09-20)
+
+The full behavior contract and acceptance tests are in the **Owner acceptance findings** section of `STAGE-TWO-PLAN.md`. The checklist below is a handoff index, not a substitute for those details. **Locally implemented** means a committed local slice has focused evidence in `STATUS.md`; it does not close the release gate until the final public head is deployed and the owner verifies it. An in-progress or uncommitted visual change does not count as complete.
+
+| Finding | Current state | What remains before acceptance |
+| --- | --- | --- |
+| One-viewport quick editor; no Show score control; calculated season average and confirmed override | Locally implemented | Recheck on final desktop build and with real saved season scores. |
+| Remove overall list total while keeping filter status counts | Locally implemented | Recheck personal and public lists on final build. |
+| Home CTA hover legibility and combined/separate Your lists links | Locally implemented | Recheck hover, keyboard focus, and both preference modes. |
+| Square profile action, hover/focus-only outline, unfilled blue Fast-search icon, first-scroll hide, Settings alignment | Locally implemented | Recheck desktop and Settings routes on final build; retain keyboard and reduced-motion behavior. |
+| Group pending connection updates by title and remove only after every applicable provider succeeds | Open | Implement and prove success, partial failure, retry, and final removal across multiple providers. |
+| Newly synced Completed title creates rating request, attention prompt, and activity | Locally implemented regression | Confirm the reported Stremio manual-sync scenario with a live established connection; preserve initial-import silence. |
+| AniList-like desktop Fast search with input-only opening and simultaneous nonempty category cards; unsupported on phone | Locally implemented for Movies/Series | Recheck combined/separate, empty/error, keyboard and phone boundary on final build; Games/Books await those catalogue types. |
+| Denser compact rows, AniList-measured first-viewport profile/list geometry and consistent filters/type/spacing | In progress | Record reproducible reference measurements and complete desktop, 1440p/4K, and phone checks. |
+| Stats visual hierarchy using icons, spacing and typography instead of repeated generic cards | Open | Redesign against the reference while preserving all accepted data and chart accessibility. |
+| Separate Favorite from streaming Library add/remove on title details | Open | Implement honest per-provider pending/error feedback and verify remote delivery semantics. |
+| Remove obsolete Scrob UI pages and redesign login in AnyList style | Open | Inventory redirects/integration routes; preserve Google, configured password fallback, recovery and accessibility. |
+| Rated activity displays its score; legacy missing-score rows do not claim a rating | Locally implemented | Recheck the reported Interstellar-style row and scored activity on final build. |
+
+No Phase Two approval request is due while any row above remains open or final deployment, CI, physical-device verification, and owner review remain outstanding.
+
 After core approval, ask separately whether to implement the deferred season features. Level one would prompt for a season rating on Stremio/Nuvio completion while shows remain combined and a manual whole-show score takes priority over the rated-season average. Level two would add an optional setting for separate season rows in lists. Neither is authorized for the core build.
