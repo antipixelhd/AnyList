@@ -21,6 +21,7 @@ The detailed product contract, accepted edge cases, test scenarios, and current 
 - [Stage-two product contract](docs/media-tracker/STAGE-TWO-PLAN.md)
 - [Implementation and acceptance scenarios](docs/media-tracker/IMPLEMENTATION.md)
 - [Current verified status](docs/media-tracker/STATUS.md)
+- [Public-ready release gates](docs/media-tracker/PUBLIC-READY-GATES.md)
 - [Remaining external verification gates](docs/media-tracker/FOLLOW-UP.md)
 - [AniList interface analysis](docs/media-tracker/ANILIST-ANALYSIS.md)
 
