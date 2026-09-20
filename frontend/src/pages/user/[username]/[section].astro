@@ -32,7 +32,7 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
       </aside>
       <div class="list-content"><div class="list-toolbar"><span id="result-count" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
       <div id="entry-groups">
-      {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return group.length > 0 && <section class="status-section" data-group={status}><h2>{label} <span>{group.length}</span></h2><div class="entry-table">
+      {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return group.length > 0 && <section class="status-section" data-group={status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span>Title</span><span>Score</span><span>Progress</span>{isCombined&&<span>Type</span>}</div>
         {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
           <div class="entry-title"><div class="entry-thumbnail" data-preview-src={artwork(entry.poster)}>{artwork(entry.poster) ? <img class="entry-cover" src={artwork(entry.poster)} alt="" loading="lazy"/> : <span class="entry-cover"/>}{data.owner&&<button class="row-menu" data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><a href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a></div>
@@ -114,7 +114,6 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
           if (!row.hidden) visible++;
         });
         group.hidden = visible===0;
-        group.querySelector('h2 span')!.textContent = String(visible);
         count+=visible;
       });
       document.querySelector('#result-count')!.textContent=`${count} entries`;
