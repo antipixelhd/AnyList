@@ -82,7 +82,11 @@ const dateLabel = (value: string | null) => value
 
           <section class="ratings-overview" aria-label="Ratings">
             <div class="personal-scores">
-              <button class="personal-score-button" aria-label={`Rate ${title.title}. Current score: ${personalScoreLabel(title.entry?.score ?? null)}`} data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster)} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label data-score-format="out-of-ten">{personalScoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
+              {Astro.locals.user ? (
+                <button class="personal-score-button" aria-label={`Rate ${title.title}. Current score: ${personalScoreLabel(title.entry?.score ?? null)}`} data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster)} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label data-score-format="out-of-ten">{personalScoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
+              ) : (
+                <a class="personal-score-button" href={`/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`} aria-label={`Sign in to rate ${title.title}`}><span>Your score</span><strong>—</strong><small>Sign in to rate</small></a>
+              )}
               <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
             </div>
             <div class="provider-scores" aria-label="External ratings">
