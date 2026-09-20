@@ -63,24 +63,12 @@ async def _check_profile_access(user_id: int, current_user, db: AsyncSession):
     profile = profile_result.scalar_one_or_none()
 
     is_owner = current_user and current_user.id == user_id
-    is_admin = current_user and current_user.role == "admin"
     privacy = profile.privacy_level if profile else PrivacyLevel.private
 
-    is_mutual_follow = False
-    if current_user and not is_owner and privacy == PrivacyLevel.friends_only:
-        mutual_q = await db.execute(
-            select(func.count())
-            .select_from(Follow)
-            .where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
-            .where(
-                select(Follow.id)
-                .where(Follow.follower_id == user_id, Follow.following_id == current_user.id)
-                .exists()
-            )
-        )
-        is_mutual_follow = mutual_q.scalar_one() > 0
-
-    if not (is_owner or privacy == PrivacyLevel.public or is_mutual_follow):
+    # Stage two exposes profiles through one-way following only when the
+    # profile itself is public. Treat the inherited friends-only value as
+    # private, matching the current settings UI and the tracking endpoints.
+    if not (is_owner or privacy == PrivacyLevel.public):
         raise HTTPException(status_code=403, detail="This profile is private")
 
     # A request with no valid session (no JWT, or an API key that doesn't match

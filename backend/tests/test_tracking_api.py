@@ -118,6 +118,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         blocked = await self.client.post(f'/profile/{self.friend.id}/follow')
         self.assertEqual(blocked.status_code, 404, blocked.text)
 
+        # Mutual legacy follows must not make a friends-only profile public.
+        self.db.add_all([
+            Follow(follower_id=self.owner.id, following_id=self.friend.id),
+            Follow(follower_id=self.friend.id, following_id=self.owner.id),
+        ])
+        await self.db.commit()
+        profile_blocked = await self.client.get(f'/profile/{self.friend.id}')
+        self.assertEqual(profile_blocked.status_code, 403, profile_blocked.text)
+
         friend_profile.privacy_level = PrivacyLevel.public
         await self.db.commit()
         visible = await self.client.get('/profile/search', params={'q': self.friend.username})

@@ -9,7 +9,7 @@ const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oid
 const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/device/code", "/api/proxy/auth/device/token", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
-const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series)))\/?$/;
+const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
 // The profile page's <img> tag hits this proxy path directly. It has no file
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
@@ -81,7 +81,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Anonymous access to any of these read-only pages is allowed only when the
   // admin has enabled logged-out navigation (Admin Settings) and a global
   // TMDB key is set. Profile/list pages still enforce their own privacy
-  // (public/friends/private) server side - this only decides whether a
+  // (public/private) server side - this only decides whether a
   // logged-out visitor gets past the gate at all. Fails closed (redirects to
   // login) if the check errors.
   const isAllowedAnonymousPublicPage = async () => {
