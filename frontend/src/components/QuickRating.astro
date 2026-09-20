@@ -7,7 +7,7 @@ import Icon from './Icon.astro';
       <img id="quick-rating-poster" alt="" hidden />
       <div><span class="eyebrow">Quick rate</span><h2 id="quick-rating-title">Rate title</h2></div>
     </div>
-    <button type="button" class="icon-button editor-icon-button" id="quick-rating-close" aria-label="Close rating"><Icon name="close" /></button>
+    <button type="button" class="quick-rating-close" id="quick-rating-close" aria-label="Close rating"><Icon name="close" /></button>
   </div>
   <div class="quick-rating-body">
     <output id="quick-rating-value" aria-live="polite">Unrated</output>
@@ -51,7 +51,8 @@ import Icon from './Icon.astro';
     for (let star = 1; star <= 10; star++) {
       const shell = document.createElement('span');
       shell.className = 'quick-star';
-      shell.innerHTML = '<span aria-hidden="true">★</span><i aria-hidden="true">★</i>';
+      const starSvg = '<svg viewBox="0 0 24 24" focusable="false"><path d="M12 2 15 8.2 22 9.2 17 14l1.2 7L12 17.7 5.8 21 7 14 2 9.2l7-1L12 2Z"/></svg>';
+      shell.innerHTML = `<span class="quick-star-layer" aria-hidden="true">${starSvg}</span><span class="quick-star-layer quick-star-fill" aria-hidden="true">${starSvg}</span>`;
       for (const half of [0.5, 1]) {
         const score = star - 1 + half;
         const button = document.createElement('button');
@@ -99,7 +100,7 @@ import Icon from './Icon.astro';
         const row = control.closest<HTMLElement>('.entry-row');
         if (row) row.dataset.score = score == null ? '-1' : String(score);
         const label = control.querySelector<HTMLElement>('[data-score-label]');
-        if (label) label.textContent = score == null ? '—' : label.dataset.scoreFormat === 'out-of-ten' ? `${Number(score.toFixed(1))} / 10` : Number(score.toFixed(1)).toString();
+        if (label) label.textContent = score == null ? '—' : label.dataset.scoreFormat === 'out-of-ten' ? `${score.toFixed(1)} / 10` : Number(score.toFixed(1)).toString();
         const modeLabel = control.querySelector<HTMLElement>('[data-rating-mode-label]');
         if (modeLabel) modeLabel.textContent = score == null ? 'Unrated' : 'Manual rating';
       });
