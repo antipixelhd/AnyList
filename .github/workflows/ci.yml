@@ -41,7 +41,7 @@ jobs:
           cache-dependency-glob: backend/uv.lock
       - name: Install backend dependencies
         working-directory: backend
-        run: uv sync --locked --no-dev
+        run: uv sync --frozen --no-dev
       - name: Run backend tests
         working-directory: backend
         run: uv run --no-sync python -m unittest discover -s tests -q
