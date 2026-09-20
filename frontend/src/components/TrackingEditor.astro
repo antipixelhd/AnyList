@@ -17,6 +17,7 @@ import Icon from './Icon.astro';
       <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
       <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
       <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
+      <label class="checkbox favorite-field"><input name="favorite" type="checkbox"/><span>Favorite</span></label>
       <label class="wide" id="rating-mode-field">Show score<select name="rating_mode"><option value="manual">Keep a separate show rating</option><option value="average">Average my rated seasons</option></select><span class="hint" id="calculated-score"></span></label>
       <label class="wide">Notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
       <p class="wide hint" id="completion-help">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
@@ -73,6 +74,7 @@ import Icon from './Icon.astro';
       poster.src = artwork(title.poster, 'w342'); poster.alt = title.poster ? `${title.title} poster` : ''; poster.hidden = !title.poster;
       backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
       for (const name of ['status','manual_score','progress','start_date','finish_date','rewatch_count','notes','rating_mode']) field(name).value = current[name] ?? '';
+      field('favorite').checked = Boolean(current.favorite);
       field('progress').disabled = title.type === 'movie';
       document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
       document.querySelector<HTMLElement>('#completion-help')!.hidden = title.type === 'movie';
@@ -104,7 +106,7 @@ import Icon from './Icon.astro';
     error.hidden = true;
     const submit = form.querySelector<HTMLButtonElement>('[type=submit]')!;
     const status = field('status').value;
-    const body: any = {status, notes:field('notes').value,
+    const body: any = {status, notes:field('notes').value, favorite:field('favorite').checked,
       rewatch_count:Number(field('rewatch_count').value || 0), rating_mode:field('rating_mode').value};
     if (!field('manual_score').disabled) body.manual_score = Number(field('manual_score').value || 0);
     for (const name of ['start_date','finish_date']) {

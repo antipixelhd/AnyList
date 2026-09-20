@@ -40,7 +40,11 @@ const dateLabel = (value: string | null) => value
             <img class="detail-poster" src={artwork(title.poster)} alt={`${title.title} poster`} />
           ) : <div class="detail-poster detail-poster-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</div>}
           {Astro.locals.user && (
-            <StatusControl mediaId={title.id} status={title.entry?.status} type={title.type} />
+            <div class="detail-controls">
+              <StatusControl mediaId={title.id} status={title.entry?.status} type={title.type} />
+              <button class="button-secondary favorite-toggle" type="button" aria-pressed={title.entry?.favorite?'true':'false'} data-favorite-toggle data-media={title.id} data-favorite={title.entry?.favorite?'true':'false'}><Icon name="heart"/><span>{title.entry?.favorite?'Favorited':'Favorite'}</span></button>
+              <p class="status-error" role="alert" data-favorite-error hidden></p>
+            </div>
           )}
 
           <dl class="detail-facts">
@@ -167,6 +171,16 @@ document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener
  const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes…';
  try{const res=await fetch(`/api/proxy/tracking/title/${button.dataset.media}/refresh-episodes`,{method:'POST'});if(!res.ok){const data=await res.json();throw new Error(data.detail||'Unable to refresh episodes');}location.reload();}
  catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;button.textContent='Refresh episode metadata';}
+});
+document.querySelector<HTMLButtonElement>('[data-favorite-toggle]')?.addEventListener('click',async event=>{
+ const button=event.currentTarget as HTMLButtonElement;
+ const error=document.querySelector<HTMLElement>('[data-favorite-error]')!;
+ const next=button.dataset.favorite!=='true';button.disabled=true;error.hidden=true;
+ try{
+  const response=await fetch(`/api/proxy/tracking/entry/${button.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({favorite:next})});
+  if(!response.ok){const data=await response.json();throw new Error(typeof data.detail==='string'?data.detail:'Could not update this favorite.');}
+  location.reload();
+ }catch(cause){error.textContent=(cause as Error).message;error.hidden=false;button.disabled=false;}
 });
 document.querySelectorAll<HTMLButtonElement>('[data-season-progress]').forEach(button=>button.addEventListener('click',async()=>{
  button.disabled=true;
