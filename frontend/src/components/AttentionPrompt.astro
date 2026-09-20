@@ -1,0 +1,59 @@
+<aside class="attention-prompt" data-attention-prompt hidden aria-live="polite" aria-label="Notification requiring attention">
+  <div class="attention-prompt-copy">
+    <span class="eyebrow" data-attention-kicker>Needs attention</span>
+    <strong data-attention-title></strong>
+    <p data-attention-message></p>
+  </div>
+  <div class="attention-prompt-actions">
+    <a class="button-primary" href="/recent-events" data-attention-action>Review</a>
+    <button class="button-quiet" type="button" data-attention-close aria-label="Hide this prompt for this browsing session">Dismiss</button>
+  </div>
+</aside>
+
+<script>
+  const prompt = document.querySelector<HTMLElement>('[data-attention-prompt]');
+  const hiddenKey = 'anylist-hidden-attention-prompts';
+  const readHidden = () => { try { return new Set<string>(JSON.parse(sessionStorage.getItem(hiddenKey) || '[]')); } catch { return new Set<string>(); } };
+  const writeHidden = (ids: string[]) => { try { sessionStorage.setItem(hiddenKey, JSON.stringify([...readHidden(), ...ids])); } catch {} };
+  if (prompt) {
+    let visibleIds: string[] = [];
+    const hide = () => { writeHidden(visibleIds); prompt.hidden = true; };
+    prompt.querySelector('[data-attention-close]')?.addEventListener('click', hide);
+    let startX: number | null = null;
+    prompt.addEventListener('pointerdown', event => { startX = event.clientX; });
+    prompt.addEventListener('pointerup', event => { if (startX != null && Math.abs(event.clientX - startX) > 64) hide(); startX = null; });
+    document.addEventListener('media-tracker:rating-changed', hide);
+
+    fetch('/api/proxy/tracking/recent-events').then(response => response.ok ? response.json() : null).then(data => {
+      if (!data) return;
+      const hidden = readHidden();
+      const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high' && !hidden.has(String(item.id)));
+      const ratings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media && !hidden.has(String(item.id)));
+      const items = [...conflicts, ...ratings];
+      if (!items.length) return;
+      visibleIds = items.map((item: any) => String(item.id));
+      const title = prompt.querySelector<HTMLElement>('[data-attention-title]')!;
+      const message = prompt.querySelector<HTMLElement>('[data-attention-message]')!;
+      const action = prompt.querySelector<HTMLAnchorElement>('[data-attention-action]')!;
+      if (items.length > 1) {
+        const summary = [];
+        if (ratings.length) summary.push(`${ratings.length} ${ratings.length === 1 ? 'title' : 'titles'} ready to rate`);
+        if (conflicts.length) summary.push(`${conflicts.length} ${conflicts.length === 1 ? 'change' : 'changes'} need review`);
+        title.textContent = summary.join(' · ');
+        message.textContent = 'Open Notifications to work through the queue one item at a time.';
+        action.textContent = 'Open notifications';
+      } else if (conflicts.length) {
+        title.textContent = 'A change needs your review';
+        message.textContent = conflicts[0].message || 'A connected service reported a change that conflicts with your list.';
+        action.textContent = 'Review change';
+      } else {
+        const item = ratings[0];
+        title.textContent = `${item.media.title} is ready to rate`;
+        message.textContent = 'Your completed title is still unrated.';
+        action.textContent = 'Rate now';
+        action.href = `/title/${item.media.id}?rate=1`;
+      }
+      prompt.hidden = false;
+    }).catch(() => {});
+  }
+</script>

@@ -3,6 +3,7 @@ import '../styles/tracker.css';
 import AppBar from '../components/AppBar.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import QuickRating from '../components/QuickRating.astro';
+import AttentionPrompt from '../components/AttentionPrompt.astro';
 const {title = 'AnyList'} = Astro.props;
 ---
 <!doctype html>
@@ -12,6 +13,7 @@ const {title = 'AnyList'} = Astro.props;
   <AppBar />
   <main id="content"><slot /></main>
   <QuickRating />
+  {Astro.locals.user && <AttentionPrompt />}
   <PwaRuntime />
   <footer class="page-footer">AnyList <span>Keep a little history of the stories you love.</span></footer>
 </body></html>
