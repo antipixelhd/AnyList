@@ -2,6 +2,8 @@
 import Icon from './Icon.astro';
 import BrandMark from './BrandMark.astro';
 
+const { showBrand = true } = Astro.props;
+
 const features = [
   { icon: 'list', title: 'One clear watch journal', copy: 'Movies and series grouped by Watching, Completed, Paused, Dropped, and Planning.' },
   { icon: 'star', title: 'Ratings with room for nuance', copy: 'Score titles in half-points, keep season ratings, and see what the people you follow thought.' },
@@ -10,10 +12,10 @@ const features = [
 ---
 
 <div class="auth-hero">
-  <a class="auth-brand" href="/login" aria-label="AnyList sign in">
+  {showBrand && <a class="auth-brand" href="/login" aria-label="AnyList sign in">
     <BrandMark size={46}/>
     <span>AnyList</span>
-  </a>
+  </a>}
   <p class="auth-kicker">Your private media journal</p>
   <h1>Keep every story<br/><span>in one place.</span></h1>
   <p class="auth-lead">A clean, self-hosted home for the movies and series you watch, rate, and share with friends.</p>

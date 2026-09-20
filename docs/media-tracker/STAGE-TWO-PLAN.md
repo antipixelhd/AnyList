@@ -335,6 +335,8 @@ Visual-pass progress: a measured first-viewport pass now aligns the avatar with 
 - Inventory and remove obsolete Scrob-era UI pages and navigation that are no longer part of AnyList. Preserve required APIs, migrations, stored-state compatibility, upstream attribution, and deliberate redirects; do not leave two competing user interfaces or break external integration routes merely because their technical identifier still contains `scrob`.
 - Rework login and authentication-facing layout to use the AnyList visual system rather than the legacy Scrob page style, while preserving Google sign-in, password fallback where configured, recovery, accessibility, and error behavior.
 
+Login progress: the sign-in route now has a full-width AnyList navy/blue shell, quiet public navigation, restrained hero, matching form surfaces and responsive layout. Its existing password, conditional OIDC, 2FA, recovery and bootstrap-restore paths remain wired; local invalid-password handling and desktop/phone rendering were checked. Public Google and 2FA interaction on the final deployed build still need verification. The obsolete Scrob-page inventory/removal is separate and remains open.
+
 ### Required verification for this backlog
 
 - Each behavior above needs focused regression or browser evidence before it can be marked complete. The connected-completion path must be tested against an established disposable provider baseline, and pending delivery must cover multiple providers with success, partial failure, retry, and final removal.

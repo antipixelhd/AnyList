@@ -4,6 +4,12 @@ Updated 2026-09-20. Release one is complete, validated locally, and deployed to 
 
 Owner review of deployed build `504c687` produced a new mandatory Phase Two backlog. The current deployment remains a verified baseline but is no longer eligible for final approval. `STAGE-TWO-PLAN.md` now requires a condensed rating-aware quick editor, denser lists and corrected shell styling, grouped multi-provider delivery state, repaired connected-completion notifications/activity, desktop-only AniList-style Fast search, an AniList-measured layout/Stats pass, distinct Favorite and streaming-Library actions, legacy Scrob-UI removal, an AnyList login redesign, and ratings attached to Rated activity. No application code was changed in the documentation checkpoint that recorded these findings.
 
+## AnyList sign-in surface (2026-09-20)
+
+The login route now uses a full-width AnyList shell: restrained navy gradient, shared blue accent, compact branding/public navigation, and a focused sign-in panel. The legacy poster wall, old zinc card treatment, duplicate auth brand and phone marketing tiles are gone. The layout's new `fullBleed` option affects this route only. Native reading/tab order replaces positive `tabindex` values, and error/success messages have live semantics. Conditional Google/OIDC, password fallback, 2FA, forgot-password, registration and first-run restore logic remain in place; first-run restore surfaces use the same panel styling.
+
+The Astro production build passed. Anonymous local browser QA reviewed 1440×900 and 390×844 screenshots, verified no horizontal overflow at 390×844 or 320×720, and submitted deliberately invalid credentials to confirm an error appears while the form remains usable. The local instance has OIDC disabled and no 2FA fixture, so those interactions require final deployed verification before the authentication gate closes.
+
 ## Stats visual hierarchy pass (2026-09-20)
 
 The six Stats highlights now form a flat, icon-led ledger with type size, weight and fine separators carrying the grouping. Current-list status, score distribution, viewing activity and genre charts sit in open sections rather than repeated bordered cards. The underlying values, media/year controls, Chart.js canvases, accessible headings and adjacent chart summaries remain intact; no statistics calculation changed.

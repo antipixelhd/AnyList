@@ -29,7 +29,7 @@ The full behavior contract and acceptance tests are in the **Owner acceptance fi
 | Denser compact rows, AniList-measured first-viewport profile/list geometry and consistent filters/type/spacing | In progress | Record reproducible reference measurements and complete desktop, 1440p/4K, and phone checks. |
 | Stats visual hierarchy using icons, spacing and typography instead of repeated generic cards | Locally implemented | Recheck media/year filters, charts, summaries and accessibility on final deployed desktop and phone builds. |
 | Separate Favorite from streaming Library add/remove on title details | Open | Implement honest per-provider pending/error feedback and verify remote delivery semantics. |
-| Remove obsolete Scrob UI pages and redesign login in AnyList style | Open | Inventory redirects/integration routes; preserve Google, configured password fallback, recovery and accessibility. |
+| Remove obsolete Scrob UI pages and redesign login in AnyList style | Login locally implemented; legacy-page inventory open | Inventory redirects/integration routes; verify deployed Google, configured password fallback, 2FA, recovery and accessibility. |
 | Rated activity displays its score; legacy missing-score rows do not claim a rating | Locally implemented | Recheck the reported Interstellar-style row and scored activity on final build. |
 
 No Phase Two approval request is due while any row above remains open or final deployment, CI, physical-device verification, and owner review remain outstanding.

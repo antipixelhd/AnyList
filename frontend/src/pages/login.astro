@@ -1,8 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
-import PosterWall from "../components/PosterWall.astro";
 import AuthHero from "../components/AuthHero.astro";
-import AuthMobileFeatures from "../components/AuthMobileFeatures.astro";
+import BrandMark from "../components/BrandMark.astro";
 import { api } from "../lib/api";
 import type { OidcConfig } from "../lib/api";
 
@@ -108,53 +107,32 @@ if (token) {
   return Astro.redirect(nextPath);
 }
 
-// When the nav bar renders (logged-out navigation enabled), it adds real
-// height above this section that the fixed 9rem/5rem budget below doesn't
-// know about - without this, the page overflows by the nav's height even
-// though the hero content itself fits the viewport.
-const heroMinHeightClass = showNav
-  ? "min-h-[calc(100dvh-14rem)] md:min-h-[calc(100dvh-10rem)]"
-  : "min-h-[calc(100dvh-9rem)] md:min-h-[calc(100dvh-5rem)]";
 ---
 
-<Base title="Welcome" hideNav={!showNav}>
-  <!-- Decorative poster-wall background (full viewport, behind content) -->
-  <PosterWall />
+<Base title="Welcome" hideNav={true} fullBleed={true}>
+  <div class="anylist-login">
+    <header class="login-topbar">
+      <a href="/login" class="login-brand" aria-label="AnyList sign in"><BrandMark size={32}/><span>AnyList</span></a>
+      {showNav && <nav aria-label="Public navigation"><a href="/movies">Movies</a><a href="/shows">Series</a><a href="/browse">Browse</a></nav>}
+    </header>
+  <div class="login-main">
+    <div class="login-layout">
 
-  {!showNav && (
-  <button
-    id="theme-toggle"
-    tabindex="1"
-    class="fixed top-4 right-4 z-20 p-2 rounded-lg bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95"
-    aria-label="Toggle Theme"
-  >
-    <span id="sun-icon" class="hidden">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-    </span>
-    <span id="moon-icon">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-    </span>
-  </button>
-  )}
-
-  <div class={`relative z-10 ${heroMinHeightClass} flex items-center py-6 md:py-10`}>
-    <div class="w-full grid md:grid-cols-2 gap-8 md:gap-12 lg:gap-20 items-center">
-
-      <AuthHero />
+      <AuthHero showBrand={false}/>
 
       <!-- Login card -->
-      <div class="w-full max-w-md mx-auto md:justify-self-end">
-        <div class="p-8 bg-zinc-900/85 backdrop-blur-md rounded-xl border border-zinc-800 shadow-2xl">
+      <div class="login-form-column">
+        <div class="auth-panel p-8 bg-zinc-900/85 backdrop-blur-md rounded-xl border border-zinc-800 shadow-2xl">
     <h2 class="text-2xl font-bold mb-6 text-zinc-100 text-center">Sign in</h2>
 
     {error && (
-      <div class="bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6">
+      <div role="alert" class="auth-error bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6">
         {error}
       </div>
     )}
 
     {success && (
-      <div class="bg-green-500/10 border border-green-500 text-green-400 p-3 rounded-lg mb-6">
+      <div role="status" class="auth-success bg-green-500/10 border border-green-500 text-green-400 p-3 rounded-lg mb-6">
         {success}
       </div>
     )}
@@ -165,8 +143,7 @@ const heroMinHeightClass = showNav
         {oidcConfig.enabled && (
           <a
             href={`/oidc-start?next=${encodeURIComponent(nextPath)}`}
-            tabindex="2"
-            class="flex items-center justify-center gap-2 w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 font-bold py-2 rounded-lg transition-colors cursor-pointer mb-4"
+            class="auth-oidc flex items-center justify-center gap-2 w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 font-bold py-2 rounded-lg transition-colors cursor-pointer mb-4"
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
               <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
@@ -189,7 +166,7 @@ const heroMinHeightClass = showNav
 
         {/* Password form */}
         {!oidcConfig.disable_password_login && (
-          <form method="POST" class="space-y-4">
+          <form method="POST" class="auth-form space-y-4">
             <input type="hidden" name="_step" value="login" />
             <input type="hidden" name="_next" value={nextPath} />
             <div>
@@ -200,15 +177,14 @@ const heroMinHeightClass = showNav
                 id="username"
                 autocomplete="username"
                 required
-                tabindex="3"
-                class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
               />
             </div>
             <div>
             <div class="flex items-center justify-between">
                 <label for="password" class="block text-sm font-medium text-zinc-400">Password</label>
                 {smtpConfigured && (
-                  <a href="/forgot-password" tabindex="7" class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Forgot password?</a>
+                  <a href="/forgot-password" class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Forgot password?</a>
                 )}
               </div>
               <div class="relative group/field">
@@ -218,12 +194,10 @@ const heroMinHeightClass = showNav
                   id="password"
                   autocomplete="current-password"
                   required
-                  tabindex="4"
-                  class="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 />
                 <button
                   type="button"
-                  tabindex="5"
                   class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
                   aria-label="Toggle password visibility"
                 >
@@ -239,8 +213,7 @@ const heroMinHeightClass = showNav
             </div>
             <button
               type="submit"
-              tabindex="6"
-              class="w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
+              class="auth-submit w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
             >
               Sign In
             </button>
@@ -249,12 +222,12 @@ const heroMinHeightClass = showNav
 
         {!oidcConfig.disable_password_login && registrationEnabled && (
           <div class="mt-6 text-center text-sm text-zinc-500">
-            Don't have an account? <a href="/register" tabindex="8" class="text-zinc-100 hover:underline">Register</a>
+            Don't have an account? <a href="/register" class="text-zinc-100 hover:underline">Register</a>
           </div>
         )}
       </>
     ) : (
-      <form method="POST" class="space-y-4">
+      <form method="POST" class="auth-form space-y-4">
         <input type="hidden" name="_step" value="verify_2fa" />
         <input type="hidden" name="temp_token" value={tempToken} />
         <input type="hidden" name="_next" value={nextPath} />
@@ -276,12 +249,12 @@ const heroMinHeightClass = showNav
             autocomplete="one-time-code"
             inputmode="numeric"
             placeholder="000000 or XXXX-XXXX"
-            class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-center tracking-widest text-lg font-mono"
+            class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-center tracking-widest text-lg font-mono"
           />
         </div>
         <button
           type="submit"
-          class="w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
+          class="auth-submit w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
         >
           Verify
         </button>
@@ -299,7 +272,7 @@ const heroMinHeightClass = showNav
               <span class="text-xs text-zinc-600">or restore from backup</span>
               <div class="flex-1 border-t border-zinc-800"></div>
             </div>
-            <div class="p-6 bg-zinc-900/85 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl">
+            <div class="bootstrap-restore-panel p-6 bg-zinc-900/85 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl">
               <h2 class="font-semibold text-zinc-100 mb-1">Restore Database</h2>
               <p class="text-sm text-zinc-400 mb-4">Upload a <code class="text-zinc-300">.bak</code> file to restore a previous installation.</p>
               <div class="flex flex-col gap-3">
@@ -315,15 +288,15 @@ const heroMinHeightClass = showNav
           </div>
         )}
 
-        <AuthMobileFeatures />
       </div>
     </div>
+  </div>
   </div>
 </Base>
 <!-- Bootstrap Restore Confirmation Modal -->
 <div id="bootstrap-restore-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="bootstrap-restore-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
-  <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
+  <div class="bootstrap-restore-dialog relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
     <h2 class="text-xl font-black text-zinc-100 mb-2">Restore Database?</h2>
     <p class="text-sm text-zinc-400 mb-1">Restoring from:</p>
     <p id="bootstrap-restore-modal-filename" class="text-sm text-zinc-100 font-medium mb-4 break-all"></p>
@@ -342,6 +315,35 @@ const heroMinHeightClass = showNav
     </div>
   </div>
 </div>
+
+<style>
+  .anylist-login{min-height:100dvh;background:radial-gradient(ellipse 75% 70% at 16% 23%,#294561 0%,transparent 65%),linear-gradient(125deg,#15283c 0%,#101f30 55%,#0d1a29 100%);color:#d7e4ee;font-family:Inter,"Segoe UI",sans-serif}
+  .login-topbar{height:calc(72px + env(safe-area-inset-top));display:flex;align-items:center;justify-content:space-between;gap:28px;padding:env(safe-area-inset-top) max(24px,calc((100vw - 1340px)/2 + 24px)) 0;border-bottom:1px solid #ffffff12;background:#142131dd}
+  .login-brand{display:inline-flex;align-items:center;gap:11px;color:#f1f8fd;font-size:17px;font-weight:700;letter-spacing:-.02em}
+  .login-topbar nav{display:flex;gap:28px;color:#a9bfd0;font-size:13px;font-weight:600}
+  .login-topbar nav a:hover,.login-topbar nav a:focus-visible{color:#56c0f6}
+  .login-main{min-height:calc(100dvh - 72px - env(safe-area-inset-top));display:grid;align-items:center;padding:56px 24px 74px}
+  .login-layout{width:100%;max-width:1292px;margin:auto;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(360px,440px);align-items:center;gap:clamp(40px,6vw,100px)}
+  .login-form-column{width:100%}
+  .anylist-login .auth-panel{padding:34px 36px;background:#192b3ded;border:1px solid #355069;border-radius:8px;box-shadow:0 20px 55px #06121e70}
+  .auth-panel h2{margin:0 0 26px;color:#f2f8fc;text-align:left;font-size:24px;font-weight:700}
+  .anylist-login .auth-panel label{color:#adc2d1}
+  .anylist-login .auth-input{min-height:46px;background:#122235;border:1px solid #355069;border-radius:5px;color:#f1f8fd}
+  .anylist-login .auth-input:focus{border-color:#56bdf1;outline:2px solid #3db4f280;outline-offset:2px;box-shadow:none}
+  .anylist-login .auth-oidc{min-height:46px;background:#213b51;border:1px solid #40627e;border-radius:5px;color:#edf7fc;font-size:13px}
+  .anylist-login .auth-oidc:hover,.anylist-login .auth-oidc:focus-visible{background:#2a4b64;border-color:#66c8f6;color:#fff}
+  .anylist-login .auth-submit{min-height:46px;background:#3db4f2;border-radius:5px;color:#07131d;font-size:14px}
+  .anylist-login .auth-submit:hover,.anylist-login .auth-submit:focus-visible{background:#66c7f6;color:#07131d}
+  .anylist-login .auth-error{border-color:#9c5365;color:#ffd1db;background:#4d263744}
+  .anylist-login .auth-success{border-color:#397d68;color:#c2efd9;background:#1c493f55}
+  .anylist-login .auth-panel a:not(.auth-oidc){color:#9dd9f7}
+  .anylist-login .auth-panel a:not(.auth-oidc):hover{color:#d3f0ff}
+  .anylist-login .bootstrap-restore-panel{background:#192b3d;border-color:#355069;border-radius:8px}
+  .bootstrap-restore-dialog{background:#192b3d;border-color:#355069;border-radius:8px}
+  .anylist-login a:focus-visible,.anylist-login button:focus-visible{outline:2px solid #66c8f6;outline-offset:3px}
+  @media(max-width:767px){.login-topbar{height:calc(64px + env(safe-area-inset-top));padding:env(safe-area-inset-top) max(20px,env(safe-area-inset-right)) 0 max(20px,env(safe-area-inset-left))}.login-topbar nav{gap:14px;font-size:12px}.login-main{min-height:calc(100dvh - 64px - env(safe-area-inset-top));padding:40px 16px 56px}.login-layout{grid-template-columns:1fr;gap:30px;max-width:480px}.anylist-login .auth-panel{padding:27px 24px}.auth-panel h2{font-size:21px}}
+  @media(max-width:380px){.login-topbar nav{gap:10px}.login-topbar nav a{font-size:11px}.login-brand{font-size:15px}}
+</style>
 
 <script>
   function setupPasswordToggles() {
