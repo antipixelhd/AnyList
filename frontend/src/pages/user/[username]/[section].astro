@@ -14,6 +14,7 @@ const entries = data?.entries || [];
 const genres = [...new Set(entries.flatMap((e: any) => e.genres))].sort();
 const years = [...new Set(entries.map((e:any)=>e.year).filter(Boolean))].sort().reverse();
 const profile = `/user/${encodeURIComponent(username!)}`;
+const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.locals.token).catch(() => ({default_sort:'title'})) : {default_sort:'title'};
 ---
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`}>
   {data ? <>
@@ -26,7 +27,7 @@ const profile = `/user/${encodeURIComponent(username!)}`;
         <h2>Filters</h2><select id="genre-filter" aria-label="Genre"><option value="">All genres</option>{genres.map(g=><option>{g}</option>)}</select>
         <select id="year-filter" aria-label="Release year"><option value="">All years</option>{years.map(y=><option>{y}</option>)}</select>
         <select id="favorite-filter" aria-label="Favorites"><option value="">All entries</option><option value="yes">Favorites only</option></select>
-        <h2>Sort</h2><select id="sort-filter" aria-label="Sort list"><option value="title">Title</option><option value="score">Score</option><option value="progress">Progress</option><option value="updated">Recently updated</option></select>
+        <h2>Sort</h2><select id="sort-filter" aria-label="Sort list"><option value="title" selected={viewerPrefs.default_sort==='title'}>Title</option><option value="score" selected={viewerPrefs.default_sort==='score'}>Score</option><option value="progress" selected={viewerPrefs.default_sort==='progress'}>Progress</option><option value="updated" selected={viewerPrefs.default_sort==='updated'}>Recently updated</option></select>
         <button class="button-secondary" id="reset-filters">Reset filters</button>
       </aside>
       <div class="list-content"><div class="list-toolbar"><span id="result-count" aria-live="polite">{entries.length} entries</span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
@@ -103,5 +104,6 @@ const profile = `/user/${encodeURIComponent(username!)}`;
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();groups.classList.toggle('grid-view',button.dataset.view==='grid');document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
     document.querySelector('.mobile-filter-toggle')!.addEventListener('click',event=>{const open=document.querySelector('#list-filters')!.classList.toggle('open');(event.currentTarget as HTMLElement).setAttribute('aria-expanded',String(open));});
     document.addEventListener('media-tracker:rating-changed', filter);
+    filter();
   }
 </script>

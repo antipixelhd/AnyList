@@ -89,6 +89,7 @@ async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get
 class PreferencePatch(BaseModel):
     auto_confirm: bool | None = None
     combine_lists: bool | None = None
+    default_sort: Literal['title', 'score', 'progress', 'updated'] | None = None
     low_priority_notifications: bool | None = None
     low_priority_retention_days: int | None = Field(None, ge=1, le=90)
 
@@ -99,6 +100,7 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
     return {
         'auto_confirm': bool(row and row.auto_confirm),
         'combine_lists': True if row is None else row.combine_lists,
+        'default_sort': 'title' if row is None else row.default_sort,
         'low_priority_notifications': True if row is None else row.low_priority_notifications,
         'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
     }
@@ -731,7 +733,8 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
     if body.season_scores and any(body.season_scores.values()) and not any(entry.season_scores.values()) and body.rating_mode is None:
         raise HTTPException(409, "Choose average seasons or a separate show score")
     status = body.status.value if body.status else entry.status
-    entry.start_date, entry.finish_date = default_dates(previous, status, entry.start_date, entry.finish_date, date.today())
+    today = datetime.now(timezone.utc).date()
+    entry.start_date, entry.finish_date = default_dates(previous, status, entry.start_date, entry.finish_date, today)
     entry.status = status
     for name in ("manual_score", "rating_mode", "favorite", "notes", "start_date", "finish_date", "rewatch_count"):
         if name in fields:
@@ -765,7 +768,7 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             # completed title remains completed even when correcting history.
             from core.tracking_rules import observed_status
             entry.status = observed_status(previous, target == len(episodes), True)
-            entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, date.today())
+            entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
             local_status_decision = entry.status != previous
     if local_status_decision:
         mark_status_change(entry, 'local')

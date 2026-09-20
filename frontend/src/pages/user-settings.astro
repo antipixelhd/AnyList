@@ -8,7 +8,7 @@ const { token } = Astro.locals;
 const [profileData, me, trackingPrefs] = await Promise.all([
   api.profile.get(token!).catch(() => null),
   api.auth.me(token!),
-  tracker('preferences', token!).catch(() => ({ combine_lists: true })),
+  tracker('preferences', token!).catch(() => ({ combine_lists: true, default_sort: 'title' })),
 ]);
 
 const prefs: UserPreferences = {
@@ -235,6 +235,17 @@ const COUNTRIES = [
           <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
           <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
         </label>
+        <div class="settings-inline-grid settings-single-column">
+          <label>Default list sorting
+            <select id="default-list-sort">
+              <option value="title" selected={trackingPrefs.default_sort === 'title'}>Title</option>
+              <option value="score" selected={trackingPrefs.default_sort === 'score'}>Score</option>
+              <option value="progress" selected={trackingPrefs.default_sort === 'progress'}>Progress</option>
+              <option value="updated" selected={trackingPrefs.default_sort === 'updated'}>Recently updated</option>
+            </select>
+            <small>Applied when you open your own or another public list.</small>
+          </label>
+        </div>
       </section>
 
       <!-- Device notifications -->
@@ -620,23 +631,31 @@ const COUNTRIES = [
 
     // Save
     const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
-    combineLists?.addEventListener('change', async () => {
-      combineLists.disabled = true;
+    const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
+    if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
+    if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
+    async function saveTrackingPreferences(change: Record<string, unknown>, control: HTMLInputElement | HTMLSelectElement) {
+      const previous = control.dataset.savedValue ?? '';
+      control.disabled = true;
       try {
         const response = await fetch('/api/proxy/tracking/preferences', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ combine_lists: combineLists.checked }),
+          body: JSON.stringify(change),
         });
-        if (!response.ok) throw new Error('Could not update your list presentation.');
-        showMessage('List presentation updated.');
+        if (!response.ok) throw new Error('Could not update your list preferences.');
+        control.dataset.savedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
+        showMessage('List preferences updated.');
       } catch (error) {
-        combineLists.checked = !combineLists.checked;
-        showMessage(error instanceof Error ? error.message : 'Could not update your list presentation.', 'error');
+        if (control instanceof HTMLInputElement) control.checked = previous === 'true';
+        else control.value = previous;
+        showMessage(error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
       } finally {
-        combineLists.disabled = false;
+        control.disabled = false;
       }
-    });
+    }
+    combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists));
+    defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort));
 
     // Completion-rating Web Push is enrolled per browser/PWA installation.
     const pushButton = document.getElementById('push-notifications-toggle') as HTMLButtonElement | null;

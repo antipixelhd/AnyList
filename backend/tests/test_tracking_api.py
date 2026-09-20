@@ -5,7 +5,7 @@ Set TRACKING_TEST_DATABASE_URL to the disposable local database; never productio
 import os
 import unittest
 from unittest.mock import AsyncMock, patch
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
@@ -159,7 +159,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.save(self.movie,status='completed')
         self.assertEqual(res.status_code,200,res.text)
         self.assertIsNone(res.json()['start_date'])
-        self.assertEqual(res.json()['finish_date'],date.today().isoformat())
+        self.assertEqual(res.json()['finish_date'],datetime.now(timezone.utc).date().isoformat())
         res=await self.save(self.movie,finish_date=None)
         self.assertIsNone(res.json()['finish_date'])
         res=await self.save(self.movie,status='completed')
@@ -658,14 +658,18 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(initial.status_code,200,initial.text)
         self.assertEqual(initial.json(),{
             'auto_confirm':False,'combine_lists':True,
+            'default_sort':'title',
             'low_priority_notifications':True,'low_priority_retention_days':7,
         })
         changed=await self.client.patch('/tracking/preferences',json={
-            'combine_lists':False,'low_priority_notifications':False,'low_priority_retention_days':14,
+            'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,'low_priority_retention_days':14,
         })
         self.assertEqual(changed.status_code,200,changed.text)
         self.assertFalse(changed.json()['combine_lists'])
+        self.assertEqual(changed.json()['default_sort'],'updated')
         self.assertEqual(changed.json()['low_priority_retention_days'],14)
+        invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
+        self.assertEqual(invalid.status_code,422,invalid.text)
 
     async def test_resolved_low_priority_notification_disappears_after_seen(self):
         review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='playback_removed',state='confirmed',message='Applied automatically')

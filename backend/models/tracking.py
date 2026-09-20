@@ -54,6 +54,7 @@ class TrackingPreferences(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     auto_confirm: Mapped[bool] = mapped_column(Boolean, default=False)
     combine_lists: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    default_sort: Mapped[str] = mapped_column(String(16), default="title", server_default="title")
     low_priority_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     low_priority_retention_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
 
