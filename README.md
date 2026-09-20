@@ -15,13 +15,14 @@ The current release focuses on movies and whole television shows. It provides ha
 - TMDB and TheTVDB provide the central catalog. MDBList can supply distinct IMDb and Rotten Tomatoes ratings.
 - Invite-only Google OpenID Connect is supported when an administrator configures a client; unknown identities are not auto-created.
 
-The detailed product contract, accepted edge cases, test scenarios, and current handoff live in [`../docs/media-tracker`](../docs/media-tracker/PLAN.md):
+The detailed product contract, accepted edge cases, test scenarios, and current handoff live in [`docs/media-tracker`](docs/media-tracker/PLAN.md):
 
-- [Product plan](../docs/media-tracker/PLAN.md)
-- [Implementation and acceptance scenarios](../docs/media-tracker/IMPLEMENTATION.md)
-- [Current verified status](../docs/media-tracker/STATUS.md)
-- [Remaining external verification gates](../docs/media-tracker/FOLLOW-UP.md)
-- [AniList interface analysis](../docs/media-tracker/ANILIST-ANALYSIS.md)
+- [Product plan](docs/media-tracker/PLAN.md)
+- [Stage-two product contract](docs/media-tracker/STAGE-TWO-PLAN.md)
+- [Implementation and acceptance scenarios](docs/media-tracker/IMPLEMENTATION.md)
+- [Current verified status](docs/media-tracker/STATUS.md)
+- [Remaining external verification gates](docs/media-tracker/FOLLOW-UP.md)
+- [AniList interface analysis](docs/media-tracker/ANILIST-ANALYSIS.md)
 
 ## Local development
 

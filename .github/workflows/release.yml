@@ -1,8 +1,7 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   release:
@@ -54,12 +53,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -76,14 +69,11 @@ jobs:
           build-args: |
             APP_VERSION=${{ needs.release.outputs.new_release_version }}
           tags: |
-            bellamy/scrob:latest
-            bellamy/scrob:main
-            bellamy/scrob:${{ needs.release.outputs.new_release_version }}
-            ghcr.io/ellite/scrob:latest
-            ghcr.io/ellite/scrob:main
-            ghcr.io/ellite/scrob:${{ needs.release.outputs.new_release_version }}
-          cache-from: type=gha,scope=scrob-release
-          cache-to: type=gha,mode=max,scope=scrob-release
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:main
+            ghcr.io/${{ github.repository }}:${{ needs.release.outputs.new_release_version }}
+          cache-from: type=gha,scope=anylist-release
+          cache-to: type=gha,mode=max,scope=anylist-release
 
       - name: Build and push omnibus image
         uses: docker/build-push-action@v6
@@ -95,11 +85,8 @@ jobs:
           build-args: |
             APP_VERSION=${{ needs.release.outputs.new_release_version }}
           tags: |
-            bellamy/scrob:latest-omnibus
-            bellamy/scrob:main-omnibus
-            bellamy/scrob:${{ needs.release.outputs.new_release_version }}-omnibus
-            ghcr.io/ellite/scrob:latest-omnibus
-            ghcr.io/ellite/scrob:main-omnibus
-            ghcr.io/ellite/scrob:${{ needs.release.outputs.new_release_version }}-omnibus
-          cache-from: type=gha,scope=scrob-omnibus-release
-          cache-to: type=gha,mode=max,scope=scrob-omnibus-release
+            ghcr.io/${{ github.repository }}:latest-omnibus
+            ghcr.io/${{ github.repository }}:main-omnibus
+            ghcr.io/${{ github.repository }}:${{ needs.release.outputs.new_release_version }}-omnibus
+          cache-from: type=gha,scope=anylist-omnibus-release
+          cache-to: type=gha,mode=max,scope=anylist-omnibus-release
