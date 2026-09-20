@@ -88,19 +88,19 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
   };
   async function load(){
     if(!query||!typeSelect)return;
-    controller?.abort();controller=new AbortController();
+    controller?.abort();const request=new AbortController();controller=request;
     const term=query.value.trim();const type=typeSelect.value;
-    if(status)status.textContent='Loading…';if(error)error.hidden=true;
+    if(status)status.textContent='Loading…';if(error)error.hidden=true;if(grid)grid.setAttribute('aria-busy','true');
     const params=new URLSearchParams();if(term)params.set('q',term);if(type==='series')params.set('type','series');
     history.replaceState(null,'',`${location.pathname}${params.size?`?${params}`:''}`);
     try{
       let response:Response;let payload:any;let isTrending=!term;
-      if(term){response=await fetch(`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:type,q:term})}`,{signal:controller.signal});payload=await response.json();if(!response.ok)throw new Error('Unable to load titles. Please try again.');}
-      else{response=await fetch(`/api/proxy/media/trending/${type==='movie'?'movies':'shows'}?page=1`,{signal:controller.signal});payload=response.ok?await response.json():{results:[]};}
+      if(term){response=await fetch(`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:type,q:term})}`,{signal:request.signal});payload=await response.json();if(!response.ok)throw new Error('Unable to load titles. Please try again.');}
+      else{response=await fetch(`/api/proxy/media/trending/${type==='movie'?'movies':'shows'}?page=1`,{signal:request.signal});payload=response.ok?await response.json():{results:[]};}
       let items=unique((payload.results||[]).map((item:any)=>normalize(item,type)).filter((item:any)=>!item.adult));
       let message=payload.notice||'';
       if(!term&&!items.length){
-        const fallback=await fetch(`/api/proxy/tracking/catalog?media_type=${type}`,{signal:controller.signal});
+        const fallback=await fetch(`/api/proxy/tracking/catalog?media_type=${type}`,{signal:request.signal});
         if(!fallback.ok)throw new Error('Unable to load titles. Please try again.');
         items=unique((await fallback.json()).results.map((item:any)=>normalize(item,type)));isTrending=false;
         message='Trending is temporarily unavailable. Showing the local catalogue.';
@@ -110,7 +110,12 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
       if(status)status.textContent=message;
     }catch(reason){
       if((reason as Error).name==='AbortError')return;
-      if(status)status.textContent='';if(error){error.hidden=false;error.textContent=(reason as Error).message;}
+      if(status)status.textContent='';if(grid)grid.hidden=true;if(empty)empty.hidden=true;
+      if(heading)heading.textContent=term?'Search unavailable':'Browse unavailable';
+      if(intro)intro.textContent='Try again in a moment.';
+      if(error){error.hidden=false;error.textContent='Unable to load titles. Please try again.';}
+    }finally{
+      if(controller===request&&grid)grid.setAttribute('aria-busy','false');
     }
   }
   form?.addEventListener('submit',event=>{event.preventDefault();void load();});
