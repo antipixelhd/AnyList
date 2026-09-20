@@ -71,3 +71,11 @@ Added at the user's request as list-page, navigation, and filter inspiration. Th
 
 Do not copy unrelated Reviews/Submissions tabs, the random/shuffle action, separate anime season entries, or rewatch automation into release one solely because they appear here. The accepted product specification still defines scope; this screenshot defines layout and interaction inspiration.
 
+## Phase Two owner-review reference pass
+
+The next implementation pass must inspect the live [AniList list](https://anilist.co/user/antipixel/animelist) and [AniList stats overview](https://anilist.co/user/antipixel/stats/anime/overview) with `agent-browser` before choosing replacement layout constants. Record the viewport, browser scaling, app-bar/profile/filter/list coordinates, row heights, font sizes/weights, and relevant gaps in the verification record.
+
+For the list/profile comparison, scope the visual reference to the top desktop 16:9 viewport. Use its relative placement and rhythm for the logo, app bar, profile gradient/header, avatar, profile navigation, left filter rail, and compact rows. This is a targeted geometry and hierarchy pass, not permission to copy AniList branding, anime-only fields, or the full page.
+
+For Stats, use the reference's icons, whitespace, alignment, typography and restrained separators to replace the current lifeless repeated-card feeling while preserving the already accepted metrics, filters, charts, privacy, and non-canvas text equivalents. Fast search likewise follows AniList's staged desktop composition: animate the input first, then reveal only nonempty category result cards together after the response. Fast search is not supported on phones in Phase Two; mobile discovery continues through Browse.
+

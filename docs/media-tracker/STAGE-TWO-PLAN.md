@@ -274,3 +274,59 @@ Implementation authorization was received after the consolidated contract. Conti
 - AnyList is published as the standalone public repository [antipixelhd/AnyList](https://github.com/antipixelhd/AnyList), with the complete Scrob history, GPLv3 license, upstream attribution, modification notice, and canonical product/verification documents retained in-tree.
 - The publication audit scanned 2,754 historical text blobs across 604 commits. No private keys or account/provider-token formats were found; the four JWT-shaped matches are the upstream ARVIO public anonymous application key and historical rotations. Only `.env.example` appears in sensitive-path history, while runtime credentials and local state remain ignored.
 - Inherited release and container workflows are manual and target only this repository's GHCR namespace. Read-only PostgreSQL backend and Astro frontend CI runs on `main` and pull requests and supports manual dispatch. The local-reference `origin` remains untouched; the public repository is a separate `github` remote.
+
+## Owner acceptance findings — mandatory before Phase Two completion (2026-09-20)
+
+Status: accepted core requirements. These findings reopen the Phase Two implementation gate and supersede any earlier statement that the deployed build is ready for final approval. They are not part of the optional post-approval season work. This checkpoint records requirements only; no application implementation was performed while adding it.
+
+### Quick editor and list density
+
+- Condense the list quick editor so its normal desktop workflow fits within one viewport without scrolling. Remove the separate **Show score** setting from this editor while retaining the existing effective-rating behavior.
+- With no rated seasons, the score behaves as an ordinary whole-show score. With rated seasons in calculated mode, the current season average appears automatically in the score control. Editing that calculated value must invoke the existing explicit manual-override confirmation; it may not silently replace the season average or expose a second mode control merely to make the layout fit.
+- Remove the overall entry total rendered above the first status group, to the right of the filter/list-title area. Status counts in the filter controls remain unless a later requirement explicitly removes them.
+- Reduce compact-row height further to match the live AniList list density while keeping required pointer, keyboard, and touch targets usable. Apply the resulting spacing, type scale, weight, and vertical rhythm consistently to filters and related tracker pages instead of tuning one list in isolation.
+
+### Home, app bar, and settings-shell corrections
+
+- Fix the **Find people** and **Find your next title** hover/focus states so their text remains legible.
+- Home's **Your list** links follow the profile owner's combined-list preference: combined mode shows one Movie/Series List link; separate mode shows distinct Movie List and Series List links.
+- Use a square container for the app-bar profile avatar. Its blue outline appears on hover or keyboard focus rather than as a permanent ring.
+- Restyle Fast search as the same unfilled icon action language used by Settings and Notifications. Its icon uses the shared blue accent instead of white.
+- On desktop, one ordinary wheel/trackpad scroll action is enough to start hiding the app bar. Preserve the existing upward reveal, top-of-page, keyboard-focus, and reduced-motion rules.
+- Correct the app-bar/Fast-search alignment on Settings pages so the control occupies the same area and coordinates as on the tracker pages.
+
+### Pending connection delivery state
+
+- Pending connection updates are grouped once per movie/show, not duplicated once per provider. A single card reports every intended connected-service delivery and embeds any provider-specific error within that title's card.
+- The card disappears only after the change has been delivered successfully to every applicable connected service. Partial success remains visible with the remaining pending or failed provider outcomes; retries must not recreate duplicate title cards.
+
+### Connected completion, rating prompt, and activity regression
+
+- After an established Stremio/Nuvio connection sync newly adds or marks an unrated title Completed, AnyList must create the persistent `rating_needed` notification, make the attention prompt eligible, and publish the completion in recent activity. The existing initial-import flood suppression remains in force; this requirement covers new changes after an established/approved baseline.
+- Add a regression for the reported path: mark **The Death of Robin Hood** watched in Stremio, manually sync AnyList, and verify the movie is Completed in the personal list, appears in recent activity, and has one unresolved rating request. Provider polling and manual sync must share these outcomes.
+- A `Rated` activity must include the actual rating. Never render the Rated action without a score, including legacy/inconsistent rows such as the observed local Interstellar activity; repair or safely reinterpret missing-score records rather than presenting a false rating event.
+
+### Desktop Fast search composition
+
+- Fast search is desktop-only for Phase Two. Do not expose the app-bar Fast-search control or its modal on phone layouts. This supersedes the earlier requirement for a phone category selector inside Fast search; the ordinary Browse page remains the supported phone discovery/search path and still defaults to Trending.
+- Opening Fast search animates in the input/search bar by itself. Result surfaces are not rendered before the user provides input and a search response is ready.
+- After a response, reveal the available category cards together. Render a card only when that category has results. Movies and Series use separate cards or one combined Movies & Series card according to the searching user's preference; future Games and Books get their own cards when those media types exist.
+- Make the dialog/search surface smaller and position the input higher so category cards have deliberate space and separation. Preserve live fuzzy search, stale-request cancellation, loading/error/empty semantics, keyboard focus, Escape/backdrop dismissal, reduced motion, and no submit button.
+
+### AniList-guided visual pass
+
+- Before changing layout constants, use `agent-browser` to measure the live references at [AniList list](https://anilist.co/user/antipixel/animelist) and [AniList stats overview](https://anilist.co/user/antipixel/stats/anime/overview). Record viewport, browser scaling, and measured geometry so the comparison is reproducible.
+- For the profile/list shell, study only the top desktop 16:9 viewport rather than copying the entire page. Match its relationships for logo placement, app-bar height and typography, the gradient between app bar and profile navigation, avatar position aligned with the filter rail, narrower profile-navigation height, and a filter rail shifted left to give the list more width. Preserve AnyList identity and the already accepted mobile adaptations.
+- Rework Stats toward the reference's visual hierarchy. Repeated generic cards should not carry the layout; use icons, whitespace, alignment, type size/weight, restrained separators, and charts to make groups feel intentional while retaining every accepted statistic and accessible text alternative.
+
+### Detail, legacy UI, and authentication surfaces
+
+- Split the title-detail Favorite action from a new Library action. Favorite continues to mean personal preference. Library quickly adds/removes streaming-library membership through the existing Stremio/Nuvio delivery workflow. The UI must identify pending/failed delivery and cannot claim remote success before the applicable connection writes succeed; implementation must make the affected connected libraries clear.
+- Inventory and remove obsolete Scrob-era UI pages and navigation that are no longer part of AnyList. Preserve required APIs, migrations, stored-state compatibility, upstream attribution, and deliberate redirects; do not leave two competing user interfaces or break external integration routes merely because their technical identifier still contains `scrob`.
+- Rework login and authentication-facing layout to use the AnyList visual system rather than the legacy Scrob page style, while preserving Google sign-in, password fallback where configured, recovery, accessibility, and error behavior.
+
+### Required verification for this backlog
+
+- Each behavior above needs focused regression or browser evidence before it can be marked complete. The connected-completion path must be tested against an established disposable provider baseline, and pending delivery must cover multiple providers with success, partial failure, retry, and final removal.
+- Browser evidence must include the measured AniList comparison, 1440p/4K-class desktop layouts, keyboard behavior, the desktop-only Fast-search boundary, Settings-shell alignment, dense large lists, Stats, login, title Library delivery state, and relevant loading/error/empty states.
+- Phase Two cannot return to owner-approval status until this entire section is implemented, documented in `STATUS.md`, committed, deployed, and reverified. Physical Android Chrome and iPhone Safari checks remain required for the phone surfaces that continue to be supported.

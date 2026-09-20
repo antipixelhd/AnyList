@@ -33,8 +33,12 @@ The viewing user's preferred ordering of entries, applied to lists they view wit
 _Avoid_: Profile owner's sorting mandate
 
 **Daily progress activity**:
-A profile activity summarizing a person's progress on one title during one calendar day in that person's saved timezone, even when viewing of other titles interleaves.
+A profile activity summarizing a person's progress on one title during one UTC calendar day, even when viewing of other titles interleaves.
 _Avoid_: One card per episode
+
+**Pending connection update**:
+One title-level operational delivery record for a local change intended for one or more connected services. It remains pending while any applicable provider delivery is pending or failed and clears only after all succeed.
+_Avoid_: One card per provider, successful local save
 
 **Season position**:
 The latest watched regular episode identified by its season and episode number, such as S1E4, alongside the completed-season progress.

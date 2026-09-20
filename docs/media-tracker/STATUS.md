@@ -2,6 +2,8 @@
 
 Updated 2026-09-20. Release one is complete, validated locally, and deployed to the isolated test instance. Stage Two implementation is active. Production rollout is intentionally separate.
 
+Owner review of deployed build `504c687` produced a new mandatory Phase Two backlog. The current deployment remains a verified baseline but is no longer eligible for final approval. `STAGE-TWO-PLAN.md` now requires a condensed rating-aware quick editor, denser lists and corrected shell styling, grouped multi-provider delivery state, repaired connected-completion notifications/activity, desktop-only AniList-style Fast search, an AniList-measured layout/Stats pass, distinct Favorite and streaming-Library actions, legacy Scrob-UI removal, an AnyList login redesign, and ratings attached to Rated activity. No application code was changed in the documentation checkpoint that recorded these findings.
+
 ## Stage Two implementation started
 
 The user authorized the consolidated Stage Two contract in STAGE-TWO-PLAN.md. The first correctness slice fixes quick-rating mode safety, half-star rendering, close-control consistency, live list sort metadata, stale editor responses, series-only fields on movie editors, and calculated season-average previews. Current Headless UI packages support React and Vue rather than Astro directly, so the project retains Astro-native shared components instead of adding a UI runtime solely for primitives.

@@ -26,6 +26,7 @@
 | Entry deletion | Confirmed removal of all personal state for a main list entry, propagated where supported; not deletion of the shared title. |
 | Provider removal | Removal from a connected service's collection, interpreted according to its limited capabilities; not automatically an entry deletion. |
 | Notifications | Private review area for unconfirmed sync interpretations, with confirmation, status correction, and rating actions. Separate from the social feed. |
+| Pending connection update | Operational per-title delivery state for a local change intended for connected services. One visible item may contain multiple provider outcomes and clears only after every applicable delivery succeeds. |
 | Streaming library | Membership mirrored across Stremio/Nuvio accounts independently of main tracked-list entries and statuses. |
 | Plan to Watch | User-facing Planning group for not-yet-started titles; distinct from mere streaming-library membership. |
 | Deletion marker | Minimal internal title/time/pending-acknowledgment record preventing stale reimport after personal entry data is cleared. |
