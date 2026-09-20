@@ -164,15 +164,22 @@ async def validate_api_key(api_key: str) -> bool:
 
 
 async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
-    params: dict = {"append_to_response": "credits,release_dates,recommendations,external_ids,keywords"}
+    params: dict = {
+        "append_to_response": "credits,release_dates,recommendations,external_ids,keywords,images",
+        # TMDB marks language-neutral artwork with iso_639_1=null. Request it
+        # even when the title metadata itself is localized.
+        "include_image_language": "null",
+    }
     if language:
         params["language"] = language
-    return await _get(
+    data = await _get(
         f"{TMDB_BASE}/movie/{tmdb_id}",
         headers=get_headers(api_key),
         params=params,
         cache_ttl=cache_ttl,
     )
+    preferred = preferred_poster_path(data)
+    return {**data, "poster_path": preferred} if preferred != data.get("poster_path") else data
 
 
 def extract_credits_stingers(data: dict) -> tuple[bool, bool]:
@@ -184,15 +191,20 @@ def extract_credits_stingers(data: dict) -> tuple[bool, bool]:
 
 
 async def get_show(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
-    params: dict = {"append_to_response": "credits,content_ratings,recommendations,external_ids"}
+    params: dict = {
+        "append_to_response": "credits,content_ratings,recommendations,external_ids,images",
+        "include_image_language": "null",
+    }
     if language:
         params["language"] = language
-    return await _get(
+    data = await _get(
         f"{TMDB_BASE}/tv/{tmdb_id}",
         headers=get_headers(api_key),
         params=params,
         cache_ttl=cache_ttl,
     )
+    preferred = preferred_poster_path(data)
+    return {**data, "poster_path": preferred} if preferred != data.get("poster_path") else data
 
 
 async def get_season(tmdb_id: int, season_number: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
@@ -377,6 +389,34 @@ def poster_url(path: str, size: str = "w500") -> str | None:
     if not path:
         return None
     return f"{TMDB_IMAGE_BASE}/{size}{path}"
+
+
+def preferred_poster_path(data: dict) -> str | None:
+    """Prefer TMDB's best language-neutral poster, then its normal poster.
+
+    Posters with ``iso_639_1`` set to null are the closest reliable API-level
+    signal for title-free artwork. Votes decide first; resolution breaks ties.
+    The ordinary localized poster remains the fallback when no such image was
+    returned or when an older mocked/cached response has no appended images.
+    """
+    posters = (data.get("images") or {}).get("posters") or []
+    textless = [
+        image for image in posters
+        if isinstance(image, dict)
+        and image.get("iso_639_1") is None
+        and image.get("file_path")
+    ]
+    if not textless:
+        return data.get("poster_path")
+
+    def rank(image: dict) -> tuple[float, int, int]:
+        return (
+            float(image.get("vote_average") or 0),
+            int(image.get("vote_count") or 0),
+            int(image.get("width") or 0) * int(image.get("height") or 0),
+        )
+
+    return max(textless, key=rank)["file_path"]
 
 
 async def get_person(person_id: int, api_key: str = None) -> dict:

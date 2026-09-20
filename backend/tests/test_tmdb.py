@@ -258,6 +258,67 @@ class ExtractCreditsStingersTests(unittest.TestCase):
         data = {"keywords": {"keywords": [{"id": 2, "name": "aftercreditsstinger"}]}}
         self.assertEqual(tmdb.extract_credits_stingers(data), (False, True))
 
+
+class PreferredPosterTests(unittest.TestCase):
+    def test_prefers_highest_rated_language_neutral_poster(self) -> None:
+        data = {
+            "poster_path": "/localized.jpg",
+            "images": {"posters": [
+                {"file_path": "/english.jpg", "iso_639_1": "en", "vote_average": 10, "vote_count": 50},
+                {"file_path": "/textless-low.jpg", "iso_639_1": None, "vote_average": 5, "vote_count": 20},
+                {"file_path": "/textless-best.jpg", "iso_639_1": None, "vote_average": 8, "vote_count": 4},
+            ]},
+        }
+        self.assertEqual(tmdb.preferred_poster_path(data), "/textless-best.jpg")
+
+    def test_falls_back_to_normal_poster(self) -> None:
+        data = {
+            "poster_path": "/localized.jpg",
+            "images": {"posters": [
+                {"file_path": "/english.jpg", "iso_639_1": "en", "vote_average": 10},
+            ]},
+        }
+        self.assertEqual(tmdb.preferred_poster_path(data), "/localized.jpg")
+
+
+class PosterImageRequestTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        tmdb._cache._store.clear()
+
+    async def test_movie_and_show_details_request_language_neutral_images(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"id": 1})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            await tmdb.get_movie(1, api_key="key", cache_ttl=None)
+            await tmdb.get_show(1, api_key="key", language="de-DE", cache_ttl=None)
+
+        for request in requests:
+            self.assertIn("images", request.url.params["append_to_response"].split(","))
+            self.assertEqual(request.url.params["include_image_language"], "null")
+        self.assertEqual(requests[1].url.params["language"], "de-DE")
+
+    async def test_detail_wrapper_returns_preferred_poster_to_all_callers(self) -> None:
+        payload = {
+            "poster_path": "/localized.jpg",
+            "images": {"posters": [{
+                "file_path": "/textless.jpg", "iso_639_1": None,
+                "vote_average": 7, "vote_count": 2,
+            }]},
+        }
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+        with patch.object(
+            tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
+        ):
+            result = await tmdb.get_movie(1, api_key="key", cache_ttl=None)
+        self.assertEqual(result["poster_path"], "/textless.jpg")
+
     def test_detects_both(self) -> None:
         data = {"keywords": {"keywords": [
             {"id": 1, "name": "duringcreditsstinger"},

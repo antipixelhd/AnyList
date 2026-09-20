@@ -222,7 +222,7 @@ async def enrich_media(
             media.title = data.get("title") or media.title
             media.original_title = data.get("original_title")
             media.overview = data.get("overview")
-            media.poster_path = tmdb.poster_url(data.get("poster_path"))
+            media.poster_path = tmdb.poster_url(tmdb.preferred_poster_path(data))
             media.backdrop_path = tmdb.poster_url(data.get("backdrop_path"), size="w1280")
             media.release_date = data.get("release_date")
             media.tmdb_rating = data.get("vote_average")
@@ -270,7 +270,7 @@ async def enrich_media(
             media.title = data.get("name") or media.title
             media.original_title = data.get("original_name")
             media.overview = data.get("overview")
-            media.poster_path = tmdb.poster_url(data.get("poster_path"))
+            media.poster_path = tmdb.poster_url(tmdb.preferred_poster_path(data))
             media.backdrop_path = tmdb.poster_url(data.get("backdrop_path"), size="w1280")
             media.release_date = data.get("first_air_date")
             media.tmdb_rating = data.get("vote_average")
