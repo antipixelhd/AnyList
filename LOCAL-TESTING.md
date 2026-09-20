@@ -1,11 +1,11 @@
-# Test Media Tracker locally
+# Test AnyList locally
 
 This is a working local preview. It is ready for testing lists, ratings, progress, search and imported Stremio data. Provider integration is not yet complete for unrestricted bidirectional use.
 
 ## Open the app
 
 1. Start Docker Desktop if it is not already running.
-2. Double-click **Start Media Tracker.cmd** in this folder. It starts the isolated database and web servers, then opens **http://localhost:7340**.
+2. Double-click **Start AnyList.cmd** in this folder. It starts the isolated database and web servers, then opens **http://localhost:7340**.
 3. Find your local passwords in **.venv/LOCAL-LOGIN.txt**. Sign in with **provider-test** for your private Stremio and Nuvio imports, or **preview** for synthetic examples you can freely change. These are app logins, separate from your streaming accounts.
 
 The app binds to this PC's loopback interface. Google SSO and VPS access are not part of this local test setup.
@@ -24,7 +24,7 @@ The combined read-only Stremio and Nuvio imports currently contain **34 movies a
 
 ## Stop or restart
 
-Double-click **Stop Media Tracker.cmd** to stop the two web servers. The isolated database and saved data remain available. Start again with **Start Media Tracker.cmd**. Logs are in `.venv/backend.error.log` and `.venv/frontend.error.log`; do not share them without checking for account details.
+Double-click **Stop AnyList.cmd** to stop the two web servers. The isolated database and saved data remain available. Start again with **Start AnyList.cmd**. Logs are in `.venv/backend.error.log` and `.venv/frontend.error.log`; do not share them without checking for account details.
 
 ## Current limits
 

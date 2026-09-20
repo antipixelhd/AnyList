@@ -1,11 +1,11 @@
 # Google sign-in setup
 
-Media Tracker uses the standard OpenID Connect authorization-code flow. Accounts are invite-only: create the Media Tracker account first with the same email address the friend uses at Google. OIDC auto-creation stays disabled.
+AnyList uses the standard OpenID Connect authorization-code flow. Accounts are invite-only: create the AnyList account first with the same email address the friend uses at Google. OIDC auto-creation stays disabled.
 
 ## Google Cloud configuration
 
 1. In Google Cloud Console, create an OAuth 2.0 Client ID with application type **Web application**.
-2. Add the exact public Media Tracker callback as an authorized redirect URI, for example `https://media.example.com/oidc-callback`.
+2. Add the exact public AnyList callback as an authorized redirect URI, for example `https://media.example.com/oidc-callback`.
 3. Store the generated client ID and secret in the instance environment. Never commit the secret.
 
 ```dotenv
@@ -34,7 +34,7 @@ Keep password login enabled during isolated testing. It can be disabled after an
 3. Leave both password fields empty for an SSO-only account, or set a password as a fallback.
 4. Ask the friend to choose **Login with Google**.
 
-Media Tracker lowercases the address for matching, requires Google's `email_verified` claim, and refuses unknown accounts. Self-registration and OIDC account creation remain disabled.
+AnyList lowercases the address for matching, requires Google's `email_verified` claim, and refuses unknown accounts. Self-registration and OIDC account creation remain disabled.
 
 ## Verification gate
 

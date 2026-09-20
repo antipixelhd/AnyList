@@ -17,4 +17,4 @@ for (const [name, size] of [
   await sharp(source).resize(size, size).png().toFile(join(publicDir, name));
 }
 
-console.log('Generated Media Tracker browser and PWA artwork.');
+console.log('Generated AnyList browser and PWA artwork.');

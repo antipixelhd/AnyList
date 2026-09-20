@@ -1,6 +1,6 @@
 {
-  "name": "Media Tracker",
-  "short_name": "Media Tracker",
+  "name": "AnyList",
+  "short_name": "AnyList",
   "description": "Private, self-hosted movie and series tracking",
   "start_url": "/",
   "scope": "/",
@@ -35,14 +35,14 @@
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Media Tracker"
+      "label": "AnyList"
     },
     {
       "src": "/web-app-manifest-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Media Tracker"
+      "label": "AnyList"
     }
   ],
   "categories": ["entertainment", "lifestyle"]

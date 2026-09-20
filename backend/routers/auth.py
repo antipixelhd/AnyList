@@ -1414,7 +1414,7 @@ async def totp_setup(current_user: User = Depends(get_current_user)):
     secret = pyotp.random_base32()
     uri = pyotp.TOTP(secret).provisioning_uri(
         name=current_user.email,
-        issuer_name="Media Tracker",
+        issuer_name="AnyList",
     )
     return {"provisioning_uri": uri, "secret": secret}
 

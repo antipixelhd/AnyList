@@ -984,7 +984,7 @@ class NuvioNormalizationTests(unittest.TestCase):
 class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_push_merges_instead_of_replacing_remote_library(self) -> None:
         """A first full push must merge the local library without dropping
-        remote-only items that Media Tracker has never managed."""
+        remote-only items that AnyList has never managed."""
         conn = SimpleNamespace(
             id=4,
             user_id=7,

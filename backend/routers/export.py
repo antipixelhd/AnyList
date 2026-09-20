@@ -94,7 +94,7 @@ async def run_scrob_import(user_id: int, job_id: int, data, include: dict) -> No
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled))
             await db.commit()
         except Exception as exc:
-            logger.exception("Media Tracker import job %s failed", job_id)
+            logger.exception("AnyList import job %s failed", job_id)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(exc)))
             await db.commit()
 
@@ -115,7 +115,7 @@ async def import_data(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Restore a Media Tracker or compatible Scrob data export into this account.
+    """Restore an AnyList or compatible Scrob data export into this account.
     What to import is chosen per upload, as with the Trakt export import."""
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip export files are accepted.")
@@ -164,4 +164,4 @@ async def import_data(
     await db.refresh(job)
 
     background_tasks.add_task(run_scrob_import, current_user.id, job.id, data, include)
-    return {"status": "started", "job_id": job.id, "message": "Media Tracker import is running in the background"}
+    return {"status": "started", "job_id": job.id, "message": "AnyList import is running in the background"}

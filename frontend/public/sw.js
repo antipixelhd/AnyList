@@ -1,4 +1,4 @@
-// Media Tracker service worker
+// AnyList service worker
 // Strategy:
 //   - Static assets (JS/CSS/fonts/icons): NetworkFirst, cached for offline fallback
 //   - TMDB / Proxy images (posters, backdrops, rating posters): bypass service worker (native HTTP cache)
@@ -69,7 +69,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let payload = {};
   try { payload = event.data?.json() ?? {}; } catch { payload = { body: event.data?.text() }; }
-  const title = payload.title || 'Media Tracker';
+  const title = payload.title || 'AnyList';
   event.waitUntil(self.registration.showNotification(title, {
     body: payload.body || `${title} completed. Rate now!`,
     icon: payload.icon || '/web-app-manifest-192x192.png',

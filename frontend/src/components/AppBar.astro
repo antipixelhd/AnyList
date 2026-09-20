@@ -1,6 +1,7 @@
 ---
 import Icon from './Icon.astro';
 import QuickSearch from './QuickSearch.astro';
+import BrandMark from './BrandMark.astro';
 import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
 
@@ -37,9 +38,9 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
 ---
 <header class="topbar" data-appbar>
   <div class="appbar-inner">
-    <a class="brand" href="/home" aria-label="Media Tracker home">
-      <span class="brand-mark" aria-hidden="true">M<span>t</span></span>
-      <span>Media Tracker</span>
+    <a class="brand" href="/home" aria-label="AnyList home">
+      <BrandMark size={34}/>
+      <span>AnyList</span>
     </a>
     <nav class="appbar-nav" aria-label="Main navigation">
       <a href="/home" class:list={{active: active('/home')}} aria-current={active('/home') ? 'page' : undefined}>Home</a>

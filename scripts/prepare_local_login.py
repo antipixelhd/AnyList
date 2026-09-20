@@ -20,7 +20,7 @@ async def main():
     target=ROOT/'.venv'/'LOCAL-LOGIN.txt'
     existing=target.read_text().splitlines() if target.exists() else []
     previous=dict(line.split(': ',1) for line in existing if ': ' in line)
-    lines=['Media Tracker local preview - http://localhost:7340/login',
+    lines=['AnyList local preview - http://localhost:7340/login',
         'Use provider-test for your private imported lists; preview contains synthetic examples.',
         'These passwords are only for this local app, not your streaming accounts.','']
     async with AsyncSessionLocal() as db:

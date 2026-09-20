@@ -3,15 +3,15 @@ import '../styles/tracker.css';
 import AppBar from '../components/AppBar.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import QuickRating from '../components/QuickRating.astro';
-const {title = 'Media Tracker'} = Astro.props;
+const {title = 'AnyList'} = Astro.props;
 ---
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · Media Tracker</title><link rel="icon" href="/favicon.svg"/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/></head>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · AnyList</title><link rel="icon" href="/favicon.svg"/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/></head>
 <body class="tracker">
   <a class="skip-link" href="#content">Skip to content</a>
   <AppBar />
   <main id="content"><slot /></main>
   <QuickRating />
   <PwaRuntime />
-  <footer class="page-footer">Media Tracker <span>Keep a little history of the stories you love.</span></footer>
+  <footer class="page-footer">AnyList <span>Keep a little history of the stories you love.</span></footer>
 </body></html>

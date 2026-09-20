@@ -7,7 +7,7 @@ from core.config import settings
 
 
 def _send_sync(to: str, subject: str, html: str) -> None:
-    from_addr = settings.from_email or settings.smtp_username or "noreply@media-tracker"
+    from_addr = settings.from_email or settings.smtp_username or "noreply@anylist"
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -48,7 +48,7 @@ async def send_activation_email(to: str, token: str) -> None:
       <div style="max-width: 480px; margin: 0 auto; background: #27272a; border: 1px solid #3f3f46; border-radius: 12px; padding: 32px;">
         <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">Confirm your email</h1>
         <p style="color: #a1a1aa; margin-bottom: 24px;">
-          Thanks for registering on Media Tracker. Click the button below to activate your account.
+          Thanks for registering on AnyList. Click the button below to activate your account.
           This link expires in <strong style="color: #f4f4f5;">24 hours</strong>.
         </p>
         <a href="{link}"
@@ -63,7 +63,7 @@ async def send_activation_email(to: str, token: str) -> None:
     </body>
     </html>
     """
-    await send_email(to, "Activate your Media Tracker account", html)
+    await send_email(to, "Activate your AnyList account", html)
 
 
 async def send_password_reset_email(to: str, token: str) -> None:
@@ -75,7 +75,7 @@ async def send_password_reset_email(to: str, token: str) -> None:
       <div style="max-width: 480px; margin: 0 auto; background: #27272a; border: 1px solid #3f3f46; border-radius: 12px; padding: 32px;">
         <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">Reset your password</h1>
         <p style="color: #a1a1aa; margin-bottom: 24px;">
-          We received a request to reset your Media Tracker password. Click the button below to choose a new one.
+          We received a request to reset your AnyList password. Click the button below to choose a new one.
           This link expires in <strong style="color: #f4f4f5;">1 hour</strong>.
         </p>
         <a href="{link}"
@@ -90,4 +90,4 @@ async def send_password_reset_email(to: str, token: str) -> None:
     </body>
     </html>
     """
-    await send_email(to, "Reset your Media Tracker password", html)
+    await send_email(to, "Reset your AnyList password", html)

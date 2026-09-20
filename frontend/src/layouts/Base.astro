@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import WatchedAtPicker from "../components/WatchedAtPicker.astro";
+import BrandMark from "../components/BrandMark.astro";
 import { api } from "../lib/api";
 
 interface Props { title: string; hideNav?: boolean }
@@ -58,7 +59,7 @@ const bottomNavItem = (active: boolean) =>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>{title} · Media Tracker</title>
+  <title>{title} · AnyList</title>
   <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
@@ -68,7 +69,7 @@ const bottomNavItem = (active: boolean) =>
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Media Tracker" />
+  <meta name="apple-mobile-web-app-title" content="AnyList" />
   <style>
     /* Inline so icons render correctly on first paint before external CSS loads */
     #sun-icon { display: none; }
@@ -175,8 +176,8 @@ const bottomNavItem = (active: boolean) =>
         <!-- Left: logo + desktop links -->
         <div class="flex items-center gap-6 min-w-0">
           <a href="/" class="flex items-center gap-2 text-zinc-100 font-bold text-lg tracking-tight shrink-0 group active:opacity-70 transition-opacity">
-            <span aria-hidden="true" class="inline-flex items-center justify-center w-7 h-7 md:w-8 md:h-8 rounded-md bg-gradient-to-br from-sky-400 to-indigo-500 text-[11px] md:text-xs font-black tracking-[-0.12em] shadow-lg shadow-sky-950/30">M<span class="text-sky-100">t</span></span>
-            <span>Media Tracker</span>
+            <BrandMark size={32}/>
+            <span>AnyList</span>
           </a>
           {(user || showAnonNavLinks) && (
             <div class="hidden md:flex items-center gap-6 text-sm">
@@ -551,7 +552,7 @@ const bottomNavItem = (active: boolean) =>
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl p-4 flex items-start gap-3">
       <img src="/web-app-manifest-192x192.png" alt="" aria-hidden="true" class="w-12 h-12 rounded-xl shrink-0" />
       <div class="flex-1 min-w-0">
-        <p class="text-sm font-bold text-zinc-100">Install Media Tracker</p>
+        <p class="text-sm font-bold text-zinc-100">Install AnyList</p>
         <p id="pwa-banner-msg" class="text-xs text-zinc-400 mt-0.5 leading-snug">Add to your home screen for the full app experience.</p>
       </div>
       <button id="pwa-dismiss" aria-label="Dismiss" class="text-zinc-400 hover:text-zinc-300 transition shrink-0 cursor-pointer mt-0.5">
@@ -756,7 +757,7 @@ const bottomNavItem = (active: boolean) =>
                 : m.show_tmdb_id ? `/show/${m.show_tmdb_id}` : m.show_tvdb_id ? `/show/tvdb/${m.show_tvdb_id}` : null)
           : (m.tmdb_id ? `/media/movie/${m.tmdb_id}` : null);
         const isPaused = session.state === 'paused';
-        const sourceLabels = { plex: 'Plex', emby: 'Emby', kodi: 'Kodi', jellyfin: 'Jellyfin', manual: 'Media Tracker' };
+        const sourceLabels = { plex: 'Plex', emby: 'Emby', kodi: 'Kodi', jellyfin: 'Jellyfin', manual: 'AnyList' };
         const sourceLabel = sourceLabels[session.source] ?? session.source;
         const progressSeconds = session.progress_seconds ?? 0;
         const runtime = m.runtime ?? 0;

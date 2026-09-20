@@ -1,6 +1,6 @@
-# Media Tracker
+# AnyList
 
-Media Tracker is a private, self-hosted movie and television tracker for an administrator and invited friends. It combines AniList-inspired lists and profiles with bidirectional synchronization built on the Scrob codebase.
+AnyList is a private, self-hosted movie and television tracker for an administrator and invited friends. It combines AniList-inspired lists and profiles with bidirectional synchronization built on the Scrob codebase.
 
 The current release focuses on movies and whole television shows. It provides half-point ratings, optional per-season ratings, episode progress, favorites, one-way following, private or public profiles, activity, and a notification inbox for provider changes that need review.
 
@@ -81,6 +81,6 @@ The production-style container applies Alembic migrations at startup and serves 
 
 ## Source and license
 
-Media Tracker is derived from [Scrob](https://github.com/ellite/scrob). The upstream architecture and provider adapters remain a substantial part of this repository; protocol names and migration-compatible identifiers intentionally retain some `scrob` terminology.
+AnyList is derived from [Scrob](https://github.com/ellite/scrob). The upstream architecture and provider adapters remain a substantial part of this repository; protocol names, migration-compatible identifiers, and existing deployment identifiers intentionally retain some `scrob` or `media-tracker` terminology.
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE.md). Third-party names and trademarks identify interoperable services only and do not imply affiliation or endorsement.

@@ -1,5 +1,6 @@
 ---
 import Tracker from "../layouts/Tracker.astro";
+import BrandMark from "../components/BrandMark.astro";
 import { connectionIconHtml } from "../lib/connectionIcons";
 import "../styles/global.css";
 
@@ -41,10 +42,10 @@ const currentVersion = process.env.APP_VERSION ?? "development";
 <Tracker title="About">
   <main class="mx-auto max-w-4xl px-5 py-10 md:px-8 md:py-14">
     <header class="mb-10 flex items-center gap-5">
-      <span aria-hidden="true" class="inline-flex h-16 w-16 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-indigo-500 text-2xl font-black tracking-[-0.12em] text-white shadow-xl shadow-sky-950/30">M<span class="text-sky-100">t</span></span>
+      <BrandMark size={64}/>
       <div>
         <p class="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-sky-400">Self-hosted media tracking</p>
-        <h1 class="page-title">Media Tracker</h1>
+        <h1 class="page-title">AnyList</h1>
         <p class="mt-1 text-sm text-zinc-500">Build {currentVersion}</p>
       </div>
     </header>
@@ -53,7 +54,7 @@ const currentVersion = process.env.APP_VERSION ?? "development";
       <section class="rounded-md border border-zinc-800 bg-zinc-900/55 p-6 md:p-8">
         <h2 class="mb-3 text-lg font-semibold text-zinc-100">One place for the titles you watch</h2>
         <p class="m-0 max-w-2xl text-sm md:text-[15px]">
-          Media Tracker combines movie and series lists, half-point ratings, episode progress,
+          AnyList combines movie and series lists, half-point ratings, episode progress,
           profiles, following, and provider synchronization in a private service for you and
           the people you invite.
         </p>
@@ -62,7 +63,7 @@ const currentVersion = process.env.APP_VERSION ?? "development";
       <section>
         <h2 class="section-headline mb-3">Project</h2>
         <p class="mb-4 text-sm">
-          Media Tracker is built from the open-source Scrob project and remains licensed under
+          AnyList is built from the open-source Scrob project and remains licensed under
           the GNU General Public License v3. The interface and tracking model have been adapted
           for whole-show lists, season ratings, private profiles, social activity, and reviewed
           synchronization decisions.

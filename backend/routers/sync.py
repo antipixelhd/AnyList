@@ -503,7 +503,7 @@ async def sync_shows_batch(
             show_map[str(source_id)] = show.id
             show_id_to_tmdb[show.id] = show.tmdb_id
 
-    # Whole-series Media rows power Media Tracker lists and details, while
+    # Whole-series Media rows power AnyList lists and details, while
     # Show rows own episode numbering. Older syncs enriched only Show, leaving
     # a matching Media row without its poster, synopsis, genres, or seasons.
     # Repair those rows from the canonical Show metadata on every successful
@@ -883,7 +883,7 @@ async def _push_nuvio_library_delta(
             removed_content_ids=set(removals),
             on_refresh=_persist_refresh,
         )
-    # This connection-scoped set records only library IDs Media Tracker has
+    # This connection-scoped set records only library IDs AnyList has
     # successfully managed. A failed delta leaves it unchanged, so the next
     # full/scheduled push can retry removals without touching remote-only rows.
     conn.stremio_pushed_library_ids = sorted(items_by_id)
@@ -6661,7 +6661,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     # this single-use refresh token while this one waited.
                     await db.refresh(conn)
                     if conn.push_collection:
-                        # Remove only IDs a previous successful Media Tracker push
+                        # Remove only IDs a previous successful AnyList push
                         # managed. Remote-only rows remain untouched, while a failed
                         # real-time delta remains retryable on this scheduled push.
                         await nuvio.merge_library(

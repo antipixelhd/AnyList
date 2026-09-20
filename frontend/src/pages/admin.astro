@@ -332,7 +332,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
           <label class="flex items-center justify-between gap-3 cursor-pointer">
             <div>
-              <span class="block text-sm font-semibold text-zinc-200">Show anime in Media Tracker</span>
+              <span class="block text-sm font-semibold text-zinc-200">Show anime in AnyList</span>
               <span class="block text-xs text-zinc-500 mt-0.5">Anime stays stored and synchronized when hidden. This switch controls only catalogue, lists, title pages, and activity.</span>
             </div>
             <input type="checkbox" name="show_anime" id="show_anime" value="true" class="sr-only peer" checked={globalSettings.show_anime ?? false} />

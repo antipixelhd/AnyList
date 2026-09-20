@@ -96,7 +96,7 @@ foreach ($service in @(
                 }
             }
         }
-        if (!$owned) { throw "Port $($service.port) is occupied by another process. Stop it before starting Media Tracker." }
+        if (!$owned) { throw "Port $($service.port) is occupied by another process. Stop it before starting AnyList." }
         continue
     }
     $process = Start-Process -FilePath $service.exe -ArgumentList $service.args -WorkingDirectory $service.cwd -WindowStyle Hidden -PassThru `

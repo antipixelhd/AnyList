@@ -1505,7 +1505,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
 async def jellyfin_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_webhook(request, db, api_key)
 
@@ -1515,7 +1515,7 @@ async def jellyfin_scrobble_webhook(
     connection_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_scrobble_webhook(request, db, api_key, connection_id, source="jellyfin")
 
@@ -1525,7 +1525,7 @@ async def jellyfin_webhook_connection(
     connection_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_webhook(request, db, api_key, connection_id)
 
@@ -1925,7 +1925,7 @@ async def _handle_jellyfin_scrobble_webhook(
 async def emby_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_emby_webhook(request, db, api_key)
 
@@ -1935,7 +1935,7 @@ async def emby_scrobble_webhook(
     connection_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_scrobble_webhook(request, db, api_key, connection_id, source="emby")
 
@@ -1945,7 +1945,7 @@ async def emby_webhook_connection(
     connection_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_emby_webhook(request, db, api_key, connection_id)
 
@@ -3075,7 +3075,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
 async def plex_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_plex_webhook(request, db, api_key)
 
@@ -3085,7 +3085,7 @@ async def plex_scrobble_webhook(
     connection_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_plex_scrobble_webhook(request, db, api_key, connection_id)
 
@@ -3095,7 +3095,7 @@ async def plex_webhook_connection(
     connection_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str = Query(..., description="Media Tracker user API key"),
+    api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_plex_webhook(request, db, api_key, connection_id)
 
