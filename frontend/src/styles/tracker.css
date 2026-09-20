@@ -176,3 +176,6 @@ body.tracker{font-size:14px;line-height:1.55}
 .settings-inline-grid.settings-single-column{grid-template-columns:minmax(0,420px)}
 @media(max-width:650px){.quick-rating-stars{gap:1px}.quick-star{width:27px;flex-basis:27px;font-size:26px}.quick-rating-body{padding-inline:12px}}
 @media(max-width:650px){.settings-inline-grid{grid-template-columns:1fr}}
+.entry-progress{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.progress-increment{display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #42627c;border-radius:50%;background:#203b51;color:var(--bright);opacity:0;transform:scale(.9);transition:opacity .14s ease,transform .14s ease,background .14s ease}.entry-row:hover .progress-increment,.entry-row:focus-within .progress-increment,.progress-increment:focus-visible{opacity:1;transform:scale(1)}.progress-increment:hover,.progress-increment:focus-visible{background:var(--blue);border-color:var(--blue)}
+@media(hover:none),(max-width:650px){.progress-increment{opacity:1;transform:none;width:26px;height:26px}}
+@media(prefers-reduced-motion:reduce){.progress-increment{transition:none}}

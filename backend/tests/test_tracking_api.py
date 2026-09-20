@@ -1060,6 +1060,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.save(self.show,status='completed')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['progress'],1)
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
+        self.assertEqual(result['season_position'],'S1E1')
         rows=(await self.db.execute(select(Media).join(WatchEvent,WatchEvent.media_id==Media.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()
         self.assertEqual([row.tmdb_id for row in rows],[987654310])
         # A newly released episode appears as unwatched without moving the
@@ -1073,7 +1075,16 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'],'completed')
         self.assertEqual(result['progress'],1)
         self.assertEqual(result['released_episodes'],2)
+        self.assertEqual(result['season_position'],'S1E1')
         self.assertEqual(result['new_seasons'],1)
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.show.id))).scalar_one()
+        entry.progress=8
+        await self.db.commit()
+        res=await self.save(self.show,progress=2)
+        self.assertEqual(res.status_code,200,res.text)
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
+        self.assertEqual(result['season_position'],'S2E2')
         res=await self.save(self.show,status='watching')
         self.assertEqual(res.status_code,200,res.text)
         result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
@@ -1117,6 +1128,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(row.tvdb_id, row.season_number, row.episode_number) for row in rows], [
             (7101, 1, 1), (7102, 1, 2),
         ])
+        response = await self.save(self.show, status='completed')
+        self.assertEqual(response.status_code, 200, response.text)
+        result = (await self.client.get(
+            f'/tracking/profile/{self.owner.username}/series'
+        )).json()['entries'][0]
+        self.assertEqual(result['season_position'], 'S1E2')
 
         rows[0].season_number = 2
         await self.db.commit()

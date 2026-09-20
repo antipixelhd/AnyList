@@ -514,10 +514,18 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     if media_type in ('series','all'):
         # One batched query for all catalogue episode IDs; don't confuse status
         # Completed with history covering newly released episodes.
-        catalogue_ids = {episode_id for _, m in rows for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
-        released = (await db.execute(select(Media.id, Media.tmdb_id, Media.season_number).where(Media.media_type == MediaType.episode,
-            Media.tmdb_id.in_(catalogue_ids), Media.season_number > 0, Media.release_date.is_not(None),
-            Media.release_date <= date.today().isoformat()))).all() if catalogue_ids else []
+        tmdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') != 'tvdb'
+                    for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
+        tvdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') == 'tvdb'
+                    for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
+        identity_filters = []
+        if tmdb_ids:
+            identity_filters.append(Media.tmdb_id.in_(tmdb_ids))
+        if tvdb_ids:
+            identity_filters.append(Media.tvdb_id.in_(tvdb_ids))
+        released = (await db.execute(select(Media.id, Media.tmdb_id, Media.tvdb_id, Media.season_number, Media.episode_number).where(
+            Media.media_type == MediaType.episode, or_(*identity_filters), Media.season_number > 0,
+            Media.release_date.is_not(None), Media.release_date <= date.today().isoformat()))).all() if identity_filters else []
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user.id,
             WatchEvent.media_id.in_([r.id for r in released]), WatchEvent.completed.is_(True)))).scalars()) if released else set()
         for result, (_, media) in zip(entries, rows):
@@ -525,10 +533,14 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                 continue
             ids = set((media.tmdb_data or {}).get('tracking_episode_ids', []))
             if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
-                title_episodes = [r.id for r in released if r.tmdb_id in ids]
+                provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
+                title_episodes = [r for r in released if (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids]
                 result['released_episodes'] = len(title_episodes)
-                unwatched = [r for r in released if r.tmdb_id in ids and r.id not in watched]
+                unwatched = [r for r in title_episodes if r.id not in watched]
                 result['progress'] = len(title_episodes) - len(unwatched)
+                watched_episodes = [r for r in title_episodes if r.id in watched]
+                latest = max(watched_episodes, key=lambda r: (r.season_number or 0, r.episode_number or 0), default=None)
+                result['season_position'] = f'S{latest.season_number}E{latest.episode_number}' if latest else None
                 result['new_seasons'] = len({r.season_number for r in unwatched}) if result['status'] == 'completed' else 0
     prefs=await db.get(TrackingPreferences,user.id)
     return {
@@ -684,7 +696,9 @@ async def released_episodes(db, media):
     )
     catalogue_ids = (media.tmdb_data or {}).get('tracking_episode_ids')
     if catalogue_ids is not None:
-        query = query.where(Media.tmdb_id.in_(catalogue_ids))
+        provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
+        identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
+        query = query.where(identity.in_(catalogue_ids))
     return (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
 
 
@@ -761,7 +775,9 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids), WatchEvent.completed.is_(True)))).scalars())
-        rollback = target < entry.progress or bool(watched.intersection(ids[target:]))
+        # Watch events are canonical. A cached aggregate can lag after a
+        # catalogue refresh, so only later watched events make this a rollback.
+        rollback = bool(watched.intersection(ids[target:]))
         if rollback and not body.confirm_rollback:
             raise HTTPException(409, "Confirm marking later episodes unwatched")
         for episode in episodes[:target]:
