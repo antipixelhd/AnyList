@@ -22,6 +22,7 @@ const runtimeLabel = (minutes: number | null, suffix = '') => {
 };
 const names = (items: any[] = []) => items.map((item) => item?.name).filter(Boolean);
 const percentLabel = (value: number | null) => value == null ? '—' : `${Math.round(value)}%`;
+const personalScoreLabel = (value: number | null) => value == null || value === 0 ? '—' : `${Number(value.toFixed(1))} / 10`;
 const dateLabel = (value: string | null) => value
   ? new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(`${value.slice(0, 10)}T00:00:00`))
   : null;
@@ -75,15 +76,9 @@ const dateLabel = (value: string | null) => value
             {title.tagline && <p class="detail-tagline">“{title.tagline}”</p>}
           </div>
 
-          <nav class="detail-tabs" aria-label="Title sections">
-            <a class="active" href="#overview">Overview</a>
-            {title.type === 'series' && <a href="#seasons">Seasons</a>}
-            <a href="#social">Social</a>
-          </nav>
-
           <section class="ratings-overview" aria-label="Ratings">
             <div class="personal-scores">
-              <button class="personal-score-button" data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster)} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label>{scoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
+              <button class="personal-score-button" data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster)} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label data-score-format="out-of-ten">{personalScoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
               <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
             </div>
             <div class="provider-scores" aria-label="External ratings">

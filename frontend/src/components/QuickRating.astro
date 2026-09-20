@@ -99,7 +99,7 @@ import Icon from './Icon.astro';
         const row = control.closest<HTMLElement>('.entry-row');
         if (row) row.dataset.score = score == null ? '-1' : String(score);
         const label = control.querySelector<HTMLElement>('[data-score-label]');
-        if (label) label.textContent = score == null ? '—' : Number(score.toFixed(1)).toString();
+        if (label) label.textContent = score == null ? '—' : label.dataset.scoreFormat === 'out-of-ten' ? `${Number(score.toFixed(1))} / 10` : Number(score.toFixed(1)).toString();
         const modeLabel = control.querySelector<HTMLElement>('[data-rating-mode-label]');
         if (modeLabel) modeLabel.textContent = score == null ? 'Unrated' : 'Manual rating';
       });
