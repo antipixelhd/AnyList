@@ -111,11 +111,16 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   if (appbar) {
     let previousY = Math.max(0, window.scrollY);
     let scheduled = false;
+    let keyboardFocus = false;
+    document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true });
+    document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true });
+    window.addEventListener('wheel', () => { keyboardFocus = false; }, { passive: true });
+    window.addEventListener('touchstart', () => { keyboardFocus = false; }, { passive: true });
     const reveal = () => appbar.classList.remove('appbar-hidden');
     const update = () => {
       const currentY = Math.max(0, window.scrollY);
       const delta = currentY - previousY;
-      const ownsFocus = appbar.contains(document.activeElement);
+      const ownsFocus = keyboardFocus && appbar.contains(document.activeElement);
       if (currentY <= 16 || delta < -4 || ownsFocus) reveal();
       else if (delta > 6 && currentY > appbar.offsetHeight) appbar.classList.add('appbar-hidden');
       previousY = currentY;
@@ -131,6 +136,23 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     window.addEventListener('pageshow', () => { previousY = Math.max(0, window.scrollY); reveal(); });
   }
   const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
+  const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');
+  let openMobileMenuFromKeyboard = false;
+  mobileMenuSummary?.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') openMobileMenuFromKeyboard = true;
+  });
+  mobileMenu?.addEventListener('toggle', () => {
+    if (mobileMenu.open && openMobileMenuFromKeyboard) {
+      requestAnimationFrame(() => mobileMenu.querySelector<HTMLAnchorElement>('nav a')?.focus());
+    }
+    openMobileMenuFromKeyboard = false;
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && mobileMenu?.open) {
+      mobileMenu.open = false;
+      mobileMenuSummary?.focus();
+    }
+  });
   document.addEventListener('pointerdown', event => {
     if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
   });

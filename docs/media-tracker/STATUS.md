@@ -10,6 +10,10 @@ Final local walkthrough checked compact lists at 2560×1440, 3840×2160 and 390�
 
 Fast search now suppresses Chromium's native search-cancel glyph inside the full-screen dialog so it does not sit beside and duplicate the explicit Close search control. Browse retains its useful native field clear action.
 
+Phone primary navigation now sends keyboard-opened focus into its first destination and closes on Escape while restoring focus to the disclosure. This corrects the previous native-details behavior, which left focus on an open trigger and ignored Escape.
+
+The scroll-direction app bar now distinguishes keyboard focus from pointer/touch interaction. Keyboard users keep a focused header control visible, while a previously tapped control no longer pins the header during later touch or wheel scrolling.
+
 Verification for this slice: `npm run build` passed with the existing upstream deprecation, empty-chunk, and bundle-size warnings; `scripts/verify_local_preview.py` passed for both local accounts; authenticated headless browser checks covered the ordinary quick-rating dialog and the calculated-average override/cancel interaction. No score or provider state was changed during the browser check.
 
 The next correctness slice aligns anonymous routing with the current public profile surface (`list`, `social`, future `stats`, and the combined-list API) and makes inherited `friends_only` profiles private across both tracker and legacy profile endpoints, even for mutual follows. The focused regression passed and the frontend build remained green. The full tracking file must run only against a clean disposable database: using the populated preview database makes its scheduled catalogue tests count real preview titles outside their fixture.
