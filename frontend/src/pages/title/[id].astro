@@ -83,7 +83,7 @@ const dateLabel = (value: string | null) => value
 
           <section class="ratings-overview" aria-label="Ratings">
             <div class="personal-scores">
-              <button class="personal-score-button" data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster)} data-quick-rate-score={title.entry?.score??''}><span>Your score</span><strong data-score-label>{scoreLabel(title.entry?.score ?? null)}</strong><small>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
+              <button class="personal-score-button" data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster)} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label>{scoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
               <div><span>Following</span><strong>{scoreLabel(title.friends_average)}</strong><small>{title.friends.length ? `${title.friends.length} rated` : 'No ratings yet'}</small></div>
             </div>
             <div class="provider-scores" aria-label="External ratings">

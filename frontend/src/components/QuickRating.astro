@@ -1,31 +1,42 @@
+---
+import Icon from './Icon.astro';
+---
 <dialog id="quick-rating" class="quick-rating-dialog" aria-labelledby="quick-rating-title">
   <div class="quick-rating-head">
     <div class="quick-rating-media">
       <img id="quick-rating-poster" alt="" hidden />
       <div><span class="eyebrow">Quick rate</span><h2 id="quick-rating-title">Rate title</h2></div>
     </div>
-    <button type="button" class="icon-button" id="quick-rating-close" aria-label="Close rating">×</button>
+    <button type="button" class="icon-button editor-icon-button" id="quick-rating-close" aria-label="Close rating"><Icon name="close" /></button>
   </div>
   <div class="quick-rating-body">
     <output id="quick-rating-value" aria-live="polite">Unrated</output>
     <div id="quick-rating-stars" class="quick-rating-stars" aria-label="Choose a score from 0.5 to 10"></div>
-    <p>Choose a half point. Your rating saves immediately.</p>
+    <p id="quick-rating-help">Choose a half point. Your rating saves immediately.</p>
+    <div class="quick-rating-confirm" id="quick-rating-confirm" hidden>
+      <p>This show currently uses the average of your rated seasons. Setting this score will use a separate show rating instead.</p>
+      <div><button type="button" class="button-primary" id="quick-rating-override">Use show rating</button><button type="button" class="button-quiet" id="quick-rating-cancel">Cancel</button></div>
+    </div>
     <button type="button" class="button-quiet" id="quick-rating-remove">Remove rating</button>
     <p id="quick-rating-error" class="error-message" role="alert" hidden></p>
   </div>
 </dialog>
 
 <script>
-  type QuickRateDetail = { id: number; title: string; poster?: string; score?: number | null };
+  type QuickRateDetail = { id: number; title: string; poster?: string; score?: number | null; ratingMode?: 'manual' | 'average' };
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
   const value = document.querySelector<HTMLOutputElement>('#quick-rating-value')!;
   const title = document.querySelector<HTMLElement>('#quick-rating-title')!;
   const poster = document.querySelector<HTMLImageElement>('#quick-rating-poster')!;
   const remove = document.querySelector<HTMLButtonElement>('#quick-rating-remove')!;
+  const help = document.querySelector<HTMLElement>('#quick-rating-help')!;
+  const confirmation = document.querySelector<HTMLElement>('#quick-rating-confirm')!;
+  const override = document.querySelector<HTMLButtonElement>('#quick-rating-override')!;
   const error = document.querySelector<HTMLElement>('#quick-rating-error')!;
   let active: QuickRateDetail | null = null;
   let savedScore: number | null = null;
+  let pendingScore: number | null = null;
 
   const display = (score: number | null) => score == null || score === 0 ? 'Unrated' : `${score.toFixed(1)} / 10`;
   function paint(score: number | null) {
@@ -49,30 +60,48 @@
         button.setAttribute('aria-label', `${score.toFixed(1)} out of 10`);
         button.addEventListener('pointerenter', () => paint(score));
         button.addEventListener('focus', () => paint(score));
-        button.addEventListener('click', () => save(score));
+        button.addEventListener('click', () => choose(score));
         shell.append(button);
       }
       stars.append(shell);
     }
   }
-  async function save(score: number | null) {
+  function choose(score: number) {
+    if (!active) return;
+    if (active.ratingMode === 'average') {
+      pendingScore = score;
+      paint(score);
+      confirmation.hidden = false;
+      help.hidden = true;
+      override.focus();
+      return;
+    }
+    save(score);
+  }
+  async function save(score: number | null, changeToManual = false) {
     if (!active) return;
     error.hidden = true;
     stars.classList.add('saving');
     try {
       const response = await fetch(`/api/proxy/tracking/entry/${active.id}`, {
         method: 'PATCH', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ rating_mode: 'manual', manual_score: score ?? 0 }),
+        body: JSON.stringify({ ...(changeToManual ? { rating_mode: 'manual' } : {}), manual_score: score ?? 0 }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || 'Unable to save this rating.');
       }
       savedScore = score;
+      if (changeToManual) active.ratingMode = 'manual';
       document.querySelectorAll<HTMLElement>(`[data-quick-rate-id="${active.id}"]`).forEach(control => {
         control.dataset.quickRateScore = score == null ? '' : String(score);
+        if (changeToManual) control.dataset.quickRateMode = 'manual';
+        const row = control.closest<HTMLElement>('.entry-row');
+        if (row) row.dataset.score = score == null ? '-1' : String(score);
         const label = control.querySelector<HTMLElement>('[data-score-label]');
         if (label) label.textContent = score == null ? '—' : Number(score.toFixed(1)).toString();
+        const modeLabel = control.querySelector<HTMLElement>('[data-rating-mode-label]');
+        if (modeLabel) modeLabel.textContent = score == null ? 'Unrated' : 'Manual rating';
       });
       document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: { id: active.id, score } }));
       setTimeout(() => dialog.close(), 140);
@@ -87,10 +116,13 @@
   function open(detail: QuickRateDetail) {
     active = detail;
     savedScore = detail.score || null;
+    pendingScore = null;
     title.textContent = detail.title;
     poster.hidden = !detail.poster;
     if (detail.poster) poster.src = detail.poster;
-    remove.hidden = savedScore == null;
+    remove.hidden = savedScore == null || detail.ratingMode === 'average';
+    confirmation.hidden = true;
+    help.hidden = false;
     error.hidden = true;
     paint(savedScore);
     if (!dialog.open) dialog.showModal();
@@ -99,6 +131,13 @@
   stars.addEventListener('pointerleave', () => paint(savedScore));
   document.querySelector('#quick-rating-close')?.addEventListener('click', () => dialog.close());
   remove.addEventListener('click', () => save(null));
+  override.addEventListener('click', () => { if (pendingScore != null) save(pendingScore, true); });
+  document.querySelector('#quick-rating-cancel')?.addEventListener('click', () => {
+    pendingScore = null;
+    confirmation.hidden = true;
+    help.hidden = false;
+    paint(savedScore);
+  });
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
   document.addEventListener('click', event => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-quick-rate-id]');
@@ -109,6 +148,7 @@
       title: button.dataset.quickRateTitle || 'Rate title',
       poster: button.dataset.quickRatePoster || undefined,
       score: Number(button.dataset.quickRateScore) || null,
+      ratingMode: button.dataset.quickRateMode === 'average' ? 'average' : 'manual',
     });
   });
   (window as any).mediaTrackerQuickRate = open;

@@ -14,12 +14,12 @@ import Icon from './Icon.astro';
     <div class="editor-fields">
       <label>Status<select name="status">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select></label>
       <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint">0 means unrated</span></label>
-      <label>Episode progress<input name="progress" type="number" min="0" step="1"/></label>
+      <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
       <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
       <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
       <label class="wide" id="rating-mode-field">Show score<select name="rating_mode"><option value="manual">Keep a separate show rating</option><option value="average">Average my rated seasons</option></select><span class="hint" id="calculated-score"></span></label>
       <label class="wide">Notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
-      <p class="wide hint">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
+      <p class="wide hint" id="completion-help">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
@@ -34,6 +34,7 @@ import Icon from './Icon.astro';
   let current: any = null;
   let initialState = '';
   let opener: HTMLElement | null = null;
+  let loadController: AbortController | null = null;
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
   const formState = () => JSON.stringify(Array.from(new FormData(form).entries()));
@@ -52,13 +53,17 @@ import Icon from './Icon.astro';
     current = null;
     initialState = '';
     opener = button;
+    loadController?.abort();
+    const controller = new AbortController();
+    loadController = controller;
     dialog.showModal();
     document.querySelector('#editor-title')!.textContent = 'Loading entry…';
     form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = true;
     try {
-      const res = await fetch(`/api/proxy/tracking/title/${button.dataset.editEntry}`);
+      const res = await fetch(`/api/proxy/tracking/title/${button.dataset.editEntry}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Unable to load this entry. Try again.');
       const title = await res.json();
+      if (loadController !== controller || !dialog.open || opener !== button) return;
       current = {id:title.id, type:title.type, ...(title.entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null})};
       document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !title.entry;
       document.querySelector('#editor-title')!.textContent = title.title;
@@ -69,22 +74,26 @@ import Icon from './Icon.astro';
       backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
       for (const name of ['status','manual_score','progress','start_date','finish_date','rewatch_count','notes','rating_mode']) field(name).value = current[name] ?? '';
       field('progress').disabled = title.type === 'movie';
+      document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
+      document.querySelector<HTMLElement>('#completion-help')!.hidden = title.type === 'movie';
       document.querySelector<HTMLElement>('#rating-mode-field')!.hidden = title.type !== 'series';
       updateMode();
       initialState = formState();
       form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = false;
-    } catch(e) { error.textContent = (e as Error).message; error.hidden = false; }
+    } catch(e) { if ((e as Error).name !== 'AbortError') { error.textContent = (e as Error).message; error.hidden = false; } }
   });
   function updateMode() {
     const average = field('rating_mode').value === 'average';
     field('manual_score').disabled = average;
-    document.querySelector('#calculated-score')!.textContent = average ? `Calculated score: ${current?.score == null ? 'Unrated' : Number(current.score.toFixed(1))}. Only explicitly rated seasons count.` : '';
+    const seasonScores = Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
+    const calculated = seasonScores.length ? seasonScores.reduce((sum, score) => sum + score, 0) / seasonScores.length : null;
+    document.querySelector('#calculated-score')!.textContent = average ? `Calculated score: ${calculated == null ? 'Unrated' : Number(calculated.toFixed(1))}. Only explicitly rated seasons count.` : '';
   }
   field('rating_mode').addEventListener('change', updateMode);
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
-  dialog.addEventListener('close', () => { current = null; initialState = ''; opener?.focus(); opener = null; });
+  dialog.addEventListener('close', () => { loadController?.abort(); loadController = null; current = null; initialState = ''; opener?.focus(); opener = null; });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
