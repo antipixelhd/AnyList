@@ -1,11 +1,11 @@
 # Google sign-in setup
 
-Media Tracker uses the standard OpenID Connect authorization-code flow. Accounts are invite-only: create the Media Tracker account first with the same email address the friend uses at Google. OIDC auto-creation stays disabled.
+AnyList uses the standard OpenID Connect authorization-code flow. Accounts are invite-only: create the AnyList account first with the same email address the friend uses at Google. OIDC auto-creation stays disabled.
 
 ## Google Cloud configuration
 
 1. In Google Cloud Console, create an OAuth 2.0 Client ID with application type **Web application**.
-2. Add the exact public Media Tracker callback as an authorized redirect URI. The isolated test instance uses `https://media-tracker-test.don-cloud.dedyn.io/oidc-callback`. Google requires an exact match, including scheme, host, port, path, and trailing-slash choice.
+2. Add the exact public AnyList callback as an authorized redirect URI. Use your own deployment hostname; Google requires an exact match, including scheme, host, port, path, and trailing-slash choice.
 3. Store the generated client ID and secret in the test instance environment. Never commit the secret.
 
 Use these settings:
@@ -19,7 +19,7 @@ OIDC_CLIENT_SECRET=your-client-secret
 OIDC_AUTH_URL=https://accounts.google.com/o/oauth2/v2/auth
 OIDC_TOKEN_URL=https://oauth2.googleapis.com/token
 OIDC_USERINFO_URL=https://openidconnect.googleapis.com/v1/userinfo
-OIDC_REDIRECT_URL=https://media-tracker-test.don-cloud.dedyn.io/oidc-callback
+OIDC_REDIRECT_URL=https://your-anylist-host.example/oidc-callback
 OIDC_IDENTIFIER_FIELD=email
 OIDC_SCOPES=openid email
 OIDC_AUTO_CREATE_USERS=false

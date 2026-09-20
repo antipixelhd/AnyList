@@ -127,9 +127,9 @@ Implementation proposal: cache source-specific scores with timestamps, refresh w
 
 ## Workspace and rollout
 
-- Temporary product name: Media Tracker. Branding can change later.
+- Final product name: AnyList. Stored compatibility identifiers retain their existing names.
 - Working repository: C:/Users/joshu/Documents/4_Stremio-SelfHost/media-tracker, a separate clone of the clean Scrob reference at commit 3d75f172fc054ed90c39af9d336d5f5feda40d54. Both reference repositories remain intact.
-- Development and validation began locally. The committed release is now deployed as the isolated `/opt/media-tracker-test` project on the existing VPS, with disposable Stremio/Nuvio connections and outbound flags disabled after controlled verification. Its public test URL is `https://media-tracker-test.don-cloud.dedyn.io`; the existing Scrob project and neighboring services remain separate.
+- Development and validation began locally. The committed release is deployed to an isolated test project with disposable Stremio/Nuvio connections and outbound flags disabled after controlled verification. Operational endpoints and neighboring-service inventory are kept out of this public product plan.
 - The source clone retains a local reference origin. Do not push to the reference repository. A hosted project remote is not required to begin local implementation.
 
 ## Engineering verification (agent-owned)
