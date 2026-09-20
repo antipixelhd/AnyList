@@ -35,13 +35,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - name: Install backend dependencies
-        run: python -m pip install -r backend/requirements.txt
+        working-directory: backend
+        run: uv sync --locked --no-dev
       - name: Run backend tests
         working-directory: backend
-        run: python -m unittest discover -s tests -q
+        run: uv run --no-sync python -m unittest discover -s tests -q
 
   frontend:
     runs-on: ubuntu-latest
