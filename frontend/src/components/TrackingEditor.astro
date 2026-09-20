@@ -13,12 +13,11 @@ import Icon from './Icon.astro';
   <form id="tracking-form">
     <div class="editor-fields">
       <label>Status<select name="status">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select></label>
-      <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint">0 means unrated</span></label>
+      <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint" id="score-help">0 means unrated</span></label>
       <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
       <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
       <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
       <label class="checkbox favorite-field"><input name="favorite" type="checkbox"/><span>Favorite</span></label>
-      <label class="wide" id="rating-mode-field">Show score<select name="rating_mode"><option value="manual">Keep a separate show rating</option><option value="average">Average my rated seasons</option></select><span class="hint" id="calculated-score"></span></label>
       <label class="wide">Notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
       <p class="wide hint" id="completion-help">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
     </div>
@@ -29,6 +28,14 @@ import Icon from './Icon.astro';
     </div>
   </form>
 </dialog>
+<dialog class="score-override-dialog" id="editor-score-override" aria-labelledby="score-override-title">
+  <form method="dialog">
+    <span class="eyebrow">Season ratings</span>
+    <h2 id="score-override-title">Use a separate show score?</h2>
+    <p>Your current score is calculated from rated seasons. Saving this value will switch the show to a separate manual score; your season ratings stay unchanged.</p>
+    <div class="season-mode-actions"><button class="button-primary" value="confirm">Use manual score</button><button class="button-secondary" value="cancel">Keep season average</button></div>
+  </form>
+</dialog>
 <script>
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
@@ -36,6 +43,7 @@ import Icon from './Icon.astro';
   let initialState = '';
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
+  let displayedScore = '';
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
   const formState = () => JSON.stringify(Array.from(new FormData(form).entries()));
@@ -73,29 +81,39 @@ import Icon from './Icon.astro';
       const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
       poster.src = artwork(title.poster, 'w342'); poster.alt = title.poster ? `${title.title} poster` : ''; poster.hidden = !title.poster;
       backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
-      for (const name of ['status','manual_score','progress','start_date','finish_date','rewatch_count','notes','rating_mode']) field(name).value = current[name] ?? '';
+      for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
+      const calculatedScore = current.rating_mode === 'average' ? current.score : current.manual_score;
+      field('manual_score').value = calculatedScore ?? '';
+      displayedScore = field('manual_score').value;
       field('favorite').checked = Boolean(current.favorite);
       field('progress').disabled = title.type === 'movie';
       document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
       document.querySelector<HTMLElement>('#completion-help')!.hidden = title.type === 'movie';
-      document.querySelector<HTMLElement>('#rating-mode-field')!.hidden = title.type !== 'series';
-      updateMode();
+      updateScoreHelp();
       initialState = formState();
       form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = false;
     } catch(e) { if ((e as Error).name !== 'AbortError') { error.textContent = (e as Error).message; error.hidden = false; } }
   });
-  function updateMode() {
-    const average = field('rating_mode').value === 'average';
-    field('manual_score').disabled = average;
+  function ratedSeasonScores() {
+    return Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
+  }
+  function updateScoreHelp() {
     const seasonScores = Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
     const calculated = seasonScores.length ? seasonScores.reduce((sum, score) => sum + score, 0) / seasonScores.length : null;
-    document.querySelector('#calculated-score')!.textContent = average ? `Calculated score: ${calculated == null ? 'Unrated' : Number(calculated.toFixed(1))}. Only explicitly rated seasons count.` : '';
+    document.querySelector('#score-help')!.textContent = current?.rating_mode === 'average' && calculated != null
+      ? `Calculated from ${seasonScores.length} rated ${seasonScores.length === 1 ? 'season' : 'seasons'}. Changing it creates a separate show score.`
+      : '0 means unrated';
   }
-  field('rating_mode').addEventListener('change', updateMode);
+  async function confirmScoreOverride() {
+    const confirmation = document.querySelector<HTMLDialogElement>('#editor-score-override')!;
+    confirmation.returnValue = 'cancel';
+    confirmation.showModal();
+    return new Promise<boolean>(resolve => confirmation.addEventListener('close', () => resolve(confirmation.returnValue === 'confirm'), {once:true}));
+  }
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
-  dialog.addEventListener('close', () => { loadController?.abort(); loadController = null; current = null; initialState = ''; opener?.focus(); opener = null; });
+  dialog.addEventListener('close', () => { loadController?.abort(); loadController = null; current = null; initialState = ''; displayedScore = ''; opener?.focus(); opener = null; });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
@@ -107,8 +125,16 @@ import Icon from './Icon.astro';
     const submit = form.querySelector<HTMLButtonElement>('[type=submit]')!;
     const status = field('status').value;
     const body: any = {status, notes:field('notes').value, favorite:field('favorite').checked,
-      rewatch_count:Number(field('rewatch_count').value || 0), rating_mode:field('rating_mode').value};
-    if (!field('manual_score').disabled) body.manual_score = Number(field('manual_score').value || 0);
+      rewatch_count:Number(field('rewatch_count').value || 0)};
+    const scoreChanged = field('manual_score').value !== displayedScore;
+    if (scoreChanged) {
+      if (current.rating_mode === 'average' && ratedSeasonScores().length && !(await confirmScoreOverride())) {
+        field('manual_score').value = displayedScore;
+        return;
+      }
+      body.manual_score = Number(field('manual_score').value || 0);
+      if (current.rating_mode === 'average') body.rating_mode = 'manual';
+    }
     for (const name of ['start_date','finish_date']) {
       // An untouched empty date must not suppress a transition's automatic date.
       if (field(name).value !== (current[name] || '')) body[name] = field(name).value || null;

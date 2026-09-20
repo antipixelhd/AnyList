@@ -286,6 +286,8 @@ Status: accepted core requirements. These findings reopen the Phase Two implemen
 - Remove the overall entry total rendered above the first status group, to the right of the filter/list-title area. Status counts in the filter controls remain unless a later requirement explicitly removes them.
 - Reduce compact-row height further to match the live AniList list density while keeping required pointer, keyboard, and touch targets usable. Apply the resulting spacing, type scale, weight, and vertical rhythm consistently to filters and related tracker pages instead of tuning one list in isolation.
 
+Implementation progress: the desktop quick editor is condensed to one 1440×900 viewport and the visible **Show score** selector is removed. Its Score field displays the calculated rated-season average when that mode is active, preserves calculated mode when untouched, and asks before changing to a separate manual whole-show score. Canceling the override restores the calculated value. The overall list total and broader AniList density pass remain open.
+
 ### Home, app bar, and settings-shell corrections
 
 - Fix the **Find people** and **Find your next title** hover/focus states so their text remains legible.

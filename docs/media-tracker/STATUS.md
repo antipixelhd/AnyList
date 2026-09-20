@@ -499,3 +499,9 @@ A disposable PostgreSQL regression reproduces the reported **The Death of Robin 
 Rating-only activity now includes the saved value directly in its action label, such as `Rated 7.5 / 10`, as well as the existing score pill. Activity serialization clears an inconsistent legacy `rating_changed` claim when its row has no score, so rows such as the reported local Interstellar record fall back to their actual status/update instead of displaying a rating that does not exist. Valid scored events and combined progress/rating cards retain their rating data.
 
 The focused three-test activity set and all 59 PostgreSQL-backed `TrackingApiTests` pass. The production Astro build also passes.
+
+## Condensed quick editor and seasonal-score behavior (2026-09-20)
+
+The list quick editor no longer exposes a separate **Show score** setting. For an ordinary title, Score remains the direct whole-title rating. For a series using rated-season averaging, the calculated value appears in the same Score field with a short explanation. An untouched value preserves averaging; changing it opens a focused confirmation before switching to a manual whole-show score, and canceling restores the calculated value without altering season ratings.
+
+The desktop editor hero, poster, field heights, spacing and action area were condensed. At 1440×900, the rendered editor measures 752px high and fits without internal scrolling. Browser QA used a save-blocked in-page fixture with two rated seasons: it displayed 7.5, prompted when changed to 8, and restored 7.5 after **Keep season average**. No seeded data was changed. The production Astro build passes.
