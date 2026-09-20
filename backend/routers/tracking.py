@@ -543,18 +543,25 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)
     show_anime=await anime_is_visible(db)
-    rows = (await db.execute(select(Media).where(Media.media_type == MediaType(media_type), Media.title.ilike(f"%{q[:200]}%")).order_by(Media.title).limit(80))).scalars().all()
+    term = q.strip()[:200]
+    query = select(Media).where(Media.media_type == MediaType(media_type))
+    if term:
+        similarity = func.similarity(Media.title, term)
+        query = query.where(or_(Media.title.ilike(f"%{term}%"), similarity >= 0.2)).order_by(similarity.desc(), Media.title)
+    else:
+        query = query.order_by(Media.title)
+    rows = (await db.execute(query.limit(80))).scalars().all()
     if not show_anime:rows=[m for m in rows if not is_anime(m)]
     results = [media_data(m) for m in rows]
     notice = None
-    if q.strip():
+    if term:
         from routers.media import get_user_tmdb_key
         from core import tmdb
         key = await get_user_tmdb_key(db, viewer.id if viewer else -1)
         if key:
             try:
                 search = tmdb.search_movies if media_type == 'movie' else tmdb.search_shows
-                remote = await search(q.strip()[:200], api_key=key)
+                remote = await search(term, api_key=key)
                 known = {m.tmdb_id for m in rows if m.tmdb_id}
                 for item in remote.get('results', []):
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}

@@ -155,6 +155,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.save(self.movie,manual_score=7.2)).status_code,422)
         self.assertEqual((await self.save(self.movie,season_scores={'1':8})).status_code,422)
 
+    async def test_catalog_search_tolerates_small_title_errors(self):
+        response=await self.client.get('/tracking/catalog',params={'media_type':'movie','q':'Fxtur Flm'})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['results'][0]['id'],self.movie.id)
+
     async def test_manual_completed_only_defaults_finish(self):
         res=await self.save(self.movie,status='completed')
         self.assertEqual(res.status_code,200,res.text)
