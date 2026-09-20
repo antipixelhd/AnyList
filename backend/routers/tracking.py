@@ -345,13 +345,21 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     followers_ids = (await db.execute(select(Follow.follower_id).where(Follow.following_id == user.id))).scalars().all()
     people = (await db.execute(select(User, UserProfileData).join(UserProfileData, UserProfileData.user_id == User.id).where(User.id.in_(set(following_ids + followers_ids)), UserProfileData.privacy_level == PrivacyLevel.public))).all()
     visible = [{"username":u.username, "display_name":p.display_name or u.username, "following":u.id in following_ids, "follower":u.id in followers_ids} for u,p in people]
+    scores = [score for entry, _ in entries if (score := effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)) is not None]
+    activity_rows = (await db.execute(select(TrackingActivity, Media).join(Media, Media.id == TrackingActivity.media_id)
+        .where(TrackingActivity.user_id == user.id).order_by(TrackingActivity.created_at.desc()).limit(12))).all()
+    if not await anime_is_visible(db):
+        activity_rows = [row for row in activity_rows if not is_anime(row[1])]
     prefs=await db.get(TrackingPreferences,user.id)
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),"has_avatar":bool(user.profile and user.profile.avatar_path),
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "counts":{"movies":sum(m.media_type==MediaType.movie for e,m in entries),"series":sum(m.media_type==MediaType.series for e,m in entries),
-                  "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids)},
-        "favorites":[media_data(m) for e,m in entries if e.favorite],"people":visible}
+                  "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids),
+                  "favorites":sum(e.favorite for e,m in entries),"rated":len(scores)},
+        "average_score":round(sum(scores)/len(scores),1) if scores else None,
+        "favorites":[media_data(m) for e,m in entries if e.favorite],"people":visible,
+        "recent_activity":[{"status":a.status,"score":a.score,"created_at":a.created_at,"media":media_data(m)} for a,m in activity_rows]}
 
 
 @router.get('/people-search')
@@ -833,7 +841,7 @@ async def activity(db: AsyncSession = Depends(get_db), viewer: User = Depends(ge
     followed = select(Follow.following_id).where(Follow.follower_id == viewer.id)
     rows = (await db.execute(select(TrackingActivity, Media, User).join(Media, Media.id == TrackingActivity.media_id)
         .join(User, User.id == TrackingActivity.user_id).outerjoin(UserProfileData, UserProfileData.user_id == User.id)
-        .where(or_(User.id == viewer.id, (User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public)))
+        .where((User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public))
         .order_by(TrackingActivity.created_at.desc()).limit(60))).all()
     if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
     return {"results": [{"username": u.username, "status": a.status, "score": a.score, "created_at": a.created_at, "media": media_data(m)} for a, m, u in rows]}

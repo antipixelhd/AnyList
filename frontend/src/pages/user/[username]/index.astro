@@ -1,14 +1,29 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
-import {tracker,artwork} from '../../../lib/tracker';
+import ActivityCover from '../../../components/ActivityCover.astro';
+import Icon from '../../../components/Icon.astro';
+import {tracker,artwork,scoreLabel,statuses} from '../../../lib/tracker';
 let profile:any=null,error='';
 try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
+function timestamp(value:string){return /(?:Z|[+-]\d\d:\d\d)$/.test(value)?value:value+'Z';}
+const highlights=profile?[
+  {label:'Movies',value:profile.counts.movies,detail:'tracked'},
+  {label:'Series',value:profile.counts.series,detail:'tracked'},
+  {label:'Completed',value:profile.counts.completed,detail:'current status'},
+  {label:'Average score',value:profile.average_score==null?'—':scoreLabel(profile.average_score),detail:`${profile.counts.rated} rated`},
+]:[];
 ---
-<Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><div class="page-width">
-<div class="profile-totals">{Object.entries(profile.counts).map(([key,value])=><div><strong>{value}</strong><span>{key}</span></div>)}</div>
-<h2>Favorites</h2>{profile.favorites.length?<div class="card-grid">{profile.favorites.map((m:any)=><a class="media-card" href={`/title/${m.id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h2>{m.title}</h2></a>)}</div>:<p>No favorites yet.</p>}
-<h2 id="social" style="margin-top:40px">Social</h2>{profile.people.length?profile.people.map((p:any)=><div class="social-score"><a href={`/user/${encodeURIComponent(p.username)}`}>{p.display_name}</a><span>{p.following?'Following':'Follower'}</span></div>):<p>No public connections to show yet.</p>}
-{profile.owner&&<a class="button-secondary" href="/profile">Edit profile</a>}
-</div></>:<div class="page-width"><p class="error-message">{error}</p></div>}</Tracker>
-<style>.profile-totals{display:flex;justify-content:space-around;gap:20px;background:var(--panel);padding:25px;border-radius:5px;margin-bottom:35px;flex-wrap:wrap}.profile-totals div{text-align:center}.profile-totals strong{display:block;font-size:25px;color:var(--blue)}.profile-totals span{text-transform:capitalize;font-size:13px}</style>
+<Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
+  <section aria-labelledby="overview-highlights"><div class="section-heading"><h2 id="overview-highlights">Overview</h2><span>Movie &amp; series highlights</span></div>
+    <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
+  </section>
+  <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2><span>{profile.owner?'Your latest updates':`${profile.display_name}'s latest updates`}</span></div>
+    {profile.recent_activity.length?profile.recent_activity.map((a:any)=><article class="visual-event">
+      <ActivityCover media={a.media}/><div class="event-body"><div class="event-meta"><time datetime={timestamp(a.created_at)}>{new Date(timestamp(a.created_at)).toLocaleDateString('en-GB')}</time></div>
+      <p class="event-summary">{a.status==='completed'?'Completed':a.status==='planning'?'Plans to watch':statuses.find(([s])=>s===a.status)?.[1]}</p><h3><a href={`/title/${a.media.id}`}>{a.media.title}</a></h3>
+      {a.score!=null&&<div class="event-footer"><span class="score-pill" aria-label={`Rated ${scoreLabel(a.score)} out of 10`}><Icon name="star"/> {scoreLabel(a.score)}<small>/10</small></span></div>}</div>
+    </article>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
+  </section>
+  {profile.favorites.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2><span>{profile.counts.favorites} saved</span></div><div class="card-grid">{profile.favorites.map((m:any)=><a class="media-card" href={`/title/${m.id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h3>{m.title}</h3></a>)}</div></section>}
+</main></>:<main class="page-width"><p class="error-message" role="alert">{error}</p></main>}</Tracker>

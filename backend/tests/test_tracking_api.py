@@ -206,9 +206,20 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.save(self.movie,manual_score=8,status='watching')
         res=await self.save(self.movie,manual_score=0,status='paused')
         self.assertIsNone(res.json()['score'])
-        res=await self.client.get('/tracking/activity')
-        self.assertEqual(len(res.json()['results']),1)
-        self.assertEqual(res.json()['results'][0]['status'],'paused')
+        profile=await self.client.get(f'/tracking/people/{self.owner.username}')
+        self.assertEqual(len(profile.json()['recent_activity']),1)
+        self.assertEqual(profile.json()['recent_activity'][0]['status'],'paused')
+        self.assertEqual((await self.client.get('/tracking/activity')).json()['results'],[])
+
+    async def test_home_activity_contains_followed_public_profiles_only(self):
+        owner_activity=TrackingActivity(user_id=self.owner.id,media_id=self.movie.id,status='watching',score=None)
+        friend_activity=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='completed',score=8)
+        friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
+        friend_profile.privacy_level=PrivacyLevel.public
+        self.db.add_all([owner_activity,friend_activity,Follow(follower_id=self.owner.id,following_id=self.friend.id)])
+        await self.db.commit()
+        results=(await self.client.get('/tracking/activity')).json()['results']
+        self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
 
     async def test_private_profile_denied_even_to_an_admin_viewer(self):
         self.owner.is_admin=True
