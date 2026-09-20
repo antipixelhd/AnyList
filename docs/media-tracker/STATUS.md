@@ -4,6 +4,12 @@ Updated 2026-09-20. Release one is complete, validated locally, and deployed to 
 
 Owner review of deployed build `504c687` produced a new mandatory Phase Two backlog. The current deployment remains a verified baseline but is no longer eligible for final approval. `STAGE-TWO-PLAN.md` now requires a condensed rating-aware quick editor, denser lists and corrected shell styling, grouped multi-provider delivery state, repaired connected-completion notifications/activity, desktop-only AniList-style Fast search, an AniList-measured layout/Stats pass, distinct Favorite and streaming-Library actions, legacy Scrob-UI removal, an AnyList login redesign, and ratings attached to Rated activity. No application code was changed in the documentation checkpoint that recorded these findings.
 
+## Stats visual hierarchy pass (2026-09-20)
+
+The six Stats highlights now form a flat, icon-led ledger with type size, weight and fine separators carrying the grouping. Current-list status, score distribution, viewing activity and genre charts sit in open sections rather than repeated bordered cards. The underlying values, media/year controls, Chart.js canvases, accessible headings and adjacent chart summaries remain intact; no statistics calculation changed.
+
+The Astro production build passed. Authenticated local browser checks at 1440×900 and 390×844 reviewed the rendered hierarchy; the Movies filter updated the visible totals without error. At 390×844 and 320×720, all six metrics and three chart canvases remained in the page with no horizontal overflow. The live AniList Stats body did not render usable reference geometry in this browser session, so this pass follows the owner's visual direction and the profile-shell relationships rather than claiming pixel parity. Final public-head and physical-device verification remain open.
+
 ## Measured profile shell and compact list pass (2026-09-20)
 
 The first-viewport AniList comparison measured its 1440×900 CSS-pixel top shell at 100% zoom and device scale factor 1. The live profile navigation was 46px high and its 160px avatar ended at that navigation boundary. AniList's list and Stats content did not render usable geometry in this browser session, so their oversized artwork/rows were excluded as density evidence; `UI-REFERENCE.md` records the limitation and the measured shell coordinates.

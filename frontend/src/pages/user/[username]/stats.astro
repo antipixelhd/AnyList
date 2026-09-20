@@ -1,6 +1,7 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
+import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
 const {username} = Astro.params;
 let data:any=null,error='';
@@ -18,12 +19,12 @@ const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).
     </header>
     <p class="stats-error error-message" role="alert" hidden></p>
     <section class="stats-highlights" aria-label="Highlights">
-      <article><span>Current titles</span><strong data-stat="current"></strong><small>Current list total</small></article>
-      <article><span>Viewed titles</span><strong data-stat="titles"></strong><small>Unique documented titles</small></article>
-      <article><span>Episodes / seasons</span><strong data-stat="episodes"></strong><small data-stat="seasons"></small></article>
-      <article><span>Estimated watch time</span><strong data-stat="time"></strong><small>Known viewing dates and runtimes</small></article>
-      <article><span>Average score</span><strong data-stat="average"></strong><small data-stat="rated"></small></article>
-      <article><span>Repeat views</span><strong data-stat="repeats"></strong><small>Documented plays beyond unique items</small></article>
+      <article><Icon name="list" class="stats-highlight-icon"/><div><span>Current titles</span><strong data-stat="current"></strong><small>Current list total</small></div></article>
+      <article><Icon name="film" class="stats-highlight-icon"/><div><span>Viewed titles</span><strong data-stat="titles"></strong><small>Unique documented titles</small></div></article>
+      <article><Icon name="play" class="stats-highlight-icon"/><div><span>Episodes / seasons</span><strong data-stat="episodes"></strong><small data-stat="seasons"></small></div></article>
+      <article><Icon name="clock" class="stats-highlight-icon"/><div><span>Estimated watch time</span><strong data-stat="time"></strong><small>Known viewing dates and runtimes</small></div></article>
+      <article><Icon name="star" class="stats-highlight-icon"/><div><span>Average score</span><strong data-stat="average"></strong><small data-stat="rated"></small></div></article>
+      <article><Icon name="undo" class="stats-highlight-icon"/><div><span>Repeat views</span><strong data-stat="repeats"></strong><small>Documented plays beyond unique items</small></div></article>
     </section>
     <section class="stats-grid">
       <article class="stats-panel"><div><span class="eyebrow">Current list</span><h2>Titles by status</h2></div><div class="status-stat-list" data-status-list></div></article>
