@@ -10,6 +10,9 @@ const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
 const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
+// Old numeric Stats bookmarks redirect to the username-based profile Stats
+// route after the same public-profile permission check as /profile/{id}.
+const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
 // The profile page's <img> tag hits this proxy path directly. It has no file
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
@@ -87,6 +90,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const isAllowedAnonymousPublicPage = async () => {
     const isGatedPage =
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
+      PUBLIC_LEGACY_STATS_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
       PUBLIC_LIST_PAGE_RE.test(pathname) ||
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
