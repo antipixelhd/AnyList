@@ -1,5 +1,6 @@
 ---
 import Icon from './Icon.astro';
+import QuickSearch from './QuickSearch.astro';
 import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
 
@@ -49,6 +50,7 @@ const active = (prefix: string) => pathname === prefix || pathname.startsWith(`$
     </nav>
     <div class="account-nav">
       {user ? <>
+        <QuickSearch combineLists={combineLists} />
         <a class:list={{'profile-action': true, active: pathname.startsWith('/user/')}} href={profile} aria-label={`Open ${user.display_name || user.username}'s profile`}>
           {avatarUrl
             ? <img src={avatarUrl} alt="" />

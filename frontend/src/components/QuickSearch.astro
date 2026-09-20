@@ -1,0 +1,141 @@
+---
+import Icon from './Icon.astro';
+const { combineLists = true } = Astro.props;
+---
+<button class="appbar-icon-link" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>
+<dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
+  <h1 class="sr-only" id="quick-search-heading">Fast search</h1>
+  <div class="quick-search-bar">
+    <Icon name="search" />
+    <label class="sr-only" for="quick-search-input">Search movies and series</label>
+    <input id="quick-search-input" type="search" placeholder="Search movies and series…" autocomplete="off" spellcheck="false" />
+    <button class="editor-icon-button" type="button" aria-label="Close search" data-quick-search-close><Icon name="close" /></button>
+  </div>
+  <div class="quick-search-mobile-heading">
+    <label for="quick-search-category">Browse</label>
+    <select id="quick-search-category">
+      {combineLists && <option value="all">Movies & Series</option>}
+      <option value="movie">Movies</option>
+      <option value="series">Series</option>
+    </select>
+  </div>
+  <div class:list={['quick-search-results', {'combined': combineLists}]} aria-live="polite" aria-busy="false">
+    <p class="quick-search-state" data-search-state>Start typing to search the catalogue.</p>
+    <section data-search-section="all" hidden={!combineLists}><h2>Movies & Series</h2><div data-search-results="all"></div></section>
+    <section data-search-section="movie" hidden={combineLists}><h2>Movies</h2><div data-search-results="movie"></div></section>
+    <section data-search-section="series" hidden={combineLists}><h2>Series</h2><div data-search-results="series"></div></section>
+  </div>
+  <footer><span>Results update as you type</span><kbd>Esc</kbd><span>to close</span></footer>
+</dialog>
+
+<script>
+  type SearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null };
+  const dialog = document.querySelector<HTMLDialogElement>('[data-quick-search]');
+  const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
+  const closeButton = dialog?.querySelector<HTMLButtonElement>('[data-quick-search-close]');
+  const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
+  const category = dialog?.querySelector<HTMLSelectElement>('#quick-search-category');
+  const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
+  const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
+  let controller: AbortController | null = null;
+  let timer = 0;
+  let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
+  const isCombined = dialog?.dataset.combined === 'yes';
+
+  const imageUrl = (path?: string | null) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/w92${path}` : (path || '');
+  const resultUrl = (item: SearchResult) => item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
+  function interleave(first: SearchResult[], second: SearchResult[]) {
+    const merged: SearchResult[] = [];
+    for (let index = 0; index < Math.max(first.length, second.length); index++) {
+      if (first[index]) merged.push(first[index]);
+      if (second[index]) merged.push(second[index]);
+    }
+    return merged;
+  }
+  function unique(items: SearchResult[]) {
+    const seen = new Set<string>();
+    return items.filter(item => {
+      const key = `${item.type}:${item.title.toLocaleLowerCase()}:${item.year || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+  }
+  function resultNode(item: SearchResult) {
+    const link = document.createElement('a');
+    link.className = 'quick-search-result';
+    link.href = resultUrl(item);
+    const image = imageUrl(item.poster);
+    if (image) {
+      const poster = document.createElement('img');
+      poster.src = image; poster.alt = ''; poster.loading = 'lazy';
+      link.append(poster);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'quick-search-poster'; fallback.textContent = item.title.slice(0,1);
+      link.append(fallback);
+    }
+    const copy = document.createElement('span');
+    const name = document.createElement('strong'); name.textContent = item.title;
+    const meta = document.createElement('small'); meta.textContent = [item.year, item.type === 'movie' ? 'Movie' : 'Series'].filter(Boolean).join(' · ');
+    copy.append(name, meta); link.append(copy);
+    return link;
+  }
+  function fill(kind: 'all'|'movie'|'series', items: SearchResult[]) {
+    const target = dialog?.querySelector<HTMLElement>(`[data-search-results="${kind}"]`);
+    if (!target) return;
+    target.replaceChildren(...items.slice(0,8).map(resultNode));
+  }
+  function setMobileCategory() {
+    if (!dialog || !category) return;
+    const mobile = matchMedia('(max-width:650px)').matches;
+    dialog.querySelectorAll<HTMLElement>('[data-search-section]').forEach(section => {
+      if (!mobile) section.hidden = isCombined ? section.dataset.searchSection !== 'all' : section.dataset.searchSection === 'all';
+      else section.hidden = section.dataset.searchSection !== category.value;
+    });
+  }
+  function render() {
+    fill('movie', latest.movie); fill('series', latest.series);
+    fill('all', interleave(latest.movie, latest.series));
+    setMobileCategory();
+    const count = latest.movie.length + latest.series.length;
+    if (state) { state.hidden = count > 0; state.textContent = count ? '' : 'No matching movies or series.'; }
+  }
+  async function search() {
+    const query = input?.value.trim() || '';
+    controller?.abort();
+    if (query.length < 2) {
+      latest = {movie:[],series:[]};
+      if (state) { state.hidden = false; state.textContent = query ? 'Type one more character.' : 'Start typing to search the catalogue.'; }
+      fill('movie',[]); fill('series',[]); fill('all',[]); return;
+    }
+    const current = new AbortController();
+    controller = current;
+    if (resultShell) resultShell.setAttribute('aria-busy','true');
+    if (state) { state.hidden = false; state.textContent = 'Searching…'; }
+    try {
+      const request = (mediaType: 'movie'|'series') => fetch(`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:mediaType,q:query})}`, {signal:current.signal}).then(response => {
+        if (!response.ok) throw new Error(); return response.json();
+      });
+      const [movies, series] = await Promise.all([request('movie'), request('series')]);
+      if (controller !== current) return;
+      latest = { movie: unique(movies.results || []), series: unique(series.results || []) };
+      render();
+    } catch (cause) {
+      if ((cause as Error).name !== 'AbortError' && state) { state.hidden = false; state.textContent = 'Search is unavailable. Try again.'; }
+    } finally { if (controller === current) resultShell?.setAttribute('aria-busy','false'); }
+  }
+  function open() {
+    if (!dialog?.open) dialog?.showModal();
+    requestAnimationFrame(() => input?.focus());
+    setMobileCategory();
+  }
+  openButton?.addEventListener('click', open);
+  closeButton?.addEventListener('click', () => dialog?.close());
+  dialog?.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  input?.addEventListener('input', () => { clearTimeout(timer); timer = window.setTimeout(search, 180); });
+  category?.addEventListener('change', setMobileCategory);
+  window.addEventListener('resize', setMobileCategory);
+  document.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
+  });
+</script>
