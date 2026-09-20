@@ -1295,6 +1295,45 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         review=(await self.db.execute(select(SyncReview).where(SyncReview.user_id==self.owner.id,SyncReview.kind=='playback_removed'))).scalars().all()
         self.assertEqual(review,[])
 
+    async def test_established_stream_completion_import_creates_activity_and_rating_prompt_once(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.movie.title='The Death of Robin Hood'
+        self.movie.tmdb_id=987654302
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
+        self.db.add(conn);await self.db.commit()
+
+        # Establish and approve the connection before the title appears. Initial
+        # imports remain quiet; this is a later provider change.
+        await observe_stream_snapshot(self.db,conn,[],[],[],{})
+        baseline=await self.db.get(StreamBaseline,conn.id)
+        baseline.approved=True
+        baseline.observed_at=datetime.now()+timedelta(seconds=1)
+        await self.db.commit()
+
+        watched_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        self.db.add(WatchEvent(user_id=self.owner.id,media_id=self.movie.id,completed=True,watched_at=watched_at))
+        await self.db.commit()
+        row={'content_id':'tt-death-robin-hood','content_type':'movie'}
+        snapshot_args=([],[row],[],{'tt-death-robin-hood':self.movie.tmdb_id})
+
+        await observe_stream_snapshot(self.db,conn,*snapshot_args)
+        await observe_stream_snapshot(self.db,conn,*snapshot_args)
+
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        prompts=(await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id==self.owner.id,SyncReview.media_id==self.movie.id,
+            SyncReview.kind=='rating_needed',SyncReview.dismissed_at.is_(None)))).scalars().all()
+        activity=(await self.db.execute(select(TrackingActivity).where(
+            TrackingActivity.user_id==self.owner.id,TrackingActivity.media_id==self.movie.id))).scalars().all()
+        self.assertEqual(entry.status,'completed')
+        self.assertEqual(len(prompts),1)
+        self.assertEqual(prompts[0].provider,'stremio')
+        self.assertEqual(len(activity),1)
+        self.assertEqual(activity[0].status,'completed')
+        self.assertTrue(activity[0].payload['status_changed'])
+
     async def test_first_import_preserves_conflicting_local_status(self):
         from core.tracking_snapshot import observe_stream_snapshot, require_stream_reconciliation
         from fastapi import HTTPException

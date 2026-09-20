@@ -306,6 +306,8 @@ Status: accepted core requirements. These findings reopen the Phase Two implemen
 - Add a regression for the reported path: mark **The Death of Robin Hood** watched in Stremio, manually sync AnyList, and verify the movie is Completed in the personal list, appears in recent activity, and has one unresolved rating request. Provider polling and manual sync must share these outcomes.
 - A `Rated` activity must include the actual rating. Never render the Rated action without a score, including legacy/inconsistent rows such as the observed local Interstellar activity; repair or safely reinterpret missing-score records rather than presenting a false rating event.
 
+Implementation progress: the established-connection completion path now treats a title first imported after baseline as a new transition even when history import has already created its Completed row. It publishes one completion activity and queues one unresolved `rating_needed` record, while preserving initial-import silence and repeated-snapshot idempotence. A PostgreSQL regression covers the reported Stremio movie flow with **The Death of Robin Hood**. The separate missing-score activity requirement remains open.
+
 ### Desktop Fast search composition
 
 - Fast search is desktop-only for Phase Two. Do not expose the app-bar Fast-search control or its modal on phone layouts. This supersedes the earlier requirement for a phone category selector inside Fast search; the ordinary Browse page remains the supported phone discovery/search path and still defaults to Trending.

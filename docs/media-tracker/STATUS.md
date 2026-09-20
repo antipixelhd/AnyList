@@ -485,3 +485,11 @@ The public issue review highlighted that older documentation named the test host
 The public `f3d26dc` source archive was staged separately from the prior test source and matched its local SHA-256. Compose configuration validated before the build. Only the isolated app image was built; a mode-600 disposable database dump was created and checked with `pg_restore -l` before the app container was replaced. The database container retained its identity, both app and database report healthy, and the app source marker is `f3d26dc`. Startup migrations reached `mt014`.
 
 Over the existing HTTPS test route, login, the web manifest and the service worker returned 200; the OIDC start route returned 302 and the backend still reports Google enabled with password fallback. The backend health endpoint returned `{"status":"ok","app":"AnyList"}`. A read-only query confirmed the one disposable Nuvio and one disposable Stremio connection each retain `push_playback=false` and `push_watched=false`. No container reported an unhealthy state. The prior source and private database backup remain available for rollback. Authenticated UI acceptance and real Android/iPhone checks remain open.
+
+## Established stream completion notification repair (2026-09-20)
+
+An established Stremio/Nuvio snapshot could import a newly watched title into tracking as already Completed, then fail to recognize a transition because reconciliation compared the imported row with itself. The title reached the personal list, but no recent activity or rating request was created.
+
+Snapshot reconciliation now records a title first seen after the approved baseline as a new transition. An unrated Completed title creates one persistent `rating_needed` record and one completion activity; repeated polling remains idempotent, and first-import flood suppression is unchanged. For a newly tracked series, activity counts the imported cumulative progress instead of reporting a zero-episode change.
+
+A disposable PostgreSQL regression reproduces the reported **The Death of Robin Hood** Stremio manual-sync path and verifies Completed status, one unresolved Stremio rating prompt, one completion activity, and duplicate suppression across a repeated snapshot. The focused four-test safety set and all 58 `TrackingApiTests` pass. Live-provider confirmation remains part of owner verification.

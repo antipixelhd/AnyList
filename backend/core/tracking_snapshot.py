@@ -186,6 +186,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == conn.user_id, TrackedEntry.media_id == media.id))).scalar_one_or_none()
             if not entry:
                 continue
+            newly_tracked = media.id not in existing_ids
             pending = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,
                 SyncReview.media_id == media.id, SyncReview.state == 'pending', SyncReview.kind.in_(['conflict','playback_removed'])))).first()
             if pending:
@@ -207,22 +208,21 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             entry.status = proposed
             mark_status_change(entry,f'{conn.type}:{conn.id}',provider_changed_at(row))
             entry.start_date, entry.finish_date = default_dates(previous_status, entry.status, entry.start_date, entry.finish_date, date.today())
-            if media.id not in existing_ids:
+            if newly_tracked:
                 if entry.status=='watching' and entry.start_date is None:entry.start_date=date.today()
                 if entry.status=='completed' and entry.finish_date is None:entry.finish_date=date.today()
             progress_changed = entry.progress != previous_progress
-            if entry.status != previous_status or progress_changed:
+            if entry.status != previous_status or progress_changed or newly_tracked:
                 from core.activity import record_daily_activity, series_activity_details
                 position, finished = await series_activity_details(db, media, entry.progress)
                 await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
                     score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
-                    episodes_watched=max(0,entry.progress-previous_progress),progress=entry.progress,
-                    position=position,finished_seasons=finished,status_changed=entry.status != previous_status)
-            if entry.status != previous_status:
-                if not first and entry.status == 'completed':
-                    await queue_sync_completion_rating(
-                        db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
-                    )
+                    episodes_watched=entry.progress if newly_tracked else max(0,entry.progress-previous_progress),progress=entry.progress,
+                    position=position,finished_seasons=finished,status_changed=entry.status != previous_status or newly_tracked)
+            if entry.status == 'completed' and (entry.status != previous_status or newly_tracked):
+                await queue_sync_completion_rating(
+                    db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
+                )
     resume={**previous.get('resume',{})}
     for key in removed:
         if not completed_progress(old_active[key],completed):resume[key]=old_active[key]
