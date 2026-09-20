@@ -505,3 +505,9 @@ The focused three-test activity set and all 59 PostgreSQL-backed `TrackingApiTes
 The list quick editor no longer exposes a separate **Show score** setting. For an ordinary title, Score remains the direct whole-title rating. For a series using rated-season averaging, the calculated value appears in the same Score field with a short explanation. An untouched value preserves averaging; changing it opens a focused confirmation before switching to a manual whole-show score, and canceling restores the calculated value without altering season ratings.
 
 The desktop editor hero, poster, field heights, spacing and action area were condensed. At 1440×900, the rendered editor measures 752px high and fits without internal scrolling. Browser QA used a save-blocked in-page fixture with two rated seasons: it displayed 7.5, prompted when changed to 8, and restored 7.5 after **Keep season average**. No seeded data was changed. The production Astro build passes.
+
+## Home shortcuts, CTA contrast, and list total cleanup (2026-09-20)
+
+Home now reads the signed-in user's tracking presentation preference. Combined mode shows one **Movie/Series List** shortcut; separate mode shows **Movies** and **Series**. The shared primary-button hover/focus state keeps dark readable text on the brighter blue background, repairing the disappearing text on **Find people** and **Find your next title**.
+
+The overall result total above the first status group is visually removed from personal and public lists. Its live filtered-result announcement remains as screen-reader-only feedback, and the compact/grid switch stays right-aligned. The production Astro build passes. Authenticated browser QA confirmed the combined shortcut, final hover colors of `rgb(7, 19, 29)` on `rgb(102, 199, 246)`, a 1px assistive-only result-count box, and `flex-end` toolbar alignment.

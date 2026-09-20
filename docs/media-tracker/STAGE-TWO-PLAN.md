@@ -286,7 +286,7 @@ Status: accepted core requirements. These findings reopen the Phase Two implemen
 - Remove the overall entry total rendered above the first status group, to the right of the filter/list-title area. Status counts in the filter controls remain unless a later requirement explicitly removes them.
 - Reduce compact-row height further to match the live AniList list density while keeping required pointer, keyboard, and touch targets usable. Apply the resulting spacing, type scale, weight, and vertical rhythm consistently to filters and related tracker pages instead of tuning one list in isolation.
 
-Implementation progress: the desktop quick editor is condensed to one 1440×900 viewport and the visible **Show score** selector is removed. Its Score field displays the calculated rated-season average when that mode is active, preserves calculated mode when untouched, and asks before changing to a separate manual whole-show score. Canceling the override restores the calculated value. The overall list total and broader AniList density pass remain open.
+Implementation progress: the desktop quick editor is condensed to one 1440×900 viewport and the visible **Show score** selector is removed. Its Score field displays the calculated rated-season average when that mode is active, preserves calculated mode when untouched, and asks before changing to a separate manual whole-show score. Canceling the override restores the calculated value. The overall result total above the first list group is now visually removed while its filtered-count announcement remains available to assistive technology. The broader AniList density pass remains open.
 
 ### Home, app bar, and settings-shell corrections
 
@@ -296,6 +296,8 @@ Implementation progress: the desktop quick editor is condensed to one 1440×900 
 - Restyle Fast search as the same unfilled icon action language used by Settings and Notifications. Its icon uses the shared blue accent instead of white.
 - On desktop, one ordinary wheel/trackpad scroll action is enough to start hiding the app bar. Preserve the existing upward reveal, top-of-page, keyboard-focus, and reduced-motion rules.
 - Correct the app-bar/Fast-search alignment on Settings pages so the control occupies the same area and coordinates as on the tracker pages.
+
+Implementation progress: Home's **Your lists** shortcuts now read the signed-in user's combined-list preference and render either one Movie/Series List link or distinct Movies and Series links. Primary buttons now retain deliberate dark-on-light contrast on hover and keyboard focus, fixing both reported Home CTA failures. The app-bar and Settings-shell items remain open.
 
 ### Pending connection delivery state
 

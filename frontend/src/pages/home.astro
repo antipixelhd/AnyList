@@ -3,12 +3,13 @@ import Tracker from '../layouts/Tracker.astro';
 import ActivityCover from '../components/ActivityCover.astro';
 import Icon from '../components/Icon.astro';
 import {tracker,scoreLabel,activityLabel,activityTime} from '../lib/tracker';
-let activities:any[]=[],error='',pending:number|null=null;
+let activities:any[]=[],error='',pending:number|null=null,combineLists=true;
 if(!Astro.locals.user)return Astro.redirect('/browse');
-const [activityResult,eventResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token)]);
+const [activityResult,eventResult,preferenceResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token),tracker('preferences',Astro.locals.token)]);
 if(activityResult.status==='fulfilled')activities=activityResult.value.results;
 else error=activityResult.reason.message;
 if(eventResult.status==='fulfilled')pending=eventResult.value.pending;
+if(preferenceResult.status==='fulfilled')combineLists=preferenceResult.value.combine_lists!==false;
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 ---
 <Tracker title="Home"><div class="page-width dashboard">
@@ -20,5 +21,5 @@ const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
     {a.score!=null&&<div class="event-footer"><span class="score-pill" aria-label={`Rated ${scoreLabel(a.score)} out of 10`}><Icon name="star" /> {scoreLabel(a.score)}<small>/10</small></span></div>}</div>
   </article>):<div class="empty-state"><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
   </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events"><span class="eyebrow">Notifications</span><strong>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
-  <div class="shortcut-panel"><h2>Your lists</h2><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a><a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a></div></aside></div>
+  <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a></div></aside></div>
 </div></Tracker>
