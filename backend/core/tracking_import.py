@@ -11,7 +11,7 @@ from core.tracking_rules import observed_status
 from core.status_provenance import mark_status_change
 
 
-async def import_tracking_history(db, user_id: int):
+async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | None = None):
     await db.execute(select(User.id).where(User.id==user_id).with_for_update())
     deleted=set((await db.execute(select(TrackingDeletion.media_id).where(TrackingDeletion.user_id==user_id))).scalars())
     existing={e.media_id:e for e in (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==user_id))).scalars()}
@@ -77,6 +77,8 @@ async def import_tracking_history(db, user_id: int):
             finish_date=max(item['dates']) if complete and item['dates'] else None)
         mark_status_change(entry,'history-import')
         db.add(entry)
+        if added_media_ids is not None:
+            added_media_ids.add(media_id)
         added+=1
     await db.commit()
     return added

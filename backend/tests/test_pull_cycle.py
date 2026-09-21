@@ -17,6 +17,19 @@ from models.base import CollectionSource
 
 
 class PullCycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_media_server_pull_excludes_source(self):
+        from core.pull_propagation import propagate_media_server_pull
+
+        db = AsyncMock()
+        db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: object())
+        conn = SimpleNamespace(id=7, user_id=41, type='jellyfin')
+        fan_out = AsyncMock()
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
+             patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
+            await propagate_media_server_pull(db, conn=conn, watched_ids={10})
+            fan_out.assert_awaited_once()
+            self.assertEqual(fan_out.await_args.args[:5], (db, 41, 7, {10}, {}))
+
     async def test_cloud_pull_exports_only_when_approved_and_complete(self):
         from core.pull_propagation import propagate_cloud_pull
 

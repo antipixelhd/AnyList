@@ -37,12 +37,14 @@ def _history_changes(entry, *, proposed_status, proposed_start, proposed_finish,
     return fields
 
 
-async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status, changes):
+async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status, changes, connection_id=None):
+    kind = "conflict" if connection_id is not None else "cloud_conflict"
     pending = (await db.execute(select(SyncReview).where(
         SyncReview.user_id == user_id,
         SyncReview.provider == provider,
+        SyncReview.connection_id == connection_id,
         SyncReview.media_id == entry.media_id,
-        SyncReview.kind == "cloud_conflict",
+        SyncReview.kind == kind,
         SyncReview.state == "pending",
     ).limit(1))).scalar_one_or_none()
     if pending is None:
@@ -51,7 +53,8 @@ async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status,
             user_id=user_id,
             media_id=entry.media_id,
             provider=provider,
-            kind="cloud_conflict",
+            connection_id=connection_id,
+            kind=kind,
             previous_status=entry.status,
             proposed_status=proposed_status,
             payload={"changes": changes},
@@ -65,7 +68,7 @@ async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status,
         pending.payload = {"changes": changes}
 
 
-async def _add_applied_notification(db, *, user_id, provider, entry, previous_status, changes):
+async def _add_applied_notification(db, *, user_id, provider, entry, previous_status, changes, connection_id=None):
     if not changes:
         return
     label = {"trakt": "Trakt", "simkl": "Simkl", "mdblist": "MDBList"}.get(provider, provider)
@@ -73,6 +76,7 @@ async def _add_applied_notification(db, *, user_id, provider, entry, previous_st
         user_id=user_id,
         media_id=entry.media_id,
         provider=provider,
+        connection_id=connection_id,
         kind="cloud_update",
         state="confirmed",
         previous_status=previous_status,
@@ -90,18 +94,28 @@ async def reconcile_cloud_watch_events(
     provider: str,
     new_media_ids: set[int],
     applied_media_ids: set[int] | None = None,
+    connection_id: int | None = None,
+    initial_import_override: bool | None = None,
+    newly_tracked_ids: set[int] | None = None,
+    observed_after: datetime | None = None,
 ) -> dict[str, int]:
     stats = {"applied": 0, "conflicts": 0, "preserved": 0}
     if not new_media_ids:
         return stats
-    initial_import = (await db.execute(select(CloudBaseline.id).where(
-        CloudBaseline.user_id == user_id,
-        CloudBaseline.provider == provider,
-    ))).first() is None
+    if initial_import_override is None:
+        initial_import = (await db.execute(select(CloudBaseline.id).where(
+            CloudBaseline.user_id == user_id,
+            CloudBaseline.provider == provider,
+        ))).first() is None
+    else:
+        initial_import = initial_import_override
+    event_filters = [WatchEvent.user_id == user_id, Media.id.in_(new_media_ids)]
+    if observed_after is not None:
+        event_filters.append(WatchEvent.created_at > observed_after)
     rows = (await db.execute(
         select(WatchEvent, Media)
         .join(Media, Media.id == WatchEvent.media_id)
-        .where(WatchEvent.user_id == user_id, Media.id.in_(new_media_ids))
+        .where(*event_filters)
     )).all()
 
     roots: dict[int, dict] = {}
@@ -201,6 +215,8 @@ async def reconcile_cloud_watch_events(
             if released:
                 entry.progress = len(watched_ids) + len(inferred_previous)
             stats["preserved"] += 1
+            if root_id in (newly_tracked_ids or ()) and applied_media_ids is not None:
+                applied_media_ids.update(event_media.id for event, event_media in item["events"] if event_media.id in new_media_ids)
             continue
         reliably_newer = bool(latest_at and local_at and latest_at > local_at)
         reliably_older = bool(latest_at and local_at and latest_at < local_at)
@@ -210,7 +226,7 @@ async def reconcile_cloud_watch_events(
             and entry.start_date is None
             and entry.finish_date is None
         )
-        may_apply = reliably_newer or (initial_import and empty_local)
+        may_apply = reliably_newer or (initial_import and empty_local) or root_id in (newly_tracked_ids or ())
         if not may_apply:
             if reliably_older:
                 stats["preserved"] += 1
@@ -222,6 +238,7 @@ async def reconcile_cloud_watch_events(
                     entry=entry,
                     proposed_status=proposed_status,
                     changes=changes,
+                    connection_id=connection_id,
                 )
                 stats["conflicts"] += 1
             continue
@@ -266,6 +283,7 @@ async def reconcile_cloud_watch_events(
                 entry=entry,
                 previous_status=previous_status,
                 changes=changes,
+                connection_id=connection_id,
             )
         stats["applied"] += 1
         if applied_media_ids is not None:

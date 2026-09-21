@@ -46,3 +46,26 @@ async def propagate_cloud_pull(
         # The import has already committed. A destination outage cannot turn an
         # accepted source snapshot into a failed pull or erase its local state.
         logger.exception("Cloud pull propagation failed for %s user %s", provider, user_id)
+
+
+async def propagate_media_server_pull(db, *, conn, watched_ids: set[int]) -> None:
+    if not watched_ids:
+        return
+    from core.tracking_snapshot import require_stream_reconciliation
+    from fastapi import HTTPException
+
+    try:
+        await require_stream_reconciliation(db, conn)
+    except HTTPException:
+        return
+    from routers.sync import _fan_out_changes_to_other_connections
+
+    try:
+        settings = (await db.execute(select(UserSettings).where(
+            UserSettings.user_id == conn.user_id,
+        ))).scalar_one_or_none()
+        await _fan_out_changes_to_other_connections(
+            db, conn.user_id, conn.id, watched_ids, {}, settings,
+        )
+    except Exception:
+        logger.exception("Media server pull propagation failed for connection %s", conn.id)

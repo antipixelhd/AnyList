@@ -1577,6 +1577,57 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             SyncReview.connection_id == conn.id, SyncReview.kind == 'initial_import',
         ))).scalars().all()), 1)
 
+    async def test_approved_media_server_exports_only_accepted_watch_change(self):
+        from core.media_server_reconciliation import reconcile_media_server_pull
+        from core.tracking_snapshot import require_stream_reconciliation
+        from fastapi import HTTPException
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='jellyfin', name='Fixture Jellyfin',
+            url='https://example.test', token='fixture',
+        )
+        self.db.add(conn)
+        await self.db.commit()
+        await self.save(self.movie, status='planning')
+        self.db.add(StreamBaseline(
+            user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={'kind': 'media_server'},
+            observed_at=datetime.now() - timedelta(days=1),
+        ))
+        watched_at = datetime.now() + timedelta(days=1)
+        self.db.add(WatchEvent(
+            user_id=self.owner.id, media_id=self.movie.id,
+            watched_at=watched_at, completed=True,
+        ))
+        await self.db.commit()
+        stats = {'movies': 1, 'errors': 0}
+        accepted = await reconcile_media_server_pull(
+            self.db, conn, stats, {self.movie.id}, complete=True,
+        )
+        self.assertEqual(accepted, {self.movie.id})
+        self.assertEqual(stats['tracking_updates'], 1)
+
+        # A later undated observation cannot overrule the explicit local edit.
+        await self.save(self.movie, status='dropped')
+        self.db.add(WatchEvent(
+            user_id=self.owner.id, media_id=self.movie.id,
+            watched_at=None, completed=True,
+            created_at=datetime.now() + timedelta(seconds=2),
+        ))
+        await self.db.commit()
+        rejected = await reconcile_media_server_pull(
+            self.db, conn, {'movies': 1, 'errors': 0}, {self.movie.id},
+            complete=True,
+        )
+        self.assertEqual(rejected, set())
+        conflicts = (await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id, SyncReview.kind == 'conflict',
+            SyncReview.state == 'pending',
+        ))).scalars().all()
+        self.assertEqual(len(conflicts), 1)
+        with self.assertRaises(HTTPException):
+            await require_stream_reconciliation(self.db, conn)
+
     async def test_completion_threshold_does_not_infer_removal(self):
         from core.tracking_snapshot import observe_stream_snapshot
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
