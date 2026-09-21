@@ -260,7 +260,7 @@ class ExtractCreditsStingersTests(unittest.TestCase):
 
 
 class PreferredPosterTests(unittest.TestCase):
-    def test_prefers_highest_rated_language_neutral_poster(self) -> None:
+    def test_uses_standard_poster_even_when_alternatives_exist(self) -> None:
         data = {
             "poster_path": "/localized.jpg",
             "images": {"posters": [
@@ -269,7 +269,7 @@ class PreferredPosterTests(unittest.TestCase):
                 {"file_path": "/textless-best.jpg", "iso_639_1": None, "vote_average": 8, "vote_count": 4},
             ]},
         }
-        self.assertEqual(tmdb.preferred_poster_path(data), "/textless-best.jpg")
+        self.assertEqual(tmdb.preferred_poster_path(data), "/localized.jpg")
 
     def test_falls_back_to_normal_poster(self) -> None:
         data = {
@@ -285,7 +285,7 @@ class PosterImageRequestTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         tmdb._cache._store.clear()
 
-    async def test_movie_and_show_details_request_language_neutral_images(self) -> None:
+    async def test_movie_and_show_details_do_not_request_unused_image_sets(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -300,11 +300,11 @@ class PosterImageRequestTests(unittest.IsolatedAsyncioTestCase):
             await tmdb.get_show(1, api_key="key", language="de-DE", cache_ttl=None)
 
         for request in requests:
-            self.assertIn("images", request.url.params["append_to_response"].split(","))
-            self.assertEqual(request.url.params["include_image_language"], "null")
+            self.assertNotIn("images", request.url.params["append_to_response"].split(","))
+            self.assertNotIn("include_image_language", request.url.params)
         self.assertEqual(requests[1].url.params["language"], "de-DE")
 
-    async def test_detail_wrapper_returns_preferred_poster_to_all_callers(self) -> None:
+    async def test_detail_wrapper_preserves_standard_poster_for_all_callers(self) -> None:
         payload = {
             "poster_path": "/localized.jpg",
             "images": {"posters": [{
@@ -317,7 +317,7 @@ class PosterImageRequestTests(unittest.IsolatedAsyncioTestCase):
             tmdb.httpx, "AsyncClient", side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw),
         ):
             result = await tmdb.get_movie(1, api_key="key", cache_ttl=None)
-        self.assertEqual(result["poster_path"], "/textless.jpg")
+        self.assertEqual(result["poster_path"], "/localized.jpg")
 
     def test_detects_both(self) -> None:
         data = {"keywords": {"keywords": [

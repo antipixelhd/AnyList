@@ -1,6 +1,6 @@
-"""Refresh preferred posters for titles already present in tracking lists.
+"""Refresh standard TMDB posters for titles already present in tracking lists.
 
-New catalogue imports receive the preference during normal enrichment. This
+New catalogue imports receive the standard poster during normal enrichment. This
 bounded maintenance command covers existing rows without making profile/list
 requests fan out into one TMDB request per title.
 """
@@ -66,7 +66,7 @@ async def run(media_id: int | None, limit: int | None) -> tuple[int, int, int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prefer textless TMDB posters for existing tracked titles")
+    parser = argparse.ArgumentParser(description="Restore standard TMDB posters for existing tracked titles")
     parser.add_argument("--media-id", type=int, help="refresh one local Media row")
     parser.add_argument("--limit", type=int, help="bound the number of tracked titles refreshed")
     args = parser.parse_args()

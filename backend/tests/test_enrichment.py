@@ -470,7 +470,7 @@ class SeriesCatalogueMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.tmdb_data["created_by"][0]["name"], "Fixture Creator")
         self.assertEqual(media.tmdb_data["episode_run_time"], [52])
 
-    async def test_series_enrichment_prefers_textless_poster(self) -> None:
+    async def test_series_enrichment_uses_standard_tmdb_poster(self) -> None:
         media = Media(media_type=MediaType.series, tmdb_id=1399)
         response = {
             "name": "Fixture",
@@ -482,7 +482,7 @@ class SeriesCatalogueMetadataTests(unittest.IsolatedAsyncioTestCase):
         }
         with patch("core.enrichment.tmdb.get_show", AsyncMock(return_value=response)):
             await enrich_media(media, api_key="tmdb-key")
-        self.assertTrue(media.poster_path.endswith("/textless.jpg"))
+        self.assertTrue(media.poster_path.endswith("/localized.jpg"))
 
     async def test_show_repairs_series_media_without_losing_tracking_markers(self) -> None:
         media = Media(

@@ -17,6 +17,9 @@ export function artwork(path: string | null, size = 'w342') {
   if (path.startsWith('/') && !path.startsWith('//')) return `https://image.tmdb.org/t/p/${size}${path}`;
   try {
     const url = new URL(path);
+    if (url.hostname === 'image.tmdb.org') {
+      url.pathname = url.pathname.replace(/^\/t\/p\/(?:w\d+|h\d+|original)(?=\/)/, `/t/p/${size}`);
+    }
     return url.protocol === 'https:' ? url.href : '';
   } catch { return ''; }
 }
