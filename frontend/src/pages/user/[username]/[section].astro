@@ -15,16 +15,18 @@ const genres = [...new Set(entries.flatMap((e: any) => e.genres))].sort();
 const years = [...new Set(entries.map((e:any)=>e.year).filter(Boolean))].sort().reverse();
 const profile = `/user/${encodeURIComponent(username!)}`;
 const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.locals.token).catch(() => ({default_sort:'title'})) : {default_sort:'title'};
+const requestedStatus=Astro.url.searchParams.get('status')||'all';
+const initialStatus=['all',...statuses.map(([value])=>value)].includes(requestedStatus)?requestedStatus:'all';
 ---
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`}>
   {data ? <>
     <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following}} active={section}/>
-    <div class="list-shell">
+    <div class="list-shell" data-initial-status={initialStatus}>
       <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters"><Icon name="sliders"/> <span>Filters & sorting</span><span id="mobile-filter-count" class="filter-count" hidden>0</span></button>
       <aside class="filters" id="list-filters" aria-label="List filters">
         <div class="mobile-filter-heading"><strong>Filters & sorting</strong><button type="button" class="button-quiet" data-close-filters aria-label="Close filters"><Icon name="close"/></button></div>
         <label class="filter-search"><Icon name="search"/><input id="list-search" type="search" placeholder="Filter titles" aria-label="Search this list"/></label>
-        <h2>Lists</h2><div class="status-filters"><button data-status="all" class="selected">All <span>{entries.length}</span></button>{statuses.map(([s,label])=><button data-status={s}>{label}<span>{entries.filter((e:any)=>e.status===s).length}</span></button>)}</div>
+        <h2>Lists</h2><div class="status-filters"><button data-status="all" class:list={{selected:initialStatus==='all'}}>All <span>{entries.length}</span></button>{statuses.map(([s,label])=><button data-status={s} class:list={{selected:initialStatus===s}}>{label}<span>{entries.filter((e:any)=>e.status===s).length}</span></button>)}</div>
         <h2>Filters</h2>
         <label class="filter-control"><span>Genre</span><select id="genre-filter"><option value="">All genres</option>{genres.map(g=><option>{g}</option>)}</select></label>
         <label class="filter-control"><span>Release year</span><select id="year-filter"><option value="">All years</option>{years.map(y=><option>{y}</option>)}</select></label>
@@ -98,7 +100,7 @@ const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.loca
     }
   }));
   if (groups) {
-    let status = 'all';
+    let status = document.querySelector<HTMLElement>('.list-shell')?.dataset.initialStatus || 'all';
     const input = (id:string) => document.getElementById(id) as HTMLInputElement;
     const resetButton=document.querySelector<HTMLButtonElement>('#reset-filters')!;
     const defaultSort=resetButton.dataset.defaultSort||'title';

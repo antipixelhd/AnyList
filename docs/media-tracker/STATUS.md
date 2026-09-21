@@ -573,3 +573,11 @@ Migration downgrade/re-upgrade passed on disposable PostgreSQL. The 65 tracking/
 Seven inherited Scrob discovery presentations no longer compete with the AnyList Browse experience. `/movies`, `/shows`, `/search`, `/discover`, both `/trending/*` routes and `/airing-today` now provide thin 302 compatibility redirects. Useful movie/series selection and title queries survive the redirect, while a signed-in `/search?type=user` bookmark opens that user's canonical Social search. Login's public navigation now points directly to Browse. The internal `/discover-title` route remains as Browse's remote-catalogue import bridge rather than a user-facing presentation.
 
 The production Astro build passes. Authenticated browser checks confirmed a movie-search bookmark retained `type=movie&q=severance`, a user-search bookmark opened the signed-in profile's Social route, and the old Trending Shows URL opened Browse with `type=series`.
+
+## Legacy personal-page retirement (2026-09-21)
+
+Eight inherited Scrob personal presentations now resolve into the accepted AnyList workflows. Custom-list bookmarks open the canonical username list, both provider collection pages open the owner-only streaming Library, Progress selects Watching on the Series list, Dropped selects Dropped on the combined list, History opens the owner's Profile Overview activity, and Calendar opens Home. Anonymous routes retain the appropriate login or Browse boundary.
+
+The canonical list accepts a validated `status` query and applies it as the initial visible filter, so compatibility redirects preserve their meaning instead of only changing the URL. Custom-list storage, exports and backend APIs remain unchanged even though custom lists are outside the accepted release interface.
+
+The production Astro build passes. Authenticated browser checks confirmed Progress selected Watching with no horizontal overflow, Dropped selected Dropped, both collection routes opened Library, History opened Profile Overview, and Lists opened the canonical combined list.
