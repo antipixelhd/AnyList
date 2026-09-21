@@ -47,6 +47,10 @@ def completed_rows(progress):
     return result
 
 
+def same_playback(left, right):
+    return all(left.get(key) == right.get(key) for key in ('position','duration','season','episode'))
+
+
 async def require_stream_reconciliation(db, conn):
     """Shared by HTTP and background entry points; no first-write bypass."""
     if conn.type not in ('stremio', 'nuvio'):
@@ -177,7 +181,13 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
     if not first:
         old_watched = set(previous.get('watched', []))
         new_completed = [row for row in completed if watch_key(row) not in old_watched]
-        changed_active = [row for key, row in active.items() if old_active.get(key) != row]
+        outbound = dict(previous.get('outbound', {}))
+        acknowledged = {key for key, row in active.items()
+            if key in outbound and same_playback(row, outbound[key])}
+        for key in acknowledged | removed:
+            outbound.pop(key, None)
+        changed_active = [row for key, row in active.items()
+            if key not in acknowledged and not (old_active.get(key) and same_playback(old_active[key], row))]
         deleted = set((await db.execute(select(TrackingDeletion.media_id).where(TrackingDeletion.user_id == conn.user_id))).scalars())
         for row in [*changed_active, *new_completed]:
             media = lookup.get((mappings.get(str(row.get('content_id'))), row.get('content_type')))
@@ -219,6 +229,9 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
                     score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                     episodes_watched=entry.progress if newly_tracked else max(0,entry.progress-previous_progress),progress=entry.progress,
                     position=position,finished_seasons=finished,status_changed=entry.status != previous_status or newly_tracked)
+            if row in changed_active and baseline.approved:
+                from core.stream_actions import queue_progress_update
+                await queue_progress_update(db, conn, media, row)
             if entry.status == 'completed' and (entry.status != previous_status or newly_tracked):
                 await queue_sync_completion_rating(
                     db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
@@ -237,6 +250,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
     progress=[row for row in progress if str(row.get('content_id')) not in deleted_keys]
     completed=[row for row in completed if str(row.get('content_id')) not in deleted_keys]
     baseline.snapshot={'library':sorted(library_ids),'progress':active,'mappings':mappings,'resume':resume,
+        'outbound':outbound if not first else {},
         'watched': sorted({watch_key(row) for row in completed}),
         'records': {'library':library, 'watched':watched, 'progress':progress}}
     baseline.observed_at=datetime.now(timezone.utc).replace(tzinfo=None)

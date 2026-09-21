@@ -4949,6 +4949,7 @@ async def _stremio_records(
             "content_id": content_id,
             "content_type": content_type,
             "title": title,
+            "modified_at": item.get("_mtime"),
         }
         if not item.get("removed") and not item.get("temp"):
             library_records.append(base)

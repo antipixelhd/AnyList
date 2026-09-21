@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from models import MediaServerConnection
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingDeletion
 from core import stremio, nuvio
+from core.status_provenance import provider_changed_at
 
 
 class RemotePlaybackChanged(Exception):
@@ -13,6 +14,128 @@ class RemotePlaybackChanged(Exception):
 
 def same_progress(left, right):
     return all(left.get(key) == right.get(key) for key in ('position', 'duration', 'season', 'episode'))
+
+
+def _iso_utc(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+async def push_stremio_progress(token, record):
+    rows = await stremio.datastore_get(token, ids=[record['content_id']])
+    item = rows[0]
+    state = dict(item.get('state') or {})
+    remote = {
+        'position': state.get('timeOffset'), 'duration': state.get('duration'),
+        'season': record.get('season'), 'episode': record.get('episode'),
+    }
+    if record.get('season') is not None:
+        video_id = str(state.get('video_id') or '')
+        if not video_id.endswith(f":{record['season']}:{record['episode']}"):
+            remote['season'] = remote['episode'] = None
+    if same_progress(remote, record):
+        return
+    observed_at = provider_changed_at({'modified_at': record.get('observed_at')})
+    remote_at = provider_changed_at({'modified_at': item.get('_mtime')})
+    if not observed_at or (remote_at and remote_at > observed_at):
+        raise RemotePlaybackChanged()
+    state['timeOffset'] = record['position']
+    state['duration'] = record['duration']
+    if record.get('season') is not None:
+        state['video_id'] = record.get('video_id') or f"{record['content_id']}:{record['season']}:{record['episode']}"
+    if record.get('last_watched') is not None:
+        state['lastWatched'] = record['last_watched']
+    candidate = {**item, 'state': state, '_mtime': _iso_utc(datetime.now(timezone.utc))}
+    if candidate.get('removed'):
+        candidate['temp'] = True
+    await stremio.datastore_put(token, [candidate])
+
+
+async def push_nuvio_progress(db, conn, record):
+    async def refreshed(session):
+        from db import AsyncSessionLocal
+        from sqlalchemy.orm.attributes import set_committed_value
+        async with AsyncSessionLocal() as token_db:
+            await token_db.execute(update(MediaServerConnection).where(MediaServerConnection.id == conn.id)
+                .values(token=session.refresh_token))
+            await token_db.commit()
+        set_committed_value(conn, 'token', session.refresh_token)
+    async with nuvio.connection_lock(conn.id):
+        await db.refresh(conn)
+        async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+            session = await nuvio.refresh_session(conn.url, conn.token, client=client)
+            await refreshed(session)
+            profile = nuvio.parse_profile_id(conn.server_user_id)
+            rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
+            matches = [row for row in rows if row.get('content_id') == record['content_id']
+                and row.get('season') == record.get('season') and row.get('episode') == record.get('episode')]
+            if len(matches) == 1 and same_progress(matches[0], record):
+                return
+            if matches:
+                if len(matches) != 1:
+                    raise RemotePlaybackChanged()
+                # Nuvio last_watched is viewing evidence, not a universal row
+                # modification time. Only an explicit row update time can order
+                # a competing resume value; otherwise require review.
+                observed_at = provider_changed_at({'updated_at': record.get('observed_at')})
+                remote_at = provider_changed_at({'updated_at': matches[0].get('updated_at')})
+                if not observed_at or not remote_at or remote_at > observed_at:
+                    raise RemotePlaybackChanged()
+            payload = {key: value for key, value in record.items() if key in (
+                'content_id','content_type','video_id','season','episode','position','duration','last_watched','progress_key')}
+            payload.setdefault('progress_key', f"{record['content_id']}_s{record['season']}e{record['episode']}"
+                if record.get('season') is not None else record['content_id'])
+            await nuvio._rpc(client, conn.url, session.access_token, 'sync_push_watch_progress',
+                {'p_profile_id': profile, 'p_entries': [payload]})
+
+
+async def queue_progress_update(db, source, media, record):
+    """Coalesce a trustworthy inbound resume delta for every eligible peer."""
+    evidence = record
+    if source.type == 'nuvio':
+        evidence = {key: record.get(key) for key in ('updated_at', 'modified_at')}
+    changed_at = provider_changed_at(evidence)
+    if changed_at is None:
+        return
+    targets = (await db.execute(select(MediaServerConnection).where(
+        MediaServerConnection.user_id == source.user_id,
+        MediaServerConnection.id != source.id,
+        MediaServerConnection.type.in_(['stremio', 'nuvio']),
+        MediaServerConnection.push_playback.is_(True),
+    ))).scalars().all()
+    for conn in targets:
+        baseline = await db.get(StreamBaseline, conn.id)
+        if not baseline or not baseline.approved:
+            continue
+        mappings = baseline.snapshot.get('mappings', {})
+        keys = [key for key, tmdb_id in mappings.items() if tmdb_id == media.tmdb_id]
+        if not keys and media.imdb_id:
+            keys = [media.imdb_id]
+        if not keys:
+            continue
+        key = next((item for item in keys if item in baseline.snapshot.get('progress', {})), keys[0])
+        existing = (await db.execute(select(StreamAction).where(
+            StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
+            StreamAction.action == 'upsert', StreamAction.state == 'pending').with_for_update())).scalar_one_or_none()
+        payload = {
+            **record, 'content_id': key, 'content_type': media.media_type.value,
+            'observed_at': _iso_utc(changed_at),
+            'source_connection_id': source.id,
+        }
+        payload.pop('modified_at', None)
+        payload.pop('updated_at', None)
+        if existing:
+            previous_at = provider_changed_at({'updated_at': existing.payload.get('observed_at')})
+            if previous_at is None or changed_at >= previous_at:
+                existing.payload = payload
+                existing.attempts = 0
+                existing.last_error = None
+        else:
+            db.add(StreamAction(user_id=source.user_id, connection_id=conn.id,
+                media_id=media.id, action='upsert', payload=payload))
 
 
 async def dismiss_stremio(token, record, *, restore=False, reset=False):
@@ -195,7 +318,7 @@ async def dispatch_stream_actions(db, user_id):
         StreamAction.state == 'pending').order_by(StreamAction.id).limit(100).with_for_update(skip_locked=True))).scalars().all()
     for action in actions:
         conn = await db.get(MediaServerConnection, action.connection_id)
-        if not conn or action.action not in ('dismiss','restore','reset'):
+        if not conn or action.action not in ('dismiss','restore','reset','upsert'):
             continue
         # An explicit confirmed deletion is authoritative and is not an
         # ordinary optional mirroring preference. It still waits for the
@@ -203,7 +326,7 @@ async def dispatch_stream_actions(db, user_id):
         if action.action!='reset' and not conn.push_playback:continue
         entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == action.media_id))).scalar_one_or_none()
         deleted = (await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id == user_id, TrackingDeletion.media_id == action.media_id))).scalar_one_or_none()
-        valid_statuses = ('watching',) if action.action == 'restore' else ('planning','paused','dropped','completed')
+        valid_statuses = ('watching',) if action.action in ('restore','upsert') else ('planning','paused','dropped','completed')
         invalid=(not deleted or entry is not None) if action.action=='reset' else (deleted or not entry or entry.status not in valid_statuses)
         if invalid:
             action.state = 'cancelled'; action.payload = {}
@@ -217,10 +340,12 @@ async def dispatch_stream_actions(db, user_id):
             if conn.type == 'stremio':
                 if action.action == 'reset':await dismiss_stremio(conn.token, action.payload, reset=True)
                 elif action.action == 'restore':await dismiss_stremio(conn.token, action.payload, restore=True)
+                elif action.action == 'upsert':await push_stremio_progress(conn.token, action.payload)
                 else:await dismiss_stremio(conn.token, action.payload)
             elif conn.type == 'nuvio':
                 if action.action == 'reset':await dismiss_nuvio(db, conn, action.payload, reset=True)
                 elif action.action == 'restore':await dismiss_nuvio(db, conn, action.payload, restore=True)
+                elif action.action == 'upsert':await push_nuvio_progress(db, conn, action.payload)
                 else:await dismiss_nuvio(db, conn, action.payload)
             else:
                 continue
@@ -233,12 +358,18 @@ async def dispatch_stream_actions(db, user_id):
             snapshot['resume'] = {**snapshot.get('resume',{})}
             if action.action=='dismiss':snapshot['resume'][key]=dict(action.payload)
             if action.action=='reset':snapshot['resume'].pop(key,None)
-            if action.action == 'restore':
+            if action.action in ('restore','upsert'):
                 snapshot['progress'][key]=dict(action.payload)
                 snapshot['resume'].pop(key,None)
+            snapshot['outbound'] = {**snapshot.get('outbound', {})}
+            if action.action == 'upsert':
+                snapshot['outbound'][key] = {field: action.payload.get(field)
+                    for field in ('position','duration','season','episode','observed_at')}
+            elif action.action in ('dismiss','reset'):
+                snapshot['outbound'].pop(key, None)
             records = dict(snapshot.get('records', {}))
             records['progress'] = [r for r in records.get('progress', []) if r.get('content_id') != key]
-            if action.action == 'restore':records['progress'].append(dict(action.payload))
+            if action.action in ('restore','upsert'):records['progress'].append(dict(action.payload))
             snapshot['records'] = records
             baseline.snapshot = snapshot
             action.payload = {}

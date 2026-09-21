@@ -25,7 +25,10 @@ def provider_changed_at(row: dict | None) -> datetime | None:
     """Extract a reliable provider timestamp when its adapter supplied one."""
     if not row:
         return None
-    for field in ("last_watched", "watched_at", "updated_at", "modified_at"):
+    # Prefer timestamps that describe mutation of the record itself. A
+    # provider's last-watched value can describe viewing history rather than
+    # the current resume-position write (notably Nuvio).
+    for field in ("updated_at", "modified_at", "watched_at", "last_watched"):
         value = row.get(field)
         if value in (None, ""):
             continue

@@ -1727,6 +1727,111 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(baseline.snapshot['progress'],{})
         self.assertEqual(baseline.snapshot['library'],['tt-target'])
 
+    async def test_ordered_resume_delta_coalesces_for_an_eligible_peer(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        from core.stream_actions import dispatch_stream_actions
+
+        self.movie.tmdb_id=987654319
+        self.movie.imdb_id='tt-source-resume'
+        await self.save(self.movie,status='watching')
+        source=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Source',
+            url='https://example.test',token='source',push_playback=True)
+        target=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Target',
+            url='https://example.test',token='target',push_playback=True)
+        self.db.add_all([source,target]);await self.db.flush()
+        target_record={'content_id':'tt-target-resume','content_type':'movie','position':10,'duration':100}
+        self.db.add(StreamBaseline(user_id=self.owner.id,connection_id=target.id,approved=True,
+            snapshot={'progress':{'tt-target-resume':target_record},
+                'mappings':{'tt-target-resume':self.movie.tmdb_id},'library':[]}))
+        await self.db.commit()
+        await observe_stream_snapshot(self.db,source,[],[],[],{})
+        source_baseline=await self.db.get(StreamBaseline,source.id)
+        source_baseline.approved=True
+        source_baseline.observed_at=datetime(2026,1,1)
+        await self.db.commit()
+
+        first={'content_id':'tt-source-resume','content_type':'movie','position':70,'duration':100,
+            'modified_at':'2026-01-02T12:00:00Z','last_watched':1700000000000}
+        await observe_stream_snapshot(self.db,source,[],[],[first],{'tt-source-resume':self.movie.tmdb_id})
+        actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.action=='upsert'))).scalars().all()
+        self.assertEqual(len(actions),1)
+        self.assertEqual(actions[0].connection_id,target.id)
+        self.assertEqual(actions[0].payload['content_id'],'tt-target-resume')
+        self.assertEqual(actions[0].payload['position'],70)
+        self.assertEqual(actions[0].payload['observed_at'],'2026-01-02T12:00:00Z')
+
+        # A trustworthy newer correction may move the position backwards and
+        # replaces the still-pending destination write instead of duplicating it.
+        corrected={**first,'position':25,'modified_at':'2026-01-02T12:05:00Z'}
+        await observe_stream_snapshot(self.db,source,[],[],[corrected],{'tt-source-resume':self.movie.tmdb_id})
+        await self.db.refresh(actions[0])
+        self.assertEqual(actions[0].payload['position'],25)
+        self.assertEqual(len((await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.action=='upsert'))).scalars().all()),1)
+
+        with patch('core.stream_actions.push_stremio_progress',AsyncMock()) as write:
+            await dispatch_stream_actions(self.db,self.owner.id)
+            await dispatch_stream_actions(self.db,self.owner.id)
+            write.assert_awaited_once()
+        self.assertEqual(actions[0].state,'applied')
+        target_baseline=await self.db.get(StreamBaseline,target.id)
+        self.assertEqual(target_baseline.snapshot['progress']['tt-target-resume']['position'],25)
+        self.assertIn('tt-target-resume',target_baseline.snapshot['outbound'])
+
+        # The matching destination pull acknowledges our write and must not
+        # fan the same value back to the original source connection.
+        echoed={**corrected,'content_id':'tt-target-resume','modified_at':'2026-01-02T12:06:00Z'}
+        await observe_stream_snapshot(self.db,target,[],[],[echoed],{'tt-target-resume':self.movie.tmdb_id})
+        self.assertNotIn('tt-target-resume',target_baseline.snapshot['outbound'])
+        pending=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
+            StreamAction.action=='upsert'))).scalars().all()
+        self.assertEqual(pending,[])
+
+    async def test_nuvio_last_watched_alone_does_not_order_resume_fanout(self):
+        from core.stream_actions import queue_progress_update
+
+        self.movie.tmdb_id=987654318
+        source=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Source',
+            url='https://example.test',token='source',server_user_id='1')
+        target=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Target',
+            url='https://example.test',token='target',push_playback=True)
+        self.db.add_all([source,target]);await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id,connection_id=target.id,approved=True,
+            snapshot={'mappings':{'tt-target':self.movie.tmdb_id},'progress':{},'library':[]}))
+        await self.db.commit()
+        await queue_progress_update(self.db,source,self.movie,{
+            'content_id':'tt-source','content_type':'movie','position':40,'duration':100,
+            'last_watched':1760000000000,
+        })
+        await self.db.commit()
+        actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.action=='upsert'))).scalars().all()
+        self.assertEqual(actions,[])
+
+    async def test_stremio_resume_push_uses_position_identity_and_ordering(self):
+        from core.stream_actions import push_stremio_progress, RemotePlaybackChanged
+
+        remote={'_id':'tt-target','type':'series','_mtime':'2026-01-02T12:00:00Z',
+            'state':{'timeOffset':80,'duration':100,'video_id':'tt-target:1:2'}}
+        record={'content_id':'tt-target','content_type':'series','season':1,'episode':2,
+            'position':20,'duration':100,'observed_at':'2026-01-02T12:05:00Z',
+            'last_watched':1760000000000}
+        with patch('core.stream_actions.stremio.datastore_get',AsyncMock(return_value=[remote])), \
+             patch('core.stream_actions.stremio.datastore_put',AsyncMock()) as put:
+            await push_stremio_progress('token',record)
+        candidate=put.await_args.args[1][0]
+        self.assertEqual(candidate['state']['timeOffset'],20)
+        self.assertEqual(candidate['state']['duration'],100)
+        self.assertEqual(candidate['state']['video_id'],'tt-target:1:2')
+        self.assertEqual(candidate['state']['lastWatched'],1760000000000)
+
+        newer_remote={**remote,'_mtime':'2026-01-02T12:06:00Z'}
+        with patch('core.stream_actions.stremio.datastore_get',AsyncMock(return_value=[newer_remote])):
+            with self.assertRaises(RemotePlaybackChanged):
+                await push_stremio_progress('token',record)
+
 
 
     async def test_new_series_observation_advances_cumulatively_and_completed_stays_completed(self):
