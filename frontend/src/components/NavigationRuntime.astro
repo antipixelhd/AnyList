@@ -1,0 +1,185 @@
+<div class="route-progress" data-route-progress aria-hidden="true"></div>
+<div class="offline-toast" data-offline-toast role="status" aria-live="polite" hidden></div>
+
+<script>
+  import { isTransitionBeforePreparationEvent } from 'astro:transitions/client';
+
+  type CachedPage = { html: string; bytes: number; storedAt: number };
+  type NavigationState = {
+    user: string;
+    pages: Map<string, CachedPage>;
+    bytes: number;
+    usedCached: Set<string>;
+    timer?: number;
+    initialized?: boolean;
+    originalFetch?: typeof window.fetch;
+  };
+  declare global {
+    interface Window {
+      __anyListNavigation?: NavigationState;
+      anyListToast?: (message: string) => void;
+    }
+  }
+
+  const currentUser = () => document.body.dataset.cacheUser || 'anonymous';
+  const cacheable = (url: URL) => url.origin === location.origin && (
+    ['/home','/browse','/recent-events'].includes(url.pathname)
+    || /^\/title\/\d+$/.test(url.pathname)
+    || /^\/user\/[^/]+(?:\/(?:movies|series|list|library|social|stats))?$/.test(url.pathname)
+  );
+  const keyFor = (url: URL, user = currentUser()) => `${user}:${url.pathname}${url.search}`;
+  const state = window.__anyListNavigation ||= {
+    user: currentUser(), pages: new Map(), bytes: 0, usedCached: new Set(),
+  };
+
+  function resetForIdentity() {
+    const user = currentUser();
+    if (state.user === user) return;
+    state.user = user;
+    state.pages.clear();
+    state.usedCached.clear();
+    state.bytes = 0;
+  }
+
+  function showToast(message: string) {
+    const toast = document.querySelector<HTMLElement>('[data-offline-toast]');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.hidden = false;
+    window.clearTimeout(Number(toast.dataset.timer || 0));
+    toast.dataset.timer = String(window.setTimeout(() => { toast.hidden = true; }, 4200));
+  }
+  window.anyListToast = showToast;
+
+  function sanitizedHtml(doc: Document) {
+    const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('[data-token]').forEach(element => element.removeAttribute('data-token'));
+    clone.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(input => {
+      input.value = '';
+      input.removeAttribute('value');
+    });
+    clone.querySelectorAll('[data-route-progress]').forEach(element => element.classList.remove('visible','finishing'));
+    clone.querySelectorAll('[data-offline-toast]').forEach(element => {
+      element.setAttribute('hidden',''); element.textContent = '';
+    });
+    return '<!doctype html>' + clone.outerHTML;
+  }
+
+  function remember(url: URL, doc: Document) {
+    resetForIdentity();
+    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user) return;
+    const html = sanitizedHtml(doc);
+    const bytes = new Blob([html]).size;
+    if (bytes > 2_000_000) return;
+    const key = keyFor(url);
+    const previous = state.pages.get(key);
+    if (previous) state.bytes -= previous.bytes;
+    state.pages.delete(key);
+    state.pages.set(key, { html, bytes, storedAt: Date.now() });
+    state.bytes += bytes;
+    while (state.pages.size > 18 || state.bytes > 10_000_000) {
+      const oldest = state.pages.keys().next().value as string | undefined;
+      if (!oldest) break;
+      state.bytes -= state.pages.get(oldest)?.bytes || 0;
+      state.pages.delete(oldest);
+    }
+  }
+
+  async function validate(url: URL, key: string) {
+    if (!navigator.onLine || !cacheable(url)) {
+      state.usedCached.delete(key);
+      return;
+    }
+    try {
+      const response = await (state.originalFetch || window.fetch)(url.href, {
+        credentials: 'same-origin', headers: { Accept: 'text/html' },
+      });
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) return;
+      const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (!doc.querySelector('[name="astro-view-transitions-enabled"]')) return;
+      if ((doc.body.dataset.cacheUser || 'anonymous') !== state.user) return;
+      remember(url, doc);
+    } catch { /* Retained content remains usable until a later navigation. */ }
+    finally { state.usedCached.delete(key); }
+  }
+
+  function startProgress() {
+    window.clearTimeout(state.timer);
+    state.timer = window.setTimeout(() => {
+      document.querySelector('[data-route-progress]')?.classList.add('visible');
+    }, 150);
+  }
+  function finishProgress() {
+    window.clearTimeout(state.timer);
+    const bar = document.querySelector<HTMLElement>('[data-route-progress]');
+    if (!bar) return;
+    bar.classList.add('finishing');
+    window.setTimeout(() => bar.classList.remove('visible','finishing'), 170);
+  }
+
+  if (!state.initialized) {
+    state.initialized = true;
+    state.originalFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : null;
+      const method = String(init?.method || request?.method || 'GET').toUpperCase();
+      try {
+        if (method !== 'GET' && !navigator.onLine) {
+          showToast('No internet access. This change was not queued.');
+          throw new TypeError('Offline writes are not queued');
+        }
+        return await state.originalFetch!(input, init);
+      } catch (error) {
+        if (method !== 'GET' && navigator.onLine) showToast('Could not connect. This change was not queued.');
+        throw error;
+      }
+    };
+
+    document.addEventListener('click', event => {
+      if (navigator.onLine || event.defaultPrevented || event.button !== 0) return;
+      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]');
+      if (!anchor || anchor.target || anchor.hasAttribute('download')) return;
+      const url = new URL(anchor.href, location.href);
+      if (!cacheable(url) || state.pages.has(keyFor(url))) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showToast('No internet access. Visit this page while online to keep it available in this tab.');
+    }, true);
+
+    document.addEventListener('submit', event => {
+      const form = event.target as HTMLFormElement;
+      if (new URL(form.action, location.href).pathname === '/logout') {
+        state.pages.clear(); state.usedCached.clear(); state.bytes = 0;
+      }
+    }, true);
+
+    document.addEventListener('astro:before-preparation', rawEvent => {
+      if (!isTransitionBeforePreparationEvent(rawEvent)) return;
+      resetForIdentity();
+      const event = rawEvent;
+      const key = keyFor(event.to);
+      const cached = cacheable(event.to) ? state.pages.get(key) : undefined;
+      if (!cached) {
+        startProgress();
+        return;
+      }
+      state.usedCached.add(key);
+      event.loader = async () => {
+        event.newDocument = new DOMParser().parseFromString(cached.html, 'text/html');
+      };
+    });
+    document.addEventListener('astro:after-preparation', finishProgress);
+    document.addEventListener('astro:page-load', () => {
+      finishProgress();
+      resetForIdentity();
+      const url = new URL(location.href);
+      const key = keyFor(url);
+      document.documentElement.classList.add('route-content-enter');
+      requestAnimationFrame(() => document.documentElement.classList.remove('route-content-enter'));
+      if (state.usedCached.has(key)) void validate(url, key);
+      else remember(url, document);
+    });
+  }
+
+  remember(new URL(location.href), document);
+</script>

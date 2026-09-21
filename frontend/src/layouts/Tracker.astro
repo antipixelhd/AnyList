@@ -4,16 +4,19 @@ import AppBar from '../components/AppBar.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import QuickRating from '../components/QuickRating.astro';
 import AttentionPrompt from '../components/AttentionPrompt.astro';
+import NavigationRuntime from '../components/NavigationRuntime.astro';
+import { ClientRouter } from 'astro:transitions';
 const {title = 'AnyList'} = Astro.props;
 ---
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · AnyList</title><link rel="icon" href="/favicon.svg"/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/></head>
-<body class="tracker">
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · AnyList</title><link rel="icon" href="/favicon.svg"/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/><ClientRouter fallback="swap" /></head>
+<body class="tracker" data-cache-user={Astro.locals.user?.id ?? 'anonymous'}>
   <a class="skip-link" href="#content">Skip to content</a>
   <AppBar />
   <main id="content"><slot /></main>
   <QuickRating />
   {Astro.locals.user && <AttentionPrompt />}
   <PwaRuntime />
+  <NavigationRuntime />
   <footer class="page-footer">AnyList <span>Keep a little history of the stories you love.</span></footer>
 </body></html>

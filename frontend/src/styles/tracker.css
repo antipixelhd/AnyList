@@ -287,3 +287,14 @@ body.tracker{font-size:14px;line-height:1.55}
 
 .conn-status-badge{display:inline-flex;align-items:center;align-self:flex-start;max-width:100%;white-space:nowrap}
 @media(max-width:650px){.collapsible-header{gap:12px}.collapsible-header>div:first-child{min-width:0}.conn-status-badge{width:max-content}.collapsible-header span.text-zinc-500{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(52vw,320px)}}
+
+:root{--loading-threshold:150ms;--content-reveal:170ms;--skeleton-bg:rgba(255,255,255,.055);--poster-ratio:2/3}
+.route-progress{position:fixed;z-index:1000;inset:0 100% auto 0;height:2px;pointer-events:none;background:#3db4f2;opacity:0;transition:right 900ms cubic-bezier(.2,.7,.2,1),opacity 120ms ease}
+.route-progress.visible{right:18%;opacity:1}
+.route-progress.finishing{right:0;transition-duration:160ms}
+.offline-toast{position:fixed;z-index:1001;left:50%;bottom:24px;max-width:min(430px,calc(100vw - 32px));transform:translateX(-50%);padding:10px 14px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:#16202d;color:#e8f0f7;box-shadow:0 14px 40px rgba(0,0,0,.35);font-size:.875rem;text-align:center}
+.route-content-enter main{opacity:.72}
+main{transition:opacity var(--content-reveal) ease}
+.skeleton-block{display:block;background:var(--skeleton-bg);border-radius:8px}
+.skeleton-poster{aspect-ratio:var(--poster-ratio)}
+@media(prefers-reduced-motion:reduce){.route-progress,.route-progress.finishing,main{transition:none}.route-content-enter main{opacity:1}}
