@@ -648,6 +648,14 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
     entries = [entry_data(e, m, owner) for e, m in rows]
+    movie_ids = [m.id for _, m in rows if m.media_type == MediaType.movie]
+    watched_movies = set((await db.execute(select(WatchEvent.media_id).where(
+        WatchEvent.user_id == user.id, WatchEvent.media_id.in_(movie_ids),
+        WatchEvent.completed.is_(True)))).scalars()) if movie_ids else set()
+    for result, (_, media) in zip(entries, rows):
+        if media.media_type == MediaType.movie:
+            result['progress'] = int(bool(result['progress'] or result['status'] == 'completed'
+                                          or media.id in watched_movies))
     if media_type in ('series','all'):
         # One batched query for all catalogue episode IDs; don't confuse status
         # Completed with history covering newly released episodes.
@@ -869,7 +877,7 @@ async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), vi
 
 async def released_episodes(db, media):
     if media.media_type == MediaType.movie:
-        return [media] if media.release_date and media.release_date[:10] <= date.today().isoformat() else []
+        return [media] if not media.release_date or media.release_date[:10] <= date.today().isoformat() else []
     terms = []
     if media.tmdb_id:
         terms.append(Show.tmdb_id == media.tmdb_id)

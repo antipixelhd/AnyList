@@ -17,6 +17,10 @@ const profile = `/user/${encodeURIComponent(username!)}`;
 const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.locals.token).catch(() => ({default_sort:'title'})) : {default_sort:'title'};
 const requestedStatus=Astro.url.searchParams.get('status')||'all';
 const initialStatus=['all',...statuses.map(([value])=>value)].includes(requestedStatus)?requestedStatus:'all';
+const today = new Date().toISOString().slice(0, 10);
+const canIncrement = (entry: any) => entry.type === 'movie'
+  ? entry.progress < 1 && (!entry.release_date || entry.release_date.slice(0, 10) <= today)
+  : entry.released_episodes !== undefined && entry.progress < entry.released_episodes;
 ---
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`}>
   {data ? <>
@@ -42,8 +46,8 @@ const initialStatus=['all',...statuses.map(([value])=>value)].includes(requested
           <div class="entry-title"><div class="entry-thumbnail" data-preview-src={artwork(entry.poster)}>{artwork(entry.poster) ? <img class="entry-cover" src={artwork(entry.poster)} alt="" loading="lazy"/> : <span class="entry-cover"/>}{data.owner&&<button class="row-menu" data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><a href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a></div>
           <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={artwork(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
           <span class="entry-progress">
-            <span data-progress-label>{entry.type==='movie' ? entry.status==='completed'?'Watched':'—' : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
-            {data.owner && entry.type==='series' && entry.status==='watching' && entry.released_episodes!==undefined && (entry.progress < entry.released_episodes) && <button class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.progress+1} aria-label={`Mark the next episode of ${entry.title} watched`} title="Mark next episode watched"><Icon name="plus"/></button>}
+            <span data-progress-label>{entry.type==='movie' ? `${entry.progress}/1` : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
+            {data.owner && canIncrement(entry) && <button class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'}><Icon name="plus"/></button>}
             {entry.status==='completed'&&entry.new_seasons>0&&<small class="unwatched-indicator">{entry.new_seasons} new {entry.new_seasons===1?'season':'seasons'}</small>}
           </span>
           {isCombined&&<span class="entry-type">{entry.type==='movie'?'Movie':'Series'}</span>}

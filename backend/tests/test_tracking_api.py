@@ -1297,6 +1297,44 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ids=(await self.db.execute(select(WatchEvent.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()
         self.assertEqual(ids,[])
 
+    async def test_movie_progress_works_without_release_metadata_and_stops_at_one(self):
+        self.movie.release_date=None
+        await self.db.commit()
+        added=await self.save(self.movie,status='paused')
+        self.assertEqual(added.status_code,200,added.text)
+        initial=(await self.client.get(f'/tracking/profile/{self.owner.username}/movie')).json()['entries'][0]
+        self.assertEqual(initial['progress'],0)
+        watched=await self.save(self.movie,progress=1)
+        self.assertEqual(watched.status_code,200,watched.text)
+        self.assertEqual(watched.json()['status'],'completed')
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/movie')).json()['entries'][0]
+        self.assertEqual(result['progress'],1)
+        self.assertEqual((await self.db.execute(select(WatchEvent.media_id).where(
+            WatchEvent.user_id==self.owner.id))).scalars().all(),[self.movie.id])
+        over_limit=await self.save(self.movie,progress=2)
+        self.assertEqual(over_limit.status_code,409,over_limit.text)
+
+    async def test_series_progress_advances_from_paused_status_and_ignores_future_episodes(self):
+        self.show.tmdb_id=987654322
+        self.show.tmdb_data={'tracking_catalogue_refreshed_at':datetime.now().isoformat(),
+                             'tracking_episode_ids':[987654323,987654324]}
+        series=Show(title='Fixture Show',tmdb_id=self.show.tmdb_id)
+        self.db.add(series);await self.db.flush()
+        self.db.add_all([
+            Media(title='Released',media_type=MediaType.episode,tmdb_id=987654323,show_id=series.id,
+                  season_number=1,episode_number=1,release_date='2020-01-01'),
+            Media(title='Future',media_type=MediaType.episode,tmdb_id=987654324,show_id=series.id,
+                  season_number=1,episode_number=2,release_date='2999-01-01'),
+        ]);await self.db.commit()
+        await self.save(self.show,status='paused')
+        advanced=await self.save(self.show,progress=1)
+        self.assertEqual(advanced.status_code,200,advanced.text)
+        self.assertEqual(advanced.json()['status'],'completed')
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
+        self.assertEqual(result['season_position'],'S1E1')
+        self.assertEqual(result['released_episodes'],1)
+        self.assertEqual((await self.save(self.show,progress=2)).status_code,409)
+
     async def test_snapshot_first_empty_and_partial_pull_cannot_remove_tracking(self):
         from core.tracking_snapshot import observe_stream_snapshot
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Test only',url='https://example.test',token='fixture')
