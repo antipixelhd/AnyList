@@ -58,8 +58,14 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_optional_user]=lambda:self.viewer
         app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
         self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test')
+        from core.streaming_library import dispatch_library_deliveries
+        async def deliver_in_fixture(user_id, media_id):
+            await dispatch_library_deliveries(self.db, user_id, media_id)
+        self.delivery_patch=patch('core.streaming_library.deliver_library_intent', deliver_in_fixture)
+        self.delivery_patch.start()
 
     async def asyncTearDown(self):
+        self.delivery_patch.stop()
         await self.client.aclose(); await self.db.close()
         await self.transaction.rollback(); await self.connection.close(); await self.engine.dispose()
 
@@ -875,13 +881,20 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'],[])
 
-    async def test_library_action_requires_an_opted_in_streaming_connection(self):
+    async def test_library_action_saves_without_a_connection_and_survives_refresh(self):
         response=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
-        self.assertEqual(response.status_code,409,response.text)
-        self.assertIn('Enable Library push',response.json()['detail'])
-        self.assertIsNone((await self.db.execute(select(StreamingLibraryIntent).where(
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertTrue(response.json()['desired'])
+        self.assertFalse(response.json()['pending'])
+        self.assertTrue((await self.client.get(f'/tracking/library/{self.movie.id}')).json()['desired'])
+        self.assertEqual([row['id'] for row in (await self.client.get('/tracking/library')).json()['results']],
+                         [self.movie.id])
+        self.assertIsNotNone((await self.db.execute(select(StreamingLibraryIntent).where(
             StreamingLibraryIntent.user_id==self.owner.id,
             StreamingLibraryIntent.media_id==self.movie.id))).scalar_one_or_none())
+        removed=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':False})
+        self.assertEqual(removed.status_code,200,removed.text)
+        self.assertEqual((await self.client.get('/tracking/library')).json()['results'],[])
 
     async def test_library_action_waits_for_first_connection_review(self):
         from core import stremio
@@ -893,9 +906,28 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
         self.assertEqual(response.status_code,200,response.text)
         self.assertTrue(response.json()['pending'])
-        self.assertIn('Run a full import',response.json()['connections'][0]['error'])
+        state=(await self.client.get(f'/tracking/library/{self.movie.id}')).json()
+        self.assertIn('Run a full import',state['connections'][0]['error'])
         write.assert_not_awaited()
         self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'][0]['title'],self.movie.title)
+
+    async def test_later_connection_receives_saved_library_choice_after_review(self):
+        from core.streaming_library import retry_pending_library_deliveries
+        from core import stremio
+
+        self.movie.tmdb_data={'external_ids':{'imdb_id':'tt1234567'}}
+        saved=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+        self.assertEqual(saved.status_code,200,saved.text)
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Later Stremio',
+            url='https://example.test',token='fixture',push_collection=True)
+        self.db.add(conn);await self.db.flush()
+        self.db.add(StreamBaseline(connection_id=conn.id,user_id=self.owner.id,snapshot={},approved=True))
+        await self.db.commit()
+        with (patch.object(stremio,'datastore_get',AsyncMock(return_value=[])),
+              patch.object(stremio,'datastore_put',AsyncMock()) as write):
+            await retry_pending_library_deliveries(self.db,self.owner.id,conn.id)
+        write.assert_awaited_once()
+        self.assertEqual((await self.client.get(f'/tracking/library/{self.movie.id}')).json()['connections'][0]['state'],'applied')
 
     async def test_library_action_tracks_partial_delivery_and_prevents_readding_removed_title(self):
         from routers.sync import _build_nuvio_library_items
@@ -922,9 +954,10 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(added.status_code,200,added.text)
         self.assertTrue(added.json()['desired'])
         self.assertTrue(added.json()['pending'])
-        self.assertEqual({row['name']:row['state'] for row in added.json()['connections']},
+        state=(await self.client.get(f'/tracking/library/{self.movie.id}')).json()
+        self.assertEqual({row['name']:row['state'] for row in state['connections']},
             {'Stremio':'applied','Nuvio':'pending'})
-        self.assertEqual(next(row for row in added.json()['connections'] if row['name']=='Nuvio')['error'],'RuntimeError')
+        self.assertEqual(next(row for row in state['connections'] if row['name']=='Nuvio')['error'],'RuntimeError')
         self.assertFalse(stremio_put.await_args.args[1][0]['removed'])
         grouped=(await self.client.get('/tracking/recent-events')).json()['outbound']
         self.assertEqual(len(grouped),1)
@@ -949,7 +982,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             removed=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':False})
         self.assertEqual(removed.status_code,200,removed.text)
         self.assertFalse(removed.json()['desired'])
-        self.assertFalse(removed.json()['pending'])
+        self.assertFalse((await self.client.get(f'/tracking/library/{self.movie.id}')).json()['pending'])
         self.assertTrue(stremio_remove.await_args.args[1][0]['removed'])
         self.assertEqual(stremio_remove.await_args.args[1][0]['state']['custom'],'preserve')
         self.assertEqual(nuvio_remove.await_args.kwargs['removed_content_ids'],{'tt1234567'})

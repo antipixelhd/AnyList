@@ -5,6 +5,7 @@ so a failed write, or another collection source, cannot silently reverse it.
 """
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -53,9 +54,9 @@ async def library_state(db: AsyncSession, user_id: int, media_id: int) -> dict:
             "attempts": delivery.attempts if delivery and conn.push_collection else 0,
         })
     return {
-        "in_library": bool(memberships),
+        "in_library": intent.desired if intent else bool(memberships),
         "desired": intent.desired if intent else bool(memberships),
-        "available": any(conn.push_collection for conn in connections),
+        "available": True,
         "pending": any(row["state"] == "pending" for row in rows),
         "connections": rows,
     }
@@ -101,8 +102,6 @@ async def set_library_intent(db: AsyncSession, user_id: int, media_id: int, desi
         MediaServerConnection.type.in_(("stremio", "nuvio")),
         MediaServerConnection.push_collection.is_(True),
     ))).scalars().all()
-    if not targets:
-        raise HTTPException(409, "Enable Library push for a Stremio or Nuvio connection first")
     intent = (await db.execute(select(StreamingLibraryIntent).where(
         StreamingLibraryIntent.user_id == user_id,
         StreamingLibraryIntent.media_id == media_id,
@@ -131,8 +130,18 @@ async def set_library_intent(db: AsyncSession, user_id: int, media_id: int, desi
             row.desired, row.state, row.attempts, row.last_error = desired, "pending", 0, None
     await _set_manual_anchor(db, user_id, media_id, desired)
     await db.commit()  # The decision survives a failed provider request.
-    await dispatch_library_deliveries(db, user_id, media_id)
     return await library_state(db, user_id, media_id)
+
+
+async def deliver_library_intent(user_id: int, media_id: int) -> None:
+    """Run after the response with a session independent of the request."""
+    from db import AsyncSessionLocal
+
+    try:
+        async with AsyncSessionLocal() as db:
+            await dispatch_library_deliveries(db, user_id, media_id)
+    except Exception:
+        logging.getLogger(__name__).exception("Library delivery task failed for user %s, media %s", user_id, media_id)
 
 
 async def _record_for_media(db: AsyncSession, user_id: int, media: Media) -> dict:
@@ -272,6 +281,27 @@ async def dispatch_library_deliveries(db: AsyncSession, user_id: int, media_id: 
 
 async def retry_pending_library_deliveries(db: AsyncSession, user_id: int, connection_id: int) -> None:
     """Retry a bounded batch when an established connection syncs again."""
+    conn = await db.get(MediaServerConnection, connection_id)
+    if not conn or conn.user_id != user_id or conn.type not in ("stremio", "nuvio") or not conn.push_collection:
+        return
+    # Choices made before this connection existed become deliveries once its
+    # first reviewed snapshot has been imported. The dispatcher checks that gate.
+    intents = (await db.execute(select(StreamingLibraryIntent).where(
+        StreamingLibraryIntent.user_id == user_id,
+    ).order_by(StreamingLibraryIntent.id))).scalars().all()
+    existing = {
+        row.intent_id: row for row in (await db.execute(select(StreamingLibraryDelivery).where(
+        StreamingLibraryDelivery.connection_id == connection_id,
+    ))).scalars().all()
+    }
+    for intent in intents:
+        row = existing.get(intent.id)
+        if row is None:
+            db.add(StreamingLibraryDelivery(intent_id=intent.id, connection_id=connection_id,
+                                            desired=intent.desired))
+        elif row.state == "cancelled" or row.desired != intent.desired:
+            row.desired, row.state, row.attempts, row.last_error = intent.desired, "pending", 0, None
+    await db.flush()
     media_ids = (await db.execute(select(StreamingLibraryIntent.media_id)
         .join(StreamingLibraryDelivery, StreamingLibraryDelivery.intent_id == StreamingLibraryIntent.id)
         .where(StreamingLibraryIntent.user_id == user_id,

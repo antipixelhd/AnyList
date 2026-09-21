@@ -50,11 +50,7 @@ const dateLabel = (value: string | null) => value
               <StatusControl mediaId={title.id} status={title.entry?.status} type={title.type} />
               <button class="button-secondary favorite-toggle" type="button" aria-pressed={title.entry?.favorite?'true':'false'} data-favorite-toggle data-media={title.id} data-favorite={title.entry?.favorite?'true':'false'}><Icon name="heart"/><span>{title.entry?.favorite?'Favorited':'Favorite'}</span></button>
               <p class="status-error" role="alert" data-favorite-error hidden></p>
-              <button class="button-secondary library-toggle" type="button" data-library-toggle data-media={title.id} data-desired={library?.desired?'true':'false'} disabled={!library?.available}><Icon name="list"/><span>{library?.desired?'Remove from library':'Add to library'}</span></button>
-              <div class="library-state" aria-label="Streaming library delivery">
-                {library?.connections?.length ? <><p>{library.pending?'Library change awaiting delivery':library.in_library?'In a connected library':'Streaming library'}</p><ul>{library.connections.map((connection:any)=><li><span>{connection.name}</span><small>{!connection.push_enabled?'Library push off':connection.state==='pending'?connection.error?`Retry pending · ${connection.error}`:'Pending':connection.state==='applied'?connection.in_library?'Added':'Removed':connection.in_library?'In library':'Not in library'}</small></li>)}</ul></> : <p>Connect Stremio or Nuvio and enable Library push to use this action.</p>}
-                {library?.pending&&<button class="button-quiet" type="button" data-library-retry data-media={title.id}>Retry delivery</button>}
-              </div>
+              <button class="button-secondary library-toggle" type="button" aria-pressed={library?.desired?'true':'false'} data-library-toggle data-media={title.id} data-desired={library?.desired?'true':'false'} disabled={!library}><Icon name="list"/><span>{library?.desired?'Remove from library':'Add to library'}</span></button>
               <p class="status-error" role="alert" data-library-error hidden={!libraryError}>{libraryError}</p>
             </div>
           )}
@@ -198,21 +194,21 @@ document.querySelector<HTMLButtonElement>('[data-favorite-toggle]')?.addEventLis
   location.reload();
  }catch(cause){error.textContent=(cause as Error).message;error.hidden=false;button.disabled=false;}
 });
-async function changeLibrary(button:HTMLButtonElement,path:string,body?:Record<string,boolean>){
+async function changeLibrary(button:HTMLButtonElement){
  const error=document.querySelector<HTMLElement>('[data-library-error]')!;button.disabled=true;error.hidden=true;
  try{
-  const response=await fetch(path,{method:body?'PUT':'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const next=button.dataset.desired!=='true';
+  const response=await fetch(`/api/proxy/tracking/library/${button.dataset.media}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({in_library:next})});
   if(!response.ok){const data=await response.json();throw new Error(typeof data.detail==='string'?data.detail:'Could not update the streaming library.');}
-  location.reload();
+  const state=await response.json();
+  button.dataset.desired=String(state.desired);button.setAttribute('aria-pressed',String(state.desired));
+  button.querySelector('span')!.textContent=state.desired?'Remove from library':'Add to library';
+  button.disabled=false;
  }catch(cause){error.textContent=(cause as Error).message;error.hidden=false;button.disabled=false;}
 }
 document.querySelector<HTMLButtonElement>('[data-library-toggle]')?.addEventListener('click',event=>{
  const button=event.currentTarget as HTMLButtonElement;
- changeLibrary(button,`/api/proxy/tracking/library/${button.dataset.media}`,{in_library:button.dataset.desired!=='true'});
-});
-document.querySelector<HTMLButtonElement>('[data-library-retry]')?.addEventListener('click',event=>{
- const button=event.currentTarget as HTMLButtonElement;
- changeLibrary(button,`/api/proxy/tracking/library/${button.dataset.media}/retry`);
+ changeLibrary(button);
 });
 document.querySelectorAll<HTMLButtonElement>('[data-season-progress]').forEach(button=>button.addEventListener('click',async()=>{
  button.disabled=true;

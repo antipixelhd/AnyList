@@ -2,7 +2,7 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -455,8 +455,22 @@ async def unfollow_person(username:str,db:AsyncSession=Depends(get_db),viewer:Us
 
 @router.get("/library")
 async def library(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    rows = (await db.execute(select(Media).join(Collection, Collection.media_id == Media.id).join(CollectionFile, CollectionFile.collection_id == Collection.id)
-        .where(Collection.user_id == viewer.id, CollectionFile.source.in_(['stremio','nuvio']), Media.media_type.in_([MediaType.movie,MediaType.series])).distinct().order_by(Media.title))).scalars().all()
+    from models.streaming_library import StreamingLibraryIntent
+
+    observed = select(Collection.media_id).join(CollectionFile,
+        CollectionFile.collection_id == Collection.id).where(
+        Collection.user_id == viewer.id,
+        CollectionFile.source.in_(['stremio', 'nuvio']))
+    selected = select(StreamingLibraryIntent.media_id).where(
+        StreamingLibraryIntent.user_id == viewer.id,
+        StreamingLibraryIntent.desired.is_(True))
+    excluded = select(StreamingLibraryIntent.media_id).where(
+        StreamingLibraryIntent.user_id == viewer.id,
+        StreamingLibraryIntent.desired.is_(False))
+    rows = (await db.execute(select(Media).where(
+        Media.media_type.in_([MediaType.movie, MediaType.series]),
+        or_(Media.id.in_(selected), (Media.id.in_(observed)) & ~Media.id.in_(excluded)),
+    ).order_by(Media.title))).scalars().all()
     return {"results":[media_data(m) for m in rows]}
 
 
@@ -474,10 +488,13 @@ async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db), v
 
 
 @router.put("/library/{media_id}")
-async def update_library_state(media_id: int, body: LibraryIntentPatch,
+async def update_library_state(media_id: int, body: LibraryIntentPatch, background_tasks: BackgroundTasks,
                                db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    from core.streaming_library import set_library_intent
-    return await set_library_intent(db, viewer.id, media_id, body.in_library)
+    from core.streaming_library import deliver_library_intent, set_library_intent
+    state = await set_library_intent(db, viewer.id, media_id, body.in_library)
+    if state['pending']:
+        background_tasks.add_task(deliver_library_intent, viewer.id, media_id)
+    return state
 
 
 @router.post("/library/{media_id}/retry")
