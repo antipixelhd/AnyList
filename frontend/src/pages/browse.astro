@@ -45,9 +45,12 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
     <button class="sr-only" type="submit">Search</button>
   </form>
   <p class="browse-status" role="status" aria-live="polite" data-browse-status>{notice}</p>
-  {error?<p class="error-message" data-browse-error>{error}</p>:<p class="error-message" data-browse-error hidden></p>}
-  <div class="card-grid" data-browse-results hidden={results.length===0}>{results.map(m=><a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{artwork(m.poster)?<img src={artwork(m.poster)} alt="" loading="lazy"/>:<span class="media-card-placeholder" aria-hidden="true">{m.title.slice(0,1)}</span>}<h2>{m.title}</h2><small>{m.year}</small></a>)}</div>
-  <div class="empty-state" data-browse-empty hidden={results.length>0}><h2>No matching titles</h2><p>Try another title or media type.</p></div>
+  <div data-browse-region aria-busy="false">
+    {error?<p class="error-message" data-browse-error>{error}</p>:<p class="error-message" data-browse-error hidden></p>}
+    <div class="card-grid" data-browse-results hidden={results.length===0}>{results.map(m=><a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{artwork(m.poster)?<img src={artwork(m.poster)} alt="" loading="lazy"/>:<span class="media-card-placeholder" aria-hidden="true">{m.title.slice(0,1)}</span>}<h2>{m.title}</h2><small>{m.year}</small></a>)}</div>
+    <div class="card-grid browse-skeleton-grid" data-browse-skeleton aria-hidden="true" hidden>{Array.from({length:10},(_,index)=><div class="browse-skeleton-card" data-skeleton-card={index}><span class="skeleton-block skeleton-poster"></span><span class="skeleton-block skeleton-title"></span><span class="skeleton-block skeleton-meta"></span></div>)}</div>
+    <div class="empty-state" data-browse-empty hidden={results.length>0}><h2>No matching titles</h2><p>Try another title or media type.</p></div>
+  </div>
 </div></Tracker>
 <script>
   const form=document.querySelector<HTMLFormElement>('[data-browse-form]');
@@ -58,8 +61,10 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
   const status=document.querySelector<HTMLElement>('[data-browse-status]');
   const error=document.querySelector<HTMLElement>('[data-browse-error]');
   const grid=document.querySelector<HTMLElement>('[data-browse-results]');
+  const skeleton=document.querySelector<HTMLElement>('[data-browse-skeleton]');
   const empty=document.querySelector<HTMLElement>('[data-browse-empty]');
-  let timer:number|undefined;
+  const region=document.querySelector<HTMLElement>('[data-browse-region]');
+  let searchTimer:number|undefined;
   let controller:AbortController|undefined;
 
   const posterUrl=(value:string|null)=>value?.startsWith('/')?`https://image.tmdb.org/t/p/w342${value}`:value||'';
@@ -76,7 +81,8 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
     if(!grid||!empty)return;
     grid.replaceChildren();
     for(const item of items){
-      const card=document.createElement('a');card.className='media-card';
+      const card=document.createElement('a');card.className='media-card browse-result-card';
+      card.style.setProperty('--reveal-delay',`${Math.min(grid.childElementCount*25,150)}ms`);
       card.href=item.id?`/title/${item.id}`:`/discover-title?type=${encodeURIComponent(item.type)}&id=${item.tmdb_id}`;
       const image=posterUrl(item.poster);
       if(image){const img=document.createElement('img');img.src=image;img.alt='';img.loading='lazy';card.append(img);}
@@ -90,7 +96,13 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
     if(!query||!typeSelect)return;
     controller?.abort();const request=new AbortController();controller=request;
     const term=query.value.trim();const type=typeSelect.value;
-    if(status)status.textContent='Loading…';if(error)error.hidden=true;if(grid)grid.setAttribute('aria-busy','true');
+    let loadingTimer=window.setTimeout(()=>{
+      if(controller!==request)return;
+      if(grid)grid.hidden=true;if(empty)empty.hidden=true;if(skeleton)skeleton.hidden=false;
+      if(heading)heading.textContent=term?'Search results':`Browse ${type==='movie'?'movies':'series'}`;
+      if(intro)intro.textContent=term?`Live results for “${term}”.`:'See what people are watching now.';
+    },150);
+    if(status)status.textContent='';if(error)error.hidden=true;if(empty)empty.hidden=true;region?.setAttribute('aria-busy','true');
     const params=new URLSearchParams();if(term)params.set('q',term);if(type==='series')params.set('type','series');
     history.replaceState(null,'',`${location.pathname}${params.size?`?${params}`:''}`);
     try{
@@ -105,20 +117,22 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
         items=unique((await fallback.json()).results.map((item:any)=>normalize(item,type)));isTrending=false;
         message='Trending is temporarily unavailable. Showing the local catalogue.';
       }
+      if(controller!==request||query.value.trim()!==term||typeSelect.value!==type)return;
+      window.clearTimeout(loadingTimer);if(skeleton)skeleton.hidden=true;
       render(items);if(heading)heading.textContent=term?'Search results':`${isTrending?'Trending':'Browse'} ${type==='movie'?'movies':'series'}`;
       if(intro)intro.textContent=term?`Live results for “${term}”.`:'See what people are watching now.';
       if(status)status.textContent=message;
     }catch(reason){
-      if((reason as Error).name==='AbortError')return;
-      if(status)status.textContent='';if(grid)grid.hidden=true;if(empty)empty.hidden=true;
+      if((reason as Error).name==='AbortError'||controller!==request||query.value.trim()!==term||typeSelect.value!==type)return;
+      window.clearTimeout(loadingTimer);if(skeleton)skeleton.hidden=true;if(status)status.textContent='';if(grid)grid.hidden=true;if(empty)empty.hidden=true;
       if(heading)heading.textContent=term?'Search unavailable':'Browse unavailable';
       if(intro)intro.textContent='Try again in a moment.';
-      if(error){error.hidden=false;error.textContent='Unable to load titles. Please try again.';}
+      if(error){error.hidden=false;error.textContent=navigator.onLine?'Unable to load titles. Please try again.':'No internet access. Reconnect and try again.';}
     }finally{
-      if(controller===request&&grid)grid.setAttribute('aria-busy','false');
+      if(controller===request){window.clearTimeout(loadingTimer);if(skeleton)skeleton.hidden=true;region?.setAttribute('aria-busy','false');}
     }
   }
   form?.addEventListener('submit',event=>{event.preventDefault();void load();});
-  query?.addEventListener('input',()=>{window.clearTimeout(timer);timer=window.setTimeout(()=>void load(),280);});
+  query?.addEventListener('input',()=>{window.clearTimeout(searchTimer);searchTimer=window.setTimeout(()=>void load(),280);});
   typeSelect?.addEventListener('change',()=>void load());
 </script>

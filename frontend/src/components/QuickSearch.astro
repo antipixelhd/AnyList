@@ -11,6 +11,7 @@ const { combineLists = true } = Astro.props;
     <input id="quick-search-input" type="search" placeholder="Search movies and series…" autocomplete="off" spellcheck="false" />
     <button class="editor-icon-button" type="button" aria-label="Close search" data-quick-search-close><Icon name="close" /></button>
   </div>
+  <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   <p class="quick-search-state" data-search-state role="status" hidden></p>
   <p class="sr-only" data-search-announcement role="status"></p>
   <div class:list={['quick-search-results', {'combined': combineLists}]} aria-busy="false" hidden>
@@ -29,8 +30,10 @@ const { combineLists = true } = Astro.props;
   const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
+  const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
   let controller: AbortController | null = null;
   let timer = 0;
+  let progressTimer = 0;
   let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
   const isCombined = dialog?.dataset.combined === 'yes';
 
@@ -111,7 +114,9 @@ const { combineLists = true } = Astro.props;
     const current = new AbortController();
     controller = current;
     if (resultShell) resultShell.setAttribute('aria-busy','true');
-    showState('Searching…');
+    showState('');
+    clearTimeout(progressTimer);
+    progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
       const request = (mediaType: 'movie'|'series') => fetch(`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:mediaType,q:query})}`, {signal:current.signal}).then(response => {
         if (!response.ok) throw new Error(); return response.json();
@@ -121,12 +126,13 @@ const { combineLists = true } = Astro.props;
       latest = { movie: unique(movies.results || []), series: unique(series.results || []) };
       render();
     } catch (cause) {
-      if ((cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
-    } finally { if (controller === current) resultShell?.setAttribute('aria-busy','false'); }
+      if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
+    } finally { if (controller === current) { clearTimeout(progressTimer);progress?.classList.remove('visible');resultShell?.setAttribute('aria-busy','false'); } }
   }
   function open() {
     if (matchMedia('(max-width:650px)').matches) return;
     clearTimeout(timer);
+    clearTimeout(progressTimer);progress?.classList.remove('visible');
     controller?.abort();
     if (input) input.value = '';
     if (resultShell) resultShell.hidden = true;
@@ -138,9 +144,9 @@ const { combineLists = true } = Astro.props;
   openButton?.addEventListener('click', open);
   closeButton?.addEventListener('click', () => dialog?.close());
   dialog?.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-  dialog?.addEventListener('close', () => { clearTimeout(timer); controller?.abort(); });
+  dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); });
   input?.addEventListener('input', () => {
-    clearTimeout(timer);
+    clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
