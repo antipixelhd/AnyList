@@ -7,3 +7,7 @@ The bounded pull-cycle barrier is intentionally process-local because the curren
 ## Retained page validation
 
 A retained page is shown immediately and its online validation refreshes the cache for the next visit. It does not replace the visible page while the user is reading it, which avoids a surprise content swap but means the current view can remain stale until the next navigation.
+
+## Offline Connection Settings
+
+The in-tab Connection Settings cache retains a deliberately sparse read-only summary: provider names and only whitelisted, last-viewed status labels. It excludes forms, credentials, tokens, scripts, and live operations. Online navigation fetches the full settings page instead of replaying this summary.
