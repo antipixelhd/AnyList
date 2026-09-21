@@ -53,10 +53,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   <div class="flex items-center gap-4 pointer-events-none">
                     <Fragment set:html={connectionIconHtml(conn.type)} />
                     <div class="flex flex-col gap-0.5">
-                      <span class="font-medium text-zinc-200 flex items-center gap-2">
-                        {conn.name}
-                        <span id={`conn-status-${conn.id}`} class="hidden text-xs font-normal px-1.5 py-0.5 rounded pointer-events-auto"></span>
-                      </span>
+                      <span class="font-medium text-zinc-200">{conn.name}</span>
+                      <span id={`conn-status-${conn.id}`} class="conn-status-badge hidden text-xs font-normal px-1.5 py-0.5 rounded pointer-events-auto"></span>
                       <span class="text-xs text-zinc-500">{typeLabel} · {conn.url}</span>
                     </div>
                   </div>
@@ -2827,13 +2825,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     el.classList.remove('hidden');
     if (state === 'checking') {
       el.textContent = 'Checking…';
-      el.className = 'text-xs font-normal px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400';
+      el.className = 'conn-status-badge text-xs font-normal px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400';
     } else if (state === 'connected') {
       el.textContent = '● Connected';
-      el.className = 'text-xs font-normal px-1.5 py-0.5 rounded bg-green-500/15 text-green-400';
+      el.className = 'conn-status-badge text-xs font-normal px-1.5 py-0.5 rounded bg-green-500/15 text-green-400';
     } else if (state === 'disconnected') {
       el.textContent = '● Disconnected';
-      el.className = 'text-xs font-normal px-1.5 py-0.5 rounded bg-red-500/15 text-red-400';
+      el.className = 'conn-status-badge text-xs font-normal px-1.5 py-0.5 rounded bg-red-500/15 text-red-400';
     }
   }
 
