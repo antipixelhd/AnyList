@@ -83,7 +83,7 @@ async def previous_source_playback(db, entry, media):
 
 async def require_stream_reconciliation(db, conn):
     """Shared by HTTP and background entry points; no first-write bypass."""
-    if conn.type not in ('stremio', 'nuvio'):
+    if conn.type not in ('stremio', 'nuvio', 'jellyfin', 'emby', 'plex'):
         return
     baseline = await db.get(StreamBaseline, conn.id)
     if not baseline or not baseline.approved:
@@ -91,7 +91,7 @@ async def require_stream_reconciliation(db, conn):
         raise HTTPException(409, 'Run a full import and confirm its summary in Notifications before pushing to this connection')
     unresolved = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,
         SyncReview.connection_id == conn.id, SyncReview.state == 'pending',
-        SyncReview.kind.in_(['conflict','uncertain_removal','deletion_conflict'])))).first()
+        SyncReview.kind.in_(['conflict','uncertain_removal','deletion_conflict','rating_conflict'])))).first()
     if unresolved:
         from fastapi import HTTPException
         raise HTTPException(409, 'Resolve this connection’s conflicts in Notifications before pushing')

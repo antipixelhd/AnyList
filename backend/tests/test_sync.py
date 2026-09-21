@@ -52,6 +52,11 @@ class PushUpstreamValidationTests(unittest.IsolatedAsyncioTestCase):
     this validation predated plex_push_watchlist and never learned about it,
     so "Push" always 400'd for anyone using watchlist-only push."""
 
+    async def asyncSetUp(self):
+        gate = patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock())
+        gate.start()
+        self.addCleanup(gate.stop)
+
     async def test_watchlist_only_flag_is_accepted(self):
         conn = MediaServerConnection(
             id=1, user_id=1, type="plex",
@@ -1128,6 +1133,7 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         from models.events import WatchEvent
         from models.media import Media, MediaType
         from models.sync import SyncJob, SyncStatus
+        from models.tracking import StreamBaseline
 
         async with self.Session() as db:
             conn = MediaServerConnection(
@@ -1136,6 +1142,7 @@ class FullPushPartialWatchTests(_PartialWatchDB):
             )
             db.add(conn)
             await db.flush()
+            db.add(StreamBaseline(user_id=1, connection_id=conn.id, approved=True, snapshot={}))
             job = SyncJob(
                 user_id=1, source=CollectionSource.jellyfin, status=SyncStatus.pending,
                 connection_id=conn.id, job_type="push",
@@ -1215,6 +1222,7 @@ class FullPushEchoTokenTimingTests(_PartialWatchDB):
         from models.events import WatchEvent
         from models.media import Media, MediaType
         from models.sync import SyncJob, SyncStatus
+        from models.tracking import StreamBaseline
 
         async with self.Session() as db:
             conn = MediaServerConnection(
@@ -1223,6 +1231,7 @@ class FullPushEchoTokenTimingTests(_PartialWatchDB):
             )
             db.add(conn)
             await db.flush()
+            db.add(StreamBaseline(user_id=1, connection_id=conn.id, approved=True, snapshot={}))
             job = SyncJob(
                 user_id=1, source=CollectionSource.jellyfin, status=SyncStatus.pending,
                 connection_id=conn.id, job_type="push",

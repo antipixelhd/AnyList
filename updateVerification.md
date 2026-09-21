@@ -11,3 +11,7 @@ A retained page is shown immediately and its online validation refreshes the cac
 ## Offline Connection Settings
 
 The in-tab Connection Settings cache retains a deliberately sparse read-only summary: provider names and only whitelisted, last-viewed status labels. It excludes forms, credentials, tokens, scripts, and live operations. Online navigation fetches the full settings page instead of replaying this summary.
+
+## Existing media server connections
+
+Jellyfin, Emby, and Plex now require a complete, error-free import and confirmation of its Notifications summary before outbound synchronization. Existing connections have no reviewed baseline yet, so their next full import will create that review; enabled outbound fields will wait for approval.

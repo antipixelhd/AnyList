@@ -211,7 +211,14 @@ async def _auto_sync_scheduler():
                     if conn.auto_sync_interval is not None:
                         schedules.append(("pull", conn.auto_sync_interval, pull_runner))
                     if conn.auto_push_interval is not None and conn.push_enabled:
-                        schedules.append(("push", conn.auto_push_interval, _run_full_push))
+                        from core.tracking_snapshot import require_stream_reconciliation
+                        from fastapi import HTTPException
+                        try:
+                            await require_stream_reconciliation(db, conn)
+                        except HTTPException:
+                            pass
+                        else:
+                            schedules.append(("push", conn.auto_push_interval, _run_full_push))
 
                     due: list[tuple[datetime, str, object]] = []
                     for job_type, interval, runner in schedules:

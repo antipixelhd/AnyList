@@ -1451,7 +1451,7 @@ async def _fan_out_changes_to_other_connections(
             return True
 
         for conn in push_candidates:
-            if conn.type in ('stremio', 'nuvio'):
+            if conn.type in ('stremio', 'nuvio', 'jellyfin', 'emby', 'plex'):
                 from core.tracking_snapshot import require_stream_reconciliation
                 try:
                     await require_stream_reconciliation(db, conn)
@@ -2892,8 +2892,10 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     print(f"Jellyfin sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Jellyfin.")
 
             print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.media_server_reconciliation import record_media_server_import
+            await record_media_server_import(
+                db, conn, stats, complete=not movie_limit and not show_limit and not stats["errors"],
+            )
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -3102,8 +3104,10 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     print(f"Emby sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Emby.")
 
             print(f"Emby sync job {job_id} completed. Stats: {stats}")
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.media_server_reconciliation import record_media_server_import
+            await record_media_server_import(
+                db, conn, stats, complete=not movie_limit and not show_limit and not stats["errors"],
+            )
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
@@ -4192,8 +4196,10 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                     print(f"Plex sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Plex.")
 
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            from core.media_server_reconciliation import record_media_server_import
+            await record_media_server_import(
+                db, conn, stats, complete=not movie_limit and not show_limit and not stats["errors"],
+            )
             # The watchlist reconcile above is the one exception: it honors this
             # connection's own plex_push_watchlist flag in both jobs, so pull/push
             # scheduling order can't resurrect items removed on the other side.

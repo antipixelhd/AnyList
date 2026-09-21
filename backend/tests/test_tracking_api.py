@@ -1539,6 +1539,44 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         review.state='confirmed';await self.db.commit()
         await require_stream_reconciliation(self.db,conn)
 
+    async def test_media_server_first_import_requires_approval(self):
+        from core.media_server_reconciliation import record_media_server_import
+        from core.tracking_snapshot import require_stream_reconciliation
+        from fastapi import HTTPException
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='jellyfin', name='Fixture Jellyfin',
+            url='https://example.test', token='fixture', push_watched=True,
+        )
+        self.db.add(conn)
+        await self.db.commit()
+        self.assertFalse(await record_media_server_import(
+            self.db, conn, {'movies': 1, 'errors': 1}, complete=False,
+        ))
+        self.assertIsNone(await self.db.get(StreamBaseline, conn.id))
+        self.assertFalse(await record_media_server_import(
+            self.db, conn, {'movies': 1, 'errors': 0}, complete=True,
+        ))
+        await self.db.commit()
+        with self.assertRaises(HTTPException):
+            await require_stream_reconciliation(self.db, conn)
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id, SyncReview.kind == 'initial_import',
+        ))).scalars().all()
+        self.assertEqual(len(reviews), 1)
+        response = await self.client.post(
+            f'/tracking/recent-events/{reviews[0].id}', json={'action': 'confirm'},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        await require_stream_reconciliation(self.db, conn)
+        self.assertTrue(await record_media_server_import(
+            self.db, conn, {'movies': 2, 'errors': 0}, complete=True,
+        ))
+        await self.db.commit()
+        self.assertEqual(len((await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id, SyncReview.kind == 'initial_import',
+        ))).scalars().all()), 1)
+
     async def test_completion_threshold_does_not_infer_removal(self):
         from core.tracking_snapshot import observe_stream_snapshot
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
