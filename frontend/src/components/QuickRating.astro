@@ -1,6 +1,5 @@
 ---
 import Icon from './Icon.astro';
-const scoreOptions = Array.from({ length: 20 }, (_, index) => (index + 1) / 2);
 ---
 <dialog id="quick-rating" class="quick-rating-dialog" aria-labelledby="quick-rating-title">
   <div class="quick-rating-head">
@@ -13,7 +12,6 @@ const scoreOptions = Array.from({ length: 20 }, (_, index) => (index + 1) / 2);
   <div class="quick-rating-body">
     <output id="quick-rating-value" aria-live="polite">Unrated</output>
     <div id="quick-rating-stars" class="quick-rating-stars" aria-label="Choose a score from 0.5 to 10"></div>
-    <label class="quick-rating-mobile-score" for="quick-rating-score"><span>Choose score</span><select id="quick-rating-score"><option value="">Unrated</option>{scoreOptions.map((score) => <option value={score}>{score.toFixed(1)} / 10</option>)}</select></label>
     <p id="quick-rating-help">Choose a half point. Your rating saves immediately.</p>
     <div class="quick-rating-confirm" id="quick-rating-confirm" hidden>
       <p>This show currently uses the average of your rated seasons. Setting this score will use a separate show rating instead.</p>
@@ -29,7 +27,6 @@ const scoreOptions = Array.from({ length: 20 }, (_, index) => (index + 1) / 2);
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
   const value = document.querySelector<HTMLOutputElement>('#quick-rating-value')!;
-  const mobileScore = document.querySelector<HTMLSelectElement>('#quick-rating-score')!;
   const title = document.querySelector<HTMLElement>('#quick-rating-title')!;
   const poster = document.querySelector<HTMLImageElement>('#quick-rating-poster')!;
   const remove = document.querySelector<HTMLButtonElement>('#quick-rating-remove')!;
@@ -40,11 +37,12 @@ const scoreOptions = Array.from({ length: 20 }, (_, index) => (index + 1) / 2);
   let active: QuickRateDetail | null = null;
   let savedScore: number | null = null;
   let pendingScore: number | null = null;
+  let touchPointer: number | null = null;
+  let suppressTouchClick = false;
 
   const display = (score: number | null) => score == null || score === 0 ? 'Unrated' : `${score.toFixed(1)} / 10`;
   function paint(score: number | null) {
     value.textContent = display(score);
-    mobileScore.value = score == null || score === 0 ? '' : String(score);
     stars.querySelectorAll<HTMLElement>('.quick-star').forEach((star, index) => {
       const fill = Math.max(0, Math.min(1, ((score ?? 0) - index)));
       star.style.setProperty('--star-fill', `${fill * 100}%`);
@@ -137,10 +135,39 @@ const scoreOptions = Array.from({ length: 20 }, (_, index) => (index + 1) / 2);
     if (!dialog.open) dialog.showModal();
   }
   buildStars();
-  stars.addEventListener('pointerleave', () => paint(savedScore));
+  const scoreAt = (x: number) => {
+    const shells = Array.from(stars.querySelectorAll<HTMLElement>('.quick-star'));
+    const index = shells.findIndex(shell => x < shell.getBoundingClientRect().right);
+    const bounded = index < 0 ? shells.length - 1 : index;
+    const rect = shells[bounded].getBoundingClientRect();
+    return bounded + (x < rect.left + rect.width / 2 ? 0.5 : 1);
+  };
+  stars.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' || !active) return;
+    event.preventDefault();
+    touchPointer = event.pointerId;
+    stars.setPointerCapture(event.pointerId);
+    paint(scoreAt(event.clientX));
+  });
+  stars.addEventListener('pointermove', event => {
+    if (touchPointer === event.pointerId) paint(scoreAt(event.clientX));
+  });
+  stars.addEventListener('pointerup', event => {
+    if (touchPointer !== event.pointerId) return;
+    touchPointer = null;
+    suppressTouchClick = true;
+    choose(scoreAt(event.clientX));
+    setTimeout(() => { suppressTouchClick = false; }, 0);
+  });
+  stars.addEventListener('pointercancel', event => {
+    if (touchPointer === event.pointerId) { touchPointer = null; paint(savedScore); }
+  });
+  stars.addEventListener('click', event => {
+    if (suppressTouchClick) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }, true);
+  stars.addEventListener('pointerleave', () => { if (touchPointer == null) paint(savedScore); });
   document.querySelector('#quick-rating-close')?.addEventListener('click', () => dialog.close());
   remove.addEventListener('click', () => save(null));
-  mobileScore.addEventListener('change', () => { if (mobileScore.value) choose(Number(mobileScore.value)); });
   override.addEventListener('click', () => { if (pendingScore != null) save(pendingScore, true); });
   document.querySelector('#quick-rating-cancel')?.addEventListener('click', () => {
     pendingScore = null;
