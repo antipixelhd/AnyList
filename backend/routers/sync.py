@@ -14,6 +14,7 @@ from db import get_db, engine
 from models.media import Media
 from models.show import Show
 from models.collection import Collection, CollectionFile
+from models.streaming_library import StreamingLibraryIntent
 from models.users import User, UserSettings
 from models.connections import MediaServerConnection
 from models.sync import SyncJob, SyncStatus
@@ -795,10 +796,16 @@ async def _build_nuvio_library_items(
     user_id: int,
     api_key: str | None = None,
 ) -> list[dict]:
+    # An explicit Library removal must not be undone by another source's
+    # CollectionFile during the next Stremio/Nuvio full push.
+    explicitly_removed = select(StreamingLibraryIntent.media_id).where(
+        StreamingLibraryIntent.user_id == user_id,
+        StreamingLibraryIntent.desired.is_(False),
+    )
     result = await db.execute(
         select(Collection.added_at, Media)
         .join(Media, Media.id == Collection.media_id)
-        .where(Collection.user_id == user_id)
+        .where(Collection.user_id == user_id, Collection.media_id.not_in(explicitly_removed))
         .order_by(Collection.added_at, Collection.id)
     )
     rows = result.all()
@@ -4788,6 +4795,8 @@ async def _run_nuvio_sync(
                     complete=len(progress_records) < 200)
                 from core.stream_actions import dispatch_stream_actions
                 await dispatch_stream_actions(db, user_id)
+            from core.streaming_library import retry_pending_library_deliveries
+            await retry_pending_library_deliveries(db, user_id, conn.id)
 
             # Tracking/watch changes remain local until their own confirmation rules
             # allow export. Verified streaming-library deltas are mirrored separately.
@@ -5326,6 +5335,8 @@ async def _run_stremio_sync(
                     complete=complete_snapshot, touched={str(item['_id']) for item in items})
                 from core.stream_actions import dispatch_stream_actions
                 await dispatch_stream_actions(db, user_id)
+            from core.streaming_library import retry_pending_library_deliveries
+            await retry_pending_library_deliveries(db, user_id, conn.id)
             # Tracking/watch changes remain local until their own confirmation rules
             # allow export. Verified streaming-library deltas are mirrored separately.
             conn.stremio_pull_cursor_at = pull_started_at

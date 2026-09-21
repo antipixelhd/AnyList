@@ -126,7 +126,7 @@ def review_priority(review: SyncReview) -> str:
     return review.priority or 'low'
 
 
-def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names):
+def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names, library_actions=()):
     """Project unresolved per-service actions as one card per title."""
     by_media={}
     def add(media_id:int,title:str,poster:str|None,key:str,connection:str,state:str,attempts:int,error:str|None):
@@ -144,6 +144,9 @@ def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers,
     for action,media in cloud_actions:
         add(media.id,media.title,media.poster_path,action.provider,action.provider.title(),
             action.state,action.attempts,action.last_error)
+    for delivery,media,connection in library_actions:
+        add(media.id,media.title,media.poster_path,f'library:{connection.id}',
+            f'{connection.name} · Library',delivery.state,delivery.attempts,delivery.last_error)
     for review,media in review_rows:
         marker=markers.get(review.media_id)
         if review.state!='pending' or not marker or not marker.pending_connections:continue
@@ -195,13 +198,20 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     cloud_actions=(await db.execute(select(CloudAction,Media).join(Media,Media.id==CloudAction.media_id)
         .where(CloudAction.user_id==viewer.id,CloudAction.state.in_(['pending','conflict']))
         .order_by(CloudAction.id).limit(100))).all()
+    from models.streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
+    library_actions=(await db.execute(select(StreamingLibraryDelivery,Media,MediaServerConnection)
+        .join(StreamingLibraryIntent,StreamingLibraryIntent.id==StreamingLibraryDelivery.intent_id)
+        .join(Media,Media.id==StreamingLibraryIntent.media_id)
+        .join(MediaServerConnection,MediaServerConnection.id==StreamingLibraryDelivery.connection_id)
+        .where(StreamingLibraryIntent.user_id==viewer.id,StreamingLibraryDelivery.state=='pending')
+        .order_by(StreamingLibraryDelivery.id).limit(100))).all()
     review_media_ids={review.media_id for review,_ in outbound_review_rows if review.media_id is not None}
     marker_media_ids=review_media_ids|{media.id for _,media,_ in actions}|{media.id for _,media in cloud_actions}
     markers={row.media_id:row for row in (await db.execute(select(TrackingDeletion).where(
         TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id.in_(marker_media_ids)))).scalars()} if marker_media_ids else {}
     connection_names={row.id:row.name for row in (await db.execute(select(MediaServerConnection.id,MediaServerConnection.name).where(
         MediaServerConnection.user_id==viewer.id))).all()}
-    outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names)
+    outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,library_actions)
     return {'pending':pending,'outbound':outbound,
         'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
@@ -448,6 +458,33 @@ async def library(db: AsyncSession = Depends(get_db), viewer: User = Depends(get
     rows = (await db.execute(select(Media).join(Collection, Collection.media_id == Media.id).join(CollectionFile, CollectionFile.collection_id == Collection.id)
         .where(Collection.user_id == viewer.id, CollectionFile.source.in_(['stremio','nuvio']), Media.media_type.in_([MediaType.movie,MediaType.series])).distinct().order_by(Media.title))).scalars().all()
     return {"results":[media_data(m) for m in rows]}
+
+
+class LibraryIntentPatch(BaseModel):
+    in_library: bool
+
+
+@router.get("/library/{media_id}")
+async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    media = await db.get(Media, media_id)
+    if not media or media.media_type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(404, "Title not found")
+    from core.streaming_library import library_state
+    return await library_state(db, viewer.id, media_id)
+
+
+@router.put("/library/{media_id}")
+async def update_library_state(media_id: int, body: LibraryIntentPatch,
+                               db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    from core.streaming_library import set_library_intent
+    return await set_library_intent(db, viewer.id, media_id, body.in_library)
+
+
+@router.post("/library/{media_id}/retry")
+async def retry_library_delivery(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    from core.streaming_library import dispatch_library_deliveries, library_state
+    await dispatch_library_deliveries(db, viewer.id, media_id)
+    return await library_state(db, viewer.id, media_id)
 
 
 class EntryPatch(BaseModel):

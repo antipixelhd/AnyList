@@ -20,6 +20,7 @@ from dependencies import get_current_user, get_current_user_or_api_key, get_opti
 from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
+from models.streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from routers.tracking import router
 from routers.push import router as push_router
 from routers.comments import router as comments_router
@@ -873,6 +874,93 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         stream_b.state='applied';marker.pending_connections=[];review.state='confirmed'
         await self.db.commit()
         self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'],[])
+
+    async def test_library_action_requires_an_opted_in_streaming_connection(self):
+        response=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+        self.assertEqual(response.status_code,409,response.text)
+        self.assertIn('Enable Library push',response.json()['detail'])
+        self.assertIsNone((await self.db.execute(select(StreamingLibraryIntent).where(
+            StreamingLibraryIntent.user_id==self.owner.id,
+            StreamingLibraryIntent.media_id==self.movie.id))).scalar_one_or_none())
+
+    async def test_library_action_waits_for_first_connection_review(self):
+        from core import stremio
+        self.movie.tmdb_data={'external_ids':{'imdb_id':'tt1234567'}}
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Stremio',
+            url='https://example.test',token='fixture',push_collection=True)
+        self.db.add(conn);await self.db.commit()
+        with patch.object(stremio,'datastore_put',AsyncMock()) as write:
+            response=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertTrue(response.json()['pending'])
+        self.assertIn('Run a full import',response.json()['connections'][0]['error'])
+        write.assert_not_awaited()
+        self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'][0]['title'],self.movie.title)
+
+    async def test_library_action_tracks_partial_delivery_and_prevents_readding_removed_title(self):
+        from routers.sync import _build_nuvio_library_items
+        from core import stremio, nuvio
+
+        self.movie.tmdb_data={'external_ids':{'imdb_id':'tt1234567'}}
+        stremio_conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Stremio',
+            url='https://example.test',token='fixture',push_collection=True)
+        nuvio_conn=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Nuvio',
+            url='https://example.test',token='fixture',server_user_id='1',push_collection=True)
+        self.db.add_all([stremio_conn,nuvio_conn]);await self.db.flush()
+        self.db.add_all([
+            StreamBaseline(connection_id=stremio_conn.id,user_id=self.owner.id,snapshot={},approved=True),
+            StreamBaseline(connection_id=nuvio_conn.id,user_id=self.owner.id,snapshot={},approved=True),
+        ]);await self.db.commit()
+
+        remote={'_id':'tt1234567','name':self.movie.title,'type':'movie','removed':False,
+            'temp':False,'_ctime':'2026-01-01T00:00:00Z','_mtime':'2026-01-01T00:00:00Z',
+            'state':{'timesWatched':1,'custom':'preserve'}}
+        with (patch.object(stremio,'datastore_get',AsyncMock(return_value=[])),
+              patch.object(stremio,'datastore_put',AsyncMock()) as stremio_put,
+              patch.object(nuvio,'merge_library',AsyncMock(side_effect=RuntimeError('provider unavailable')))):
+            added=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+        self.assertEqual(added.status_code,200,added.text)
+        self.assertTrue(added.json()['desired'])
+        self.assertTrue(added.json()['pending'])
+        self.assertEqual({row['name']:row['state'] for row in added.json()['connections']},
+            {'Stremio':'applied','Nuvio':'pending'})
+        self.assertEqual(next(row for row in added.json()['connections'] if row['name']=='Nuvio')['error'],'RuntimeError')
+        self.assertFalse(stremio_put.await_args.args[1][0]['removed'])
+        grouped=(await self.client.get('/tracking/recent-events')).json()['outbound']
+        self.assertEqual(len(grouped),1)
+        self.assertEqual([row['connection'] for row in grouped[0]['deliveries']],['Nuvio · Library'])
+
+        with patch.object(nuvio,'merge_library',AsyncMock()) as nuvio_merge:
+            retried=await self.client.post(f'/tracking/library/{self.movie.id}/retry')
+        self.assertEqual(retried.status_code,200,retried.text)
+        self.assertFalse(retried.json()['pending'])
+        self.assertEqual({row['state'] for row in retried.json()['connections']},{'applied'})
+        self.assertEqual(nuvio_merge.await_args.kwargs['additions'][0]['content_id'],'tt1234567')
+        self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'],[])
+        collection=(await self.db.execute(select(Collection).where(Collection.user_id==self.owner.id,
+            Collection.media_id==self.movie.id))).scalar_one()
+        self.db.add(CollectionFile(collection_id=collection.id,source=CollectionSource.plex,
+            source_id='plex-fixture'))
+        await self.db.commit()
+
+        with (patch.object(stremio,'datastore_get',AsyncMock(return_value=[remote])),
+              patch.object(stremio,'datastore_put',AsyncMock()) as stremio_remove,
+              patch.object(nuvio,'merge_library',AsyncMock()) as nuvio_remove):
+            removed=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':False})
+        self.assertEqual(removed.status_code,200,removed.text)
+        self.assertFalse(removed.json()['desired'])
+        self.assertFalse(removed.json()['pending'])
+        self.assertTrue(stremio_remove.await_args.args[1][0]['removed'])
+        self.assertEqual(stremio_remove.await_args.args[1][0]['state']['custom'],'preserve')
+        self.assertEqual(nuvio_remove.await_args.kwargs['removed_content_ids'],{'tt1234567'})
+        self.assertEqual([item['content_id'] for item in await _build_nuvio_library_items(
+            self.db,self.owner.id)],[])
+        sources=(await self.db.execute(select(CollectionFile.source).join(Collection,
+            Collection.id==CollectionFile.collection_id).where(Collection.user_id==self.owner.id,
+            Collection.media_id==self.movie.id))).scalars().all()
+        self.assertEqual(sources,[CollectionSource.plex])
+        self.assertIsNotNone((await self.db.execute(select(StreamingLibraryDelivery).where(
+            StreamingLibraryDelivery.connection_id==nuvio_conn.id))).scalar_one_or_none())
 
     async def test_unmatched_provider_item_can_be_matched_or_ignored(self):
         from core.provider_matching import record_unmatched_import, provider_override
