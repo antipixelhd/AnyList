@@ -21,6 +21,7 @@ from models import User, UserSettings, UserProfileData, Media, GlobalSettings, F
 from models.base import CollectionSource, MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
 from models.streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
+from models.sync import SyncJob, SyncStatus
 from routers.tracking import router
 from routers.push import router as push_router
 from routers.comments import router as comments_router
@@ -825,6 +826,46 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen.status_code,200,seen.text)
         recent=await self.client.get('/tracking/recent-events')
         self.assertEqual(recent.json()['results'],[])
+
+    async def test_repeated_connection_failure_has_one_alert_until_success(self):
+        connection=MediaServerConnection(user_id=self.owner.id,type='jellyfin',name='Living Room',url='https://example.test',token='fixture')
+        self.db.add(connection);await self.db.flush()
+        self.db.add(SyncJob(user_id=self.owner.id,source=CollectionSource.jellyfin,
+            connection_id=connection.id,status=SyncStatus.failed,error_message='Timed out'))
+        await self.db.commit()
+        first=(await self.client.get('/tracking/recent-events')).json()
+        self.assertEqual(first['pending'],0)
+        self.assertEqual(first['results'],[])
+
+        self.db.add(SyncJob(user_id=self.owner.id,source=CollectionSource.jellyfin,
+            connection_id=connection.id,status=SyncStatus.failed,error_message='Timed out again'))
+        await self.db.commit()
+        repeated=(await self.client.get('/tracking/recent-events')).json()
+        self.assertEqual(repeated['pending'],1)
+        self.assertEqual(len(repeated['results']),1)
+        self.assertEqual(repeated['results'][0]['kind'],'connection_failure')
+        self.assertEqual(repeated['results'][0]['payload']['title'],'Living Room')
+        self.assertEqual(repeated['results'][0]['payload']['reason'],'repeated_failure')
+        self.assertEqual(repeated['results'][0]['payload']['resolve_url'],f'/connections#conn-body-{connection.id}')
+
+        self.db.add(SyncJob(user_id=self.owner.id,source=CollectionSource.jellyfin,
+            connection_id=connection.id,status=SyncStatus.completed))
+        await self.db.commit()
+        recovered=(await self.client.get('/tracking/recent-events')).json()
+        self.assertEqual(recovered['pending'],0)
+        self.assertEqual(recovered['results'],[])
+
+    async def test_authentication_failure_alerts_immediately_for_cloud_provider(self):
+        self.db.add(SyncJob(user_id=self.owner.id,source=CollectionSource.trakt,
+            status=SyncStatus.failed,error_message='401 Unauthorized'))
+        await self.db.commit()
+        payload=(await self.client.get('/tracking/recent-events')).json()
+        self.assertEqual(payload['pending'],1)
+        self.assertEqual(len(payload['results']),1)
+        alert=payload['results'][0]
+        self.assertEqual(alert['provider'],'trakt')
+        self.assertEqual(alert['payload']['reason'],'authorization')
+        self.assertEqual(alert['payload']['resolve_url'],'/connections#trakt-body')
 
     async def test_local_delivery_state_stays_out_of_provider_review_inbox(self):
         self.db.add(TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,pending_connections=['trakt']))

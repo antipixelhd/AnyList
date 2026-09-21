@@ -15,6 +15,7 @@ from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, CloudAction
+from models.sync import SyncJob, SyncStatus
 
 router = APIRouter()
 
@@ -126,6 +127,63 @@ def review_priority(review: SyncReview) -> str:
     return review.priority or 'low'
 
 
+_AUTH_FAILURE_MARKERS = (
+    '401', '403', 'auth', 'forbidden', 'invalid token', 'permission',
+    'refresh token', 'token expired', 'unauthorized',
+)
+
+
+def connection_failure_events(jobs, connection_names):
+    """Project durable job history into one current alert per provider/connection."""
+    groups = {}
+    for job in jobs:
+        source = job.source.value if hasattr(job.source, 'value') else str(job.source)
+        if job.connection_id is not None:
+            key = f'connection:{job.connection_id}'
+            title = connection_names.get(job.connection_id, source.title())
+            resolve_url = f'/connections#conn-body-{job.connection_id}'
+        elif source in {'trakt', 'simkl', 'mdblist'}:
+            key = f'provider:{source}'
+            title = source.title() if source != 'mdblist' else 'MDBList'
+            resolve_url = f'/connections#{source}-body'
+        else:
+            continue
+        group = groups.setdefault(key, {
+            'title': title, 'provider': source, 'resolve_url': resolve_url,
+            'failures': [], 'closed': False,
+        })
+        if group['closed']:
+            continue
+        if job.status == SyncStatus.completed:
+            group['closed'] = True
+        elif job.status == SyncStatus.failed:
+            group['failures'].append(job)
+
+    results = []
+    for key, group in groups.items():
+        failures = group['failures']
+        if not failures:
+            continue
+        error = (failures[0].error_message or '').lower()
+        auth_failure = any(marker in error for marker in _AUTH_FAILURE_MARKERS)
+        if not auth_failure and len(failures) < 2:
+            continue
+        title = group['title']
+        message = (f'{title} needs authorization before AnyList can sync again.' if auth_failure else
+            f'{title} has failed to sync repeatedly. Check the connection and retry it.')
+        results.append({
+            'id': f'connection-failure:{key}', 'kind': 'connection_failure',
+            'state': 'pending', 'provider': group['provider'], 'message': message,
+            'previous_status': None, 'proposed_status': None, 'previous_score': None,
+            'proposed_score': None, 'season_number': None, 'priority': 'high',
+            'dismissible': False, 'payload': {
+                'title': title, 'resolve_url': group['resolve_url'],
+                'reason': 'authorization' if auth_failure else 'repeated_failure',
+            }, 'media': None, 'created_at': failures[0].updated_at,
+        })
+    return results
+
+
 def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names, library_actions=()):
     """Project unresolved per-service actions as one card per title."""
     by_media={}
@@ -193,7 +251,6 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .join(MediaServerConnection,MediaServerConnection.id==StreamAction.connection_id)
         .where(StreamAction.user_id==viewer.id,StreamAction.state.in_(['pending','conflict']))
         .order_by(StreamAction.id).limit(100))).all()
-    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')
     await db.commit()
     cloud_actions=(await db.execute(select(CloudAction,Media).join(Media,Media.id==CloudAction.media_id)
         .where(CloudAction.user_id==viewer.id,CloudAction.state.in_(['pending','conflict']))
@@ -211,9 +268,13 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id.in_(marker_media_ids)))).scalars()} if marker_media_ids else {}
     connection_names={row.id:row.name for row in (await db.execute(select(MediaServerConnection.id,MediaServerConnection.name).where(
         MediaServerConnection.user_id==viewer.id))).all()}
+    recent_jobs=(await db.execute(select(SyncJob).where(SyncJob.user_id==viewer.id)
+        .order_by(SyncJob.updated_at.desc(),SyncJob.id.desc()).limit(200))).scalars().all()
+    failure_events=connection_failure_events(recent_jobs,connection_names)
+    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)
     outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,library_actions)
     return {'pending':pending,'outbound':outbound,
-        'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
+        'results':failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
                     'priority':review_priority(r),'dismissible':r.state!='pending','payload':r.payload or {},
                     'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}

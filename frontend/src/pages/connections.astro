@@ -252,17 +252,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                             ))}
                           </select>
                         </div>
-                        {conn.type !== "arvio" && conn.type !== "nuvio" && conn.type !== "stremio" && (
-                          <div class="flex items-center justify-between gap-4">
-                            <label class="text-sm text-zinc-300">Push interval</label>
-                            <select class="conn-auto-push bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
-                              <option value="" selected={!conn.auto_push_interval}>Disabled</option>
-                              {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
-                                <option value={String(value)} selected={conn.auto_push_interval === value}>{label}</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
                       </div>
                       {conn.type === "plex" && me.is_admin && (
                         <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
@@ -441,13 +430,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       <div class="flex items-center justify-between gap-4">
                         <label class="text-sm text-zinc-300">Pull interval</label>
                         <select id="new-auto-sync" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
-                          <option value="">Disabled</option>
-                          {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
-                        </select>
-                      </div>
-                      <div class="flex items-center justify-between gap-4">
-                        <label class="text-sm text-zinc-300">Push interval</label>
-                        <select id="new-auto-push" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
                           <option value="">Disabled</option>
                           {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
                         </select>
@@ -797,15 +779,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                             ))}
                           </select>
                         </div>
-                        <div class="flex items-center justify-between gap-4">
-                          <label class="text-sm text-zinc-300">Push interval</label>
-                          <select name="trakt_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
-                            <option value="" selected={!settings.trakt_auto_push_interval}>Disabled</option>
-                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
-                              <option value={String(value)} selected={settings.trakt_auto_push_interval === value}>{label}</option>
-                            ))}
-                          </select>
-                        </div>
                       </div>
                     )}
                   </div>
@@ -937,15 +910,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                             <option value="" selected={!settings.simkl_auto_sync_interval}>Disabled</option>
                             {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
                               <option value={String(value)} selected={settings.simkl_auto_sync_interval === value}>{label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div class="flex items-center justify-between gap-4">
-                          <label class="text-sm text-zinc-300">Push interval</label>
-                          <select name="simkl_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all cursor-pointer">
-                            <option value="" selected={!settings.simkl_auto_push_interval}>Disabled</option>
-                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
-                              <option value={String(value)} selected={settings.simkl_auto_push_interval === value}>{label}</option>
                             ))}
                           </select>
                         </div>
@@ -1082,15 +1046,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                             <option value="" selected={!settings.mdblist_auto_sync_interval}>Disabled</option>
                             {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
                               <option value={String(value)} selected={settings.mdblist_auto_sync_interval === value}>{label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div class="flex items-center justify-between gap-4">
-                          <label class="text-sm text-zinc-300">Push interval</label>
-                          <select name="mdblist_auto_push_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all cursor-pointer">
-                            <option value="" selected={!settings.mdblist_auto_push_interval}>Disabled</option>
-                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
-                              <option value={String(value)} selected={settings.mdblist_auto_push_interval === value}>{label}</option>
                             ))}
                           </select>
                         </div>
@@ -3148,10 +3103,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 const v = (card?.querySelector('.conn-auto-sync') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
               })(),
-              auto_push_interval: (() => {
-                const v = (card?.querySelector('.conn-auto-push') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
             };
             card?.querySelectorAll('.conn-pref-checkbox').forEach((cb: any) => {
               body[cb.getAttribute('data-pref')] = cb.checked;
@@ -3217,10 +3168,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 const v = (document.querySelector('[name="trakt_auto_sync_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
               })(),
-              trakt_auto_push_interval: (() => {
-                const v = (document.querySelector('[name="trakt_auto_push_interval"]') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
             };
             const traktSyncKeys = [
               'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_sync_dropped', 'trakt_watchlist_split',
@@ -3248,10 +3195,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 const v = (document.querySelector('[name="simkl_auto_sync_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
               })(),
-              simkl_auto_push_interval: (() => {
-                const v = (document.querySelector('[name="simkl_auto_push_interval"]') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
             };
             const simklSyncKeys = [
               'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
@@ -3277,10 +3220,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               mdblist_api_key: (document.getElementById('mdblist_api_key') as HTMLInputElement)?.value || null,
               mdblist_auto_sync_interval: (() => {
                 const v = (document.querySelector('[name="mdblist_auto_sync_interval"]') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
-              mdblist_auto_push_interval: (() => {
-                const v = (document.querySelector('[name="mdblist_auto_push_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
               })(),
             };
@@ -4702,10 +4641,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                   const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
                   return value ? parseFloat(value) : null;
                 })(),
-                auto_push_interval: (() => {
-                  const value = (document.getElementById('new-auto-push') as HTMLSelectElement)?.value;
-                  return value ? parseFloat(value) : null;
-                })(),
               }),
             });
             const result = await pollResponse.json();
@@ -4882,10 +4817,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
             auto_sync_interval: (() => {
               const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
-              return value ? parseFloat(value) : null;
-            })(),
-            auto_push_interval: (() => {
-              const value = (document.getElementById('new-auto-push') as HTMLSelectElement)?.value;
               return value ? parseFloat(value) : null;
             })(),
           };
@@ -5176,6 +5107,17 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         }
       });
     });
+  }
+
+  function openDeepLinkedConnection() {
+    const targetId = window.location.hash.slice(1);
+    if (!targetId) return;
+    const body = document.getElementById(targetId);
+    const header = document.querySelector<HTMLElement>(`.collapsible-header[data-target="${CSS.escape(targetId)}"]`);
+    if (!body || !header) return;
+    body.classList.remove('hidden');
+    header.querySelector('.collapsible-chevron')?.classList.add('rotate-180');
+    header.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   async function loadLastSynced() {
@@ -6068,6 +6010,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   setupApiKey();
   setupConnectedApps();
   setupCollapsibleRows();
+  openDeepLinkedConnection();
   checkConnections();
   loadSyncWarnings();
   loadLastSynced();
@@ -6081,6 +6024,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     setupApiKey();
     setupConnectedApps();
     setupCollapsibleRows();
+    openDeepLinkedConnection();
     checkConnections();
     loadSyncWarnings();
     loadLastSynced();
