@@ -2618,14 +2618,15 @@ async def sync_items(
 
                     if sync_ratings and watch_state["user_rating"] is not None:
                         existing_r = existing_ratings.get(media_id_for_watch)
-                        if existing_r:
-                            existing_r.rating = watch_state["user_rating"]
-                        else:
-                            new_r = Rating(user_id=user_id, media_id=media_id_for_watch, rating=watch_state["user_rating"])
-                            db.add(new_r)
-                            existing_ratings[media_id_for_watch] = new_r
-                        if new_ratings is not None:
-                            new_ratings[(media_id_for_watch, None)] = watch_state["user_rating"]
+                        if not existing_r or existing_r.rating != watch_state["user_rating"]:
+                            if existing_r:
+                                existing_r.rating = watch_state["user_rating"]
+                            else:
+                                new_r = Rating(user_id=user_id, media_id=media_id_for_watch, rating=watch_state["user_rating"])
+                                db.add(new_r)
+                                existing_ratings[media_id_for_watch] = new_r
+                            if new_ratings is not None:
+                                new_ratings[(media_id_for_watch, None)] = watch_state["user_rating"]
 
             # Savepoint committed, so queue the collection's add-date only now:
             # an item that rolled back must not leave a heal behind for work

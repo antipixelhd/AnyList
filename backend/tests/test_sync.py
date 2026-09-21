@@ -1087,6 +1087,37 @@ class SyncItemsPartialWatchFanOutTests(_PartialWatchDB):
         self.assertTrue(event.completed)
         self.assertEqual(new_watched_ids, {event.media_id})
 
+    async def test_unchanged_media_server_rating_is_not_a_new_delta(self):
+        from models.collection import Collection, CollectionFile, CollectionSource
+        from models.media import Media, MediaType
+
+        async with self.Session() as db:
+            media = Media(tmdb_id=603, media_type=MediaType.movie, title="The Matrix")
+            db.add(media)
+            await db.flush()
+            coll = Collection(user_id=1, media_id=media.id)
+            db.add(coll)
+            await db.flush()
+            db.add(CollectionFile(
+                collection_id=coll.id, connection_id=7,
+                source=CollectionSource.jellyfin, source_id="jf-1",
+            ))
+            await db.commit()
+            item = {
+                "Id": "jf-1", "Name": "The Matrix", "ProviderIds": {"Tmdb": "603"},
+                "UserData": {"Rating": 8},
+            }
+            changes = {}
+            for expected in ({(media.id, None): 8.0}, {}):
+                changes.clear()
+                await sync.sync_items(
+                    items=[item], media_type=MediaType.movie,
+                    source=CollectionSource.jellyfin, db=db,
+                    stats={"movies": 0, "episodes": 0, "skipped": 0, "errors": 0},
+                    user_id=1, connection_id=7, new_ratings=changes,
+                )
+                self.assertEqual(changes, expected)
+
 
 class FullPushPartialWatchTests(_PartialWatchDB):
     """Same bug on the manual push path, which read every WatchEvent as
