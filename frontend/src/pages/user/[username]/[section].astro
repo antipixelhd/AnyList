@@ -56,7 +56,7 @@ const canIncrement = (entry: any) => entry.type === 'movie'
       </div>
       <div id="list-empty" class="empty-state" hidden={entries.length>0}><h2>{entries.length ? 'No matching titles' : 'Every list starts with a story'}</h2><p>{entries.length ? 'Try a different search or filter.' : data.owner ? 'Find a movie or series and add it to your list.' : 'There are no entries in this list yet.'}</p>{data.owner&&<a class="button-primary" href="/browse">Browse titles</a>}</div>
       </div>
-    </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div><TrackingEditor/>
+    </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div><TrackingEditor entries={entries}/>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
