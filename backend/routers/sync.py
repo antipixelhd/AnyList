@@ -901,11 +901,12 @@ async def _push_nuvio_library_delta(
 async def _fan_out_streaming_library_changes(
     db: AsyncSession,
     user_id: int,
-    exclude_connection_id: int,
+    exclude_connection_id: int | None,
     *,
     new_collected_ids: set[int],
     removed_collected_ids: set[int],
     api_key: str | None,
+    exclude_connection_ids: set[int] | None = None,
 ) -> None:
     """Mirror an observed library delta to the user's other streaming accounts.
 
@@ -917,12 +918,44 @@ async def _fan_out_streaming_library_changes(
     if not changed_media_ids:
         return
 
+    excluded_ids = set(exclude_connection_ids or ())
+    if exclude_connection_id is not None:
+        excluded_ids.add(exclude_connection_id)
+
+    if exclude_connection_id is not None:
+        from core.tracking_snapshot import require_stream_reconciliation
+
+        source_connection = await db.get(MediaServerConnection, exclude_connection_id)
+        if source_connection is None:
+            return
+        try:
+            await require_stream_reconciliation(db, source_connection)
+        except HTTPException:
+            logger.info(
+                "Streaming library mirror held until source reconciliation: connection %s",
+                exclude_connection_id,
+            )
+            return
+        from core.pull_cycle import defer_library_fan_out
+        if defer_library_fan_out(
+            user_id,
+            source_connection_id=exclude_connection_id,
+            new_collected_ids=new_collected_ids,
+            removed_collected_ids=removed_collected_ids,
+            api_key=api_key,
+        ):
+            return
+
+    filters = [
+        MediaServerConnection.user_id == user_id,
+        MediaServerConnection.type.in_(("stremio", "nuvio")),
+        MediaServerConnection.push_collection.is_(True),
+    ]
+    if excluded_ids:
+        filters.append(MediaServerConnection.id.not_in(excluded_ids))
     result = await db.execute(
         select(MediaServerConnection).where(
-            MediaServerConnection.user_id == user_id,
-            MediaServerConnection.id != exclude_connection_id,
-            MediaServerConnection.type.in_(("stremio", "nuvio")),
-            MediaServerConnection.push_collection.is_(True),
+            *filters,
         )
     )
     targets = result.scalars().all()
@@ -930,18 +963,6 @@ async def _fan_out_streaming_library_changes(
         return
 
     from core.tracking_snapshot import require_stream_reconciliation
-
-    source_connection = await db.get(MediaServerConnection, exclude_connection_id)
-    if source_connection is None:
-        return
-    try:
-        await require_stream_reconciliation(db, source_connection)
-    except HTTPException:
-        logger.info(
-            "Streaming library mirror held until source reconciliation: connection %s",
-            exclude_connection_id,
-        )
-        return
 
     nuvio_items: list[dict] | None = None
     media_by_id = {
@@ -1227,6 +1248,8 @@ async def _fan_out_changes_to_other_connections(
     removed_ratings: set[RatingKey] | None = None,
     new_collected_ids: set[int] | None = None,
     removed_collected_ids: set[int] | None = None,
+    exclude_connection_ids: set[int] | None = None,
+    exclude_cloud_sources: set[CollectionSource] | None = None,
 ) -> None:
     """Push an inbound sync delta to every enabled media server and cloud target.
 
@@ -1238,6 +1261,26 @@ async def _fan_out_changes_to_other_connections(
     removed_collected_ids = removed_collected_ids or set()
     if not new_watched_ids and not new_ratings and not removed_ratings and not new_collected_ids and not removed_collected_ids:
         return
+
+    from core.pull_cycle import defer_fan_out
+    if defer_fan_out(
+        user_id,
+        exclude_connection_id=exclude_connection_id,
+        exclude_cloud_source=exclude_cloud_source,
+        new_watched_ids=new_watched_ids,
+        new_ratings=new_ratings,
+        removed_ratings=removed_ratings,
+        new_collected_ids=new_collected_ids,
+        removed_collected_ids=removed_collected_ids,
+    ):
+        return
+
+    excluded_connection_ids = set(exclude_connection_ids or ())
+    if exclude_connection_id is not None:
+        excluded_connection_ids.add(exclude_connection_id)
+    excluded_cloud_sources = set(exclude_cloud_sources or ())
+    if exclude_cloud_source is not None:
+        excluded_cloud_sources.add(exclude_cloud_source)
 
     from routers.webhooks import mark_pushed_watched
 
@@ -1269,8 +1312,8 @@ async def _fan_out_changes_to_other_connections(
 
     # ── Media server fan-out ─────────────────────────────────────────────────
     conns_filter = [MediaServerConnection.user_id == user_id]
-    if exclude_connection_id is not None:
-        conns_filter.append(MediaServerConnection.id != exclude_connection_id)
+    if excluded_connection_ids:
+        conns_filter.append(MediaServerConnection.id.not_in(excluded_connection_ids))
     other_conns_result = await db.execute(
         select(MediaServerConnection).where(*conns_filter)
     )
@@ -1509,9 +1552,9 @@ async def _fan_out_changes_to_other_connections(
     trakt_approved = bool(settings) and await cloud_push_is_approved(db, user_id, "trakt")
     mdblist_approved = bool(settings) and await cloud_push_is_approved(db, user_id, "mdblist")
     simkl_approved = bool(settings) and await cloud_push_is_approved(db, user_id, "simkl")
-    push_trakt_watched = settings and trakt_approved and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
-    push_trakt_ratings = settings and trakt_approved and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
-    push_trakt_collection = settings and trakt_approved and exclude_cloud_source != CollectionSource.trakt and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_watched = settings and trakt_approved and CollectionSource.trakt not in excluded_cloud_sources and settings.trakt_push_watched and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_ratings = settings and trakt_approved and CollectionSource.trakt not in excluded_cloud_sources and settings.trakt_push_ratings and settings.trakt_access_token and settings.trakt_client_id
+    push_trakt_collection = settings and trakt_approved and CollectionSource.trakt not in excluded_cloud_sources and settings.trakt_push_collection and settings.trakt_access_token and settings.trakt_client_id
 
     if (push_trakt_watched or push_trakt_ratings or push_trakt_collection) and all_changed_ids:
         # Validate / refresh the token before the fan-out (own session - this
@@ -1649,9 +1692,9 @@ async def _fan_out_changes_to_other_connections(
                 )
 
     # ── MDBList fan-out ──────────────────────────────────────────────────────
-    push_mdblist_watched = settings and mdblist_approved and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_watched and settings.mdblist_api_key
-    push_mdblist_ratings = settings and mdblist_approved and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_ratings and settings.mdblist_api_key
-    push_mdblist_collection = settings and mdblist_approved and exclude_cloud_source != CollectionSource.mdblist and settings.mdblist_push_collection and settings.mdblist_api_key
+    push_mdblist_watched = settings and mdblist_approved and CollectionSource.mdblist not in excluded_cloud_sources and settings.mdblist_push_watched and settings.mdblist_api_key
+    push_mdblist_ratings = settings and mdblist_approved and CollectionSource.mdblist not in excluded_cloud_sources and settings.mdblist_push_ratings and settings.mdblist_api_key
+    push_mdblist_collection = settings and mdblist_approved and CollectionSource.mdblist not in excluded_cloud_sources and settings.mdblist_push_collection and settings.mdblist_api_key
 
     if (push_mdblist_watched or push_mdblist_ratings or push_mdblist_collection) and all_changed_ids:
         from core import mdblist as mdblist_client
@@ -1776,7 +1819,7 @@ async def _fan_out_changes_to_other_connections(
     push_simkl_watched = (
         settings
         and simkl_approved
-        and exclude_cloud_source != CollectionSource.simkl
+        and CollectionSource.simkl not in excluded_cloud_sources
         and settings.simkl_push_watched
         and settings.simkl_access_token
         and settings.simkl_client_id
@@ -1784,7 +1827,7 @@ async def _fan_out_changes_to_other_connections(
     push_simkl_ratings = (
         settings
         and simkl_approved
-        and exclude_cloud_source != CollectionSource.simkl
+        and CollectionSource.simkl not in excluded_cloud_sources
         and settings.simkl_push_ratings
         and settings.simkl_access_token
         and settings.simkl_client_id
@@ -1913,7 +1956,7 @@ async def _fan_out_changes_to_other_connections(
     # ── Bingebase fan-out ───────────────────────────────────────────────────
     push_bingebase_watched = (
         settings
-        and exclude_cloud_source != CollectionSource.bingebase
+        and CollectionSource.bingebase not in excluded_cloud_sources
         and getattr(settings, "bingebase_push_watched", False)
         and getattr(settings, "bingebase_webhook_url", None)
     )

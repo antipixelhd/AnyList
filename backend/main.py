@@ -25,6 +25,79 @@ from models.base import CollectionSource
 from models.playback_session import PlaybackSession
 
 
+async def _flush_pull_cycle(state) -> None:
+    """Deliver one coalesced outbound delta after overlapping pulls settle."""
+    from db import async_sessionmaker
+    from models import Collection, UserSettings
+    from core.cloud_actions import dispatch_cloud_actions
+    from core.stream_actions import dispatch_stream_actions
+    from routers.sync import (
+        _fan_out_changes_to_other_connections,
+        _fan_out_streaming_library_changes,
+    )
+
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with factory() as db:
+        changed_collection_ids = state.new_collected_ids | state.removed_collected_ids
+        if changed_collection_ids:
+            present = set((await db.execute(select(Collection.media_id).where(
+                Collection.user_id == state.user_id,
+                Collection.media_id.in_(changed_collection_ids),
+            ))).scalars())
+            state.new_collected_ids = changed_collection_ids & present
+            state.removed_collected_ids = changed_collection_ids - present
+
+        settings = (await db.execute(select(UserSettings).where(
+            UserSettings.user_id == state.user_id
+        ))).scalar_one_or_none()
+        if state.library_new_ids or state.library_removed_ids:
+            await _fan_out_streaming_library_changes(
+                db,
+                state.user_id,
+                None,
+                new_collected_ids=state.library_new_ids,
+                removed_collected_ids=state.library_removed_ids,
+                api_key=state.library_api_key,
+                exclude_connection_ids=state.library_source_ids,
+            )
+        await _fan_out_changes_to_other_connections(
+            db,
+            state.user_id,
+            None,
+            state.new_watched_ids,
+            state.new_ratings,
+            settings,
+            removed_ratings=state.removed_ratings,
+            new_collected_ids=state.new_collected_ids,
+            removed_collected_ids=state.removed_collected_ids,
+            exclude_connection_ids=state.excluded_connection_ids,
+            exclude_cloud_sources=state.excluded_cloud_sources,
+        )
+        await dispatch_stream_actions(db, state.user_id)
+        await dispatch_cloud_actions(db, state.user_id)
+
+
+async def _run_scheduled_pull_cycle(user_id: int, pulls: list[tuple[str, object]]) -> None:
+    """Run all pulls selected for one scheduler tick behind one delivery barrier."""
+    from core.pull_cycle import allow_cycle_delivery, coordinated_pull_cycle
+
+    async with coordinated_pull_cycle(user_id) as state:
+        results = await asyncio.gather(
+            *(runner() for _, runner in pulls),
+            return_exceptions=True,
+        )
+        for (label, _), result in zip(pulls, results):
+            if isinstance(result, BaseException):
+                print(f"Scheduled pull failed for user {user_id}, {label}: {type(result).__name__}")
+        try:
+            with allow_cycle_delivery(state):
+                await _flush_pull_cycle(state)
+        except Exception as error:
+            # Local pull commits are durable. A later retry tick can deliver any
+            # durable actions if this best-effort coalesced fan-out fails.
+            print(f"Scheduled pull fan-out failed for user {user_id}: {type(error).__name__}")
+
+
 async def _auto_sync_scheduler():
     from datetime import datetime, timedelta, timezone
 
@@ -113,6 +186,7 @@ async def _auto_sync_scheduler():
                 )
                 connections = result.scalars().all()
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
+                pull_batches: dict[int, list[tuple[str, object]]] = {}
 
                 for conn in connections:
                     source = source_map.get(conn.type)
@@ -184,7 +258,11 @@ async def _auto_sync_scheduler():
                     if job_type == "push":
                         asyncio.create_task(runner(conn.user_id, conn.id, job_id))
                     else:
-                        asyncio.create_task(runner(conn.user_id, job_id, 0, 0, conn.id))
+                        pull_batches.setdefault(conn.user_id, []).append((
+                            f"{conn.type}:{conn.id}",
+                            lambda runner=runner, user_id=conn.user_id, job_id=job_id, connection_id=conn.id:
+                                runner(user_id, job_id, 0, 0, connection_id),
+                        ))
 
                 cloud_settings_result = await db.execute(
                     select(UserSettings).where(
@@ -276,7 +354,17 @@ async def _auto_sync_scheduler():
                             f"Auto-{job_type}: queuing {source.value} for user "
                             f"{settings_row.user_id} (job {job_id})"
                         )
-                        asyncio.create_task(runner(settings_row.user_id, job_id))
+                        if job_type == "push":
+                            asyncio.create_task(runner(settings_row.user_id, job_id))
+                        else:
+                            pull_batches.setdefault(settings_row.user_id, []).append((
+                                source.value,
+                                lambda runner=runner, user_id=settings_row.user_id, job_id=job_id:
+                                    runner(user_id, job_id),
+                            ))
+
+                for user_id, pulls in pull_batches.items():
+                    asyncio.create_task(_run_scheduled_pull_cycle(user_id, pulls))
 
         except Exception as e:
             print(f"Auto-sync scheduler error: {e}")

@@ -96,6 +96,9 @@ async def _apply_reset(settings, provider, payload):
 
 
 async def dispatch_cloud_actions(db, user_id):
+    from core.pull_cycle import is_active
+    if is_active(user_id):
+        return
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
     actions = (await db.execute(select(CloudAction).where(

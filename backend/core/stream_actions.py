@@ -311,6 +311,9 @@ async def queue_resets(db,user_id,media,deleted_at):
 
 
 async def dispatch_stream_actions(db, user_id):
+    from core.pull_cycle import is_active
+    if is_active(user_id):
+        return
     from core.tracking_snapshot import require_stream_reconciliation
     from models import User
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
