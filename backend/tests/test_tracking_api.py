@@ -19,7 +19,7 @@ from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key
 from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
+from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
 from routers.tracking import router
 from routers.push import router as push_router
 from routers.comments import router as comments_router
@@ -820,6 +820,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recent.json()['results'],[])
 
     async def test_local_delivery_state_stays_out_of_provider_review_inbox(self):
+        self.db.add(TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,pending_connections=['trakt']))
         review=SyncReview(
             user_id=self.owner.id,
             media_id=self.movie.id,
@@ -836,7 +837,42 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload['results'],[])
         self.assertEqual(len(payload['outbound']),1)
         self.assertEqual(payload['outbound'][0]['title'],self.movie.title)
-        self.assertEqual(payload['outbound'][0]['connection'],'Connected services')
+        self.assertEqual(payload['outbound'][0]['deliveries'][0]['connection'],'Trakt')
+
+    async def test_connection_delivery_groups_by_title_until_every_service_finishes(self):
+        stremio=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Stremio',url='https://example.test',token='fixture')
+        nuvio=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Nuvio',url='https://example.test',token='fixture')
+        self.db.add_all([stremio,nuvio]);await self.db.flush()
+        marker=TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,
+            pending_connections=[f'connection:{stremio.id}',f'connection:{nuvio.id}','trakt'])
+        review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='outbound_pending',state='pending',message='Pending resets')
+        stream_a=StreamAction(user_id=self.owner.id,connection_id=stremio.id,media_id=self.movie.id,action='reset',payload={},state='pending')
+        stream_b=StreamAction(user_id=self.owner.id,connection_id=nuvio.id,media_id=self.movie.id,action='reset',payload={},state='pending')
+        cloud=CloudAction(user_id=self.owner.id,provider='trakt',media_id=self.movie.id,action='reset',payload={},state='pending')
+        self.db.add_all([marker,review,stream_a,stream_b,cloud]);await self.db.commit()
+
+        initial=(await self.client.get('/tracking/recent-events')).json()['outbound']
+        self.assertEqual(len(initial),1)
+        self.assertEqual({item['connection'] for item in initial[0]['deliveries']},{'Stremio','Nuvio','Trakt'})
+
+        stream_a.state='applied';stream_b.last_error='TimeoutError'
+        marker.pending_connections=[f'connection:{nuvio.id}','trakt']
+        await self.db.commit()
+        partial=(await self.client.get('/tracking/recent-events')).json()['outbound']
+        self.assertEqual(len(partial),1)
+        self.assertEqual({item['connection'] for item in partial[0]['deliveries']},{'Nuvio','Trakt'})
+        self.assertEqual(next(item for item in partial[0]['deliveries'] if item['connection']=='Nuvio')['error'],'TimeoutError')
+
+        cloud.state='applied';stream_b.attempts=2;stream_b.last_error=None
+        marker.pending_connections=[f'connection:{nuvio.id}']
+        await self.db.commit()
+        retry=(await self.client.get('/tracking/recent-events')).json()['outbound']
+        self.assertEqual(len(retry),1)
+        self.assertEqual([item['connection'] for item in retry[0]['deliveries']],['Nuvio'])
+
+        stream_b.state='applied';marker.pending_connections=[];review.state='confirmed'
+        await self.db.commit()
+        self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'],[])
 
     async def test_unmatched_provider_item_can_be_matched_or_ignored(self):
         from core.provider_matching import record_unmatched_import, provider_override

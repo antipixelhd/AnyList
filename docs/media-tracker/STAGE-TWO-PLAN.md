@@ -304,6 +304,8 @@ Implementation complete: Home's **Your lists** shortcuts now read the signed-in 
 - Pending connection updates are grouped once per movie/show, not duplicated once per provider. A single card reports every intended connected-service delivery and embeds any provider-specific error within that title's card.
 - The card disappears only after the change has been delivered successfully to every applicable connected service. Partial success remains visible with the remaining pending or failed provider outcomes; retries must not recreate duplicate title cards.
 
+Implementation progress: the Notifications API now projects unresolved streaming/cloud actions as one title group with per-service state and error detail, and the page renders one card per title. Applied/cancelled actions and resolved deletion reviews are excluded; deletion markers keep outstanding services visible through partial success. Pure projection tests and the Astro build pass. The PostgreSQL-backed multi-provider integration regression is written but could not run locally while Docker Desktop's engine is unavailable; this gate remains open until it passes and the rendered queue is checked on a working preview.
+
 ### Connected completion, rating prompt, and activity regression
 
 - After an established Stremio/Nuvio connection sync newly adds or marks an unrated title Completed, AnyList must create the persistent `rating_needed` notification, make the attention prompt eligible, and publish the completion in recent activity. The existing initial-import flood suppression remains in force; this requirement covers new changes after an established/approved baseline.

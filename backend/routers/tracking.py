@@ -126,6 +126,46 @@ def review_priority(review: SyncReview) -> str:
     return review.priority or 'low'
 
 
+def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names):
+    """Project unresolved per-service actions as one card per title."""
+    by_media={}
+    def add(media_id:int,title:str,poster:str|None,key:str,connection:str,state:str,attempts:int,error:str|None):
+        group=by_media.setdefault(media_id,{'media_id':media_id,'title':title,'poster':poster,'_deliveries':{}})
+        delivery=group['_deliveries'].get(key)
+        if delivery:
+            delivery['state']='conflict' if 'conflict' in (delivery['state'],state) else 'pending'
+            delivery['attempts']=max(delivery['attempts'],attempts)
+            if error:delivery['error']=error
+        else:
+            group['_deliveries'][key]={'connection':connection,'state':state,'attempts':attempts,'error':error}
+    for action,media,connection in stream_actions:
+        add(media.id,media.title,media.poster_path,f'connection:{connection.id}',connection.name,
+            action.state,action.attempts,action.last_error)
+    for action,media in cloud_actions:
+        add(media.id,media.title,media.poster_path,action.provider,action.provider.title(),
+            action.state,action.attempts,action.last_error)
+    for review,media in review_rows:
+        marker=markers.get(review.media_id)
+        if review.state!='pending' or not marker or not marker.pending_connections:continue
+        by_media.setdefault(review.media_id,{'media_id':review.media_id,
+            'title':media.title if media else 'Deleted entry','poster':media.poster_path if media else None,'_deliveries':{}})
+    for media_id,marker in markers.items():
+        group=by_media.get(media_id)
+        if not group:continue
+        for key in marker.pending_connections:
+            if key in group['_deliveries']:continue
+            connection=connection_names.get(int(key.split(':',1)[1]),'Connected service') if key.startswith('connection:') else key.title()
+            add(media_id,group['title'],group['poster'],key,connection,'pending',0,None)
+    outbound=[]
+    for group in by_media.values():
+        deliveries=list(group.pop('_deliveries').values())
+        if not deliveries:continue
+        group['deliveries']=deliveries
+        group['state']='conflict' if any(item['state']=='conflict' for item in deliveries) else 'pending'
+        outbound.append(group)
+    return outbound
+
+
 @router.get('/recent-events')
 async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     prefs=await db.get(TrackingPreferences,viewer.id)
@@ -143,7 +183,7 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     # A direct local edit is already understood by the user. Its delivery can
     # still need attention, but that belongs to the operational connection
     # queue rather than the provider-change review inbox.
-    outbound_review_rows=[row for row in rows if row[0].kind=='outbound_pending']
+    outbound_review_rows=[row for row in rows if row[0].kind=='outbound_pending' and row[0].state=='pending']
     rows=[row for row in rows if row[0].kind!='outbound_pending']
     from models.tracking import StreamAction
     actions=(await db.execute(select(StreamAction,Media,MediaServerConnection).join(Media,Media.id==StreamAction.media_id)
@@ -152,14 +192,16 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .order_by(StreamAction.id).limit(100))).all()
     pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')
     await db.commit()
-    outbound=[{'id':a.id,'title':m.title,'connection':c.name,'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m,c in actions]
     cloud_actions=(await db.execute(select(CloudAction,Media).join(Media,Media.id==CloudAction.media_id)
         .where(CloudAction.user_id==viewer.id,CloudAction.state.in_(['pending','conflict']))
         .order_by(CloudAction.id).limit(100))).all()
-    outbound.extend({'id':f'cloud-{a.id}','title':m.title,'connection':a.provider.title(),
-        'state':a.state,'attempts':a.attempts,'error':a.last_error} for a,m in cloud_actions)
-    outbound.extend({'id':f'review-{r.id}','title':m.title if m else 'Deleted entry','connection':'Connected services',
-        'state':'pending','attempts':0,'error':None} for r,m in outbound_review_rows)
+    review_media_ids={review.media_id for review,_ in outbound_review_rows if review.media_id is not None}
+    marker_media_ids=review_media_ids|{media.id for _,media,_ in actions}|{media.id for _,media in cloud_actions}
+    markers={row.media_id:row for row in (await db.execute(select(TrackingDeletion).where(
+        TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id.in_(marker_media_ids)))).scalars()} if marker_media_ids else {}
+    connection_names={row.id:row.name for row in (await db.execute(select(MediaServerConnection.id,MediaServerConnection.name).where(
+        MediaServerConnection.user_id==viewer.id))).all()}
+    outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names)
     return {'pending':pending,'outbound':outbound,
         'results':[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
