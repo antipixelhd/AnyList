@@ -279,6 +279,8 @@ Implementation authorization was received after the consolidated contract. Conti
 
 Status: accepted core requirements. These findings reopen the Phase Two implementation gate and supersede any earlier statement that the deployed build is ready for final approval. They are not part of the optional post-approval season work. This checkpoint records requirements only; no application implementation was performed while adding it.
 
+Owner reconfirmation (2026-09-21): every finding in this section remains a **required Phase Two acceptance item**. The implementation-progress notes describe local work, not final acceptance. The next agent should use the corresponding row in `PUBLIC-READY-GATES.md` to distinguish already implemented work from missing implementation and missing proof; reproduce the owner's reported failure paths before closing their gates. This reconfirmation is documentation-only and does not authorize or begin another implementation slice in this turn.
+
 ### Quick editor and list density
 
 - Condense the list quick editor so its normal desktop workflow fits within one viewport without scrolling. Remove the separate **Show score** setting from this editor while retaining the existing effective-rating behavior.

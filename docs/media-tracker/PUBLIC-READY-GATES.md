@@ -17,6 +17,8 @@ This is the current Stage Two release checklist. `STAGE-TWO-PLAN.md` is the acce
 
 The full behavior contract and acceptance tests are in the **Owner acceptance findings** section of `STAGE-TWO-PLAN.md`. The checklist below is a handoff index, not a substitute for those details. **Locally implemented** means a committed local slice has focused evidence in `STATUS.md`; it does not close the release gate until the final public head is deployed and the owner verifies it. An in-progress or uncommitted visual change does not count as complete.
 
+The owner reconfirmed this entire backlog as mandatory on 2026-09-21 and requested a documentation-only handoff at this checkpoint. The next agent must keep locally implemented rows open until their remaining proof passes, including the reported Stremio manual-sync rating/activity case, multi-provider pending-delivery lifecycle, desktop-only Fast search, live AniList first-viewport comparison, and final personal/public-profile review. Do not mark Phase Two complete from local code or screenshots alone.
+
 | Finding | Current state | What remains before acceptance |
 | --- | --- | --- |
 | One-viewport quick editor; no Show score control; calculated season average and confirmed override | Locally implemented | Recheck on final desktop build and with real saved season scores. |
