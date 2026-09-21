@@ -581,3 +581,9 @@ Eight inherited Scrob personal presentations now resolve into the accepted AnyLi
 The canonical list accepts a validated `status` query and applies it as the initial visible filter, so compatibility redirects preserve their meaning instead of only changing the URL. Custom-list storage, exports and backend APIs remain unchanged even though custom lists are outside the accepted release interface.
 
 The production Astro build passes. Authenticated browser checks confirmed Progress selected Watching with no horizontal overflow, Dropped selected Dropped, both collection routes opened Library, History opened Profile Overview, and Lists opened the canonical combined list.
+
+## Legacy detail and playback UI retirement (2026-09-21)
+
+The remaining inherited movie/show/episode detail family, people/network/studio pages, profile top-rated/recently-watched expansions, individual collection page, Continue Watching and Next Up dashboards no longer render the old Scrob interface. They provide compatibility redirects into canonical Title, Browse, Profile, Library and filtered Series-list workflows. Backend provider/detail APIs and stored records remain available.
+
+External identifiers are not reused as AnyList IDs. TMDB movie and series routes pass through the existing catalogue resolver, episode routes first read their parent show identity, and TVDB routes resolve a known TMDB cross-ID or use the fetched show title as a Series Browse query. The production Astro build passes. Authenticated browser checks resolved movie `550` to canonical title `234`, a TMDB season/episode bookmark for series `95396` to canonical title `195`, its TVDB `371980` bookmark through the same canonical title, a Person bookmark to Browse, and Continue Watching to the Watching-filtered Series list.

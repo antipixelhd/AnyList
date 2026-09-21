@@ -16,6 +16,10 @@ Updated 2026-09-21. The canonical Phase Two interface is Home, Browse, username-
 | `/dropped` | Redirects to the signed-in user's combined list with the Dropped status selected. | Preserves the useful shortcut without retaining a separate presentation. |
 | `/history` | Redirects to the signed-in user's Profile Overview. | Own activity belongs on Profile; Home remains following-only. |
 | `/calendar` | Redirects to Home. | Calendar is outside the accepted release and no competing legacy presentation is retained. |
+| `/media/{type}/{id}`, `/show/*` including season/episode and TVDB variants | TMDB movie/show bookmarks resolve through `/discover-title` into canonical `/title/{AnyList id}` for signed-in users. Episode bookmarks first resolve their parent show. TVDB bookmarks resolve a known TMDB cross-ID or fall back to a title-filtered Series Browse result without treating a TVDB ID as an AnyList ID. | Removes inherited watch/detail/episode presentations while preserving safe provider-identity mapping. |
+| `/person/{id}`, `/network/{id}`, `/studio/{id}` | Redirect to the relevant Browse surface. | Cast/company detail is outside the accepted release; no competing Scrob presentation remains. |
+| `/top-rated-*/*`, `/recently-watched-*/*` | Redirect through the privacy-aware numeric-profile compatibility route into canonical Profile Overview. | The canonical profile already owns highlights and activity. |
+| `/collection/{id}`, `/continue-watching`, `/next-up` | Redirect to the signed-in user's Library or Watching-filtered Series list. | Streaming/library and current progress are represented by the accepted tracking workflows rather than legacy playback dashboards. |
 
 The inherited Base-menu Profile and Statistics links now point to the canonical routes. The public legacy Stats route is allowed through the anonymous middleware gate only so the backend's public-profile check can authorize its redirect.
 
@@ -23,8 +27,7 @@ The inherited Base-menu Profile and Statistics links now point to the canonical 
 
 | Family | Examples | Retirement condition |
 | --- | --- | --- |
-| Old media and people details | `/media/*`, `/show/*`, `/person/*`, `/network/*`, `/studio/*`, top-rated and recently-watched subpages | Old TMDB/TVDB identifiers are not necessarily AnyList title IDs. Resolve a safe canonical title mapping before redirecting; never guess an ID. Keep provider/integration URLs that require the old identifier. |
 | Administrative and auth flows | `/admin`, `/requests`, `/register`, password recovery, activation, OIDC/device linking | Retain until an equivalent supported AnyList route exists. Login has been redesigned; this does not make these workflows disposable. |
 | Non-UI integration surface | `/api/proxy/*`, `/partials/*`, `/docs`, `/redoc`, `/openapi.json`, webhooks and callbacks | Keep independently of presentation retirement. Preserve their access checks and protocol behavior. |
 
-For every retired family, remove its navigation entry, document its redirect or deliberately unavailable outcome, run focused authenticated/anonymous route checks, and verify that another accepted workflow has not been lost. The Phase Two gate remains open until this inventory has no competing Scrob-style UI for released workflows.
+All competing Scrob-style presentation families for released workflows are now retired. Administrative, account-recovery and protocol surfaces remain because they still provide required behavior; their presence is not a second movie/series tracking interface. Backend media/show/list APIs, provider callbacks, stored data, migrations and export compatibility remain unchanged.
