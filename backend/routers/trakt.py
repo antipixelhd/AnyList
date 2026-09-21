@@ -1331,13 +1331,14 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
                 stats["dropped"] = await _apply_dropped_shows_import(db, user_id, dropped_items)
 
             print(_trakt_import_summary(job_id, "sync", stats))
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            # Import and reconcile before exporting only approved changed fields.
             from core.tracking_import import import_tracking_history
             stats["tracked_entries"] = await import_tracking_history(db, user_id)
             from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+            accepted_watched: set[int] = set()
             history_reconciliation = await reconcile_cloud_watch_events(
-                db, user_id=user_id, provider="trakt", new_media_ids=_new_watched
+                db, user_id=user_id, provider="trakt", new_media_ids=_new_watched,
+                applied_media_ids=accepted_watched,
             )
             stats["tracking_updates"] = history_reconciliation["applied"]
             stats["tracking_conflicts"] = history_reconciliation["conflicts"]
@@ -1351,6 +1352,11 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
                 )
             )
             await db.commit()
+            from core.pull_propagation import propagate_cloud_pull
+            await propagate_cloud_pull(
+                db, user_id=user_id, provider="trakt", watched_ids=accepted_watched,
+                ratings=_new_ratings, complete=not history_had_errors and not stats["errors"],
+            )
 
         except SyncCancelled:
             print(f"Trakt sync job {job_id} cancelled")

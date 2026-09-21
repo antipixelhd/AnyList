@@ -2,6 +2,7 @@ import asyncio
 import os
 import unittest
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 os.environ.setdefault("SECRET_KEY", "local-tests-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -16,6 +17,36 @@ from models.base import CollectionSource
 
 
 class PullCycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cloud_pull_exports_only_when_approved_and_complete(self):
+        from core.pull_propagation import propagate_cloud_pull
+
+        db = AsyncMock()
+        db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: object())
+        fan_out = AsyncMock()
+        with patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=True)), \
+             patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
+            await propagate_cloud_pull(
+                db, user_id=41, provider='trakt', watched_ids={10},
+                ratings={(11, None): 8.0}, complete=True,
+            )
+            fan_out.assert_awaited_once()
+            self.assertEqual(fan_out.await_args.kwargs['exclude_cloud_source'], CollectionSource.trakt)
+            self.assertEqual(fan_out.await_args.args[3], {10})
+            self.assertEqual(fan_out.await_args.args[4], {(11, None): 8.0})
+
+        fan_out.reset_mock()
+        with patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=False)), \
+             patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
+            await propagate_cloud_pull(
+                db, user_id=41, provider='trakt', watched_ids={10},
+                ratings={}, complete=True,
+            )
+            await propagate_cloud_pull(
+                db, user_id=41, provider='trakt', watched_ids={10},
+                ratings={}, complete=False,
+            )
+            fan_out.assert_not_awaited()
+
     async def test_overlapping_sources_coalesce_deltas_and_exclusions(self):
         async with coordinated_pull_cycle(41) as state:
             self.assertTrue(is_active(41))

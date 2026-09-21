@@ -763,13 +763,14 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                 )
             await db.commit()
 
-            # A pull only populates scrob's own data — it never automatically pushes to
-            # other connections; users push explicitly per-service (the "Push" buttons).
+            # Import and reconcile before exporting only approved changed fields.
             from core.tracking_import import import_tracking_history
             stats["tracked_entries"] = await import_tracking_history(db, user_id)
             from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+            accepted_watched: set[int] = set()
             history_reconciliation = await reconcile_cloud_watch_events(
-                db, user_id=user_id, provider="mdblist", new_media_ids=new_watched
+                db, user_id=user_id, provider="mdblist", new_media_ids=new_watched,
+                applied_media_ids=accepted_watched,
             )
             stats["tracking_updates"] = history_reconciliation["applied"]
             stats["tracking_conflicts"] = history_reconciliation["conflicts"]
@@ -784,6 +785,11 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
                 )
             )
             await db.commit()
+            from core.pull_propagation import propagate_cloud_pull
+            await propagate_cloud_pull(
+                db, user_id=user_id, provider="mdblist", watched_ids=accepted_watched,
+                ratings=new_ratings, complete=not stats["errors"],
+            )
         except SyncCancelled:
             logger.info("MDBList pull job %s cancelled", job_id)
             await db.rollback()

@@ -610,15 +610,14 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 f"Lists: {stats['lists']} new, {stats['list_items']} items. "
                 f"Skipped: {stats['skipped']}. Errors: {stats['errors']}."
             )
-            # A pull only populates scrob's own data — it never automatically pushes
-            # to other connections. Users push explicitly per-service (the "Push"
-            # buttons), so a bulk pull of thousands of items doesn't unexpectedly
-            # blast them out everywhere else at once.
+            # Import and reconcile before exporting only approved changed fields.
             from core.tracking_import import import_tracking_history
             stats["tracked_entries"] = await import_tracking_history(db, user_id)
             from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+            accepted_watched: set[int] = set()
             history_reconciliation = await reconcile_cloud_watch_events(
-                db, user_id=user_id, provider="simkl", new_media_ids=_new_watched
+                db, user_id=user_id, provider="simkl", new_media_ids=_new_watched,
+                applied_media_ids=accepted_watched,
             )
             stats["tracking_updates"] = history_reconciliation["applied"]
             stats["tracking_conflicts"] = history_reconciliation["conflicts"]
@@ -632,6 +631,11 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                 )
             )
             await db.commit()
+            from core.pull_propagation import propagate_cloud_pull
+            await propagate_cloud_pull(
+                db, user_id=user_id, provider="simkl", watched_ids=accepted_watched,
+                ratings=_new_ratings, complete=not stats["errors"],
+            )
 
         except SyncCancelled:
             print(f"Simkl sync job {job_id} cancelled")

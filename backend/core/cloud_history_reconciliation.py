@@ -89,6 +89,7 @@ async def reconcile_cloud_watch_events(
     user_id: int,
     provider: str,
     new_media_ids: set[int],
+    applied_media_ids: set[int] | None = None,
 ) -> dict[str, int]:
     stats = {"applied": 0, "conflicts": 0, "preserved": 0}
     if not new_media_ids:
@@ -267,5 +268,7 @@ async def reconcile_cloud_watch_events(
                 changes=changes,
             )
         stats["applied"] += 1
+        if applied_media_ids is not None:
+            applied_media_ids.update(event_media.id for event, event_media in item["events"] if event_media.id in new_media_ids)
     await db.commit()
     return stats

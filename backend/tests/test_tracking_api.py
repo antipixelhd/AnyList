@@ -627,11 +627,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))
         await self.db.commit()
 
+        applied_media_ids = set()
         stats = await reconcile_cloud_watch_events(
             self.db,
             user_id=self.owner.id,
             provider='trakt',
             new_media_ids={self.movie.id},
+            applied_media_ids=applied_media_ids,
         )
 
         entry = (await self.db.execute(select(TrackedEntry).where(
@@ -639,6 +641,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             TrackedEntry.media_id == self.movie.id,
         ))).scalar_one()
         self.assertEqual(stats['applied'], 1)
+        self.assertEqual(applied_media_ids, {self.movie.id})
         self.assertEqual(entry.status, 'completed')
         self.assertEqual(entry.finish_date, watched_at.date())
         notification = (await self.db.execute(select(SyncReview).where(
@@ -686,11 +689,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))
         await self.db.commit()
 
+        applied_media_ids = set()
         stats = await reconcile_cloud_watch_events(
             self.db,
             user_id=self.owner.id,
             provider='simkl',
             new_media_ids={self.movie.id},
+            applied_media_ids=applied_media_ids,
         )
 
         entry = (await self.db.execute(select(TrackedEntry).where(
@@ -703,6 +708,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             SyncReview.kind == 'cloud_conflict',
         ))).scalar_one()
         self.assertEqual(stats['conflicts'], 1)
+        self.assertEqual(applied_media_ids, set())
         self.assertEqual(entry.status, 'dropped')
         self.assertEqual(review.previous_status, 'dropped')
         self.assertEqual(review.proposed_status, 'completed')
