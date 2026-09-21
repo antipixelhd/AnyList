@@ -51,6 +51,36 @@ def same_playback(left, right):
     return all(left.get(key) == right.get(key) for key in ('position','duration','season','episode'))
 
 
+def playback_rank(row):
+    try:
+        position = float(row.get('position') or 0)
+        duration = float(row.get('duration') or 0)
+        fraction = position / duration if duration > 0 else 0
+        return (int(row.get('season') or 0), int(row.get('episode') or 0), fraction, position)
+    except (TypeError, ValueError):
+        return (0, 0, 0, 0)
+
+
+async def previous_source_playback(db, entry, media):
+    source = entry.status_source or ''
+    if ':' not in source:
+        return None
+    kind, raw_id = source.split(':', 1)
+    if kind not in ('stremio','nuvio'):
+        return None
+    try:
+        connection_id = int(raw_id)
+    except ValueError:
+        return None
+    baseline = await db.get(StreamBaseline, connection_id)
+    if not baseline:
+        return None
+    mappings = baseline.snapshot.get('mappings', {})
+    rows = [row for key, row in baseline.snapshot.get('progress', {}).items()
+        if mappings.get(key) == media.tmdb_id]
+    return max(rows, key=playback_rank) if rows else None
+
+
 async def require_stream_reconciliation(db, conn):
     """Shared by HTTP and background entry points; no first-write bypass."""
     if conn.type not in ('stremio', 'nuvio'):
@@ -206,14 +236,28 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             is_complete = media.media_type == MediaType.movie and row in new_completed
             # A newer local correction takes precedence over inferred history too.
             changed_at=status_changed_at(entry)
-            local_change=media.id in existing_ids and changed_at and baseline.observed_at and changed_at>baseline.observed_at
-            if media.media_type==MediaType.series and not local_change:
+            provider_at=provider_changed_at(row)
+            competing=bool(media.id in existing_ids and changed_at and baseline.observed_at and changed_at>baseline.observed_at)
+            ordering='apply'
+            if competing:
+                if provider_at and provider_at > changed_at:
+                    ordering='apply'
+                elif provider_at and provider_at < changed_at:
+                    ordering='stale'
+                elif provider_at and provider_at == changed_at and entry.status_source != 'local':
+                    previous_row=await previous_source_playback(db,entry,media)
+                    ordering='apply' if previous_row and playback_rank(row)>playback_rank(previous_row) else 'stale' if previous_row else 'conflict'
+                else:
+                    ordering='conflict'
+            if ordering=='stale':
+                continue
+            if media.media_type==MediaType.series and ordering=='apply':
                 is_complete=await apply_series_observation(db,conn.user_id,media,entry,row,row in new_completed)
             proposed = observed_status(previous_status, is_complete, True)
-            if local_change and (proposed != previous_status or media.media_type==MediaType.series):
+            if ordering=='conflict':
                 db.add(SyncReview(user_id=conn.user_id,connection_id=conn.id,media_id=media.id,kind='conflict',
                     previous_status=previous_status,proposed_status=proposed,
-                    message=f'{conn.name}: new playback overlaps a newer local edit. Your local status was preserved.'))
+                    message=f'{conn.name}: playback timing cannot be ordered against another recent change. Your current value was preserved.'))
                 continue
             entry.status = proposed
             mark_status_change(entry,f'{conn.type}:{conn.id}',provider_changed_at(row))

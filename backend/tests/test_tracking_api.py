@@ -1746,12 +1746,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         await observe_stream_snapshot(self.db,source,[],[],[],{})
         source_baseline=await self.db.get(StreamBaseline,source.id)
+        base=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(seconds=2)
         source_baseline.approved=True
-        source_baseline.observed_at=datetime(2026,1,1)
+        source_baseline.observed_at=base-timedelta(minutes=10)
         await self.db.commit()
 
         first={'content_id':'tt-source-resume','content_type':'movie','position':70,'duration':100,
-            'modified_at':'2026-01-02T12:00:00Z','last_watched':1700000000000}
+            'modified_at':base.isoformat()+'Z','last_watched':1700000000000}
         await observe_stream_snapshot(self.db,source,[],[],[first],{'tt-source-resume':self.movie.tmdb_id})
         actions=(await self.db.execute(select(StreamAction).where(
             StreamAction.user_id==self.owner.id,StreamAction.action=='upsert'))).scalars().all()
@@ -1759,11 +1760,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions[0].connection_id,target.id)
         self.assertEqual(actions[0].payload['content_id'],'tt-target-resume')
         self.assertEqual(actions[0].payload['position'],70)
-        self.assertEqual(actions[0].payload['observed_at'],'2026-01-02T12:00:00Z')
+        self.assertEqual(actions[0].payload['observed_at'],base.isoformat()+'Z')
 
         # A trustworthy newer correction may move the position backwards and
         # replaces the still-pending destination write instead of duplicating it.
-        corrected={**first,'position':25,'modified_at':'2026-01-02T12:05:00Z'}
+        corrected={**first,'position':25,'modified_at':(base+timedelta(minutes=5)).isoformat()+'Z'}
         await observe_stream_snapshot(self.db,source,[],[],[corrected],{'tt-source-resume':self.movie.tmdb_id})
         await self.db.refresh(actions[0])
         self.assertEqual(actions[0].payload['position'],25)
@@ -1781,13 +1782,77 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         # The matching destination pull acknowledges our write and must not
         # fan the same value back to the original source connection.
-        echoed={**corrected,'content_id':'tt-target-resume','modified_at':'2026-01-02T12:06:00Z'}
+        echoed={**corrected,'content_id':'tt-target-resume','modified_at':(base+timedelta(minutes=6)).isoformat()+'Z'}
         await observe_stream_snapshot(self.db,target,[],[],[echoed],{'tt-target-resume':self.movie.tmdb_id})
         self.assertNotIn('tt-target-resume',target_baseline.snapshot['outbound'])
         pending=(await self.db.execute(select(StreamAction).where(
             StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
             StreamAction.action=='upsert'))).scalars().all()
         self.assertEqual(pending,[])
+
+    async def test_newer_cross_provider_resume_can_move_backward_and_stale_delta_cannot_fan_out(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.movie.tmdb_id=987654320
+        await self.save(self.movie,status='watching')
+        source_a=MediaServerConnection(user_id=self.owner.id,type='stremio',name='A',
+            url='https://example.test',token='a',push_playback=True)
+        source_b=MediaServerConnection(user_id=self.owner.id,type='stremio',name='B',
+            url='https://example.test',token='b',push_playback=True)
+        self.db.add_all([source_a,source_b]);await self.db.commit()
+        await observe_stream_snapshot(self.db,source_a,[],[],[],{})
+        await observe_stream_snapshot(self.db,source_b,[],[],[],{})
+        baseline_a=await self.db.get(StreamBaseline,source_a.id)
+        baseline_b=await self.db.get(StreamBaseline,source_b.id)
+        base=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(seconds=2)
+        for baseline,key in ((baseline_a,'tt-a'),(baseline_b,'tt-b')):
+            baseline.approved=True
+            baseline.observed_at=base-timedelta(minutes=10)
+            baseline.snapshot={**baseline.snapshot,'mappings':{key:self.movie.tmdb_id},
+                'progress':{key:{'content_id':key,'content_type':'movie','position':10,'duration':100}}}
+        await self.db.commit()
+
+        first={'content_id':'tt-a','content_type':'movie','position':80,'duration':100,
+            'modified_at':base.isoformat()+'Z'}
+        await observe_stream_snapshot(self.db,source_a,[],[],[first],{'tt-a':self.movie.tmdb_id})
+        await self.db.execute(delete(StreamAction).where(StreamAction.user_id==self.owner.id))
+        await self.db.commit()
+
+        # The newer B observation is authoritative even though its playback
+        # position is lower than A's previous value.
+        correction={'content_id':'tt-b','content_type':'movie','position':20,'duration':100,
+            'modified_at':(base+timedelta(minutes=1)).isoformat()+'Z'}
+        await observe_stream_snapshot(self.db,source_b,[],[],[correction],{'tt-b':self.movie.tmdb_id})
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        self.assertEqual(entry.status_source,f'stremio:{source_b.id}')
+        self.assertEqual(entry.status_changed_at,base+timedelta(minutes=1))
+        actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
+            StreamAction.action=='upsert'))).scalars().all()
+        self.assertEqual([(action.connection_id,action.payload['position']) for action in actions],[(source_a.id,20)])
+
+        await self.db.execute(delete(StreamAction).where(StreamAction.user_id==self.owner.id))
+        await self.db.commit()
+        simultaneous={**first,'position':85,
+            'modified_at':(base+timedelta(minutes=1)).isoformat()+'Z'}
+        await observe_stream_snapshot(self.db,source_a,[],[],[simultaneous],{'tt-a':self.movie.tmdb_id})
+        await self.db.refresh(entry)
+        self.assertEqual(entry.status_source,f'stremio:{source_a.id}')
+        simultaneous_actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
+            StreamAction.action=='upsert'))).scalars().all()
+        self.assertEqual([(action.connection_id,action.payload['position']) for action in simultaneous_actions],[(source_b.id,85)])
+
+        await self.db.execute(delete(StreamAction).where(StreamAction.user_id==self.owner.id))
+        await self.db.commit()
+        stale={**first,'position':15,'modified_at':(base+timedelta(seconds=30)).isoformat()+'Z'}
+        await observe_stream_snapshot(self.db,source_a,[],[],[stale],{'tt-a':self.movie.tmdb_id})
+        await self.db.refresh(entry)
+        self.assertEqual(entry.status_source,f'stremio:{source_a.id}')
+        self.assertEqual((await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
+            StreamAction.action=='upsert'))).scalars().all(),[])
 
     async def test_nuvio_last_watched_alone_does_not_order_resume_fanout(self):
         from core.stream_actions import queue_progress_update
