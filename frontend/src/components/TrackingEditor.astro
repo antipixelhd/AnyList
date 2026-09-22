@@ -11,23 +11,25 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
     <div class="editor-hero-shade"></div>
     <img id="editor-poster" class="editor-poster" alt="" />
     <div class="editor-heading"><span id="editor-media-type">Entry</span><h2 id="editor-title">Edit entry</h2></div>
+    <div class="editor-hero-actions">
+      <label class="editor-favorite" title="Favorite"><input name="favorite" type="checkbox" form="tracking-form" aria-label="Favorite"/><Icon name="heart" /></label>
+      <button type="submit" form="tracking-form" class="button-primary editor-save">Save</button>
+    </div>
     <button type="button" class="editor-close editor-icon-button" aria-label="Close editor"><Icon name="close" /></button>
   </div>
   <form id="tracking-form">
     <div class="editor-fields">
-      <label>Status<select name="status">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select></label>
+      <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><select name="status" class="editor-status-native" tabindex="-1" aria-hidden="true">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select><div class="editor-status-dropdown"><button type="button" id="editor-status-trigger" class="editor-status-trigger" aria-labelledby="editor-status-label editor-status-value" aria-expanded="false" aria-controls="editor-status-options"><span id="editor-status-value">Watching</span><Icon name="chevron-down" /></button><div id="editor-status-options" class="editor-status-options" hidden>{statuses.map(([value,label]) => <button type="button" data-editor-status={value}>{label}</button>)}</div></div></div>
       <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint" id="score-help">0 means unrated</span></label>
       <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
       <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
       <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
-      <label class="checkbox favorite-field"><input name="favorite" type="checkbox"/><span>Favorite</span></label>
-      <label class="wide">Notes<textarea name="notes" rows="3" placeholder="Only you can see these notes"></textarea></label>
+      <label class="wide editor-notes">Notes<textarea name="notes" rows="2" placeholder="Only you can see these notes"></textarea></label>
       <p class="wide hint" id="completion-help">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
       <button type="button" class="button-danger" id="delete-tracked-entry"><Icon name="trash" />Delete entry</button>
-      <button type="submit" class="button-primary"><Icon name="save" />Save</button>
     </div>
   </form>
 </dialog>
@@ -58,6 +60,44 @@ document.addEventListener('astro:page-load', () => {
   document.addEventListener('anylist:data-changed', () => retained.clear(), { signal: pageListeners.signal });
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
+  const saveButton = dialog.querySelector<HTMLButtonElement>('.editor-save')!;
+  const statusTrigger = dialog.querySelector<HTMLButtonElement>('#editor-status-trigger')!;
+  const statusValue = dialog.querySelector<HTMLElement>('#editor-status-value')!;
+  const statusOptions = dialog.querySelector<HTMLElement>('#editor-status-options')!;
+  const statusButtons = [...statusOptions.querySelectorAll<HTMLButtonElement>('[data-editor-status]')];
+  const closeStatus = () => { statusOptions.hidden = true; statusTrigger.setAttribute('aria-expanded', 'false'); };
+  const syncStatus = () => {
+    const selected = statusButtons.find(button => button.dataset.editorStatus === field('status').value);
+    statusValue.textContent = selected?.textContent || 'Status';
+    statusButtons.forEach(button => button.setAttribute('aria-current', String(button === selected)));
+  };
+  statusTrigger.addEventListener('click', () => {
+    statusOptions.hidden = !statusOptions.hidden;
+    statusTrigger.setAttribute('aria-expanded', String(!statusOptions.hidden));
+  });
+  statusTrigger.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault(); statusOptions.hidden = false; statusTrigger.setAttribute('aria-expanded', 'true');
+      (statusButtons.find(button => button.dataset.editorStatus === field('status').value) || statusButtons[0])?.focus();
+    }
+  });
+  statusOptions.addEventListener('click', event => {
+    const selected = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-editor-status]');
+    if (!selected) return;
+    field('status').value = selected.dataset.editorStatus!;
+    syncStatus(); closeStatus(); statusTrigger.focus();
+  });
+  statusOptions.addEventListener('keydown', event => {
+    const index = statusButtons.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === 'Escape') { event.preventDefault(); closeStatus(); statusTrigger.focus(); }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? statusButtons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + statusButtons.length) % statusButtons.length;
+      statusButtons[next]?.focus();
+    }
+  });
+  dialog.addEventListener('click', event => { if (!statusTrigger.contains(event.target as Node) && !statusOptions.contains(event.target as Node)) closeStatus(); });
+  dialog.addEventListener('focusout', event => { if (!statusTrigger.contains(event.relatedTarget as Node) && !statusOptions.contains(event.relatedTarget as Node)) closeStatus(); });
   const formState = () => JSON.stringify(Array.from(new FormData(form).entries()));
   const isDirty = () => !!current && initialState !== '' && formState() !== initialState;
   const artwork = (path: string | null | undefined, size: string) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/${size}${path}` : (path || '');
@@ -78,6 +118,7 @@ document.addEventListener('astro:page-load', () => {
     poster.src = artwork(title.poster, 'w342'); poster.alt = title.poster ? `${title.title} poster` : ''; poster.hidden = !title.poster;
     backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
+    syncStatus(); closeStatus();
     const calculatedScore = current.rating_mode === 'average' ? current.score : current.manual_score;
     field('manual_score').value = calculatedScore ?? '';
     displayedScore = field('manual_score').value;
@@ -87,13 +128,14 @@ document.addEventListener('astro:page-load', () => {
     document.querySelector<HTMLElement>('#completion-help')!.hidden = title.type === 'movie';
     updateScoreHelp();
     initialState = formState();
-    form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = false;
+    saveButton.disabled = false;
   }
   document.addEventListener('click', async (event) => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
     if (!button) return;
     error.hidden = true;
     form.reset();
+    syncStatus(); closeStatus();
     current = null;
     initialState = '';
     opener = button;
@@ -108,7 +150,7 @@ document.addEventListener('astro:page-load', () => {
     }
     dialog.showModal();
     document.querySelector('#editor-title')!.textContent = 'Loading entry…';
-    form.querySelector<HTMLButtonElement>('[type=submit]')!.disabled = true;
+    saveButton.disabled = true;
     try {
       const res = await fetch(`/api/proxy/tracking/title/${button.dataset.editEntry}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Unable to load this entry. Try again.');
@@ -145,7 +187,7 @@ document.addEventListener('astro:page-load', () => {
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!current) return;
     error.hidden = true;
-    const submit = form.querySelector<HTMLButtonElement>('[type=submit]')!;
+    const submit = saveButton;
     const status = field('status').value;
     const body: any = {status, notes:field('notes').value, favorite:field('favorite').checked,
       rewatch_count:Number(field('rewatch_count').value || 0)};
