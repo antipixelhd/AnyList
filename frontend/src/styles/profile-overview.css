@@ -24,21 +24,23 @@
   color: var(--bright);
 }
 
-.overview-highlights {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.profile-overview .overview-highlights {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.overview-highlights > div {
+.profile-overview .overview-highlights > div {
   min-width: 0;
   padding: 16px;
+  border-top: 0;
+  border-bottom: 0;
 }
 
-.overview-highlights > div:nth-child(2n) {
+.profile-overview .overview-highlights > div:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.profile-overview .overview-highlights > div:nth-child(4n) {
   border-right: 0;
-}
-
-.overview-highlights > div:nth-child(n+3) {
-  border-top: 1px solid var(--border);
 }
 
 .overview-bio .profile-bio {
@@ -148,6 +150,27 @@
 }
 
 @media (max-width: 700px) {
+  .profile-overview .overview-highlights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-overview .overview-highlights > div {
+    border-top: 0;
+    border-bottom: 0;
+  }
+
+  .profile-overview .overview-highlights > div:nth-child(odd) {
+    border-right: 1px solid var(--border);
+  }
+
+  .profile-overview .overview-highlights > div:nth-child(even) {
+    border-right: 0;
+  }
+
+  .profile-overview .overview-highlights > div:nth-child(-n+2) {
+    border-bottom: 1px solid var(--border);
+  }
+
   .profile-overview .activity-stream .event-cover {
     flex-basis: 56px;
   }

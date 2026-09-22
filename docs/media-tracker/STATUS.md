@@ -4,6 +4,8 @@
 
 Profile Overview now uses equal-width columns on wide screens, stacking below 900px. Overview, a separate safe-Markdown Bio section, and Favorites sit in the left column; Recent activity occupies the right column without the previous highlights subtitle or activity subtitle. The bio content area grows to 320px before scrolling. Favorites render as compact poster-only title links, grouped as Movies/Series in combined mode or Movies and Series in separate mode, with empty groups omitted and existing order preserved. Profile navigation continues to use the preference returned by each profile endpoint; its live preference-change handler updates tabs, and successful preference writes clear same-user cached pages through the shared navigation mutation handler.
 
+Overview statistics display in one four-column row by default and switch to two columns below 700px.
+
 Local verification: the frontend Astro production build passes. Authenticated visual verification of both Favorites layouts and narrow-screen/activity wrapping remains open; no VPS work was performed.
 
 ## Profile settings visual correction (2026-09-22)
