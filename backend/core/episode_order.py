@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import re
+import time
 import unicodedata
 from collections.abc import Awaitable, Callable
 from datetime import date
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import tmdb, tvdb
@@ -618,8 +620,10 @@ async def _match_tmdb_to_tvdb_episodes(
 
     for episode, external_ids in external_rows:
         external_tvdb_id = external_ids.get("tvdb_id")
-        match = tvdb_by_id.get(int(external_tvdb_id)) if external_tvdb_id else None
+        match = None
         method = "external_id"
+        if external_tvdb_id and int(external_tvdb_id) not in used_tvdb_ids:
+            match = tvdb_by_id.get(int(external_tvdb_id))
         if match is None:
             title = _normalise_title(episode.get("name"))
             candidates = [
@@ -671,6 +675,14 @@ async def _get_tvdb_id_for_show(
     return int(tvdb_id), show_data
 
 
+# TVDB returns each episode's original-language title unless a language is
+# requested, while TMDB titles here are English - so an anime's Japanese TVDB
+# titles never matched and the switch failed with "No TMDB episodes could be
+# matched to TVDB" (#351). Matching compares titles, so both sides must be
+# English regardless of the user's display language.
+_MATCH_LANGUAGE = "eng"
+
+
 async def _fetch_show_episodes(
     series_tmdb_id: int,
     tvdb_id: int,
@@ -718,7 +730,9 @@ async def _fetch_show_episodes(
         ),
         asyncio.gather(
             *(
-                tvdb.get_series_episodes(tvdb_id, number, tvdb_api_key, cache_ttl=cache_ttl)
+                tvdb.get_series_episodes(
+                    tvdb_id, number, tvdb_api_key, language=_MATCH_LANGUAGE, cache_ttl=cache_ttl
+                )
                 for number in tvdb_season_numbers
             )
         ),
@@ -791,6 +805,16 @@ async def ensure_episode_order_mapping(
     }
 
 
+_SEASON_MAPPING_ATTEMPT_TTL = tmdb.DEFAULT_CACHE_TTL
+_season_mapping_locks: dict[int, asyncio.Lock] = {}
+_season_mapping_attempts: dict[int, float] = {}
+
+
+def _reset_season_mapping_guards() -> None:
+    _season_mapping_locks.clear()
+    _season_mapping_attempts.clear()
+
+
 async def ensure_episode_order_mapping_for_season(
     db: AsyncSession,
     show,
@@ -818,6 +842,26 @@ async def ensure_episode_order_mapping_for_season(
     if not show.tvdb_id or not tmdb_api_key or not tvdb_api_key:
         return []
 
+    deadline = _season_mapping_attempts.get(show.tmdb_id)
+    if deadline is not None and time.monotonic() < deadline:
+        return []
+    lock = _season_mapping_locks.setdefault(show.tmdb_id, asyncio.Lock())
+    if lock.locked():
+        return []
+    async with lock:
+        return await _ensure_episode_order_mapping_for_season_locked(
+            db, show, season_number, tmdb_api_key, tvdb_api_key
+        )
+
+
+async def _ensure_episode_order_mapping_for_season_locked(
+    db: AsyncSession,
+    show,
+    season_number: int,
+    tmdb_api_key: str,
+    tvdb_api_key: str,
+) -> list[EpisodeOrderMapping]:
+
     existing_result = await db.execute(
         select(EpisodeOrderMapping).where(
             EpisodeOrderMapping.series_tmdb_id == show.tmdb_id
@@ -833,6 +877,8 @@ async def ensure_episode_order_mapping_for_season(
         # returns, so there's nothing more to do unless the show's episode
         # count grew (a genuinely new episode), which force-refresh handles.
         return []
+
+    _season_mapping_attempts[show.tmdb_id] = time.monotonic() + _SEASON_MAPPING_ATTEMPT_TTL
 
     try:
         show_data = await tmdb.get_show(show.tmdb_id, api_key=tmdb_api_key, cache_ttl=tmdb.DEFAULT_CACHE_TTL)
@@ -859,8 +905,13 @@ async def ensure_episode_order_mapping_for_season(
     if not mappings:
         return []
 
-    db.add_all(mappings)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add_all(mappings)
+            await db.flush()
+    except IntegrityError:
+        logger.warning("Episode order mapping for show tmdb_id=%s conflicted with existing rows", show.tmdb_id)
+        return []
     return mappings
 
 

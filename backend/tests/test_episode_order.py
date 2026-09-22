@@ -206,6 +206,39 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(get_tvdb_series.call_args.kwargs["cache_ttl"])
         self.assertIsNone(get_tvdb_episodes.call_args.kwargs["cache_ttl"])
 
+    async def test_tvdb_episodes_are_fetched_in_english_for_title_matching(self) -> None:
+        # #351: TVDB defaults to each episode's original-language title, so an
+        # anime's TVDB titles were Japanese against TMDB's English ones and
+        # nothing matched.
+        db = AsyncMock()
+        db.execute.return_value = _ExistingResult([SimpleNamespace(tvdb_id=10414110)])
+        db.add_all = MagicMock()
+
+        get_tvdb_episodes = AsyncMock(
+            return_value=[{"id": 100, "seasonNumber": 1, "number": 1, "name": "Pilot", "aired": "2025-01-01"}]
+        )
+        with (
+            patch(
+                "core.episode_order.tmdb.get_show",
+                AsyncMock(return_value={"external_ids": {"tvdb_id": 389597}, "seasons": [{"season_number": 1}]}),
+            ),
+            patch(
+                "core.episode_order.tmdb.get_season",
+                AsyncMock(return_value={"episodes": [
+                    {"id": 1, "season_number": 1, "episode_number": 1, "name": "Pilot", "air_date": "2025-01-01"}
+                ]}),
+            ),
+            patch("core.episode_order.tmdb.get_episode_external_ids", AsyncMock(return_value={"tvdb_id": None})),
+            patch(
+                "core.episode_order.tvdb.get_series",
+                AsyncMock(return_value={"seasons": [{"number": 1, "type": {"type": "official"}}]}),
+            ),
+            patch("core.episode_order.tvdb.get_series_episodes", get_tvdb_episodes),
+        ):
+            await ensure_episode_order_mapping(db, 127532, "tmdb-key", "tvdb-key", force=True)
+
+        self.assertEqual(get_tvdb_episodes.call_args.kwargs["language"], "eng")
+
     async def test_without_force_the_shared_tmdb_cache_is_used(self) -> None:
         # An already-mapped show short-circuits before any tvdb.* call, so
         # only tmdb.get_show's cache behavior is observable on this path.
@@ -435,8 +468,26 @@ class EnsureEpisodeOrderMappingForSeasonTests(unittest.IsolatedAsyncioTestCase):
     additive (never deletes existing rows for other seasons) and cheap
     (skips per-episode external-id lookups for episodes already mapped)."""
 
+    def setUp(self):
+        from core.episode_order import _reset_season_mapping_guards
+        _reset_season_mapping_guards()
+
     def _show(self):
         return SimpleNamespace(tmdb_id=127532, tvdb_id=389597)
+
+    async def test_recent_attempt_and_inflight_mapping_skip_provider_calls(self) -> None:
+        import asyncio
+        import time
+        from core import episode_order
+
+        db = AsyncMock()
+        episode_order._season_mapping_attempts[self._show().tmdb_id] = time.monotonic() + 60
+        self.assertEqual(await ensure_episode_order_mapping_for_season(db, self._show(), 2, "tmdb-key", "tvdb-key"), [])
+        episode_order._season_mapping_attempts.clear()
+        lock = episode_order._season_mapping_locks.setdefault(self._show().tmdb_id, asyncio.Lock())
+        async with lock:
+            self.assertEqual(await ensure_episode_order_mapping_for_season(db, self._show(), 2, "tmdb-key", "tvdb-key"), [])
+        db.execute.assert_not_awaited()
 
     async def test_returns_empty_without_tvdb_id_or_api_keys(self) -> None:
         db = AsyncMock()
@@ -473,6 +524,7 @@ class EnsureEpisodeOrderMappingForSeasonTests(unittest.IsolatedAsyncioTestCase):
         )
         db.execute.return_value = _ExistingResult([existing_mapping])
         db.add_all = MagicMock()
+        db.begin_nested = MagicMock(return_value=_NestedTxn())
 
         tmdb_show = {"seasons": [{"season_number": 1}, {"season_number": 2}]}
         tmdb_season_1 = {"episodes": [

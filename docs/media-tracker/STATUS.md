@@ -1,5 +1,13 @@
 # AnyList implementation status
 
+## Scrob reliability update adapted locally (2026-09-22)
+
+Adapted the reviewed Scrob commits for episode-order matching and webhook throttling, sync-job error bounds and large-ID query chunks, Bingebase job state, stale-session rollback recovery, MDBList 429 handling, and localized search. A newly collected Plex/Jellyfin/Emby item can receive existing watched state only when its connection has watched pushing enabled and its first import has been approved. Pull jobs also require a complete error-free scan; combined episode files require every mapped episode to be watched. Echo markers and Plex pending-push tracking remain in use.
+
+The viewer-timezone history patch was not applied: `/history` redirects to the canonical profile, and the accepted AnyList activity model displays UTC timestamps and groups activity by UTC day. This preserves the explicit `mt014` decision.
+
+Local verification: 326 focused backend tests and 2 subtests passed, including new first-import and combined-file push cases; the Astro production build passed. No VPS access, deployment, or provider writes were performed for this update.
+
 ## List presentation update (2026-09-22)
 
 Movie rows now show watch progress as `0` or `1`. Desktop increment controls use a small AniList-style rotate icon with no hover treatment; they are hidden on phone and touch layouts. The saved default order is applied on the server before list rows render, including status-filtered entry groups. Movie/Series List landings initially align the profile tabs to the top of the viewport with the topbar hidden. The sticky topbar becomes visible whenever the document reaches its top, including direct loads and history restores, and otherwise follows the existing scroll-direction behavior. Other profile pages retain their normal landing position. The Astro production build passes; an authenticated visual check is still pending on a running test instance.

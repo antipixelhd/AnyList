@@ -658,7 +658,7 @@ async def _apply_trakt_import(
     live-only). Returns (stats, watched_processed, history_had_errors, new_watched,
     new_ratings) for the caller to use in its own completion/fan-out handling.
     """
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
 
     stats = {"movies": 0, "episodes": 0, "ratings": 0, "rating_conflicts": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
     _new_watched: set[int] = set()
@@ -1263,7 +1263,7 @@ async def _local_dropped_show_tmdb_ids(
 
 
 async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     print(f"Starting Trakt sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -1294,7 +1294,7 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             try:
                 access_token = await ensure_valid_trakt_token(db, settings)
             except TraktTokenError as exc:
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(exc)))
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=_short_error(exc)))
                 await db.commit()
                 return
 
@@ -1369,7 +1369,7 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             print(f"Trakt sync job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.failed, error_message=str(exc)
+                    status=SyncStatus.failed, error_message=_short_error(exc)
                 )
             )
             await db.commit()
@@ -1453,7 +1453,7 @@ async def run_trakt_export_sync(
     sync_lists: bool = True,
     sync_comments: bool = True,
 ):
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     print(f"Starting Trakt export import for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -1524,7 +1524,7 @@ async def run_trakt_export_sync(
             print(f"Trakt export import job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.failed, error_message=str(exc)
+                    status=SyncStatus.failed, error_message=_short_error(exc)
                 )
             )
             await db.commit()
@@ -1629,7 +1629,7 @@ async def trakt_import_upload(
 
 
 async def _run_trakt_push(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled
+    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
@@ -1655,7 +1655,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                 await db.execute(
                     update(SyncJob)
                     .where(SyncJob.id == job_id)
-                    .values(status=SyncStatus.failed, error_message=str(exc))
+                    .values(status=SyncStatus.failed, error_message=_short_error(exc))
                 )
                 await db.commit()
                 return
@@ -2099,7 +2099,7 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
             await db.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(status=SyncStatus.failed, error_message=str(exc))
+                .values(status=SyncStatus.failed, error_message=_short_error(exc))
             )
             await db.commit()
 
