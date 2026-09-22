@@ -86,6 +86,8 @@ body.settings-app{--color-bg-page:var(--bg);--color-bg-card:var(--panel);--color
 
 .settings-nav a{grid-template-columns:22px minmax(0,1fr);align-items:center;column-gap:10px}.settings-nav>a>.ui-icon{display:grid;color:#7890a8;font-size:13px}.settings-nav a.active>.ui-icon{color:var(--blue)}.settings-nav-copy{display:grid!important;gap:1px;min-width:0;font-size:inherit!important}.settings-nav-copy small{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:800px){.settings-nav>a>.ui-icon{display:grid}.settings-nav-copy{display:block!important}.settings-nav-copy small{display:none}}
+/* Match the list sidebar clearance so the returning topbar never covers settings navigation. */
+@media(min-width:801px){.settings-nav{top:96px}}
 
 /* List regression guard: the mobile filter trigger must not consume a desktop grid column. */
 .mobile-filter-toggle{display:none!important}
