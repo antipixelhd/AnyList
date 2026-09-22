@@ -1,5 +1,9 @@
 # AnyList implementation status
 
+## Compact autosaving profile settings (2026-09-22)
+
+Profile controls now send partial saves as they change; display name waits 500 ms, and bio alone has an explicit Save button. The bio editor provides visual Markdown and Raw Markdown modes, supports 1,000 characters, and the overview renders Markdown with raw HTML disabled. Social search excerpts use plain text. Localization controls share a compact responsive section. A successful combined-list preference change updates current navigation and profile tabs, while the existing mutation handler discards cached profile pages. Migration `mt017` widened the local PostgreSQL bio column. The frontend build, 83 tracking API tests, focused Markdown safety assertions, and local migration upgrade passed. Authenticated browser interaction remains to be checked; no VPS work was performed.
+
 ## Activity label and movie progress correction (2026-09-22)
 
 Activity cards now show the linked title in blue with a stable hover color and the action text in light text. The hierarchy places Started Watching after series season/episode progress and before rating-only activity. Movie activity never uses episode wording, including older cards whose payload retained a one-step movie progress change. Manual status changes and imported/reviewed changes set current movie progress to 1 for Completed and 0 otherwise; recorded watch history remains available. Migration `mt016` repairs existing movie rows without deleting their history.

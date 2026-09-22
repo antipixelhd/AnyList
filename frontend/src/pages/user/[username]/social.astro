@@ -2,6 +2,7 @@
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import {tracker} from '../../../lib/tracker';
+import {plainBioExcerpt} from '../../../lib/profile-markdown';
 const username=Astro.params.username!;
 let profile:any=null,error='',results:any[]=[];
 const query=Astro.url.searchParams.get('q')?.trim()||'';
@@ -18,7 +19,7 @@ const followers=(profile?.people||[]).filter((person:any)=>person.follower);
   {Astro.locals.user&&<form class="people-search" method="get"><input type="search" name="q" value={query} placeholder="Search public profiles" aria-label="Search public profiles"/><button class="button-primary">Search</button></form>}
   {query&&<section><h2>Search results</h2>{results.length?<div class="people-list">{results.map((person:any)=><article class="person-row">
     {person.has_avatar?<img class="person-avatar" src={`/api/proxy/profile/avatar/${person.id}`} alt=""/>:<span class="person-avatar" aria-hidden="true">{person.display_name[0].toUpperCase()}</span>}
-    <a class="person-copy" href={`/user/${encodeURIComponent(person.username)}`}><strong>{person.display_name}</strong><span>@{person.username}{person.bio&&` · ${person.bio}`}</span></a>
+    <a class="person-copy" href={`/user/${encodeURIComponent(person.username)}`}><strong>{person.display_name}</strong><span>@{person.username}{person.bio&&` · ${plainBioExcerpt(person.bio)}`}</span></a>
     {!person.owner&&<button class={person.following?'button-secondary':'button-primary'} data-follow={person.username} data-active={person.following?'yes':'no'}>{person.following?'Following':'Follow'}</button>}
   </article>)}</div>:<p class="section-empty">No public profiles match that search.</p>}</section>}
   <div class="social-columns"><section><h2>Following <span class="count-pill">{profile.counts.following}</span></h2>{following.length?<div class="people-list">{following.map((person:any)=><a class="person-row" href={`/user/${encodeURIComponent(person.username)}`}><span class="person-avatar" aria-hidden="true">{person.display_name[0].toUpperCase()}</span><span class="person-copy"><strong>{person.display_name}</strong><span>@{person.username}</span></span></a>)}</div>:<p class="section-empty">No public profiles followed yet.</p>}</section>

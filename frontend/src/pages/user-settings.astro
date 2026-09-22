@@ -3,6 +3,7 @@ import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import { tracker } from "../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
+import '@toast-ui/editor/dist/toastui-editor.css';
 
 const { token } = Astro.locals;
 const [profileData, me, trackingPrefs] = await Promise.all([
@@ -136,9 +137,7 @@ const COUNTRIES = [
 
 <TrackerSettings title="Profile settings">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
-  <div class="max-w-4xl mx-auto">
-    <div id="js-message" class="hidden p-4 rounded-lg mb-8"></div>
-
+  <div class="profile-settings max-w-4xl mx-auto">
     <div class="space-y-12">
 
       <!-- Identity -->
@@ -159,7 +158,7 @@ const COUNTRIES = [
             )}
           </div>
           <div class="space-y-2">
-            <p class="text-sm font-medium text-zinc-300">Profile Picture</p>
+            <p class="text-sm font-medium text-zinc-300">Profile Picture <span id="avatar-status" class="setting-save-state" role="status"></span></p>
             <p class="text-xs text-zinc-500">JPEG, PNG or WebP · Max 5 MB</p>
             <div class="flex items-center gap-2 flex-wrap">
               <label class="cursor-pointer px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 text-zinc-200 text-sm font-medium rounded-lg transition-all">
@@ -175,9 +174,9 @@ const COUNTRIES = [
           </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 gap-5">
           <div class="space-y-2">
-            <label for="display_name" class="block text-sm font-medium text-zinc-400">Display Name</label>
+            <div class="setting-label-line"><label for="display_name" class="block text-sm font-medium text-zinc-400">Display Name</label><span class="setting-save-state" data-save-state="display_name" role="status"></span></div>
             <input
               type="text"
               id="display_name"
@@ -190,14 +189,11 @@ const COUNTRIES = [
             <p class="text-xs text-zinc-500">Shown instead of your username where your name appears.</p>
           </div>
           <div class="space-y-2">
-            <label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label>
-            <textarea
-              id="bio"
-              name="bio"
-              maxlength={280}
-              placeholder="A few words about yourself…"
-              class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-none h-[94px]"
-            >{prefs.bio ?? ""}</textarea>
+            <div class="setting-label-line"><label id="bio-label" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
+            <div class="bio-mode-row"><label for="bio-raw-toggle"><input id="bio-raw-toggle" type="checkbox" /> Raw Markdown</label><span id="bio-count">0 / 1,000</span></div>
+            <div id="bio-editor" aria-labelledby="bio-label" data-initial-bio={prefs.bio ?? ''}></div>
+            <textarea id="bio-raw" aria-labelledby="bio-label" maxlength={1000} class="hidden"></textarea>
+            <button id="bio-save" type="button" class="button-primary hidden">Save bio</button>
           </div>
         </div>
       </section>
@@ -260,13 +256,14 @@ const COUNTRIES = [
         <p id="push-notifications-status" class="setting-help" role="status">Requires the installed PWA or a supported browser and notification permission.</p>
       </section>
 
-      <!-- Region -->
+      <!-- Localization -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Region</h2>
+          <h2 class="section-headline">Localization</h2>
         </div>
+        <div class="localization-grid">
         <div class="space-y-2 max-w-xs">
-          <label for="country" class="block text-sm font-medium text-zinc-400">Country</label>
+          <div class="setting-label-line"><label for="country" class="block text-sm font-medium text-zinc-400">Country</label><span class="setting-save-state" data-save-state="country" role="status"></span></div>
           <select
             id="country"
             name="country"
@@ -281,15 +278,8 @@ const COUNTRIES = [
             Used to show relevant streaming availability on the Discover page and filter content for your region.
           </p>
         </div>
-      </section>
-
-      <!-- Content Language -->
-      <section>
-        <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Content Language</h2>
-        </div>
         <div class="space-y-2 max-w-xs">
-          <label for="content_language" class="block text-sm font-medium text-zinc-400">Preferred Language</label>
+          <div class="setting-label-line"><label for="content_language" class="block text-sm font-medium text-zinc-400">Content language</label><span class="setting-save-state" data-save-state="content_language" role="status"></span></div>
           <select
             id="content_language"
             name="content_language"
@@ -304,15 +294,8 @@ const COUNTRIES = [
             Filter Discover recommendations to your preferred original language.
           </p>
         </div>
-      </section>
-
-      <!-- Metadata Language -->
-      <section>
-        <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Metadata Language</h2>
-        </div>
         <div class="space-y-2 max-w-xs">
-          <label for="metadata_language" class="block text-sm font-medium text-zinc-400">Display Language</label>
+          <div class="setting-label-line"><label for="metadata_language" class="block text-sm font-medium text-zinc-400">Metadata language</label><span class="setting-save-state" data-save-state="metadata_language" role="status"></span></div>
           <select
             id="metadata_language"
             name="metadata_language"
@@ -326,6 +309,7 @@ const COUNTRIES = [
           <p class="text-xs text-zinc-500">
             Titles, overviews, and taglines will be fetched from TMDB in this language. Translations are cached as you browse — library metadata updates gradually as you visit detail pages.
           </p>
+        </div>
         </div>
 
         <!-- Backfill card — only visible when a language is set -->
@@ -390,7 +374,7 @@ const COUNTRIES = [
       <!-- Favourite Movie Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Favourite Movie Genres</h2>
+          <h2 class="section-headline">Favourite Movie Genres</h2><span class="setting-save-state" data-save-state="genres" role="status"></span>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Pick the genres you enjoy most. The Discover page will show dedicated rows for your favourites.
@@ -415,7 +399,7 @@ const COUNTRIES = [
       <!-- Favourite Show Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Favourite Show Genres</h2>
+          <h2 class="section-headline">Favourite Show Genres</h2><span class="setting-save-state" data-save-state="genres" role="status"></span>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Pick the genres you enjoy most. The Discover page will show dedicated rows for your favourites.
@@ -440,7 +424,7 @@ const COUNTRIES = [
       <!-- Disliked Genres -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">Disliked Genres</h2>
+          <h2 class="section-headline">Disliked Genres</h2><span class="setting-save-state" data-save-state="genres" role="status"></span>
         </div>
         <p class="text-sm text-zinc-400 mb-4">
           Genres you want to avoid. Items that <em>only</em> have disliked genres are filtered out of recommendations and picks. Mixed items (some liked, some disliked) can still appear. A genre can't be in both lists — selecting one here removes it from your favourites.
@@ -462,23 +446,15 @@ const COUNTRIES = [
         </div>
       </section>
 
-      <!-- Save -->
-      <div class="pt-6 pb-8">
-        <button
-          id="save-btn"
-          type="button"
-          class="w-full md:w-auto bg-zinc-100 text-zinc-950 font-bold px-8 py-3 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-50"
-        >
-          Save Changes
-        </button>
-      </div>
-
     </div>
   </div>
 </TrackerSettings>
 
 <script>
+  let bioEditor: import('@toast-ui/editor').default | undefined;
   function setup() {
+    bioEditor?.destroy();
+    bioEditor = undefined;
     const appData = document.getElementById('app-data');
     const token = appData?.dataset.token ?? '';
 
@@ -488,20 +464,29 @@ const COUNTRIES = [
     }
 
     function showMessage(text: string, type: 'success' | 'error' = 'success') {
-      const msg = document.getElementById('js-message');
-      if (!msg) return;
-      msg.textContent = text;
-      msg.className = `p-4 rounded-lg mb-8 ${
-        type === 'success'
-          ? 'bg-green-500/10 border border-green-500 text-green-500'
-          : 'bg-red-500/10 border border-red-500 text-red-500'
-      }`;
-      msg.classList.remove('hidden');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      if ((window as Window & { _msgTimeout?: ReturnType<typeof setTimeout> })._msgTimeout)
-        clearTimeout((window as Window & { _msgTimeout?: ReturnType<typeof setTimeout> })._msgTimeout);
-      (window as Window & { _msgTimeout?: ReturnType<typeof setTimeout> })._msgTimeout =
-        setTimeout(() => msg.classList.add('hidden'), 4000);
+      const target = document.querySelector<HTMLElement>('[data-save-state="avatar"]') || document.getElementById('avatar-status');
+      if (target) { target.textContent = text; target.dataset.state = type; }
+    }
+
+    function setStatus(group: string, message: string, state: 'saving' | 'saved' | 'error' = 'saved') {
+      let targets = [...document.querySelectorAll<HTMLElement>(`[data-save-state="${group}"]`)];
+      if (!targets.length) {
+        const chip = group === 'genres' ? 'movie-genre' : group === 'streaming_services' ? 'streaming' : group;
+        const control = document.querySelector<HTMLElement>(`[data-chip="${chip}"], [name="${group}"]`) || document.getElementById(group);
+        const section = control?.closest('section');
+        const heading = section?.querySelector('.section-headline');
+        if (!heading) return;
+        const target = document.createElement('span');
+        target.className = 'setting-save-state';
+        target.dataset.saveState = group;
+        heading.after(target);
+        targets = [target];
+      }
+      for (const target of targets) {
+        target.textContent = message;
+        target.dataset.state = state;
+        target.setAttribute('role', 'status');
+      }
     }
 
     // Avatar upload
@@ -596,6 +581,72 @@ const COUNTRIES = [
       }
     }
 
+    const activeChips = (group: string) => Array.from(document.querySelectorAll<HTMLButtonElement>(`button[data-chip="${group}"]`))
+      .filter(button => button.classList.contains(group === 'disliked-genre' ? 'bg-red-500/20' : 'bg-blue-500/20'))
+      .map(button => button.dataset.value!);
+    const genreFields = ['movie_genres', 'show_genres', 'disliked_genres'] as const;
+    const chipField: Record<string, string> = { streaming: 'streaming_services', 'movie-genre': 'movie_genres', 'show-genre': 'show_genres', 'disliked-genre': 'disliked_genres' };
+    const chipGroup: Record<string, string> = { streaming_services: 'streaming', movie_genres: 'movie-genre', show_genres: 'show-genre', disliked_genres: 'disliked-genre' };
+    const chipValues = (fields: readonly string[]) => Object.fromEntries(fields.map(field => [field, activeChips(chipGroup[field])]));
+    const applyChipValues = (values: Record<string, string[]>) => {
+      for (const [field, selected] of Object.entries(values)) {
+        document.querySelectorAll<HTMLButtonElement>(`button[data-chip="${chipGroup[field]}"]`).forEach(button =>
+          setChipActive(button, selected.includes(button.dataset.value!), field === 'disliked_genres'));
+      }
+    };
+    const committed = new Map<string, Record<string, unknown>>();
+    const chains = new Map<string, Promise<void>>();
+    const revisions = new Map<string, number>();
+    async function patchProfile(change: Record<string, unknown>) {
+      const response = await fetch('/api/proxy/profile/me', {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(change),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { detail?: string | unknown[] };
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save this setting.');
+      }
+    }
+    function queueSave(group: string, value: Record<string, unknown>, rollback?: (previous: Record<string, unknown>) => void, afterSave?: () => void) {
+      const revision = (revisions.get(group) || 0) + 1;
+      revisions.set(group, revision);
+      setStatus(group, 'Saving…', 'saving');
+      const pending = (chains.get(group) || Promise.resolve()).catch(() => {}).then(async () => {
+        try {
+          await patchProfile(value);
+          committed.set(group, value);
+          if (revisions.get(group) === revision) { afterSave?.(); setStatus(group, 'Saved'); }
+        } catch (error) {
+          if (revisions.get(group) === revision) {
+            rollback?.(committed.get(group) || {});
+            setStatus(group, error instanceof Error ? error.message : 'Could not save this setting.', 'error');
+          }
+        }
+      });
+      chains.set(group, pending);
+    }
+    for (const field of ['country', 'content_language', 'metadata_language']) {
+      const select = document.getElementById(field) as HTMLSelectElement | null;
+      if (!select) continue;
+      committed.set(field, { [field]: select.value || null });
+      select.addEventListener('change', () => queueSave(field, { [field]: select.value || null }, previous => {
+        select.value = String(previous[field] || '');
+        if (field === 'metadata_language') backfillSection?.classList.toggle('hidden', !select.value);
+      }, () => { if (field === 'metadata_language') backfillSection?.classList.toggle('hidden', !select.value); }));
+    }
+    const displayName = document.getElementById('display_name') as HTMLInputElement | null;
+    let nameTimer: ReturnType<typeof setTimeout>;
+    if (displayName) {
+      committed.set('display_name', { display_name: displayName.value.trim() || null });
+      displayName.addEventListener('input', () => {
+        clearTimeout(nameTimer);
+        setStatus('display_name', 'Saving…', 'saving');
+        nameTimer = setTimeout(() => queueSave('display_name', { display_name: displayName.value.trim() || null }), 500);
+      });
+    }
+    committed.set('streaming_services', chipValues(['streaming_services']));
+    committed.set('genres', chipValues(genreFields));
     // Chip toggle with mutual exclusivity between liked and disliked
     document.querySelectorAll<HTMLButtonElement>('button[data-chip]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -615,12 +666,14 @@ const COUNTRIES = [
             });
           }
         }
+        const saveGroup = group === 'streaming' ? 'streaming_services' : 'genres';
+        const fields = group === 'streaming' ? ['streaming_services'] : genreFields;
+        queueSave(saveGroup, chipValues(fields), previous => applyChipValues(previous as Record<string, string[]>));
       });
     });
 
     // Privacy radio buttons
-    document.querySelectorAll<HTMLInputElement>('input[name="privacy_level"]').forEach(radio => {
-      radio.addEventListener('change', () => {
+    function paintPrivacy() {
         document.querySelectorAll<HTMLInputElement>('input[name="privacy_level"]').forEach(r => {
           const label = r.closest('label');
           const span = label?.querySelector('.font-semibold');
@@ -635,6 +688,17 @@ const COUNTRIES = [
             span?.classList.remove('text-blue-400');
             span?.classList.add('text-zinc-100');
           }
+        });
+    }
+    const initialPrivacy = document.querySelector<HTMLInputElement>('input[name="privacy_level"]:checked')?.value || 'private';
+    committed.set('privacy_level', { privacy_level: initialPrivacy });
+    document.querySelectorAll<HTMLInputElement>('input[name="privacy_level"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        paintPrivacy();
+        queueSave('privacy_level', { privacy_level: radio.value }, previous => {
+          const prior = document.querySelector<HTMLInputElement>(`input[name="privacy_level"][value="${previous.privacy_level}"]`);
+          if (prior) prior.checked = true;
+          paintPrivacy();
         });
       });
     });
@@ -654,12 +718,17 @@ const COUNTRIES = [
           body: JSON.stringify(change),
         });
         if (!response.ok) throw new Error('Could not update your list preferences.');
-        control.dataset.savedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
-        showMessage('List preferences updated.');
+        const saved = await response.json() as { combine_lists?: boolean; default_sort?: string };
+        control.dataset.savedValue = control instanceof HTMLInputElement ? String(saved.combine_lists !== false) : saved.default_sort || control.value;
+        if (control === combineLists) {
+          control.checked = saved.combine_lists !== false;
+          document.dispatchEvent(new CustomEvent('anylist:combine-lists-changed', { detail: { combineLists: saved.combine_lists !== false } }));
+        }
+        setStatus('combine-lists', 'Saved');
       } catch (error) {
         if (control instanceof HTMLInputElement) control.checked = previous === 'true';
         else control.value = previous;
-        showMessage(error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
+        setStatus('combine-lists', error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
       } finally {
         control.disabled = false;
       }
@@ -728,58 +797,57 @@ const COUNTRIES = [
     });
     refreshPushState();
 
-    const saveBtn = document.getElementById('save-btn') as HTMLButtonElement | null;
-    saveBtn?.addEventListener('click', async () => {
-      saveBtn.disabled = true;
-      const orig = saveBtn.textContent;
-      saveBtn.textContent = 'Saving…';
-      const displayName = (document.getElementById('display_name') as HTMLInputElement | null)?.value.trim() ?? '';
-      const bio = (document.getElementById('bio') as HTMLTextAreaElement | null)?.value.trim() ?? '';
-      const country = (document.getElementById('country') as HTMLSelectElement | null)?.value ?? '';
-      const contentLanguage = (document.getElementById('content_language') as HTMLSelectElement | null)?.value ?? '';
-      const metadataLanguage = (document.getElementById('metadata_language') as HTMLSelectElement | null)?.value ?? '';
-
-      const activeChips = (group: string) => {
-        const activeClass = group === 'disliked-genre' ? 'bg-red-500\\/20' : 'bg-blue-500\\/20';
-        return Array.from(document.querySelectorAll<HTMLButtonElement>(`button[data-chip="${group}"].${activeClass}`))
-          .map(b => b.dataset.value ?? '');
-      };
-
-      try {
-        const res = await fetch('/api/proxy/profile/me', {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            display_name: displayName || null,
-            bio: bio || null,
-            country: country || null,
-            content_language: contentLanguage || null,
-            metadata_language: metadataLanguage || null,
-            privacy_level: (document.querySelector('input[name="privacy_level"]:checked') as HTMLInputElement | null)?.value,
-            streaming_services: activeChips('streaming'),
-            movie_genres: activeChips('movie-genre'),
-            show_genres: activeChips('show-genre'),
-            disliked_genres: activeChips('disliked-genre'),
-          }),
-        });
-        if (!res.ok) {
-          const data = await res.json() as { detail?: string };
-          throw new Error(data.detail ?? 'Failed to save');
-        }
-        showMessage('Profile saved successfully.');
-        if (metadataLanguage) {
-          document.getElementById('backfill-section')?.classList.remove('hidden');
-        }
-      } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : 'Failed to save profile.', 'error');
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = orig;
-      }
-    });
+    const editorHost = document.getElementById('bio-editor');
+    const rawBio = document.getElementById('bio-raw') as HTMLTextAreaElement | null;
+    const rawToggle = document.getElementById('bio-raw-toggle') as HTMLInputElement | null;
+    const bioSave = document.getElementById('bio-save') as HTMLButtonElement | null;
+    const bioCount = document.getElementById('bio-count');
+    let savedBio = editorHost?.dataset.initialBio || '';
+    let savedVisualBio = savedBio;
+    const currentBio = () => rawToggle?.checked ? rawBio?.value || '' : bioEditor?.getMarkdown() || '';
+    const updateBio = () => {
+      const markdown = currentBio();
+      if (bioCount) bioCount.textContent = `${markdown.length} / 1,000`;
+      bioSave?.classList.toggle('hidden', markdown === (rawToggle?.checked ? savedBio : savedVisualBio));
+      if (markdown.length > 1000) setStatus('bio', 'Bio must be 1,000 characters or fewer.', 'error');
+      else if (document.querySelector<HTMLElement>('[data-save-state="bio"]')?.dataset.state === 'error') setStatus('bio', '');
+    };
+    if (editorHost && rawBio && rawToggle && bioSave) {
+      rawBio.value = savedBio;
+      rawBio.addEventListener('input', updateBio);
+      void import('@toast-ui/editor').then(({ default: Editor }) => {
+        if (!editorHost.isConnected) return;
+        bioEditor = new Editor({ el: editorHost, height: '190px', initialValue: savedBio,
+          initialEditType: 'wysiwyg', hideModeSwitch: true, usageStatistics: false,
+          toolbarItems: [['heading', 'bold', 'italic']] });
+        savedVisualBio = bioEditor.getMarkdown();
+        bioEditor.on('change', updateBio);
+        updateBio();
+      });
+      rawToggle.addEventListener('change', () => {
+        if (rawToggle.checked) rawBio.value = bioEditor?.getMarkdown() === savedVisualBio ? savedBio : bioEditor?.getMarkdown() || rawBio.value;
+        else bioEditor?.setMarkdown(rawBio.value);
+        editorHost.classList.toggle('hidden', rawToggle.checked);
+        rawBio.classList.toggle('hidden', !rawToggle.checked);
+        updateBio();
+      });
+      bioSave.addEventListener('click', async () => {
+        const markdown = currentBio();
+        if (markdown.length > 1000) { updateBio(); return; }
+        bioSave.disabled = true;
+        setStatus('bio', 'Saving…', 'saving');
+        try {
+          await patchProfile({ bio: markdown || null });
+          savedBio = markdown;
+          if (rawToggle.checked) bioEditor?.setMarkdown(markdown);
+          savedVisualBio = bioEditor?.getMarkdown() || markdown;
+          setStatus('bio', 'Saved');
+          updateBio();
+        } catch (error) {
+          setStatus('bio', error instanceof Error ? error.message : 'Could not save bio.', 'error');
+        } finally { bioSave.disabled = false; }
+      });
+    }
 
     // ── Translation backfill ──────────────────────────────────────────────────
     const backfillSection    = document.getElementById('backfill-section') as HTMLDivElement | null;

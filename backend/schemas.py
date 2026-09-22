@@ -413,7 +413,7 @@ class ManualSessionUpdate(BaseModel):
 
 class UserProfileUpdate(BaseModel):
     display_name: Optional[str] = None
-    bio: Optional[str] = None
+    bio: Optional[str] = Field(default=None, max_length=1000)
     country: Optional[str] = None
     movie_genres: Optional[list[str]] = None
     show_genres: Optional[list[str]] = None

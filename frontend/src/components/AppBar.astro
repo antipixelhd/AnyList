@@ -56,12 +56,12 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       <BrandMark size={34}/>
       <span>AnyList</span>
     </a>
-    <nav class="appbar-nav" aria-label="Main navigation">
+    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile}>
       {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
     <details class="mobile-appbar-menu" data-mobile-appbar-menu>
       <summary aria-label={`${mobileSection}. Open main navigation`}><span>{mobileSection}</span><Icon name="chevron-down" /></summary>
-      <nav aria-label="Mobile main navigation">
+      <nav aria-label="Mobile main navigation" data-mobile-main-nav data-profile-base={profile}>
         {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}><Icon name={item.icon} />{item.label}</a>)}
       </nav>
     </details>
@@ -153,6 +153,33 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   }
   const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
   const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');
+  document.addEventListener('anylist:combine-lists-changed', rawEvent => {
+    const combined = (rawEvent as CustomEvent<{combineLists: boolean}>).detail.combineLists;
+    for (const nav of document.querySelectorAll<HTMLElement>('[data-desktop-main-nav], [data-mobile-main-nav]')) {
+      const base = nav.dataset.profileBase;
+      if (!base) continue;
+      const listIcon = nav.querySelector<HTMLElement>(`a[href="${base}/list"] .ui-icon, a[href="${base}/movies"] .ui-icon, a[href="${base}/series"] .ui-icon`)?.cloneNode(true);
+      nav.querySelectorAll<HTMLAnchorElement>(`a[href="${base}/list"], a[href="${base}/movies"], a[href="${base}/series"]`).forEach(link => link.remove());
+      const browse = nav.querySelector<HTMLAnchorElement>('a[href="/browse"]');
+      const items = combined ? [['list', 'Movie/Series List']] : [['movies', 'Movie List'], ['series', 'Series List']];
+      for (const [path, label] of items) {
+        const link = document.createElement('a');
+        link.href = `${base}/${path}`;
+        if (listIcon) link.append(listIcon.cloneNode(true));
+        link.append(label);
+        if (location.pathname === link.pathname) { link.classList.add('active'); link.setAttribute('aria-current', 'page'); }
+        browse?.before(link);
+      }
+    }
+    const quickSearch = document.querySelector<HTMLElement>('[data-quick-search]');
+    if (quickSearch) {
+      quickSearch.dataset.combined = combined ? 'yes' : 'no';
+      quickSearch.querySelector('.quick-search-results')?.classList.toggle('combined', combined);
+    }
+    const summary = mobileMenuSummary?.querySelector('span');
+    if (summary && /^(Movie\/Series|Movie|Series) List$/.test(summary.textContent || ''))
+      summary.textContent = combined ? 'Movie/Series List' : location.pathname.endsWith('/series') ? 'Series List' : 'Movie List';
+  }, { signal: appbarListeners.signal });
   let openMobileMenuFromKeyboard = false;
   mobileMenuSummary?.addEventListener('keydown', event => {
     if (event.key === 'Enter' || event.key === ' ') openMobileMenuFromKeyboard = true;

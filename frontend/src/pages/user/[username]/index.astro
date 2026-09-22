@@ -3,6 +3,7 @@ import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ActivityCard from '../../../components/ActivityCard.astro';
 import Icon from '../../../components/Icon.astro';
+import {renderProfileBio} from '../../../lib/profile-markdown';
 import {tracker,artwork,scoreLabel} from '../../../lib/tracker';
 let profile:any=null,error='';
 try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
@@ -15,7 +16,7 @@ const highlights=profile?[
 ---
 <Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
   <section aria-labelledby="overview-highlights"><div class="section-heading"><h2 id="overview-highlights">Overview</h2><span>Movie &amp; series highlights</span></div>
-    {profile.bio && <p class="profile-bio">{profile.bio}</p>}
+    {profile.bio && <div class="profile-bio" set:html={renderProfileBio(profile.bio)} />}
     <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
   </section>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2><span>{profile.owner?'Your latest updates':`${profile.display_name}'s latest updates`}</span></div>

@@ -40,7 +40,6 @@ document.addEventListener('astro:page-load', () => {
   let timer = 0;
   let progressTimer = 0;
   let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
-  const isCombined = dialog?.dataset.combined === 'yes';
 
   const imageUrl = (path?: string | null) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/w92${path}` : (path || '');
   const resultUrl = (item: SearchResult) => item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
@@ -93,7 +92,7 @@ document.addEventListener('astro:page-load', () => {
   function render() {
     fill('movie', latest.movie); fill('series', latest.series);
     fill('all', interleave(latest.movie, latest.series));
-    const visible = isCombined
+    const visible = dialog?.dataset.combined === 'yes'
       ? {all: latest.movie.length + latest.series.length > 0, movie: false, series: false}
       : {all: false, movie: latest.movie.length > 0, series: latest.series.length > 0};
     for (const kind of ['all','movie','series'] as const) {

@@ -29,7 +29,7 @@ const canIncrement = (entry: any) => entry.type === 'movie'
 ---
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data}>
   {data ? <>
-    <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following}} active={section}/>
+    <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,combine_lists:data.combine_lists}} active={section}/>
     <div class="list-shell" data-initial-status={initialStatus}>
       <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters"><Icon name="sliders"/> <span>Filters & sorting</span><span id="mobile-filter-count" class="filter-count" hidden>0</span></button>
       <aside class="filters" id="list-filters" aria-label="List filters">

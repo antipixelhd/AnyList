@@ -904,6 +904,25 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
         self.assertEqual(invalid.status_code,422,invalid.text)
 
+    async def test_profile_partial_patch_and_markdown_bio_limit(self):
+        changed = await self.client.patch('/profile/me', json={'display_name': 'Reader', 'country': 'DE'})
+        self.assertEqual(changed.status_code, 200, changed.text)
+        bio = '# Hello\n\n**Movies** and *series*'
+        saved = await self.client.patch('/profile/me', json={'bio': bio})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()['display_name'], 'Reader')
+        self.assertEqual(saved.json()['country'], 'DE')
+        self.assertEqual(saved.json()['bio'], bio)
+        boundary = await self.client.patch('/profile/me', json={'bio': 'x' * 1000})
+        self.assertEqual(boundary.status_code, 200, boundary.text)
+        rejected = await self.client.patch('/profile/me', json={'bio': 'x' * 1001})
+        self.assertEqual(rejected.status_code, 422, rejected.text)
+        current = await self.client.get('/profile/me')
+        self.assertEqual(current.json()['bio'], 'x' * 1000)
+        removed = await self.client.patch('/profile/me', json={'bio': None})
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertIsNone(removed.json()['bio'])
+
     async def test_resolved_low_priority_notification_disappears_after_seen(self):
         review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='playback_removed',state='confirmed',message='Applied automatically')
         self.db.add(review);await self.db.commit()
