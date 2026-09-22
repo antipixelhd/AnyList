@@ -172,12 +172,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.save(self.show,rating_mode='manual')
         self.assertEqual(res.json()['score'],9)
 
-    async def test_manual_tenths_and_movie_seasons(self):
+    async def test_title_and_season_tenths_and_movie_season_rejection(self):
         rated = await self.save(self.movie,manual_score=7.2)
         self.assertEqual(rated.status_code, 200, rated.text)
         self.assertEqual(rated.json()['score'], 7.2)
         self.assertEqual((await self.save(self.movie,manual_score=7.25)).status_code,422)
-        self.assertEqual((await self.save(self.show,season_scores={'1':7.2})).status_code,422)
+        season = await self.save(self.show,rating_mode='average',season_scores={'1':7.2})
+        self.assertEqual(season.status_code, 200, season.text)
+        self.assertEqual(season.json()['season_scores']['1'], 7.2)
+        self.assertEqual((await self.save(self.show,season_scores={'1':7.25})).status_code,422)
         self.assertEqual((await self.save(self.movie,season_scores={'1':8})).status_code,422)
 
     async def test_catalog_search_tolerates_small_title_errors(self):

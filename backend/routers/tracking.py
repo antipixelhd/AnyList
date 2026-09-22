@@ -634,7 +634,7 @@ class EntryPatch(BaseModel):
             return value
         if any(k < 0 or k > 1000 for k in value):
             raise ValueError("Invalid season")
-        return {str(k): normalize_score(v) for k, v in value.items()}
+        return {str(k): normalize_score(v, 0.1) for k, v in value.items()}
 
 
 async def catalog_access(db, viewer):

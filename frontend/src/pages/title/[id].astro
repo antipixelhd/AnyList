@@ -155,9 +155,9 @@ const dateLabel = (value: string | null) => value
                     )}
                   </div>
                   {Astro.locals.user && (
-                    <label class="season-score">Season score
-                      <span><input type="number" step="0.5" min="0" max="10" placeholder="—" value={title.entry?.season_scores?.[String(season.season_number)] ?? ''} data-season={season.season_number} aria-label={`Season ${season.season_number} score`} /><button class="button-secondary" data-save-season={season.season_number} data-media={title.id} data-has-seasons={Object.values(title.entry?.season_scores || {}).some(Boolean) ? 'yes' : 'no'}>Save</button></span>
-                    </label>
+                    <div class="season-score"><label for={`season-score-${season.season_number}`}>Season score</label>
+                      <span><span class="score-stepper" data-score-stepper><input id={`season-score-${season.season_number}`} type="number" step="0.1" min="0" max="10" placeholder="—" value={title.entry?.season_scores?.[String(season.season_number)] ?? ''} data-season={season.season_number} aria-label={`Season ${season.season_number} score`} /><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label={`Increase season ${season.season_number} score to the next half point`}><Icon name="chevron-down" rotate={180} /></button><button type="button" data-score-step="down" aria-label={`Decrease season ${season.season_number} score to the previous half point`}><Icon name="chevron-down" /></button></span></span><button class="button-secondary" data-save-season={season.season_number} data-media={title.id} data-has-seasons={Object.values(title.entry?.season_scores || {}).some(Boolean) ? 'yes' : 'no'}>Save</button></span>
+                    </div>
                   )}
                 </article>
               )) : <p class="section-empty">Season metadata has not been loaded yet.</p>}
@@ -179,8 +179,11 @@ const dateLabel = (value: string | null) => value
 </Tracker>
 
 <script>
+import { setupScoreSteppers } from '../../lib/scoreStepper';
 document.addEventListener('astro:page-load', () => {
 if (!document.querySelector('[data-favorite-toggle], [data-library-toggle], #refresh-episodes')) return;
+const seasons = document.querySelector<HTMLElement>('.seasons-section');
+if (seasons) setupScoreSteppers(seasons);
 document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async(event)=>{
  const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes…';
  try{const res=await fetch(`/api/proxy/tracking/title/${button.dataset.media}/refresh-episodes`,{method:'POST'});if(!res.ok){const data=await res.json();throw new Error(data.detail||'Unable to refresh episodes');}location.reload();}
