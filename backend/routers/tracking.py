@@ -967,6 +967,7 @@ class SeasonProgressPatch(BaseModel):
 
 @router.patch('/entry/{media_id}/season/{season_number}')
 async def save_season_progress(media_id: int, season_number: int, body: SeasonProgressPatch,
+                               background_tasks: BackgroundTasks,
                                db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series or season_number <= 0:
@@ -983,11 +984,12 @@ async def save_season_progress(media_id: int, season_number: int, body: SeasonPr
         WatchEvent.completed.is_(True)).limit(1))).first())
     if not body.watched and later_watched and not body.confirm_rollback:
         raise HTTPException(409, 'Marking this season unwatched also clears later watched seasons. Confirm to continue.')
-    return await save_entry(media_id, EntryPatch(progress=target, confirm_rollback=True), db, viewer)
+    return await save_entry(media_id, EntryPatch(progress=target, confirm_rollback=True), background_tasks, db, viewer)
 
 
 @router.patch("/entry/{media_id}")
-async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
+                     db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
@@ -997,6 +999,8 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
     previous = entry.status if entry else None
     old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
+    old_season_scores = dict(entry.season_scores or {}) if entry else {}
+    added_watched_ids: set[int] = set()
     if entry is None:
         # An explicit user edit re-adds a previously deleted entry. Imports never
         # do this; they honor the marker until the user makes this choice.
@@ -1043,6 +1047,7 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
         for episode in episodes[:target]:
             if episode.id not in watched:
                 db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True, watched_at=None, provisional=True))
+                added_watched_ids.add(episode.id)
         if rollback:
             await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[target:])))
         entry.progress = target
@@ -1073,7 +1078,8 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             if row:
                 await db.delete(row)
         elif row:
-            row.rating, row.rated_at = value, datetime.utcnow()
+            if row.rating != value:
+                row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
     progress_changed = entry.progress != old_progress
@@ -1085,6 +1091,24 @@ async def save_entry(media_id: int, body: EntryPatch, db: AsyncSession = Depends
             position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
     await db.commit()
     await db.refresh(entry)
+    changed_ratings = {}
+    removed_ratings = set()
+    before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}
+    for season in set(before_scores) | set(scores):
+        before, after = before_scores.get(season) or None, scores.get(season) or None
+        if before == after:
+            continue
+        key = (media_id, season)
+        if after is None:
+            removed_ratings.add(key)
+        else:
+            changed_ratings[key] = after
+    if added_watched_ids or changed_ratings or removed_ratings:
+        from core.local_outbound import dispatch_local_tracking_delta
+        background_tasks.add_task(
+            dispatch_local_tracking_delta, viewer.id,
+            added_watched_ids, changed_ratings, removed_ratings,
+        )
     return entry_data(entry, media, True)
 
 

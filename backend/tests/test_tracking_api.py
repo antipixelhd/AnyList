@@ -64,9 +64,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             await dispatch_library_deliveries(self.db, user_id, media_id)
         self.delivery_patch=patch('core.streaming_library.deliver_library_intent', deliver_in_fixture)
         self.delivery_patch.start()
+        self.local_outbound = AsyncMock()
+        self.local_outbound_patch = patch(
+            'core.local_outbound.dispatch_local_tracking_delta', self.local_outbound,
+        )
+        self.local_outbound_patch.start()
 
     async def asyncTearDown(self):
         self.delivery_patch.stop()
+        self.local_outbound_patch.stop()
         await self.client.aclose(); await self.db.close()
         await self.transaction.rollback(); await self.connection.close(); await self.engine.dispose()
 
@@ -1360,6 +1366,24 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             WatchEvent.user_id==self.owner.id))).scalars().all(),[self.movie.id])
         over_limit=await self.save(self.movie,progress=2)
         self.assertEqual(over_limit.status_code,409,over_limit.text)
+
+    async def test_local_tracking_delivery_uses_only_changed_fields_after_save(self):
+        response = await self.save(self.movie, progress=1, manual_score=8)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.local_outbound.assert_awaited_once()
+        self.assertEqual(self.local_outbound.await_args.args, (
+            self.owner.id, {self.movie.id}, {(self.movie.id, None): 8}, set(),
+        ))
+        rating = (await self.db.execute(select(Rating).where(
+            Rating.user_id == self.owner.id, Rating.media_id == self.movie.id,
+        ))).scalar_one()
+        rated_at = rating.rated_at
+        self.local_outbound.reset_mock()
+        response = await self.save(self.movie, notes='Updated privately')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.local_outbound.assert_not_awaited()
+        await self.db.refresh(rating)
+        self.assertEqual(rating.rated_at, rated_at)
 
     async def test_series_progress_advances_from_paused_status_and_ignores_future_episodes(self):
         self.show.tmdb_id=987654322
