@@ -36,6 +36,14 @@ Accepted: clicking a list title opens this type of detail layout. Use a banner, 
 
 Required adaptation: distinct IMDb and RT critic/audience scores where available; followed-users average and individual scores; seasons/progress and season rating controls for TV. Show only whole series in lists/search.
 
+## Compact activity cards
+
+Profile Overview and Home use the same dense horizontal activity composition: small cover artwork, a relative timestamp with exact UTC metadata, one primary action plus linked title on a single line where space permits, and an optional rating chip aligned at bottom-right. Profile activity uses the full content width. Home adds a small linked avatar and display name for the followed member; Profile does not repeat identity already established by its header.
+
+Daily cards show only the most important change for that person/title/UTC day. Priority is Completed/Dropped/Paused/Plans to watch, watched season, watched episode range, then Rated. Watching is a fallback when it is the only status change. A rating remains visible as the chip on any higher-priority card and is never repeated in the action sentence. Later same-day changes replace and raise the existing card even when other titles were updated between them. Home keeps its server-rendered initial feed and incrementally merges cursor updates every 60 seconds while visible and on focus; this refreshes activity already recorded by sync but does not trigger provider synchronization.
+
+Do not add favorite, comment, like, or reply actions to activity cards.
+
 ## Notifications versus activity feed
 
 Notifications is a private sync-review surface, not the social feed. Explain the source change and local interpretation; offer confirm, alternate status, and rating. Apply inferred status locally and mirror underlying removal to Stremio/Nuvio immediately; hold propagation to other tracking platforms until confirmed. Auto-confirm is per user, off by default, for ordinary inferred status events only. Conflicts/uncertainty/initial merges/destructive deletion retain review. Changing back to Watching restores supported playback state on next sync. Completed takes priority; never treat initial empty accounts as removal events.

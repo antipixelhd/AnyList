@@ -26,20 +26,56 @@ export function artwork(path: string | null, size = 'w342') {
 
 export const scoreLabel = (value: number | null) => value == null || value === 0 ? '—' : Number(value.toFixed(1)).toString();
 
-export function activityLabel(activity: any) {
+export function activityAction(activity: any) {
   const details = activity.payload || {};
   const finished = details.finished_seasons || [];
-  if (finished.length) return `Finished ${finished.map((season: number) => `Season ${season}`).join(', ')}`;
-  if (details.episodes_watched) return `Watched ${details.episodes_watched} ${details.episodes_watched === 1 ? 'episode' : 'episodes'}${details.position ? ` · ${details.position}` : ''}`;
-  if (details.status_changed) return activity.status === 'completed' ? 'Completed' : activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
-  if (details.rating_changed && activity.score != null) return `Rated ${scoreLabel(activity.score)} / 10`;
+  if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
+    return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
+  }
+  if (finished.length) {
+    const seasons = finished.join(finished.length > 1 ? ' and ' : '');
+    return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
+  }
+  if (details.episodes_watched) {
+    const count = Number(details.episodes_watched);
+    const end = Number(details.progress);
+    if (Number.isFinite(end) && end > 0) {
+      const start = Math.max(1, end - count + 1);
+      return count === 1 ? `Watched episode ${end} of` : `Watched episodes ${start}–${end} of`;
+    }
+    return `Watched ${count === 1 ? 'an episode' : `${count} episodes`} of`;
+  }
+  if (details.status_changed && activity.status === 'watching') return 'Watching';
+  if (details.rating_changed && activity.score != null) return 'Rated';
   return activity.status === 'completed' ? 'Completed' : activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
 }
 
-export function activityTime(value: string) {
+export const activityLabel = activityAction;
+
+export function activityTime(value: string, now = Date.now()) {
   const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`;
+  const date = new Date(normalized);
+  const elapsed = Math.max(0, now - date.getTime());
+  const minutes = Math.floor(elapsed / 60_000);
+  const hours = Math.floor(elapsed / 3_600_000);
+  const days = Math.floor(elapsed / 86_400_000);
+  let label = 'Just now';
+  if (minutes >= 1 && minutes < 60) label = `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  else if (hours >= 1 && hours < 24) label = `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  else if (days >= 1 && days < 7) label = `${days} ${days === 1 ? 'day' : 'days'} ago`;
+  else if (days >= 7 && days < 30) {
+    const weeks = Math.floor(days / 7);
+    label = `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
+  } else if (days >= 30 && days < 365) {
+    const months = Math.floor(days / 30);
+    label = `${months} ${months === 1 ? 'month' : 'months'} ago`;
+  } else if (days >= 365) {
+    const years = Math.floor(days / 365);
+    label = `${years} ${years === 1 ? 'year' : 'years'} ago`;
+  }
   return {
     datetime: normalized,
-    label: `${new Date(normalized).toLocaleString('en-GB', {dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'})} UTC`,
+    label,
+    exact: `${date.toLocaleString('en-GB', {dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'})} UTC`,
   };
 }

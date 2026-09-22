@@ -1,5 +1,13 @@
 # AnyList implementation status
 
+## Compact incremental activity feeds (2026-09-22)
+
+Profile Overview and Home now share compact horizontal activity cards with 64px desktop artwork, one-line action/title copy, relative timestamps, and a single bottom-right rating chip. Home additionally shows linked member avatars and display names. Action copy follows the accepted daily hierarchy: status changes, completed seasons, episode ranges, then rating-only activity; a rating chip can accompany any higher-priority action without repeating its value in text.
+
+The following feed now returns stable person/title/UTC-day keys and an opaque update cursor. While Home remains open it requests only new or changed cards every 60 seconds while visible and immediately on focus, replaces same-day cards in place, reorders them by their latest update, and retains at most 60 cards in memory. Normal navigation and reload still start from a fresh server-rendered feed; no browser-persistent activity cache was introduced. The existing per-user activity index and bounded query remain sufficient for this incremental access pattern, so no speculative migration was added.
+
+Local verification: all 81 tracking API tests passed against disposable PostgreSQL, including followed-profile identity metadata, invalid cursors, and interleaved `X → Y → completed X` replacement/reordering. Eight built frontend-helper assertions covered the action hierarchy and day/week/month time transitions. The Astro production build and Python compilation passed. Authenticated localhost browser QA at 1440×900 and 390×844 confirmed linked identity, 98px/87px card heights, relative labels, and no horizontal overflow. The temporary synthetic follow used to populate Home was removed; no provider writes, VPS access, deployment, or push occurred.
+
 ## Scrob reliability update adapted locally (2026-09-22)
 
 Adapted the reviewed Scrob commits for episode-order matching and webhook throttling, sync-job error bounds and large-ID query chunks, Bingebase job state, stale-session rollback recovery, MDBList 429 handling, and localized search. A newly collected Plex/Jellyfin/Emby item can receive existing watched state only when its connection has watched pushing enabled and its first import has been approved. Pull jobs also require a complete error-free scan; combined episode files require every mapped episode to be watched. Echo markers and Plex pending-push tracking remain in use.

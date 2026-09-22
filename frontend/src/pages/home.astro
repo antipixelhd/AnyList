@@ -1,12 +1,12 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
-import ActivityCover from '../components/ActivityCover.astro';
+import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
-import {tracker,scoreLabel,activityLabel,activityTime} from '../lib/tracker';
-let activities:any[]=[],error='',pending:number|null=null,combineLists=true;
+import {tracker} from '../lib/tracker';
+let activities:any[]=[],activityCursor='',error='',pending:number|null=null,combineLists=true;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const [activityResult,eventResult,preferenceResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token),tracker('preferences',Astro.locals.token)]);
-if(activityResult.status==='fulfilled')activities=activityResult.value.results;
+if(activityResult.status==='fulfilled'){activities=activityResult.value.results;activityCursor=activityResult.value.cursor||'';}
 else error=activityResult.reason.message;
 if(eventResult.status==='fulfilled')pending=eventResult.value.pending;
 if(preferenceResult.status==='fulfilled')combineLists=preferenceResult.value.combine_lists!==false;
@@ -14,12 +14,95 @@ const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 ---
 <Tracker title="Home"><div class="page-width dashboard">
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse">Find your next title</a></header>
-  <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading"><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
-  {error?<p class="error-message" role="alert">{error}</p>:activities.length?activities.map(a=><article class="visual-event">
-    <ActivityCover media={a.media}/><div class="event-body"><div class="event-meta"><a href={`/user/${encodeURIComponent(a.username)}`}>{a.username}</a><time datetime={activityTime(a.created_at).datetime}>{activityTime(a.created_at).label}</time></div>
-    <p class="event-summary">{activityLabel(a)}</p><h3><a href={`/title/${a.media.id}`}>{a.media.title}</a></h3>
-    {a.score!=null&&<div class="event-footer"><span class="score-pill" aria-label={`Rated ${scoreLabel(a.score)} out of 10`}><Icon name="star" /> {scoreLabel(a.score)}<small>/10</small></span></div>}</div>
-  </article>):<div class="empty-state"><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
+  <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-cursor={activityCursor}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
+  {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
   </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events"><span class="eyebrow">Notifications</span><strong>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
   <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a></div></aside></div>
-</div></Tracker>
+</div>
+<template id="activity-card-template"><article class="visual-event" data-activity-card>
+  <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
+  <div class="event-body"><div class="event-meta"><div class="event-actor"><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a><a class="event-user"></a></div><time data-relative-time></time></div>
+  <p class="event-action"><span></span> <a></a></p><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <b></b><small>/10</small></span></div></div>
+</article></template>
+</Tracker>
+
+<script>
+import {activityAction,activityTime,artwork,scoreLabel} from '../lib/tracker';
+
+let activityFeedController:AbortController|undefined;
+let activityFeedTimer:ReturnType<typeof setInterval>|undefined;
+
+document.addEventListener('astro:page-load',()=>{
+  activityFeedController?.abort();
+  if(activityFeedTimer)clearInterval(activityFeedTimer);
+  const feed=document.querySelector<HTMLElement>('[data-activity-feed]');
+  const template=document.querySelector<HTMLTemplateElement>('#activity-card-template');
+  if(!feed||!template)return;
+  activityFeedController=new AbortController();
+  const signal=activityFeedController.signal;
+  let cursor=feed.dataset.cursor||'';
+  let loading=false;
+
+  const updateTimes=()=>document.querySelectorAll<HTMLTimeElement>('[data-relative-time]').forEach(time=>{
+    if(!time.dateTime)return;
+    const value=activityTime(time.dateTime);
+    time.textContent=value.label;time.title=value.exact;
+  });
+
+  const render=(activity:any)=>{
+    const card=template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    card.dataset.activityKey=activity.key;card.dataset.createdAt=activity.created_at;
+    const mediaHref=`/title/${activity.media.id}`;
+    const cover=card.querySelector<HTMLAnchorElement>('.event-cover')!;
+    cover.href=mediaHref;cover.setAttribute('aria-label',`View ${activity.media.title}`);
+    const coverImage=cover.querySelector('img')!;const coverFallback=cover.querySelector<HTMLElement>('.cover-placeholder')!;
+    const source=artwork(activity.media.poster);
+    if(source){coverImage.src=source;coverFallback.hidden=true;}else{coverImage.remove();coverFallback.hidden=false;}
+    const profileHref=`/user/${encodeURIComponent(activity.username)}`;
+    const avatar=card.querySelector<HTMLAnchorElement>('.event-avatar')!;
+    avatar.href=profileHref;avatar.setAttribute('aria-label',`View ${activity.display_name}'s profile`);
+    const avatarImage=avatar.querySelector('img')!;const avatarFallback=avatar.querySelector('span')!;
+    if(activity.has_avatar){avatarImage.src=`/api/proxy/profile/avatar/${activity.user_id}`;avatarFallback.remove();}
+    else{avatarImage.remove();avatarFallback.textContent=(activity.display_name||activity.username||'?').trim().charAt(0).toUpperCase();}
+    const user=card.querySelector<HTMLAnchorElement>('.event-user')!;user.href=profileHref;user.textContent=activity.display_name;
+    const time=card.querySelector<HTMLTimeElement>('time')!;const relative=activityTime(activity.created_at);
+    time.dateTime=relative.datetime;time.textContent=relative.label;time.title=relative.exact;
+    const action=card.querySelector<HTMLElement>('.event-action span')!;action.textContent=activityAction(activity);
+    const title=card.querySelector<HTMLAnchorElement>('.event-action>a')!;title.href=mediaHref;title.textContent=activity.media.title;
+    const footer=card.querySelector<HTMLElement>('.event-footer')!;
+    if(activity.score!=null){const score=scoreLabel(activity.score);footer.hidden=false;footer.querySelector('b')!.textContent=score;footer.querySelector('.score-pill')!.setAttribute('aria-label',`Rated ${score} out of 10`);}
+    return card;
+  };
+
+  const merge=(activities:any[])=>{
+    if(!activities.length)return;
+    feed.querySelector('[data-activity-empty]')?.remove();feed.querySelector('[data-activity-error]')?.remove();
+    const cards=new Map(Array.from(feed.querySelectorAll<HTMLElement>('[data-activity-card]')).map(card=>[card.dataset.activityKey,card]));
+    activities.forEach(activity=>{const replacement=render(activity);cards.get(activity.key)?.remove();cards.set(activity.key,replacement);feed.append(replacement);});
+    const ordered=Array.from(cards.values()).sort((left,right)=>Date.parse(right.dataset.createdAt!)-Date.parse(left.dataset.createdAt!));
+    ordered.forEach((card,index)=>index<60?feed.append(card):card.remove());
+  };
+
+  const refresh=async()=>{
+    if(loading||document.hidden)return;
+    loading=true;
+    try{
+      do{
+        const url=cursor?`/api/proxy/tracking/activity?cursor=${encodeURIComponent(cursor)}`:'/api/proxy/tracking/activity';
+        const response=await fetch(url,{cache:'no-store',signal});
+        if(!response.ok)break;
+        const data=await response.json();merge(data.results||[]);cursor=data.cursor||cursor;feed.dataset.cursor=cursor;
+        if(!data.has_more)break;
+      }while(!signal.aborted);
+    }catch(error){if(!signal.aborted)console.debug('Activity refresh deferred.',error);}
+    finally{loading=false;}
+  };
+
+  const stop=()=>{activityFeedController?.abort();if(activityFeedTimer)clearInterval(activityFeedTimer);activityFeedTimer=undefined;};
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){updateTimes();refresh();}},{signal});
+  window.addEventListener('focus',refresh,{signal});
+  document.addEventListener('astro:before-swap',stop,{signal,once:true});
+  activityFeedTimer=setInterval(()=>{updateTimes();refresh();},60_000);
+  updateTimes();
+});
+</script>

@@ -260,19 +260,60 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get('/tracking/activity')).json()['results'],[])
 
     async def test_home_activity_contains_followed_public_profiles_only(self):
+        now=datetime.now(timezone.utc).replace(tzinfo=None)
         owner_activity=TrackingActivity(user_id=self.owner.id,media_id=self.movie.id,status='watching',score=None)
         friend_activity=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='watching',score=None,
-            payload={'episodes_watched':1},created_at=datetime.utcnow()-timedelta(hours=1))
+            payload={'episodes_watched':1},created_at=now-timedelta(hours=1))
         friend_latest=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='completed',score=8,
-            payload={'rating_changed':True},created_at=datetime.utcnow())
+            payload={'rating_changed':True},created_at=now)
         friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
         friend_profile.privacy_level=PrivacyLevel.public
+        friend_profile.display_name='Friendly Viewer'
+        friend_profile.avatar_path='friendly.png'
         self.db.add_all([owner_activity,friend_activity,friend_latest,Follow(follower_id=self.owner.id,following_id=self.friend.id)])
         await self.db.commit()
-        results=(await self.client.get('/tracking/activity')).json()['results']
+        payload=(await self.client.get('/tracking/activity')).json()
+        results=payload['results']
         self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
+        self.assertEqual(results[0]['user_id'],self.friend.id)
+        self.assertEqual(results[0]['display_name'],'Friendly Viewer')
+        self.assertTrue(results[0]['has_avatar'])
+        self.assertEqual(results[0]['key'],f'{self.friend.id}:{self.movie.id}:{now.date().isoformat()}')
         self.assertEqual(results[0]['payload']['episodes_watched'],1)
         self.assertTrue(results[0]['payload']['rating_changed'])
+        self.assertTrue(payload['cursor'])
+        self.assertFalse(payload['has_more'])
+
+    async def test_activity_cursor_replaces_and_raises_interleaved_daily_card(self):
+        from core.activity import record_daily_activity
+        friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
+        friend_profile.privacy_level=PrivacyLevel.public
+        self.db.add(Follow(follower_id=self.owner.id,following_id=self.friend.id))
+        start=datetime.now(timezone.utc).replace(tzinfo=None,microsecond=0)-timedelta(minutes=10)
+        await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.movie.id,status='watching',score=None,
+                                    status_changed=True,now=start)
+        await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.show.id,status='watching',score=None,
+                                    status_changed=True,now=start+timedelta(minutes=1))
+        await self.db.commit()
+
+        initial=(await self.client.get('/tracking/activity')).json()
+        self.assertEqual([row['media']['id'] for row in initial['results']],[self.show.id,self.movie.id])
+        movie_key=next(row['key'] for row in initial['results'] if row['media']['id']==self.movie.id)
+
+        await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.movie.id,status='completed',score=8,
+                                    status_changed=True,rating_changed=True,
+                                    now=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(seconds=1))
+        await self.db.commit()
+        delta=(await self.client.get('/tracking/activity',params={'cursor':initial['cursor']})).json()
+        self.assertEqual(len(delta['results']),1)
+        self.assertEqual(delta['results'][0]['key'],movie_key)
+        self.assertEqual(delta['results'][0]['status'],'completed')
+        self.assertEqual(delta['results'][0]['score'],8)
+        latest=(await self.client.get('/tracking/activity')).json()['results']
+        self.assertEqual([row['media']['id'] for row in latest],[self.movie.id,self.show.id])
+
+        invalid=await self.client.get('/tracking/activity',params={'cursor':'not-a-cursor'})
+        self.assertEqual(invalid.status_code,422)
 
     async def test_activity_never_claims_rated_without_a_score(self):
         friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()

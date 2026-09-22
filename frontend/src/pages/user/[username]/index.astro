@@ -1,9 +1,9 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
-import ActivityCover from '../../../components/ActivityCover.astro';
+import ActivityCard from '../../../components/ActivityCard.astro';
 import Icon from '../../../components/Icon.astro';
-import {tracker,artwork,scoreLabel,activityLabel,activityTime} from '../../../lib/tracker';
+import {tracker,artwork,scoreLabel} from '../../../lib/tracker';
 let profile:any=null,error='';
 try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
 const highlights=profile?[
@@ -19,11 +19,7 @@ const highlights=profile?[
     <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
   </section>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2><span>{profile.owner?'Your latest updates':`${profile.display_name}'s latest updates`}</span></div>
-    {profile.recent_activity.length?profile.recent_activity.map((a:any)=><article class="visual-event">
-      <ActivityCover media={a.media}/><div class="event-body"><div class="event-meta"><time datetime={activityTime(a.created_at).datetime}>{activityTime(a.created_at).label}</time></div>
-      <p class="event-summary">{activityLabel(a)}</p><h3><a href={`/title/${a.media.id}`}>{a.media.title}</a></h3>
-      {a.score!=null&&<div class="event-footer"><span class="score-pill" aria-label={`Rated ${scoreLabel(a.score)} out of 10`}><Icon name="star"/> {scoreLabel(a.score)}<small>/10</small></span></div>}</div>
-    </article>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
+    {profile.recent_activity.length?profile.recent_activity.map((a:any)=><ActivityCard activity={a}/>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
   </section>
   {profile.favorites.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2><span>{profile.counts.favorites} saved</span></div><div class="card-grid">{profile.favorites.map((m:any)=><a class="media-card" href={`/title/${m.id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h3>{m.title}</h3></a>)}</div></section>}
 </main></>:<main class="page-width"><p class="error-message" role="alert">{error}</p></main>}</Tracker>

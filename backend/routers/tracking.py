@@ -1,5 +1,7 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
+import base64
+import binascii
 import re
 from datetime import date, datetime, timedelta, timezone
 from difflib import SequenceMatcher
@@ -707,10 +709,17 @@ def activity_data(rows, *, include_user=False, limit=12):
     for row in rows:
         activity, media = row[0], row[1]
         user = row[2] if include_user else None
+        profile = row[3] if include_user else None
         key = (user.id if user else activity.user_id, media.id, activity.created_at.date())
         if key not in grouped:
             grouped[key] = {
-                **({"username": user.username} if user else {}),
+                "key": f"{key[0]}:{key[1]}:{key[2].isoformat()}",
+                **({
+                    "user_id": user.id,
+                    "username": user.username,
+                    "display_name": profile.display_name or user.username,
+                    "has_avatar": bool(profile.avatar_path),
+                } if user else {}),
                 "status": activity.status,
                 "score": activity.score,
                 "payload": dict(activity.payload or {}),
@@ -725,6 +734,23 @@ def activity_data(rows, *, include_user=False, limit=12):
             # Do not publish a false "Rated" event when the value is unknowable.
             activity["payload"]["rating_changed"] = False
     return list(grouped.values())[:limit]
+
+
+def encode_activity_cursor(created_at: datetime, row_id: int) -> str:
+    raw = f"{created_at.isoformat()}|{row_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        timestamp, row_id = raw.rsplit("|", 1)
+        value = datetime.fromisoformat(timestamp)
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value, int(row_id)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        raise HTTPException(422, "Invalid activity cursor")
 
 
 def entry_data(entry, media, owner=False):
@@ -1177,11 +1203,30 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
 
 
 @router.get("/activity")
-async def activity(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     followed = select(Follow.following_id).where(Follow.follower_id == viewer.id)
-    rows = (await db.execute(select(TrackingActivity, Media, User).join(Media, Media.id == TrackingActivity.media_id)
+    watermark = datetime.now(timezone.utc).replace(tzinfo=None)
+    query = (select(TrackingActivity, Media, User, UserProfileData).join(Media, Media.id == TrackingActivity.media_id)
         .join(User, User.id == TrackingActivity.user_id).outerjoin(UserProfileData, UserProfileData.user_id == User.id)
-        .where((User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public))
-        .order_by(TrackingActivity.created_at.desc()).limit(60))).all()
+        .where((User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public)))
+    incremental = cursor is not None
+    if incremental:
+        after_at, after_id = decode_activity_cursor(cursor)
+        query = query.where(or_(
+            TrackingActivity.created_at > after_at,
+            (TrackingActivity.created_at == after_at) & (TrackingActivity.id > after_id),
+        )).order_by(TrackingActivity.created_at.asc(), TrackingActivity.id.asc()).limit(61)
+    else:
+        query = query.order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(60)
+    rows = (await db.execute(query)).all()
+    has_more = incremental and len(rows) > 60
+    if has_more:
+        rows = rows[:60]
     if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
-    return {"results": activity_data(rows,include_user=True,limit=60)}
+    presentation_rows = list(reversed(rows)) if incremental else rows
+    if has_more and rows:
+        next_cursor = encode_activity_cursor(rows[-1][0].created_at, rows[-1][0].id)
+    else:
+        next_cursor = encode_activity_cursor(watermark, 0)
+    return {"results": activity_data(presentation_rows,include_user=True,limit=60),
+            "cursor":next_cursor,"has_more":has_more}
