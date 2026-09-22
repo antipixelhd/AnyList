@@ -67,7 +67,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     <div class="account-nav">
       {user ? <>
         <QuickSearch combineLists={combineLists} />
-        <a class:list={{'profile-action': true, active: pathname.startsWith('/user/')}} href={profile} aria-label={`Open ${user.display_name || user.username}'s profile`}>
+        <a class:list={{'profile-action': true, active: pathname.startsWith('/user/')}} href={profile} aria-label={`Open ${user.display_name || user.username}'s profile`} data-appbar-avatar>
           {avatarUrl
             ? <img src={avatarUrl} alt="" />
             : <span aria-hidden="true">{(user.display_name || user.username).slice(0,1).toUpperCase()}</span>}

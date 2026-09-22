@@ -512,12 +512,21 @@ const COUNTRIES = [
     function setAvatarPreview(src: string | null) {
       const preview = document.getElementById('avatar-preview');
       if (!preview) return;
+      const appbarAvatar = document.querySelector<HTMLElement>('[data-appbar-avatar]');
       if (src) {
         preview.innerHTML = `<img id="avatar-img" src="${esc(src)}" alt="Avatar" class="w-full h-full object-cover" />`;
+        const image = document.createElement('img');
+        image.src = src;
+        image.alt = '';
+        appbarAvatar?.replaceChildren(image);
       } else {
         const initial = (document.getElementById('display_name') as HTMLInputElement | null)?.value.trim()[0]
           ?? (uploadLabel?.closest('section')?.querySelector('span')?.textContent?.trim()[0] ?? '?');
         preview.innerHTML = `<span class="text-2xl font-black text-zinc-400 select-none">${esc(initial.toUpperCase())}</span>`;
+        const fallback = document.createElement('span');
+        fallback.setAttribute('aria-hidden', 'true');
+        fallback.textContent = initial.toUpperCase();
+        appbarAvatar?.replaceChildren(fallback);
       }
     }
 
