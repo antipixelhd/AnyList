@@ -1,5 +1,9 @@
 # AnyList implementation status
 
+## List presentation update (2026-09-22)
+
+Movie rows now show watch progress as `0` or `1`. Desktop increment controls use a small AniList-style rotate icon with no hover treatment; they are hidden on phone and touch layouts. The saved default order is applied on the server before list rows render, including status-filtered entry groups. Movie/Series List landings initially align the profile tabs to the top of the viewport with the topbar hidden. The sticky topbar becomes visible whenever the document reaches its top, including direct loads and history restores, and otherwise follows the existing scroll-direction behavior. Other profile pages retain their normal landing position. The Astro production build passes; an authenticated visual check is still pending on a running test instance.
+
 ## Client navigation control repair (2026-09-22)
 
 The AnyList `ClientRouter` replaces the page body during navigation, while Astro executes bundled component scripts only once per visit. Controls initialized directly by those scripts therefore lost their event listeners after a page change. An in-progress attempt to use `data-astro-rerun` also made TypeScript scripts inline, leaving uncompiled TypeScript in the browser response. Tracker page and shared-control initialization now runs on `astro:page-load`; document and window listeners that capture page elements are retired through `AbortController` before rebinding. The affected rating, editor, search, status, profile, browse, notification, and Stats controls retain client navigation. The Astro production build, emitted-client JavaScript syntax checks, and `git diff --check` pass. An authenticated browser regression on the deployed instance remains to be verified.

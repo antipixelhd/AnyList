@@ -6,6 +6,7 @@ import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
 
 const {user, token} = Astro.locals;
+const {initiallyHidden = false} = Astro.props;
 const pathname = Astro.url.pathname;
 const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
 let combineLists = true;
@@ -49,7 +50,7 @@ const primaryItems = [
 const mobileSection = primaryItems.find(item => item.active)?.label
   || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : pathname.includes('settings') ? 'Settings' : 'Browse');
 ---
-<header class="topbar" data-appbar>
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden}]} data-appbar>
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
@@ -126,6 +127,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     window.addEventListener('wheel', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
     window.addEventListener('touchstart', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
     const reveal = () => appbar.classList.remove('appbar-hidden');
+    if (previousY <= 16) reveal();
     const update = () => {
       const currentY = Math.max(0, window.scrollY);
       const delta = currentY - previousY;
@@ -143,7 +145,10 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       }
     }, { passive: true, signal: appbarListeners.signal });
     appbar.addEventListener('focusin', reveal);
-    window.addEventListener('pageshow', () => { previousY = Math.max(0, window.scrollY); reveal(); }, { signal: appbarListeners.signal });
+    window.addEventListener('pageshow', () => {
+      previousY = Math.max(0, window.scrollY);
+      if (previousY <= 16 || !document.body.hasAttribute('data-list-landing')) reveal();
+    }, { signal: appbarListeners.signal });
   }
   const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
   const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');

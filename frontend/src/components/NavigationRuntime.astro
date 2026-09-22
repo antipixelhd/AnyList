@@ -222,6 +222,11 @@
       };
     });
     document.addEventListener('astro:after-preparation', finishProgress);
+    document.addEventListener('astro:after-swap', () => {
+      if (!document.body.hasAttribute('data-list-landing')) return;
+      const tabs = document.querySelector<HTMLElement>('.profile-tabs');
+      if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
+    });
     document.addEventListener('astro:page-load', () => {
       finishProgress();
       resetForIdentity();
