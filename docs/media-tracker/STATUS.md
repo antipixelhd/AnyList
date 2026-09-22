@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Responsive profile overview (2026-09-22)
+
+Profile Overview now uses equal-width columns on wide screens, stacking below 900px. Overview, a separate safe-Markdown Bio section, and Favorites sit in the left column; Recent activity occupies the right column without the previous highlights subtitle or activity subtitle. The bio content area grows to 320px before scrolling. Favorites render as compact poster-only title links, grouped as Movies/Series in combined mode or Movies and Series in separate mode, with empty groups omitted and existing order preserved. Profile navigation continues to use the preference returned by each profile endpoint; its live preference-change handler updates tabs, and successful preference writes clear same-user cached pages through the shared navigation mutation handler.
+
+Local verification: the frontend Astro production build passes. Authenticated visual verification of both Favorites layouts and narrow-screen/activity wrapping remains open; no VPS work was performed.
+
 ## Profile settings visual correction (2026-09-22)
 
 The bio editor now loads TOAST UI's dark theme and uses readable light text, a consistent dark toolbar, and restrained heading styles without the large heading divider. The Profile settings card stack no longer inherits the old 48px inter-card margins; header and card gaps are tighter. The Settings icon opens Profile first, while Account remains available in the settings sidebar. The Astro production build passes. Authenticated visual browser review remains open; no VPS work was performed.

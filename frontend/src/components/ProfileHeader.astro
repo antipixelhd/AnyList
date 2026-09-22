@@ -10,7 +10,7 @@ const base=`/user/${encodeURIComponent(profile.username)}`;
 <nav class="profile-tabs" aria-label="Profile" data-profile-owner={profile.owner?'yes':'no'} data-profile-base={base}><a href={base} class:list={{active:active==='overview'}} aria-current={active==='overview'?'page':undefined}>Overview</a>{profile.combine_lists!==false?<a href={`${base}/list`} class:list={{active:active==='list'}} aria-current={active==='list'?'page':undefined}>Movie/Series List</a>:<><a href={`${base}/movies`} class:list={{active:active==='movies'}} aria-current={active==='movies'?'page':undefined}>Movie List</a><a href={`${base}/series`} class:list={{active:active==='series'}} aria-current={active==='series'?'page':undefined}>Series List</a></>}<a href={`${base}/stats`} class:list={{active:active==='stats'}} aria-current={active==='stats'?'page':undefined}>Stats</a>{profile.owner&&<a href={`${base}/library`} class:list={{active:active==='library'}} aria-current={active==='library'?'page':undefined}>Library</a>}<a href={`${base}/social`} class:list={{active:active==='social'}} aria-current={active==='social'?'page':undefined}>Social</a></nav>
 <script>
 document.addEventListener('astro:page-load', () => {
-const tabs = document.querySelector<HTMLElement>('.profile-tabs[data-profile-owner="yes"]');
+const tabs = document.querySelector<HTMLElement>('.profile-tabs');
 const controller = new AbortController();
 document.addEventListener('astro:before-swap', () => controller.abort(), { signal: controller.signal, once: true });
 document.addEventListener('anylist:combine-lists-changed', rawEvent => {

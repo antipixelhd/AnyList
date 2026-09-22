@@ -5,6 +5,7 @@ import ActivityCard from '../../../components/ActivityCard.astro';
 import Icon from '../../../components/Icon.astro';
 import {renderProfileBio} from '../../../lib/profile-markdown';
 import {tracker,artwork,scoreLabel} from '../../../lib/tracker';
+import '../../../styles/profile-overview.css';
 let profile:any=null,error='';
 try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
 const highlights=profile?[
@@ -13,14 +14,25 @@ const highlights=profile?[
   {label:'Completed',value:profile.counts.completed,detail:'current status'},
   {label:'Average score',value:profile.average_score==null?'—':scoreLabel(profile.average_score),detail:`${profile.counts.rated} rated`},
 ]:[];
+const favorites:any[]=profile?.favorites||[];
+const favoriteGroups=profile?.combine_lists===false
+  ? [
+      {label:'Movies',items:favorites.filter((item:any)=>item.type==='movie')},
+      {label:'Series',items:favorites.filter((item:any)=>item.type==='series')},
+    ].filter(group=>group.items.length)
+  : [{label:'Movies/Series',items:favorites}].filter(group=>group.items.length);
 ---
 <Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
-  <section aria-labelledby="overview-highlights"><div class="section-heading"><h2 id="overview-highlights">Overview</h2><span>Movie &amp; series highlights</span></div>
-    {profile.bio && <div class="profile-bio" set:html={renderProfileBio(profile.bio)} />}
-    <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
-  </section>
-  <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2><span>{profile.owner?'Your latest updates':`${profile.display_name}'s latest updates`}</span></div>
+  <div class="profile-overview-left">
+    <section class="overview-summary" aria-labelledby="overview-highlights"><div class="section-heading"><h2 id="overview-highlights">Overview</h2></div>
+      <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
+    </section>
+    {profile.bio && <section class="overview-bio" aria-labelledby="profile-bio-heading"><div class="section-heading"><h2 id="profile-bio-heading">Bio</h2></div><div class="profile-bio" set:html={renderProfileBio(profile.bio)} />}</section>}
+    {favoriteGroups.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2></div>
+      {favoriteGroups.map(group=><div class="favorite-group"><h3>{group.label}</h3><div class="favorite-posters">{group.items.map((item:any)=><a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{artwork(item.poster,'w185')?<img src={artwork(item.poster,'w185')} alt="" loading="lazy"/>:<span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}</a>)}</div></div>)}
+    </section>}
+  </div>
+  <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>
     {profile.recent_activity.length?profile.recent_activity.map((a:any)=><ActivityCard activity={a}/>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
   </section>
-  {profile.favorites.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2><span>{profile.counts.favorites} saved</span></div><div class="card-grid">{profile.favorites.map((m:any)=><a class="media-card" href={`/title/${m.id}`}>{artwork(m.poster)&&<img src={artwork(m.poster)} alt="" loading="lazy"/>}<h3>{m.title}</h3></a>)}</div></section>}
 </main></>:<main class="page-width"><p class="error-message" role="alert">{error}</p></main>}</Tracker>

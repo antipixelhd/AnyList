@@ -191,9 +191,9 @@ const COUNTRIES = [
           </div>
           <div class="space-y-2">
             <div class="setting-label-line"><label id="bio-label" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
-            <div class="bio-mode-row"><label for="bio-raw-toggle"><input id="bio-raw-toggle" type="checkbox" /> Raw Markdown</label><span id="bio-count">0 / 1,000</span></div>
+            <div class="bio-mode-row"><label for="bio-raw-toggle"><input id="bio-raw-toggle" type="checkbox" /> Raw Markdown</label><span id="bio-count">0 / 5,000</span></div>
             <div id="bio-editor" aria-labelledby="bio-label" data-initial-bio={prefs.bio ?? ''}></div>
-            <textarea id="bio-raw" aria-labelledby="bio-label" maxlength={1000} class="hidden"></textarea>
+            <textarea id="bio-raw" aria-labelledby="bio-label" maxlength={5000} class="hidden"></textarea>
             <button id="bio-save" type="button" class="button-primary hidden">Save bio</button>
           </div>
         </div>
@@ -709,33 +709,44 @@ const COUNTRIES = [
     const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
     if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
     if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
-    async function saveTrackingPreferences(change: Record<string, unknown>, control: HTMLInputElement | HTMLSelectElement) {
-      const previous = control.dataset.savedValue ?? '';
-      control.disabled = true;
-      try {
-        const response = await fetch('/api/proxy/tracking/preferences', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(change),
-        });
-        if (!response.ok) throw new Error('Could not update your list preferences.');
-        const saved = await response.json() as { combine_lists?: boolean; default_sort?: string };
-        control.dataset.savedValue = control instanceof HTMLInputElement ? String(saved.combine_lists !== false) : saved.default_sort || control.value;
-        if (control === combineLists) {
-          control.checked = saved.combine_lists !== false;
-          document.dispatchEvent(new CustomEvent('anylist:combine-lists-changed', { detail: { combineLists: saved.combine_lists !== false } }));
-        }
-        setStatus('combine-lists', 'Saved');
-      } catch (error) {
-        if (control instanceof HTMLInputElement) control.checked = previous === 'true';
-        else control.value = previous;
-        setStatus('combine-lists', error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
-      } finally {
-        control.disabled = false;
-      }
+    const trackingChains = new Map<string, Promise<void>>();
+    const trackingRevisions = new Map<string, number>();
+    function publishCombinePreference(value: boolean) {
+      document.dispatchEvent(new CustomEvent('anylist:combine-lists-changed', { detail: { combineLists: value } }));
     }
-    combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists));
-    defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort));
+    function saveTrackingPreferences(change: Record<string, unknown>, control: HTMLInputElement | HTMLSelectElement, field: string) {
+      const revision = (trackingRevisions.get(field) || 0) + 1;
+      trackingRevisions.set(field, revision);
+      const requestedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
+      if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
+      setStatus('combine-lists', 'Saving…', 'saving');
+      const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
+        try {
+          const response = await fetch('/api/proxy/tracking/preferences', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(change),
+          });
+          if (!response.ok) throw new Error('Could not update your list preferences.');
+          const saved = await response.json() as { combine_lists?: boolean; default_sort?: string };
+          // Keep the last confirmed server value available for rollback, even when
+          // a newer change is already queued behind this request.
+          control.dataset.savedValue = field === 'combine_lists' ? String(saved.combine_lists !== false) : saved.default_sort || requestedValue;
+          if (trackingRevisions.get(field) === revision) setStatus('combine-lists', 'Saved');
+        } catch (error) {
+          if (trackingRevisions.get(field) === revision) {
+            const savedValue = control.dataset.savedValue ?? '';
+            if (control instanceof HTMLInputElement) control.checked = savedValue === 'true';
+            else control.value = savedValue;
+            if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
+            setStatus('combine-lists', error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
+          }
+        }
+      });
+      trackingChains.set(field, pending);
+    }
+    combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists, 'combine_lists'));
+    defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort, 'default_sort'));
 
     // Completion-rating Web Push is enrolled per browser/PWA installation.
     const pushButton = document.getElementById('push-notifications-toggle') as HTMLButtonElement | null;
@@ -805,12 +816,21 @@ const COUNTRIES = [
     const bioCount = document.getElementById('bio-count');
     let savedBio = editorHost?.dataset.initialBio || '';
     let savedVisualBio = savedBio;
+    let enforcingBioLimit = false;
     const currentBio = () => rawToggle?.checked ? rawBio?.value || '' : bioEditor?.getMarkdown() || '';
     const updateBio = () => {
       const markdown = currentBio();
-      if (bioCount) bioCount.textContent = `${markdown.length} / 1,000`;
-      bioSave?.classList.toggle('hidden', markdown === (rawToggle?.checked ? savedBio : savedVisualBio));
-      if (markdown.length > 1000) setStatus('bio', 'Bio must be 1,000 characters or fewer.', 'error');
+      if (markdown.length > 5000) {
+        if (!rawToggle?.checked && bioEditor && !enforcingBioLimit) {
+          enforcingBioLimit = true;
+          bioEditor.setMarkdown(markdown.slice(0, 5000));
+          enforcingBioLimit = false;
+        }
+      }
+      const current = currentBio();
+      if (bioCount) bioCount.textContent = `${current.length} / 5,000`;
+      bioSave?.classList.toggle('hidden', current === (rawToggle?.checked ? savedBio : savedVisualBio));
+      if (current.length > 5000) setStatus('bio', 'Bio must be 5,000 characters or fewer.', 'error');
       else if (document.querySelector<HTMLElement>('[data-save-state="bio"]')?.dataset.state === 'error') setStatus('bio', '');
     };
     if (editorHost && rawBio && rawToggle && bioSave) {
@@ -823,19 +843,22 @@ const COUNTRIES = [
           placeholder: 'Write a short bio…',
           toolbarItems: [['heading', 'bold', 'italic']] });
         savedVisualBio = bioEditor.getMarkdown();
-        bioEditor.on('change', updateBio);
+        bioEditor.on('change', () => { if (!enforcingBioLimit) updateBio(); });
         updateBio();
       });
       rawToggle.addEventListener('change', () => {
         if (rawToggle.checked) rawBio.value = bioEditor?.getMarkdown() === savedVisualBio ? savedBio : bioEditor?.getMarkdown() || rawBio.value;
-        else bioEditor?.setMarkdown(rawBio.value);
+        else {
+          bioEditor?.setMarkdown(rawBio.value);
+          if (rawBio.value === savedBio) savedVisualBio = bioEditor?.getMarkdown() || savedBio;
+        }
         editorHost.classList.toggle('hidden', rawToggle.checked);
         rawBio.classList.toggle('hidden', !rawToggle.checked);
         updateBio();
       });
       bioSave.addEventListener('click', async () => {
         const markdown = currentBio();
-        if (markdown.length > 1000) { updateBio(); return; }
+        if (markdown.length > 5000) { updateBio(); return; }
         bioSave.disabled = true;
         setStatus('bio', 'Saving…', 'saving');
         try {

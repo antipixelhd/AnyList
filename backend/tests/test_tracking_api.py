@@ -29,6 +29,21 @@ from routers.profile import router as profile_router
 from routers.ratings import router as ratings_router
 
 
+class ProfileBioSchemaTests(unittest.TestCase):
+    def test_bio_limit_accepts_5000_characters(self):
+        from schemas import UserProfileUpdate
+
+        update = UserProfileUpdate(bio='x' * 5000)
+        self.assertEqual(len(update.bio), 5000)
+
+    def test_bio_limit_rejects_more_than_5000_characters(self):
+        from pydantic import ValidationError
+        from schemas import UserProfileUpdate
+
+        with self.assertRaises(ValidationError):
+            UserProfileUpdate(bio='x' * 5001)
+
+
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
 class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -913,12 +928,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.json()['display_name'], 'Reader')
         self.assertEqual(saved.json()['country'], 'DE')
         self.assertEqual(saved.json()['bio'], bio)
-        boundary = await self.client.patch('/profile/me', json={'bio': 'x' * 1000})
+        boundary = await self.client.patch('/profile/me', json={'bio': 'x' * 5000})
         self.assertEqual(boundary.status_code, 200, boundary.text)
-        rejected = await self.client.patch('/profile/me', json={'bio': 'x' * 1001})
+        rejected = await self.client.patch('/profile/me', json={'bio': 'x' * 5001})
         self.assertEqual(rejected.status_code, 422, rejected.text)
         current = await self.client.get('/profile/me')
-        self.assertEqual(current.json()['bio'], 'x' * 1000)
+        self.assertEqual(current.json()['bio'], 'x' * 5000)
         removed = await self.client.patch('/profile/me', json={'bio': None})
         self.assertEqual(removed.status_code, 200, removed.text)
         self.assertIsNone(removed.json()['bio'])
