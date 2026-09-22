@@ -1,0 +1,53 @@
+import { statuses } from './tracker';
+
+export type NotificationSnapshot = {
+  results: any[];
+  pending: number;
+  outbound: any[];
+};
+
+export const eventTitle = (event: any) => event.media?.title || event.payload?.title || 'Connection reconciliation';
+export const eventSource = (event: any) => event.provider ? `${event.provider} sync` : event.kind?.startsWith('initial_') ? 'First import' : 'Connection sync';
+export const eventVariant = (event: any) => event.state === 'pending'
+  ? (event.kind?.includes('conflict') || event.kind === 'unmatched_import' ? 'warning' : 'info')
+  : event.state === 'corrected' ? 'info' : 'success';
+export const eventIcon = (event: any) => event.kind === 'rating_needed' ? 'star'
+  : event.kind === 'unmatched_import' ? 'search'
+  : event.kind === 'connection_failure' ? 'warning'
+  : event.kind?.includes('conflict') ? 'warning'
+  : event.kind === 'playback_removed' ? 'arrows-rotate'
+  : event.state === 'pending' ? 'inbox' : 'check';
+export const eventBadge = (event: any) => event.kind === 'connection_failure' ? 'Connection issue' : event.state === 'pending' ? 'Needs review' : undefined;
+export const eventHref = (event: any) => event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
+export const eventImage = (event: any) => event.media?.poster || null;
+export const historyChanges = (event: any) => (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
+export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress' } as Record<string, string>)[field] || field;
+export const historyValue = (value: any) => value == null || value === '' ? 'Not set' : String(value);
+export const statusLabel = (value: string | null | undefined) => statuses.find(([status]) => status === value)?.[1] || value || 'Unknown';
+
+export const eventKey = (event: any) => `event:${event.id}`;
+export const outboundKey = (item: any) => `outbound:${item.media_id ?? item.title ?? 'unknown'}`;
+
+function stableValue(value: any): any {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])]));
+  return value;
+}
+
+export function notificationVersion(value: any, kind: 'event' | 'outbound') {
+  const selected = kind === 'event'
+    ? {
+        id: value.id, kind: value.kind, state: value.state, provider: value.provider,
+        message: value.message, previous_status: value.previous_status, proposed_status: value.proposed_status,
+        previous_score: value.previous_score, proposed_score: value.proposed_score, season_number: value.season_number,
+        priority: value.priority, dismissible: value.dismissible, payload: value.payload,
+        media: value.media && { id: value.media.id, title: value.media.title, type: value.media.type, poster: value.media.poster },
+      }
+    : {
+        media_id: value.media_id, title: value.title, poster: value.poster, state: value.state,
+        deliveries: value.deliveries,
+      };
+  return JSON.stringify(stableValue(selected));
+}
+
+export const shouldAutoSee = (event: any) => Boolean(event.dismissible && event.priority === 'low' && event.kind !== 'rating_needed');

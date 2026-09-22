@@ -1,5 +1,13 @@
 # AnyList implementation status
 
+## Shared visible notification refresh (2026-09-23)
+
+The app-bar notification badges, Home's Notifications summary, the nonmodal AttentionPrompt, and the `/recent-events` page now subscribe to one shared in-memory notification snapshot. It fetches the complete private `/tracking/recent-events` projection with no-store semantics, so newly created, changed, and resolved/removed cards are reconciled together; the separate pending connection-delivery queue remains on the Notifications page and does not inflate the app-bar badges.
+
+The shared lifecycle refreshes immediately when a surface subscribes, then only while the document is visible every 60 seconds and when the tab regains focus. Hidden pages pause polling, overlapping requests coalesce, and Astro navigation or an account switch aborts the old lifecycle and clears its private snapshot. Successful non-GET proxy mutations use the existing data-changed event to trigger an immediate refresh, with stale in-flight responses prevented from replacing newer state. No notification data is persisted in localStorage.
+
+The Notifications page reconciles cards by stable key/version, adding, replacing, reordering, and removing cards from the full snapshot while deferring changes that would interrupt a focused control, dirty match search, or active quick-rating interaction. The prompt remains dismissible without stealing focus. Home activity continues to use its own cursor-based incremental refresh and 60-card cap; Profile Overview remains server-rendered and does not start a background poll. These refreshes display changes already committed by sync or local actions and never trigger provider synchronization themselves.
+
 ## Responsive profile overview (2026-09-22)
 
 Profile Overview now uses equal-width columns on wide screens, stacking below 900px. Overview, a separate safe-Markdown Bio section, and Favorites sit in the left column; Recent activity occupies the right column without the previous highlights subtitle or activity subtitle. The bio content area grows to 320px before scrolling. Favorites render as compact poster-only title links, grouped as Movies/Series in combined mode or Movies and Series in separate mode, with empty groups omitted and existing order preserved. Profile navigation continues to use the preference returned by each profile endpoint; its live preference-change handler updates tabs, and successful preference writes clear same-user cached pages through the shared navigation mutation handler.

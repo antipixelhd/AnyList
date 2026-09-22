@@ -85,10 +85,12 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   </div>
 </header>
 {user && <script>
-  let notificationListeners: AbortController;
+  import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
+
+  let notificationPageListeners: AbortController;
   document.addEventListener('astro:page-load', () => {
-  notificationListeners?.abort();
-  notificationListeners = new AbortController();
+  notificationPageListeners?.abort();
+  notificationPageListeners = new AbortController();
   const link = document.querySelector<HTMLElement>('[data-notification-link]');
   const quietBadge = document.querySelector<HTMLElement>('[data-notification-quiet]');
   const attentionBadge = document.querySelector<HTMLElement>('[data-notification-attention]');
@@ -97,20 +99,15 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     badge.hidden = count === 0;
     badge.textContent = count > 99 ? '99+' : String(count);
   };
-  async function refreshNotificationBadge() {
-    try {
-      const response = await fetch('/api/proxy/tracking/recent-events');
-      if (!response.ok) return;
-      const notifications = await response.json();
-      const attention = (notifications.results ?? []).filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
-      const quiet = Math.max(0, (notifications.results?.length ?? 0) - attention);
-      renderBadge(quietBadge, quiet);
-      renderBadge(attentionBadge, attention);
-      if (link) link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread');
-    } catch { /* Keep the last known server-rendered count during a transient failure. */ }
-  }
-  document.addEventListener('media-tracker:notifications-changed', refreshNotificationBadge, { signal: notificationListeners.signal });
-  document.addEventListener('anylist:data-changed', refreshNotificationBadge, { signal: notificationListeners.signal });
+  const renderNotificationBadges = (notifications: NotificationSnapshot) => {
+    const attention = notifications.results.filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
+    // The operational outbound queue is intentionally excluded from the app-bar badges.
+    const quiet = Math.max(0, notifications.results.length - attention);
+    renderBadge(quietBadge, quiet);
+    renderBadge(attentionBadge, attention);
+    if (link) link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread');
+  };
+  subscribeNotifications(renderNotificationBadges, {signal: notificationPageListeners.signal});
   });
 </script>}
 <script>

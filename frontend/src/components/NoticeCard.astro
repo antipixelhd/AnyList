@@ -11,6 +11,11 @@ interface Props {
   message?: string;
   image?: string | null;
   dismissibleId?: number;
+  cardKey?: string;
+  version?: string;
+  kind?: string;
+  priority?: string;
+  state?: string;
 }
 
 const {
@@ -23,9 +28,14 @@ const {
   message,
   image,
   dismissibleId,
+  cardKey,
+  version,
+  kind,
+  priority,
+  state,
 } = Astro.props;
 ---
-<article class:list={['notice-card', `notice-${variant}`]} data-auto-seen={dismissibleId}>
+<article class:list={['notice-card', `notice-${variant}`]} data-auto-seen={dismissibleId} data-notification-key={cardKey} data-notification-version={version} data-notification-kind={kind} data-notification-priority={priority} data-notification-state={state}>
   <div class:list={['notice-visual', { 'has-image': !!image }]}>
     {image ? <img src={image} alt="" loading="lazy" /> : <Icon name={icon} />}
   </div>

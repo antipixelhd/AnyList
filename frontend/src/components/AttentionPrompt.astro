@@ -11,6 +11,8 @@
 </aside>
 
 <script>
+import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
+
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -28,17 +30,17 @@ document.addEventListener('astro:page-load', () => {
     prompt.addEventListener('pointerup', event => { if (startX != null && Math.abs(event.clientX - startX) > 64) hide(); startX = null; });
     document.addEventListener('media-tracker:rating-changed', hide, { signal: pageListeners.signal });
 
-    fetch('/api/proxy/tracking/recent-events').then(response => response.ok ? response.json() : null).then(data => {
-      if (!data) return;
+    const renderPrompt = (data: NotificationSnapshot) => {
       const hidden = readHidden();
       const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high' && !hidden.has(String(item.id)));
       const ratings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media && !hidden.has(String(item.id)));
       const items = [...conflicts, ...ratings];
-      if (!items.length) return;
+      if (!items.length) { visibleIds = []; prompt.hidden = true; return; }
       visibleIds = items.map((item: any) => String(item.id));
       const title = prompt.querySelector<HTMLElement>('[data-attention-title]')!;
       const message = prompt.querySelector<HTMLElement>('[data-attention-message]')!;
       const action = prompt.querySelector<HTMLAnchorElement>('[data-attention-action]')!;
+      action.href = '/recent-events';
       if (items.length > 1) {
         const summary = [];
         if (ratings.length) summary.push(`${ratings.length} ${ratings.length === 1 ? 'title' : 'titles'} ready to rate`);
@@ -58,7 +60,8 @@ document.addEventListener('astro:page-load', () => {
         action.href = `/title/${item.media.id}?rate=1`;
       }
       prompt.hidden = false;
-    }).catch(() => {});
+    };
+    subscribeNotifications(renderPrompt, {signal: pageListeners.signal});
   }
 });
 </script>

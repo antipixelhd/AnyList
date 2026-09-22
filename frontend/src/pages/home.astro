@@ -16,7 +16,7 @@ const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse">Find your next title</a></header>
   <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-cursor={activityCursor}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
-  </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events"><span class="eyebrow">Notifications</span><strong>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
+  </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events" data-notification-summary><span class="eyebrow">Notifications</span><strong data-notification-summary-title>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p data-notification-summary-message>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
   <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a></div></aside></div>
 </div>
 <template id="activity-card-template"><article class="visual-event" data-activity-card>
@@ -28,20 +28,17 @@ const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 
 <script>
 import {activityAction,activityTime,artwork,scoreLabel} from '../lib/tracker';
+import {startVisibleRefresh} from '../lib/visible-refresh';
 
-let activityFeedController:AbortController|undefined;
-let activityFeedTimer:ReturnType<typeof setInterval>|undefined;
+let stopActivityFeed: (()=>void)|undefined;
 
 document.addEventListener('astro:page-load',()=>{
-  activityFeedController?.abort();
-  if(activityFeedTimer)clearInterval(activityFeedTimer);
+  stopActivityFeed?.();
+  stopActivityFeed=undefined;
   const feed=document.querySelector<HTMLElement>('[data-activity-feed]');
   const template=document.querySelector<HTMLTemplateElement>('#activity-card-template');
   if(!feed||!template)return;
-  activityFeedController=new AbortController();
-  const signal=activityFeedController.signal;
   let cursor=feed.dataset.cursor||'';
-  let loading=false;
 
   const updateTimes=()=>document.querySelectorAll<HTMLTimeElement>('[data-relative-time]').forEach(time=>{
     if(!time.dateTime)return;
@@ -83,9 +80,8 @@ document.addEventListener('astro:page-load',()=>{
     ordered.forEach((card,index)=>index<60?feed.append(card):card.remove());
   };
 
-  const refresh=async()=>{
-    if(loading||document.hidden)return;
-    loading=true;
+  const refresh=async(signal:AbortSignal)=>{
+    updateTimes();
     try{
       do{
         const url=cursor?`/api/proxy/tracking/activity?cursor=${encodeURIComponent(cursor)}`:'/api/proxy/tracking/activity';
@@ -95,14 +91,28 @@ document.addEventListener('astro:page-load',()=>{
         if(!data.has_more)break;
       }while(!signal.aborted);
     }catch(error){if(!signal.aborted)console.debug('Activity refresh deferred.',error);}
-    finally{loading=false;}
   };
 
-  const stop=()=>{activityFeedController?.abort();if(activityFeedTimer)clearInterval(activityFeedTimer);activityFeedTimer=undefined;};
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){updateTimes();refresh();}},{signal});
-  window.addEventListener('focus',refresh,{signal});
-  document.addEventListener('astro:before-swap',stop,{signal,once:true});
-  activityFeedTimer=setInterval(()=>{updateTimes();refresh();},60_000);
+  stopActivityFeed=startVisibleRefresh({refresh,intervalMs:60_000});
   updateTimes();
+});
+</script>
+
+<script>
+import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
+
+let homeNotificationListeners: AbortController | undefined;
+document.addEventListener('astro:page-load', () => {
+  homeNotificationListeners?.abort();
+  homeNotificationListeners = new AbortController();
+  const title = document.querySelector<HTMLElement>('[data-notification-summary-title]');
+  const message = document.querySelector<HTMLElement>('[data-notification-summary-message]');
+  if (!title || !message) return;
+  const renderSummary = (snapshot: NotificationSnapshot) => {
+    const pending = snapshot.pending;
+    title.textContent = pending ? `${pending} ${pending === 1 ? 'change' : 'changes'} to review` : 'You’re all caught up';
+    message.textContent = pending ? 'Confirm updates, adjust a status or add your rating.' : 'Connection updates will appear here.';
+  };
+  subscribeNotifications(renderSummary, {signal: homeNotificationListeners.signal});
 });
 </script>

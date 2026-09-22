@@ -50,6 +50,10 @@ Do not add favorite, comment, like, or reply actions to activity cards.
 
 Notifications is a private sync-review surface, not the social feed. Explain the source change and local interpretation; offer confirm, alternate status, and rating. Apply inferred status locally and mirror underlying removal to Stremio/Nuvio immediately; hold propagation to other tracking platforms until confirmed. Auto-confirm is per user, off by default, for ordinary inferred status events only. Conflicts/uncertainty/initial merges/destructive deletion retain review. Changing back to Watching restores supported playback state on next sync. Completed takes priority; never treat initial empty accounts as removal events.
 
+### Shared notification refresh
+
+The app-bar badges, Home's Notifications summary, the nonmodal AttentionPrompt, and the Notifications page share one in-memory full-snapshot refresh. The initial server-rendered state remains authoritative for a normal load; after hydration, the snapshot uses no-store reads immediately, every 60 seconds while visible, and on tab focus/visibility return. Hidden pages pause, Astro navigation and account changes clean up the lifecycle, and successful local mutations trigger an immediate refresh. Reconcile additions, replacements, reordering, and removals from the full snapshot, while preserving a focused or dirty search/status/rating interaction until it ends. Do not persist private notification data in localStorage. The outbound connection-delivery queue is separate from the unread app-bar badge. Home activity uses its separate cursor-based incremental refresh; Profile Overview remains SSR-only.
+
 ### Updated Notifications feedback
 
 ![Current Media Tracker Notifications feedback](references/media-tracker-recent-events-feedback-2026.png)
