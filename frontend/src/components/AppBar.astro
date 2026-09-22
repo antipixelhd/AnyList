@@ -110,6 +110,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     } catch { /* Keep the last known server-rendered count during a transient failure. */ }
   }
   document.addEventListener('media-tracker:notifications-changed', refreshNotificationBadge, { signal: notificationListeners.signal });
+  document.addEventListener('anylist:data-changed', refreshNotificationBadge, { signal: notificationListeners.signal });
   });
 </script>}
 <script>

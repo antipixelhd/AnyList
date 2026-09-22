@@ -53,6 +53,9 @@ document.addEventListener('astro:page-load', () => {
   let loadController: AbortController | null = null;
   let displayedScore = '';
   const retained = new Map<number, any>((JSON.parse(document.querySelector('#tracking-editor-data')?.textContent || '[]') as any[]).map(entry => [entry.id, entry]));
+  // The embedded list entries are only a first-load shortcut. A quick rating or
+  // another in-place write makes them stale even while this page stays mounted.
+  document.addEventListener('anylist:data-changed', () => retained.clear(), { signal: pageListeners.signal });
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
   const formState = () => JSON.stringify(Array.from(new FormData(form).entries()));

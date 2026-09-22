@@ -195,6 +195,7 @@
             // Mutations can change totals, lists, detail controls, feeds, and profiles.
             // Retire all same-user page snapshots before the next client navigation.
             clearPages();
+            document.dispatchEvent(new Event('anylist:data-changed'));
           }
         }
         return response;

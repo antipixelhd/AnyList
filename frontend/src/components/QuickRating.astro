@@ -100,22 +100,27 @@ document.addEventListener('astro:page-load', () => {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || 'Unable to save this rating.');
       }
-      savedScore = score;
-      if (changeToManual) active.ratingMode = 'manual';
+      const saved = await response.json();
+      savedScore = saved.score == null ? null : Number(saved.score);
+      const ratingMode = saved.rating_mode === 'average' ? 'average' : 'manual';
+      active.ratingMode = ratingMode;
       document.querySelectorAll<HTMLElement>(`[data-quick-rate-id="${active.id}"]`).forEach(control => {
-        control.dataset.quickRateScore = score == null ? '' : String(score);
-        if (changeToManual) control.dataset.quickRateMode = 'manual';
+        control.dataset.quickRateScore = savedScore == null ? '' : String(savedScore);
+        control.dataset.quickRateMode = ratingMode;
         const row = control.closest<HTMLElement>('.entry-row');
-        if (row) row.dataset.score = score == null ? '-1' : String(score);
+        if (row) {
+          row.dataset.score = savedScore == null ? '-1' : String(savedScore);
+          if (saved.updated_at) row.dataset.updated = saved.updated_at;
+        }
         const label = control.querySelector<HTMLElement>('[data-score-label]');
-        if (label) label.textContent = score == null ? '—' : label.dataset.scoreFormat === 'out-of-ten' ? `${score.toFixed(1)} / 10` : Number(score.toFixed(1)).toString();
+        if (label) label.textContent = savedScore == null ? '—' : label.dataset.scoreFormat === 'out-of-ten' ? `${savedScore.toFixed(1)} / 10` : Number(savedScore.toFixed(1)).toString();
         if (control.classList.contains('personal-score-button')) {
-          control.setAttribute('aria-label', `Rate ${mediaTitle}. Current score: ${score == null ? '—' : `${score.toFixed(1)} / 10`}`);
+          control.setAttribute('aria-label', `Rate ${mediaTitle}. Current score: ${savedScore == null ? '—' : `${savedScore.toFixed(1)} / 10`}`);
         }
         const modeLabel = control.querySelector<HTMLElement>('[data-rating-mode-label]');
-        if (modeLabel) modeLabel.textContent = score == null ? 'Unrated' : 'Manual rating';
+        if (modeLabel) modeLabel.textContent = savedScore == null ? 'Unrated' : ratingMode === 'average' ? 'Rated-season average' : 'Manual rating';
       });
-      document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: { id: active.id, score } }));
+      document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: { id: active.id, score: savedScore } }));
       setTimeout(() => dialog.close(), 140);
     } catch (cause) {
       error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
