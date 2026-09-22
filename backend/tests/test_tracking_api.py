@@ -70,10 +70,16 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'core.local_outbound.dispatch_local_tracking_delta', self.local_outbound,
         )
         self.local_outbound_patch.start()
+        self.local_rollback = AsyncMock()
+        self.local_rollback_patch = patch(
+            'core.local_outbound.dispatch_local_watch_rollback', self.local_rollback,
+        )
+        self.local_rollback_patch.start()
 
     async def asyncTearDown(self):
         self.delivery_patch.stop()
         self.local_outbound_patch.stop()
+        self.local_rollback_patch.stop()
         await self.client.aclose(); await self.db.close()
         await self.transaction.rollback(); await self.connection.close(); await self.engine.dispose()
 
@@ -1346,6 +1352,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status_code,409,res.text)
         res=await self.client.patch(url+'1',json={'watched':False,'confirm_rollback':True})
         self.assertEqual(res.status_code,200,res.text)
+        self.local_rollback.assert_awaited_once_with(
+            self.owner.id, {e.id for e in episodes[1:4]},
+        )
         self.assertEqual(res.json()['progress'],0)
         self.assertEqual(res.json()['status'],'completed')
         ids=(await self.db.execute(select(WatchEvent.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()

@@ -1001,6 +1001,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
     old_season_scores = dict(entry.season_scores or {}) if entry else {}
     added_watched_ids: set[int] = set()
+    removed_watched_ids: set[int] = set()
     if entry is None:
         # An explicit user edit re-adds a previously deleted entry. Imports never
         # do this; they honor the marker until the user makes this choice.
@@ -1049,6 +1050,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
                 db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True, watched_at=None, provisional=True))
                 added_watched_ids.add(episode.id)
         if rollback:
+            removed_watched_ids = watched.intersection(ids[target:])
             await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[target:])))
         entry.progress = target
         if 'status' not in fields and target > 0:
@@ -1109,6 +1111,9 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             dispatch_local_tracking_delta, viewer.id,
             added_watched_ids, changed_ratings, removed_ratings,
         )
+    if removed_watched_ids:
+        from core.local_outbound import dispatch_local_watch_rollback
+        background_tasks.add_task(dispatch_local_watch_rollback, viewer.id, removed_watched_ids)
     return entry_data(entry, media, True)
 
 

@@ -35,3 +35,16 @@ async def dispatch_local_tracking_delta(
             )
     except Exception:
         logger.exception("Local tracking delivery failed for user %s", user_id)
+
+
+async def dispatch_local_watch_rollback(user_id: int, media_ids: set[int]) -> None:
+    if not media_ids:
+        return
+    from routers.history import _push_watch_state
+
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with factory() as db:
+            await _push_watch_state(db, user_id, sorted(media_ids), watched=False)
+    except Exception:
+        logger.exception("Local watch rollback delivery failed for user %s", user_id)
