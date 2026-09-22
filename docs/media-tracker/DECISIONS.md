@@ -56,7 +56,7 @@ Refinement: keep a minimal deletion marker (title, time, pending acknowledgments
 
 ## ADR-010 — Streaming library is distinct from tracked lists (accepted)
 
-Mirror library membership among connected Stremio/Nuvio accounts without automatically adding/removing main tracked entries. Main lists focus on started media, with Plan to Watch as the explicit unstarted exception. Library removal alone is not the Paused/Dropped signal. Precisely distinguishing removal from active playback remains unresolved.
+Streaming Library membership is an AnyList-owned choice that works with no connected service and never automatically adds/removes a main tracked entry. Mirror that choice to eligible Stremio/Nuvio connections after their reconciliation gates; a later connection can receive an earlier local choice. Main lists focus on started media, with Plan to Watch as the explicit unstarted exception. Library removal alone is not the Paused/Dropped signal. Precisely distinguishing removal from active playback remains unresolved. The local-first clarification was accepted on 2026-09-21 and supersedes connection-only Library eligibility.
 
 ## ADR-011 — Provider-specific review gating (accepted)
 
@@ -107,3 +107,11 @@ First imports are baselines, not deletion evidence. A new or empty account canno
 Use standards-based Web Push through the existing PWA for Windows and Android. Notifications are per-device and require an explicit browser permission grant. Queue them only when a subsequent provider sync newly completes an unrated title; exclude initial imports and direct local completion. The payload identifies the title, includes cover art when the browser supports it, and deep-links to the title's quick-rating surface. Rating resolves the in-app prompt. Keep local 0.5 precision and reuse one accessible half-star interaction across lists, title details, in-app Notifications, and push deep links.
 
 Generate and persist one VAPID key pair per Media Tracker instance in application data. Store subscriptions per user, discard expired endpoints, and never treat delivery as authoritative state. The in-app Notification remains the durable source of the rating request.
+
+## ADR-021 — Reconcile overlapping sources before targeted fan-out (accepted 2026-09-21)
+
+Independent provider pulls retain their configured intervals, but overlapping pulls for one AnyList user form a bounded reconciliation cycle: compare each complete snapshot with its own approved baseline, derive changes, resolve compatible observations once, apply local truth, then target only eligible destinations affected by the result. This avoids treating each source's sequential import as final truth or echoing a change back to its source; a failed source cannot imply deletion or indefinitely block unrelated safe deltas. Order competing changes by trustworthy comparable modification evidence, not provider rank; explicit local corrections beat proven stale observations, equally trustworthy simultaneous forward progress takes the furthest point, and unorderable conflicts preserve local state for review. Prompt outbound delivery and durable per-destination retry remain separate from user-visible pull intervals.
+
+## ADR-022 — Read-only offline navigation within an open session (accepted 2026-09-21)
+
+Cache safely displayable content for read-only navigation while an AnyList tab is already open, not as a promise that an offline first load or refresh works. This gives previously loaded pages and list editors continuity without making offline writes, stale connection state, or a service-worker app shell appear authoritative. Partition private data by AnyList user, clear it on explicit logout/account switch, never cache credentials, and localize missing-data/offline feedback rather than replacing the entire live page.

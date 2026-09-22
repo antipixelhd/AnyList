@@ -4,7 +4,7 @@
 | --- | --- |
 | Catalog entry | Stable local identity for a title, mapped to relevant external provider IDs. |
 | Provider | External catalog, rating source, or connected tracking service; its capabilities must be identified rather than assumed. |
-| Connection | A user's optional linked external account, with supported sync fields and directions. |
+| Connection | One AnyList user's optional link to an external service account or profile, with supported sync fields and directions. Several users may independently link the same external identity. |
 | List entry | A user's tracked movie or whole TV series, with status, progress, rating behavior, and favorite state. |
 | Status | Planning, Watching, Paused, Dropped, or Completed for movies/TV. Separate from granular watch history. |
 | Completed | Caught up through available episodes, or a manually selected status; not an assertion about unreleased episodes. |
@@ -27,7 +27,7 @@
 | Provider removal | Removal from a connected service's collection, interpreted according to its limited capabilities; not automatically an entry deletion. |
 | Notifications | Private review area for unconfirmed sync interpretations, with confirmation, status correction, and rating actions. Separate from the social feed. |
 | Pending connection update | Operational per-title delivery state for a local change intended for connected services. One visible item may contain multiple provider outcomes and clears only after every applicable delivery succeeds. |
-| Streaming library | Membership mirrored across Stremio/Nuvio accounts independently of main tracked-list entries and statuses. |
+| Streaming library | A user's selected movie/series membership, independent of main tracked-list entries and usable without a connected service; eligible Stremio/Nuvio connections can mirror it. |
 | Plan to Watch | User-facing Planning group for not-yet-started titles; distinct from mere streaming-library membership. |
 | Deletion marker | Minimal internal title/time/pending-acknowledgment record preventing stale reimport after personal entry data is cleared. |
 | Auto-confirm | Per-user, default-off confirmation of ordinary inferred Paused/Dropped changes; never auto-resolves conflicts, uncertain removals, first merges, or destructive deletions. |

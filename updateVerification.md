@@ -19,3 +19,7 @@ Jellyfin, Emby, and Plex now require a complete, error-free import and confirmat
 ## Media server rating order
 
 The current Jellyfin, Emby, and Plex rating feeds do not provide a comparable per-rating modification time in this integration. A score changed from its reviewed source baseline can replace a matching, unchanged local score. If the local score also changed or the source first appears with a different score, AnyList keeps the local value and asks for review in Notifications.
+
+## Prompt local tracking delivery
+
+Local list progress, rating and confirmed rollback changes now start provider delivery after the database save returns. This uses response background tasks and is best effort: unlike Streaming Library membership, ordinary tracking deltas have no durable per-destination delivery row. A provider failure or app restart can leave that prompt attempt incomplete; later manual or scheduled synchronization remains the recovery path.

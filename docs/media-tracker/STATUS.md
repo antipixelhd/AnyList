@@ -1,6 +1,8 @@
 # AnyList implementation status
 
-Updated 2026-09-20. Release one is complete, validated locally, and deployed to the isolated test instance. Stage Two implementation is active. Production rollout is intentionally separate.
+Updated 2026-09-22. Release one is complete, validated locally, and deployed to the isolated test instance. Stage Two's additional local gates are implemented and awaiting owner manual verification before any VPS work. Production rollout is intentionally separate.
+
+The 2026-09-21 refinements now have local implementation evidence in [STAGE-TWO-PLAN.md](STAGE-TWO-PLAN.md) and the [public-ready gates](PUBLIC-READY-GATES.md). The disposable PostgreSQL suite passes 1,167 tests, the Astro production build passes, and the final implementation head passed public CI. Authenticated browser checks covered responsive canonical pages, offline in-tab list navigation, logout cache purge and a populated editor under reduced motion. Live provider delivery, deployed Google authentication, physical phones and owner acceptance remain open.
 
 Owner review of deployed build `504c687` produced a new mandatory Phase Two backlog. The current deployment remains a verified baseline but is no longer eligible for final approval. `STAGE-TWO-PLAN.md` now requires a condensed rating-aware quick editor, denser lists and corrected shell styling, grouped multi-provider delivery state, repaired connected-completion notifications/activity, desktop-only AniList-style Fast search, an AniList-measured layout/Stats pass, distinct Favorite and streaming-Library actions, legacy Scrob-UI removal, an AnyList login redesign, and ratings attached to Rated activity. No application code was changed in the documentation checkpoint that recorded these findings.
 

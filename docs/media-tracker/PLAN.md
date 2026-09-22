@@ -2,10 +2,10 @@
 
 Status: release-one implementation completed and validated on 2026-09-19. See RELEASE-AUDIT.md and STATUS.md for scope and evidence.
 
-Stage two is in final acceptance as of 2026-09-20. Read STAGE-TWO-PLAN.md for the accepted contract and implementation evidence, and STAGE-TWO-REVIEW.md for the historical baseline findings. The owner's Google-authenticated review and physical Android/iPhone checks remain the final acceptance gates; games/books remain deferred.
+Stage two's earlier implementation reached final acceptance review on 2026-09-20, and the owner added mandatory local-development gates on 2026-09-21. The added gates were implemented locally on 2026-09-22. The next step is owner manual verification before any VPS work. Read STAGE-TWO-PLAN.md for the accepted requirements and local handoff, STAGE-TWO-REVIEW.md for the original baseline findings, and PUBLIC-READY-GATES.md for the remaining deployed and owner proof. Google-authenticated review and physical Android/iPhone checks remain later acceptance gates; games/books remain deferred.
 
-The Stage Two contract is accepted and implemented. See STAGE-TWO-PLAN.md for the consolidated requirements and PUBLIC-READY-GATES.md for the remaining review evidence, including the mandatory post-core-approval checkpoint for optional season features.
-Updated: 2026-09-20.
+The optional-season checkpoint remains after core approval.
+Updated: 2026-09-22.
 
 This is the durable handoff for this project. Read DECISIONS.md and GLOSSARY.md with this document. Explicit accepted decisions override recommendations and older conversation statements. Unresolved items must not silently become requirements.
 

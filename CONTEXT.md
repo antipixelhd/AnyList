@@ -1,6 +1,6 @@
 # Media tracking
 
-A personal record of movies and whole TV series, with optional connected-service progress and comparison with followed people. The established domain glossary is in [GLOSSARY.md](../docs/media-tracker/GLOSSARY.md); this file records terminology resolved during the maturity work.
+A personal record of movies and whole TV series, with optional connected-service progress and comparison with followed people. The established domain glossary is in [GLOSSARY.md](docs/media-tracker/GLOSSARY.md); this file records terminology resolved during the maturity work.
 
 ## Language
 
@@ -11,6 +11,14 @@ _Avoid_: Offline tracking, unsupported user
 **Connected tracking**:
 Maintaining personal viewing progress using observations from an optional linked service, with the user retaining control over their own entries and ratings.
 _Avoid_: Mandatory sync, automatic rating
+
+**Connection**:
+One AnyList user's link to an external service account or profile. Different AnyList users may independently connect the same external identity; a connection is not exclusive ownership of that identity.
+_Avoid_: AnyList account, shared connection row
+
+**Streaming library**:
+An AnyList user's selected movie and series membership, independent of tracked-list entries and usable without any connection. Eligible Stremio and Nuvio connections can mirror that membership later.
+_Avoid_: Favorite, Plan to Watch
 
 **Catalog search**:
 Finding movies or whole TV series available to add or inspect, including titles absent from the user's personal list.
@@ -41,8 +49,8 @@ One title-level operational delivery record for a local change intended for one 
 _Avoid_: One card per provider, successful local save
 
 **Season position**:
-The latest watched regular episode identified by its season and episode number, such as S1E4, alongside the completed-season progress.
-_Avoid_: Whole-show episode number
+The furthest completed regular episode in series order, identified by season and episode number such as S1E4, alongside the completed-season progress.
+_Avoid_: Whole-show episode number, most recently replayed episode
 
 **Finished season**:
 A season that is fully released and whose episodes have all been watched; an airing season with every currently released episode watched does not meet this definition.
