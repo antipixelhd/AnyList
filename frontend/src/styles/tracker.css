@@ -218,6 +218,7 @@ body.tracker{font-size:14px;line-height:1.55}
 .entry-row{min-height:60px}
 @media(hover:none),(max-width:650px){.progress-increment{display:none}}
 .tracker[data-list-landing] .list-shell{min-height:calc(100dvh - 50px)}
+.tracker[data-list-landing]:not([data-list-ready]) #content{visibility:hidden}
 
 /* Browse keeps the search compact while the default view leads with trending titles. */
 .browse-heading h1{margin:.2rem 0 .25rem}.browse-heading p{margin:0;color:var(--muted)}.browse-status:empty{display:none}.media-card-placeholder{width:100%;height:250px;display:grid;place-items:center;border-radius:5px;background:linear-gradient(145deg,#243c52,#192b3d);color:var(--blue);font-size:42px;font-weight:800}

@@ -30,12 +30,6 @@ const canIncrement = (entry: any) => entry.type === 'movie'
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data}>
   {data ? <>
     <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following}} active={section}/>
-    <script is:inline>
-      (() => {
-        const tabs = document.querySelector('.profile-tabs');
-        if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
-      })();
-    </script>
     <div class="list-shell" data-initial-status={initialStatus}>
       <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters"><Icon name="sliders"/> <span>Filters & sorting</span><span id="mobile-filter-count" class="filter-count" hidden>0</span></button>
       <aside class="filters" id="list-filters" aria-label="List filters">
@@ -68,6 +62,12 @@ const canIncrement = (entry: any) => entry.type === 'movie'
       <div id="list-empty" class="empty-state" hidden={entries.length>0}><h2>{entries.length ? 'No matching titles' : 'Every list starts with a story'}</h2><p>{entries.length ? 'Try a different search or filter.' : data.owner ? 'Find a movie or series and add it to your list.' : 'There are no entries in this list yet.'}</p>{data.owner&&<a class="button-primary" href="/browse">Browse titles</a>}</div>
       </div>
     </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div><TrackingEditor entries={entries}/>
+    <script is:inline data-astro-rerun>
+      (() => {
+        const tabs = document.querySelector('.profile-tabs');
+        if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
+      })();
+    </script>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
@@ -166,6 +166,7 @@ document.addEventListener('astro:page-load', () => {
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
     document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});
     filter();
+    document.body.setAttribute('data-list-ready', '');
   }
 });
 </script>
