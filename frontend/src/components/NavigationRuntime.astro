@@ -10,6 +10,7 @@
     pages: Map<string, CachedPage>;
     bytes: number;
     usedCached: Set<string>;
+    generation?: number;
     timer?: number;
     initialized?: boolean;
     originalFetch?: typeof window.fetch;
@@ -29,16 +30,21 @@
   );
   const keyFor = (url: URL, user = currentUser()) => `${user}:${url.pathname}${url.search}`;
   const state = window.__anyListNavigation ||= {
-    user: currentUser(), pages: new Map(), bytes: 0, usedCached: new Set(),
+    user: currentUser(), pages: new Map(), bytes: 0, usedCached: new Set(), generation: 0,
   };
+
+  function clearPages() {
+    state.pages.clear();
+    state.usedCached.clear();
+    state.bytes = 0;
+    state.generation = (state.generation || 0) + 1;
+  }
 
   function resetForIdentity() {
     const user = currentUser();
     if (state.user === user) return;
     state.user = user;
-    state.pages.clear();
-    state.usedCached.clear();
-    state.bytes = 0;
+    clearPages();
   }
 
   function showToast(message: string) {
@@ -142,12 +148,14 @@
       state.usedCached.delete(key);
       return;
     }
+    const generation = state.generation;
     try {
       const response = await (state.originalFetch || window.fetch)(url.href, {
         credentials: 'same-origin', headers: { Accept: 'text/html' },
       });
       if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) return;
       const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (generation !== state.generation) return;
       if (!doc.querySelector('[name="astro-view-transitions-enabled"]')) return;
       if ((doc.body.dataset.cacheUser || 'anonymous') !== state.user) return;
       remember(url, doc);
@@ -180,7 +188,16 @@
           showToast('No internet access. This change was not queued.');
           throw new TypeError('Offline writes are not queued');
         }
-        return await state.originalFetch!(input, init);
+        const response = await state.originalFetch!(input, init);
+        if (method !== 'GET' && response.ok) {
+          const url = new URL(request?.url || String(input), location.href);
+          if (url.origin === location.origin && url.pathname.startsWith('/api/proxy/')) {
+            // Mutations can change totals, lists, detail controls, feeds, and profiles.
+            // Retire all same-user page snapshots before the next client navigation.
+            clearPages();
+          }
+        }
+        return response;
       } catch (error) {
         if (method !== 'GET' && navigator.onLine) showToast('Could not connect. This change was not queued.');
         throw error;
@@ -201,7 +218,7 @@
     document.addEventListener('submit', event => {
       const form = event.target as HTMLFormElement;
       if (new URL(form.action, location.href).pathname === '/logout') {
-        state.pages.clear(); state.usedCached.clear(); state.bytes = 0;
+        clearPages();
       }
     }, true);
 
