@@ -35,4 +35,4 @@ const favoriteGroups=profile?.combine_lists===false
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>
     {profile.recent_activity.length?profile.recent_activity.map((a:any)=><ActivityCard activity={a}/>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
   </section>
-</main></>:<main class="page-width"><p class="error-message" role="alert">{error}</p></main>}</Tracker>
+</main></>:<main class="page-width"><p class="error-message" role="alert">{error}</p></main></Tracker>
