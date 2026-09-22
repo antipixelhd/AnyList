@@ -34,9 +34,11 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         from core.pull_propagation import propagate_cloud_pull
 
         db = AsyncMock()
-        db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: object())
+        db.execute.return_value = SimpleNamespace(
+            scalar_one_or_none=lambda: SimpleNamespace(approved=True),
+        )
         fan_out = AsyncMock()
-        with patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=True)), \
+        with patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=False)), \
              patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
             await propagate_cloud_pull(
                 db, user_id=41, provider='trakt', watched_ids={10},
@@ -48,8 +50,10 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(fan_out.await_args.args[4], {(11, None): 8.0})
 
         fan_out.reset_mock()
-        with patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=False)), \
-             patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
+        db.execute.return_value = SimpleNamespace(
+            scalar_one_or_none=lambda: SimpleNamespace(approved=False),
+        )
+        with patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
             await propagate_cloud_pull(
                 db, user_id=41, provider='trakt', watched_ids={10},
                 ratings={}, complete=True,

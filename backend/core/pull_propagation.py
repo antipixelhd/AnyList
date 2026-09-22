@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from models.base import CollectionSource
 from models.ratings import RatingChanges
+from models.tracking import CloudBaseline
 from models.users import UserSettings
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,11 @@ async def propagate_cloud_pull(
 ) -> None:
     if not complete or (not watched_ids and not ratings):
         return
-    from core.cloud_reconciliation import cloud_push_is_approved
-
-    if not await cloud_push_is_approved(db, user_id, provider):
+    baseline = (await db.execute(select(CloudBaseline).where(
+        CloudBaseline.user_id == user_id,
+        CloudBaseline.provider == provider,
+    ))).scalar_one_or_none()
+    if not baseline or not baseline.approved:
         return
     from routers.sync import _fan_out_changes_to_other_connections
 
