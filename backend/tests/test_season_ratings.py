@@ -74,6 +74,12 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
         )
         approval.start()
         self.addCleanup(approval.stop)
+        stream_approval = patch(
+            "core.tracking_snapshot.require_stream_reconciliation",
+            AsyncMock(),
+        )
+        stream_approval.start()
+        self.addCleanup(stream_approval.stop)
 
     async def test_season_rating_fans_out_with_provider_specific_identity(self) -> None:
         media = Media(
