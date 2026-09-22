@@ -1,5 +1,9 @@
 # AnyList implementation status
 
+## Profile settings visual correction (2026-09-22)
+
+The bio editor now loads TOAST UI's dark theme and uses readable light text, a consistent dark toolbar, and restrained heading styles without the large heading divider. The Profile settings card stack no longer inherits the old 48px inter-card margins; header and card gaps are tighter. The Settings icon opens Profile first, while Account remains available in the settings sidebar. The Astro production build passes. Authenticated visual browser review remains open; no VPS work was performed.
+
 ## Compact autosaving profile settings (2026-09-22)
 
 Profile controls now send partial saves as they change; display name waits 500 ms, and bio alone has an explicit Save button. The bio editor provides visual Markdown and Raw Markdown modes, supports 1,000 characters, and the overview renders Markdown with raw HTML disabled. Social search excerpts use plain text. Localization controls share a compact responsive section. A successful combined-list preference change updates current navigation and profile tabs, while the existing mutation handler discards cached profile pages. Migration `mt017` widened the local PostgreSQL bio column. The frontend build, 83 tracking API tests, focused Markdown safety assertions, and local migration upgrade passed. Authenticated browser interaction remains to be checked; no VPS work was performed.

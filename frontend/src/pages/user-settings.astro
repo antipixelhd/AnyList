@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { tracker } from "../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
 import '@toast-ui/editor/dist/toastui-editor.css';
+import '@toast-ui/editor/dist/theme/toastui-editor-dark.css';
 
 const { token } = Astro.locals;
 const [profileData, me, trackingPrefs] = await Promise.all([
@@ -138,7 +139,7 @@ const COUNTRIES = [
 <TrackerSettings title="Profile settings">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div class="profile-settings max-w-4xl mx-auto">
-    <div class="space-y-12">
+    <div class="profile-settings-cards">
 
       <!-- Identity -->
       <section>
@@ -817,8 +818,9 @@ const COUNTRIES = [
       rawBio.addEventListener('input', updateBio);
       void import('@toast-ui/editor').then(({ default: Editor }) => {
         if (!editorHost.isConnected) return;
-        bioEditor = new Editor({ el: editorHost, height: '190px', initialValue: savedBio,
-          initialEditType: 'wysiwyg', hideModeSwitch: true, usageStatistics: false,
+        bioEditor = new Editor({ el: editorHost, height: '220px', initialValue: savedBio,
+          initialEditType: 'wysiwyg', theme: 'dark', hideModeSwitch: true, usageStatistics: false,
+          placeholder: 'Write a short bio…',
           toolbarItems: [['heading', 'bold', 'italic']] });
         savedVisualBio = bioEditor.getMarkdown();
         bioEditor.on('change', updateBio);
