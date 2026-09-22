@@ -549,7 +549,8 @@ const COUNTRIES = [
         const data = await res.json() as { avatar_url: string };
         setAvatarPreview(`/api/proxy${data.avatar_url}?t=${Date.now()}`);
         if (removeBtn) removeBtn.classList.remove('hidden');
-        showMessage('Avatar updated.');
+        // A normal reload clears client-navigation snapshots rendered with the old avatar.
+        location.reload();
       } catch (e: unknown) {
         showMessage(e instanceof Error ? e.message : 'Upload failed.', 'error');
       } finally {
@@ -568,7 +569,7 @@ const COUNTRIES = [
         if (!res.ok) throw new Error('Failed to remove avatar');
         setAvatarPreview(null);
         removeBtn.classList.add('hidden');
-        showMessage('Avatar removed.');
+        location.reload();
       } catch (e: unknown) {
         showMessage(e instanceof Error ? e.message : 'Failed to remove avatar.', 'error');
       } finally {
