@@ -22,10 +22,9 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
       <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><select name="status" class="editor-status-native" tabindex="-1" aria-hidden="true">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select><div class="editor-status-dropdown"><button type="button" id="editor-status-trigger" class="editor-status-trigger" aria-labelledby="editor-status-label editor-status-value" aria-expanded="false" aria-controls="editor-status-options"><span id="editor-status-value">Watching</span><Icon name="chevron-down" /></button><div id="editor-status-options" class="editor-status-options" hidden>{statuses.map(([value,label]) => <button type="button" data-editor-status={value}>{label}</button>)}</div></div></div>
       <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint" id="score-help">0 means unrated</span></label>
       <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
-      <label>Start date<input name="start_date" type="date"/></label><label>Finish date<input name="finish_date" type="date"/></label>
-      <label>Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
+      <label class="editor-start-date">Start date<input name="start_date" type="date"/></label><label class="editor-finish-date">Finish date<input name="finish_date" type="date"/></label>
+      <label class="editor-rewatches">Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
       <label class="wide editor-notes">Notes<textarea name="notes" rows="2" placeholder="Only you can see these notes"></textarea></label>
-      <p class="wide hint" id="completion-help">Completing a series marks every currently released regular episode as watched. Episodes released later remain unwatched.</p>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
@@ -125,7 +124,6 @@ document.addEventListener('astro:page-load', () => {
     field('favorite').checked = Boolean(current.favorite);
     field('progress').disabled = title.type === 'movie';
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
-    document.querySelector<HTMLElement>('#completion-help')!.hidden = title.type === 'movie';
     updateScoreHelp();
     initialState = formState();
     saveButton.disabled = false;
