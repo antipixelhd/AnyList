@@ -4,7 +4,7 @@ const base=`/user/${encodeURIComponent(profile.username)}`;
 ---
 <section class="profile-hero"><div class="profile-identity">
 {profile.has_avatar?<img class="profile-avatar" src={`/api/proxy/profile/avatar/${profile.id}`} alt=""/>:<div class="profile-avatar" aria-hidden="true">{profile.display_name.slice(0,1).toUpperCase()}</div>}
-<div><h1>{profile.display_name}</h1></div>
+<div><h1 style="transform: translateY(-10px)">{profile.display_name}</h1></div>
 {!profile.owner&&Astro.locals.user&&<button class="button-primary" id="follow-profile" data-user={profile.id} data-following={profile.following?'yes':'no'}>{profile.following?'Following':'Follow'}</button>}
 </div></section>
 <nav class="profile-tabs" aria-label="Profile"><a href={base} class:list={{active:active==='overview'}} aria-current={active==='overview'?'page':undefined}>Overview</a>{profile.combine_lists!==false?<a href={`${base}/list`} class:list={{active:active==='list'}} aria-current={active==='list'?'page':undefined}>Movie/Series List</a>:<><a href={`${base}/movies`} class:list={{active:active==='movies'}} aria-current={active==='movies'?'page':undefined}>Movie List</a><a href={`${base}/series`} class:list={{active:active==='series'}} aria-current={active==='series'?'page':undefined}>Series List</a></>}<a href={`${base}/stats`} class:list={{active:active==='stats'}} aria-current={active==='stats'?'page':undefined}>Stats</a>{profile.owner&&<a href={`${base}/library`} class:list={{active:active==='library'}} aria-current={active==='library'?'page':undefined}>Library</a>}<a href={`${base}/social`} class:list={{active:active==='social'}} aria-current={active==='social'?'page':undefined}>Social</a></nav>
