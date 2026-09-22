@@ -292,6 +292,11 @@ body.tracker{font-size:14px;line-height:1.55}
 /* The title carries the activity link color; its action stays visually quiet. */
 .activity-stream .event-action>span{color:var(--bright)}
 .activity-stream .event-action>a,.activity-stream .event-action>a:hover{color:var(--blue)}
+.activity-stream .event-body{display:flex;flex-direction:column;justify-content:center}
+.activity-stream .event-meta{position:absolute;top:11px;left:14px;right:14px}
+.activity-stream .event-action{margin:28px 72px 28px 0;text-align:left}
+.activity-stream .event-action>span{font-weight:400}
+@media(max-width:700px){.activity-stream .event-meta{top:9px;left:11px;right:11px}.activity-stream .event-action{margin:25px 62px 25px 0}}
 
 /* Fast search starts as a compact input; result cards appear together after a response. */
 .quick-search-dialog{position:fixed;inset:52px 0 auto;width:min(860px,calc(100vw - 64px));max-height:calc(100vh - 76px);margin:0 auto;overflow:auto;background:transparent;border:0;box-shadow:none;animation:quick-search-enter .18s ease-out}
