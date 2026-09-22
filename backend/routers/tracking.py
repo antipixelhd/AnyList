@@ -1,5 +1,8 @@
 """Tracked lists are independent of connected streaming-library membership."""
+import asyncio
+import re
 from datetime import date, datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -18,6 +21,42 @@ from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, Tr
 from models.sync import SyncJob, SyncStatus
 
 router = APIRouter()
+
+
+def fuzzy_remote_terms(term: str) -> list[str]:
+    """Return a small, conservative set of useful typo corrections for TMDB.
+
+    PostgreSQL's trigram search handles titles already in AnyList, but a title
+    not imported yet has to be found by TMDB. TMDB treats a misspelling as a
+    literal query, so recover the common cases without a wide edit-distance
+    search against the remote API.
+    """
+    candidates: list[str] = []
+
+    def add(value: str) -> None:
+        value = value.strip()
+        if value and value.casefold() != term.casefold() and value not in candidates:
+            candidates.append(value)
+
+    # Correct one repeated run at a time: “Thee Odyssey” should produce
+    # “The Odyssey”, not also strip the legitimate double-s in “Odyssey”.
+    for match in re.finditer(r"(.)\1+", term, flags=re.IGNORECASE):
+        add(f"{term[:match.start()]}{match.group(1)}{term[match.end():]}")
+    # These reciprocal substitutions cover ordinary keyboard/vowel slips such
+    # as Mutany -> Mutiny. Generated results are checked against the original
+    # spelling before they reach the user.
+    substitutions = (("a", "i"), ("i", "a"), ("e", "a"), ("a", "e"),
+                     ("o", "u"), ("u", "o"), ("e", "i"), ("i", "e"))
+    for wrong, right in substitutions:
+        for match in re.finditer(wrong, term, flags=re.IGNORECASE):
+            add(f"{term[:match.start()]}{right}{term[match.end():]}")
+    return candidates[:8]
+
+
+def is_close_title_match(query: str, title: str) -> bool:
+    """Avoid showing unrelated results from a generated fallback query."""
+    compact = lambda value: re.sub(r"[^\w]", "", value.casefold())
+    return SequenceMatcher(None, compact(query), compact(title)).ratio() >= 0.6
 
 
 @router.delete('/entry/{media_id}')
@@ -836,8 +875,24 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
             try:
                 search = tmdb.search_movies if media_type == 'movie' else tmdb.search_shows
                 remote = await search(term, api_key=key)
+                remote_results = remote.get('results', [])
+                # Search an unimported title with a few safe corrections only
+                # when the literal request came back empty. This preserves
+                # normal TMDB ranking and keeps the fallback within its API
+                # budget.
+                if not remote_results:
+                    corrected = await asyncio.gather(
+                        *(search(candidate, api_key=key) for candidate in fuzzy_remote_terms(term)),
+                        return_exceptions=True,
+                    )
+                    remote_results = [
+                        item
+                        for response in corrected if isinstance(response, dict)
+                        for item in response.get('results', [])
+                        if is_close_title_match(term, item.get('title') or item.get('name') or '')
+                    ]
                 known = {m.tmdb_id for m in rows if m.tmdb_id}
-                for item in remote.get('results', []):
+                for item in remote_results:
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
                     if item['id'] in known or item.get('adult') or (not show_anime and is_anime(candidate)):

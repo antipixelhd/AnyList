@@ -181,6 +181,26 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['results'][0]['id'],self.movie.id)
 
+    async def test_catalog_search_recovers_remote_common_title_typos(self):
+        from core import tmdb
+
+        async def search(query, **_kwargs):
+            if query == 'Mutiny':
+                return {'results':[{'id':101,'title':'Mutiny','poster_path':'/mutiny.jpg','release_date':'2026-01-01'}]}
+            if query == 'The Odyssey':
+                return {'results':[{'id':102,'title':'The Odyssey','poster_path':'/odyssey.jpg','release_date':'2026-01-01'}]}
+            return {'results':[]}
+
+        with (patch('routers.media.get_user_tmdb_key', AsyncMock(return_value='fixture-key')),
+              patch.object(tmdb, 'search_movies', side_effect=search)):
+            mutany = await self.client.get('/tracking/catalog', params={'media_type':'movie','q':'Mutany'})
+            odyssey = await self.client.get('/tracking/catalog', params={'media_type':'movie','q':'Thee Odyssey'})
+
+        self.assertEqual(mutany.status_code, 200, mutany.text)
+        self.assertEqual([row['title'] for row in mutany.json()['results']], ['Mutiny'])
+        self.assertEqual(odyssey.status_code, 200, odyssey.text)
+        self.assertEqual([row['title'] for row in odyssey.json()['results']], ['The Odyssey'])
+
     async def test_manual_completed_only_defaults_finish(self):
         res=await self.save(self.movie,status='completed')
         self.assertEqual(res.status_code,200,res.text)
