@@ -22,11 +22,11 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
 
         db = AsyncMock()
         db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: object())
+        db.get.return_value = SimpleNamespace(approved=True)
         conn = SimpleNamespace(id=7, user_id=41, type='jellyfin')
         fan_out = AsyncMock()
-        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
-             patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
-            await propagate_media_server_pull(db, conn=conn, watched_ids={10})
+        with patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
+            await propagate_media_server_pull(db, conn=conn, watched_ids={10}, ratings={})
             fan_out.assert_awaited_once()
             self.assertEqual(fan_out.await_args.args[:5], (db, 41, 7, {10}, {}))
 

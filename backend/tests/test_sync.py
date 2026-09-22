@@ -1123,6 +1123,36 @@ class SyncItemsPartialWatchFanOutTests(_PartialWatchDB):
                 )
                 self.assertEqual(changes, expected)
 
+    async def test_media_server_rating_waits_for_reconciliation(self):
+        from models.collection import Collection, CollectionFile, CollectionSource
+        from models.media import Media, MediaType
+        from models.ratings import Rating
+
+        async with self.Session() as db:
+            media = Media(tmdb_id=603, media_type=MediaType.movie, title="The Matrix")
+            db.add(media)
+            await db.flush()
+            coll = Collection(user_id=1, media_id=media.id)
+            db.add(coll)
+            await db.flush()
+            db.add(CollectionFile(
+                collection_id=coll.id, connection_id=7,
+                source=CollectionSource.jellyfin, source_id="jf-1",
+            ))
+            await db.commit()
+            observed = {}
+            await sync.sync_items(
+                items=[{
+                    "Id": "jf-1", "Name": "The Matrix", "ProviderIds": {"Tmdb": "603"},
+                    "UserData": {"Rating": 8},
+                }],
+                media_type=MediaType.movie, source=CollectionSource.jellyfin,
+                db=db, stats={"movies": 0, "episodes": 0, "skipped": 0, "errors": 0},
+                user_id=1, connection_id=7, observed_ratings=observed,
+            )
+            self.assertEqual(observed, {(media.id, None): 8.0})
+            self.assertEqual((await db.execute(select(Rating))).scalars().all(), [])
+
 
 class FullPushPartialWatchTests(_PartialWatchDB):
     """Same bug on the manual push path, which read every WatchEvent as

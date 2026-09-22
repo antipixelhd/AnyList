@@ -48,15 +48,15 @@ async def propagate_cloud_pull(
         logger.exception("Cloud pull propagation failed for %s user %s", provider, user_id)
 
 
-async def propagate_media_server_pull(db, *, conn, watched_ids: set[int]) -> None:
-    if not watched_ids:
+async def propagate_media_server_pull(
+    db, *, conn, watched_ids: set[int], ratings: RatingChanges,
+) -> None:
+    if not watched_ids and not ratings:
         return
-    from core.tracking_snapshot import require_stream_reconciliation
-    from fastapi import HTTPException
+    from models.tracking import StreamBaseline
 
-    try:
-        await require_stream_reconciliation(db, conn)
-    except HTTPException:
+    baseline = await db.get(StreamBaseline, conn.id)
+    if not baseline or not baseline.approved:
         return
     from routers.sync import _fan_out_changes_to_other_connections
 
@@ -65,7 +65,7 @@ async def propagate_media_server_pull(db, *, conn, watched_ids: set[int]) -> Non
             UserSettings.user_id == conn.user_id,
         ))).scalar_one_or_none()
         await _fan_out_changes_to_other_connections(
-            db, conn.user_id, conn.id, watched_ids, {}, settings,
+            db, conn.user_id, conn.id, watched_ids, ratings, settings,
         )
     except Exception:
         logger.exception("Media server pull propagation failed for connection %s", conn.id)

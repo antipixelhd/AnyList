@@ -2096,6 +2096,7 @@ async def sync_items(
     sync_ratings: bool = True,
     new_watched_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
     new_ratings: RatingChanges | None = None,  # accumulated across calls; mutated in-place
+    observed_ratings: RatingChanges | None = None,  # complete source values for reviewed media-server pulls
     new_collected_ids: set[int] | None = None,  # accumulated across calls; mutated in-place
     connection_id: int | None = None,
     ratingkey_to_media_id: dict[str, int] | None = None,  # accumulated across calls; mutated in-place
@@ -2226,14 +2227,17 @@ async def sync_items(
             rewatch_progressed_media_ids = {row[0] for row in progress_q.all()}
 
     # Existing ratings: media_id → Rating
-    rat_res = await db.execute(
-        select(Rating).where(
-            Rating.user_id == user_id,
-            Rating.season_number.is_(None),
-            Rating.episode_order.is_(None),
+    if observed_ratings is None:
+        rat_res = await db.execute(
+            select(Rating).where(
+                Rating.user_id == user_id,
+                Rating.season_number.is_(None),
+                Rating.episode_order.is_(None),
+            )
         )
-    )
-    existing_ratings: dict[int, Rating] = {r.media_id: r for r in rat_res.scalars()}
+        existing_ratings: dict[int, Rating] = {r.media_id: r for r in rat_res.scalars()}
+    else:
+        existing_ratings = {}
 
     # ── Phase 2: Main sync loop (no N+1 queries, savepoints for error isolation) ──
     new_media_for_enrichment: list[tuple] = []  # (Media, series_tmdb_id | None)
@@ -2254,6 +2258,7 @@ async def sync_items(
 
     for i, item in enumerate(items):
         new_media: Media | None = None
+        rating_observation: tuple[RatingKey, float] | None = None
         try:
             async with db.begin_nested():
                 if source in _MEDIA_BROWSER_ITEM_SOURCES:
@@ -2617,16 +2622,19 @@ async def sync_items(
                                 new_watched_ids.add(media_id_for_watch)
 
                     if sync_ratings and watch_state["user_rating"] is not None:
-                        existing_r = existing_ratings.get(media_id_for_watch)
-                        if not existing_r or existing_r.rating != watch_state["user_rating"]:
-                            if existing_r:
-                                existing_r.rating = watch_state["user_rating"]
-                            else:
-                                new_r = Rating(user_id=user_id, media_id=media_id_for_watch, rating=watch_state["user_rating"])
-                                db.add(new_r)
-                                existing_ratings[media_id_for_watch] = new_r
-                            if new_ratings is not None:
-                                new_ratings[(media_id_for_watch, None)] = watch_state["user_rating"]
+                        if observed_ratings is not None:
+                            rating_observation = ((media_id_for_watch, None), watch_state["user_rating"])
+                        else:
+                            existing_r = existing_ratings.get(media_id_for_watch)
+                            if not existing_r or existing_r.rating != watch_state["user_rating"]:
+                                if existing_r:
+                                    existing_r.rating = watch_state["user_rating"]
+                                else:
+                                    new_r = Rating(user_id=user_id, media_id=media_id_for_watch, rating=watch_state["user_rating"])
+                                    db.add(new_r)
+                                    existing_ratings[media_id_for_watch] = new_r
+                                if new_ratings is not None:
+                                    new_ratings[(media_id_for_watch, None)] = watch_state["user_rating"]
 
             # Savepoint committed, so queue the collection's add-date only now:
             # an item that rolled back must not leave a heal behind for work
@@ -2635,6 +2643,8 @@ async def sync_items(
                 queued = collection_heals.get(heal_collection_id)
                 if queued is None or added_at < queued:
                     collection_heals[heal_collection_id] = added_at
+            if rating_observation is not None and observed_ratings is not None:
+                observed_ratings[rating_observation[0]] = rating_observation[1]
 
             # Savepoint committed - update pre-loaded caches so duplicates within the
             # same sync batch reuse the newly created media instead of creating another.
@@ -2764,7 +2774,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
-            _new_ratings: RatingChanges = {}
+            _observed_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
             _seen_collection_source_ids: set[str] = set()
 
@@ -2823,7 +2833,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.jellyfin, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
@@ -2866,7 +2876,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
@@ -2877,7 +2887,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                             seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
@@ -2893,15 +2903,17 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
             print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
             from core.media_server_reconciliation import reconcile_media_server_pull
-            accepted_watched = await reconcile_media_server_pull(
-                db, conn, stats, _new_watched,
+            accepted_watched, accepted_ratings = await reconcile_media_server_pull(
+                db, conn, stats, _new_watched, _observed_ratings,
                 complete=not movie_limit and not show_limit and not stats["errors"],
             )
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             from core.pull_propagation import propagate_media_server_pull
-            await propagate_media_server_pull(db, conn=conn, watched_ids=accepted_watched)
+            await propagate_media_server_pull(
+                db, conn=conn, watched_ids=accepted_watched, ratings=accepted_ratings,
+            )
             asyncio.create_task(pre_cache_all_collected_bg())
         except SyncCancelled:
             print(f"Jellyfin sync job {job_id} cancelled")
@@ -2977,7 +2989,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
-            _new_ratings: RatingChanges = {}
+            _observed_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
             _seen_collection_source_ids: set[str] = set()
 
@@ -3036,7 +3048,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.emby, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
@@ -3081,7 +3093,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
@@ -3092,7 +3104,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                             seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
@@ -3108,15 +3120,17 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
             print(f"Emby sync job {job_id} completed. Stats: {stats}")
             from core.media_server_reconciliation import reconcile_media_server_pull
-            accepted_watched = await reconcile_media_server_pull(
-                db, conn, stats, _new_watched,
+            accepted_watched, accepted_ratings = await reconcile_media_server_pull(
+                db, conn, stats, _new_watched, _observed_ratings,
                 complete=not movie_limit and not show_limit and not stats["errors"],
             )
             all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             from core.pull_propagation import propagate_media_server_pull
-            await propagate_media_server_pull(db, conn=conn, watched_ids=accepted_watched)
+            await propagate_media_server_pull(
+                db, conn=conn, watched_ids=accepted_watched, ratings=accepted_ratings,
+            )
             asyncio.create_task(pre_cache_all_collected_bg())
         except SyncCancelled:
             print(f"Emby sync job {job_id} cancelled")
@@ -3893,7 +3907,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
-            _new_ratings: RatingChanges = {}
+            _observed_ratings: RatingChanges = {}
             _new_collected: set[int] = set()
             _seen_collection_source_ids: set[str] = set()
             # ratingKey -> media_id, accumulated across every movie/show library this
@@ -3901,17 +3915,6 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             # built here (not via CollectionFile) since it must exist even when
             # sync_collection is off, as watched-history sync doesn't depend on it.
             _plex_ratingkey_to_media: dict[str, int] = {}
-            ratings_result = await db.execute(
-                select(Rating).where(
-                    Rating.user_id == user_id,
-                    Rating.episode_order.is_(None),
-                )
-            )
-            existing_ratings = {
-                (rating.media_id, rating.season_number): rating
-                for rating in ratings_result.scalars().all()
-            }
-
             for lib in libraries:
                 lib_type = lib.get("type")
                 lib_key = lib.get("key")
@@ -3966,7 +3969,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
                     w = await sync_items(items, MediaType.movie, CollectionSource.plex, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
@@ -4056,24 +4059,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                     )
                                     key = (media.id, int(season_number))
                                     rating_value = float(season["userRating"])
-                                    current = existing_ratings.get(key)
-                                    if current and current.rating == rating_value:
-                                        stats["skipped"] += 1
-                                        continue
-                                    if current:
-                                        current.rating = rating_value
-                                        current.rated_at = datetime.utcnow()
-                                    else:
-                                        current = Rating(
-                                            user_id=user_id,
-                                            media_id=media.id,
-                                            season_number=int(season_number),
-                                            rating=rating_value,
-                                        )
-                                        db.add(current)
-                                        existing_ratings[key] = current
-                                    _new_ratings[key] = rating_value
-                                    stats["ratings"] += 1
+                                    _observed_ratings[key] = rating_value
                             except Exception as exc:
                                 logger.warning(
                                     "Error importing Plex season rating show=%s season=%s: %s",
@@ -4106,24 +4092,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                     )
                                     key = (media.id, None)
                                     rating_value = float(show["userRating"])
-                                    current = existing_ratings.get(key)
-                                    if current and current.rating == rating_value:
-                                        stats["skipped"] += 1
-                                        continue
-                                    if current:
-                                        current.rating = rating_value
-                                        current.rated_at = datetime.utcnow()
-                                    else:
-                                        current = Rating(
-                                            user_id=user_id,
-                                            media_id=media.id,
-                                            season_number=None,
-                                            rating=rating_value,
-                                        )
-                                        db.add(current)
-                                        existing_ratings[key] = current
-                                    _new_ratings[key] = rating_value
-                                    stats["ratings"] += 1
+                                    _observed_ratings[key] = rating_value
                             except Exception as exc:
                                 logger.warning(
                                     "Error importing Plex show rating show=%s: %s",
@@ -4157,7 +4126,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                         ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                     )
                     all_warnings.extend(w)
@@ -4168,7 +4137,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=plex_watched_state_is_reliable, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, new_ratings=_new_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
+                            new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id,
                             ratingkey_to_media_id=_plex_ratingkey_to_media, seen_source_ids=_seen_collection_source_ids,
                         )
                         all_warnings.extend(w)
@@ -4203,8 +4172,8 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
             print(f"Plex sync job {job_id} completed. Stats: {stats}")
             from core.media_server_reconciliation import reconcile_media_server_pull
-            accepted_watched = await reconcile_media_server_pull(
-                db, conn, stats, _new_watched,
+            accepted_watched, accepted_ratings = await reconcile_media_server_pull(
+                db, conn, stats, _new_watched, _observed_ratings,
                 complete=not movie_limit and not show_limit and not stats["errors"],
             )
             # The watchlist reconcile above is the one exception: it honors this
@@ -4214,7 +4183,9 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
             await db.commit()
             from core.pull_propagation import propagate_media_server_pull
-            await propagate_media_server_pull(db, conn=conn, watched_ids=accepted_watched)
+            await propagate_media_server_pull(
+                db, conn=conn, watched_ids=accepted_watched, ratings=accepted_ratings,
+            )
             asyncio.create_task(pre_cache_all_collected_bg())
         except SyncCancelled:
             print(f"Plex sync job {job_id} cancelled")

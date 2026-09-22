@@ -1601,10 +1601,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))
         await self.db.commit()
         stats = {'movies': 1, 'errors': 0}
-        accepted = await reconcile_media_server_pull(
-            self.db, conn, stats, {self.movie.id}, complete=True,
+        accepted, ratings = await reconcile_media_server_pull(
+            self.db, conn, stats, {self.movie.id}, {}, complete=True,
         )
         self.assertEqual(accepted, {self.movie.id})
+        self.assertEqual(ratings, {})
         self.assertEqual(stats['tracking_updates'], 1)
 
         # A later undated observation cannot overrule the explicit local edit.
@@ -1615,11 +1616,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime.now() + timedelta(seconds=2),
         ))
         await self.db.commit()
-        rejected = await reconcile_media_server_pull(
-            self.db, conn, {'movies': 1, 'errors': 0}, {self.movie.id},
+        rejected, ratings = await reconcile_media_server_pull(
+            self.db, conn, {'movies': 1, 'errors': 0}, {self.movie.id}, {},
             complete=True,
         )
         self.assertEqual(rejected, set())
+        self.assertEqual(ratings, {})
         conflicts = (await self.db.execute(select(SyncReview).where(
             SyncReview.connection_id == conn.id, SyncReview.kind == 'conflict',
             SyncReview.state == 'pending',
@@ -1627,6 +1629,87 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(conflicts), 1)
         with self.assertRaises(HTTPException):
             await require_stream_reconciliation(self.db, conn)
+
+    async def test_media_server_rating_uses_source_baseline_and_preserves_local_edit(self):
+        from core.media_server_reconciliation import reconcile_media_server_pull
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='emby', name='Fixture Emby',
+            url='https://example.test', token='fixture',
+        )
+        self.db.add(conn)
+        await self.db.commit()
+        await self.save(self.movie, status='planning', manual_score=8)
+        row = (await self.db.execute(select(Rating).where(
+            Rating.user_id == self.owner.id, Rating.media_id == self.movie.id,
+        ))).scalar_one()
+        row.rated_at = datetime.now() - timedelta(days=2)
+        self.db.add(StreamBaseline(
+            user_id=self.owner.id, connection_id=conn.id, approved=True,
+            observed_at=datetime.now() - timedelta(days=1),
+            snapshot={'kind': 'media_server', 'ratings': {f'{self.movie.id}:': 8}},
+        ))
+        await self.db.commit()
+
+        watched, ratings = await reconcile_media_server_pull(
+            self.db, conn, {'movies': 1, 'errors': 0}, set(),
+            {(self.movie.id, None): 9}, complete=True,
+        )
+        self.assertEqual(watched, set())
+        self.assertEqual(ratings, {(self.movie.id, None): 9})
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(entry.manual_score, 9)
+
+        await self.save(self.movie, manual_score=7)
+        watched, ratings = await reconcile_media_server_pull(
+            self.db, conn, {'movies': 1, 'errors': 0}, set(),
+            {(self.movie.id, None): 9}, complete=True,
+        )
+        self.assertEqual(ratings, {})
+        await self.db.refresh(entry)
+        self.assertEqual(entry.manual_score, 7)
+        watched, ratings = await reconcile_media_server_pull(
+            self.db, conn, {'movies': 1, 'errors': 0}, set(),
+            {(self.movie.id, None): 10}, complete=True,
+        )
+        self.assertEqual(ratings, {})
+        await self.db.refresh(entry)
+        self.assertEqual(entry.manual_score, 7)
+        conflict = (await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id,
+            SyncReview.kind == 'rating_conflict',
+        ))).scalar_one()
+        self.assertEqual(conflict.previous_score, 7)
+        self.assertEqual(conflict.proposed_score, 10)
+
+    async def test_first_media_server_rating_does_not_replace_existing_local_score(self):
+        from core.media_server_reconciliation import reconcile_media_server_pull
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='plex', name='Fixture Plex',
+            url='https://example.test', token='fixture',
+        )
+        self.db.add(conn)
+        await self.db.commit()
+        await self.save(self.movie, status='planning', manual_score=7)
+        watched, ratings = await reconcile_media_server_pull(
+            self.db, conn, {'movies': 1, 'errors': 0}, set(),
+            {(self.movie.id, None): 9}, complete=True,
+        )
+        self.assertEqual((watched, ratings), (set(), {}))
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(entry.manual_score, 7)
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id,
+            SyncReview.state == 'pending',
+        ))).scalars().all()
+        self.assertEqual({review.kind for review in reviews}, {'initial_import', 'rating_conflict'})
 
     async def test_completion_threshold_does_not_infer_removal(self):
         from core.tracking_snapshot import observe_stream_snapshot

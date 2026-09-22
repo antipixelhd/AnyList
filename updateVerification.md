@@ -15,3 +15,7 @@ The in-tab Connection Settings cache retains a deliberately sparse read-only sum
 ## Existing media server connections
 
 Jellyfin, Emby, and Plex now require a complete, error-free import and confirmation of its Notifications summary before outbound synchronization. Existing connections have no reviewed baseline yet, so their next full import will create that review; enabled outbound fields will wait for approval.
+
+## Media server rating order
+
+The current Jellyfin, Emby, and Plex rating feeds do not provide a comparable per-rating modification time in this integration. A score changed from its reviewed source baseline can replace a matching, unchanged local score. If the local score also changed or the source first appears with a different score, AnyList keeps the local value and asks for review in Notifications.
