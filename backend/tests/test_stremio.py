@@ -209,6 +209,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
                     "content_id": "tt0133093",
                     "content_type": "movie",
                     "title": "The Matrix",
+                    "modified_at": None,
                     "watched_at": 1785528000000,
                 }
             ],
