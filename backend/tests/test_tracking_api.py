@@ -825,7 +825,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))).scalar_one()
         self.assertEqual(stats['conflicts'], 1)
         self.assertEqual(entry.status, 'dropped')
-        self.assertEqual(entry.progress, 1)
+        self.assertEqual(entry.progress, 0)
         self.assertIn({'field': 'status', 'previous': 'dropped', 'proposed': 'completed'}, review.payload['changes'])
 
     async def test_cloud_history_resolution_applies_reviewed_fields_together(self):
@@ -861,7 +861,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review.state, 'confirmed')
         self.assertEqual(entry.status, 'completed')
         self.assertEqual(entry.finish_date, date(2026, 9, 18))
-        self.assertEqual(entry.progress, 8)
+        self.assertEqual(entry.progress, 1)
 
     async def test_title_omits_instance_community_average(self):
         await self.save(self.movie, status='completed', manual_score=8)
@@ -1459,6 +1459,24 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             WatchEvent.user_id==self.owner.id))).scalars().all(),[self.movie.id])
         over_limit=await self.save(self.movie,progress=2)
         self.assertEqual(over_limit.status_code,409,over_limit.text)
+
+    async def test_movie_status_controls_progress_and_never_claims_episode_activity(self):
+        completed=await self.save(self.movie,status='completed')
+        self.assertEqual(completed.status_code,200,completed.text)
+        self.assertEqual(completed.json()['progress'],1)
+        watching=await self.save(self.movie,status='watching')
+        self.assertEqual(watching.status_code,200,watching.text)
+        self.assertEqual(watching.json()['progress'],0)
+        history=(await self.db.execute(select(WatchEvent.id).where(
+            WatchEvent.user_id==self.owner.id,WatchEvent.media_id==self.movie.id))).scalars().all()
+        self.assertEqual(len(history),1)
+        activity=(await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'][0]
+        self.assertEqual(activity['status'],'watching')
+        self.assertEqual(activity['payload']['episodes_watched'],0)
+        self.assertEqual((await self.save(self.movie,status='paused')).json()['progress'],0)
+        self.assertEqual((await self.save(self.movie,status='dropped')).json()['progress'],0)
+        self.assertEqual((await self.save(self.movie,status='planning')).json()['progress'],0)
+        self.assertEqual((await self.save(self.movie,status='completed')).json()['progress'],1)
 
     async def test_local_tracking_delivery_uses_only_changed_fields_after_save(self):
         response = await self.save(self.movie, progress=1, manual_score=8)

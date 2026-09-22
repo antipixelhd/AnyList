@@ -476,9 +476,12 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             if body.action=='change' and body.status:
                 entry.status=body.status.value
                 status_changed = True
+            media=await db.get(Media, entry.media_id)
+            if media.media_type == MediaType.movie:
+                entry.progress=1 if entry.status=='completed' else 0
             if status_changed:mark_status_change(entry,'local')
             from core.activity import record_daily_activity, series_activity_details
-            position, finished = await series_activity_details(db, await db.get(Media, entry.media_id), entry.progress)
+            position, finished = await series_activity_details(db, media, entry.progress)
             await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                 progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed)
@@ -488,6 +491,9 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         status=body.status.value if body.action=='change' and body.status else event.previous_status if body.action=='keep' else event.proposed_status
         if not status:raise HTTPException(422,'Choose a status')
         entry.status=status
+        media=await db.get(Media, entry.media_id)
+        if media.media_type == MediaType.movie:
+            entry.progress=1 if status=='completed' else 0
         mark_status_change(entry,'local')
         if status=='watching':
             from core.stream_actions import queue_restorations
@@ -1116,22 +1122,25 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         entry.season_scores = {**entry.season_scores, **body.season_scores}
     episodes = []
     completing_series = media.media_type == MediaType.series and status == 'completed' and previous != 'completed'
-    if body.progress is not None or body.mark_released_watched or completing_series:
+    status_driven_movie = media.media_type == MediaType.movie and 'status' in fields
+    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie:
         if media.media_type == MediaType.series and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
             raise HTTPException(409, 'Refresh episode metadata on the title page before changing progress')
-        episodes = await released_episodes(db, media)
-        target = len(episodes) if body.mark_released_watched or completing_series else body.progress
+        episodes = [media] if status_driven_movie else await released_episodes(db, media)
+        target = (1 if status == 'completed' else 0) if status_driven_movie else len(episodes) if body.mark_released_watched or completing_series else body.progress
         if not episodes or target > len(episodes):
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids), WatchEvent.completed.is_(True)))).scalars())
         # Watch events are canonical. A cached aggregate can lag after a
         # catalogue refresh, so only later watched events make this a rollback.
-        rollback = bool(watched.intersection(ids[target:]))
+        # Status alone changes the movie's current 0/1 progress, not its past
+        # viewing history. An explicit progress rollback still removes history.
+        rollback = bool(watched.intersection(ids[target:])) and not status_driven_movie
         if rollback and not body.confirm_rollback:
             raise HTTPException(409, "Confirm marking later episodes unwatched")
         for episode in episodes[:target]:
-            if episode.id not in watched:
+            if episode.id not in watched or (media.media_type == MediaType.movie and old_progress == 0 and previous != 'completed'):
                 db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True, watched_at=None, provisional=True))
                 added_watched_ids.add(episode.id)
         if rollback:
@@ -1142,7 +1151,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             # Watching later episodes resumes paused/dropped titles, while a
             # completed title remains completed even when correcting history.
             from core.tracking_rules import observed_status
-            entry.status = observed_status(previous, target == len(episodes), True)
+            entry.status = 'watching' if media.media_type == MediaType.movie and target == 0 and previous == 'completed' else observed_status(previous, target == len(episodes), True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
             local_status_decision = entry.status != previous
     if local_status_decision:
@@ -1174,7 +1183,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         from core.activity import record_daily_activity, series_activity_details
         position, finished = await series_activity_details(db, media, entry.progress)
         await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
-            episodes_watched=max(0, entry.progress-old_progress), progress=entry.progress if media.media_type == MediaType.series else None,
+            episodes_watched=max(0, entry.progress-old_progress) if media.media_type == MediaType.series else 0, progress=entry.progress if media.media_type == MediaType.series else None,
             position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
     await db.commit()
     await db.refresh(entry)

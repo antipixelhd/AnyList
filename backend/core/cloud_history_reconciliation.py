@@ -212,7 +212,9 @@ async def reconcile_cloud_watch_events(
                     provisional=True,
                     watched_at=None,
                 ))
-            if released:
+            if media.media_type == MediaType.movie:
+                entry.progress = 1
+            elif released:
                 entry.progress = len(watched_ids) + len(inferred_previous)
             stats["preserved"] += 1
             if root_id in (newly_tracked_ids or ()) and applied_media_ids is not None:
@@ -257,6 +259,8 @@ async def reconcile_cloud_watch_events(
         if released:
             entry.progress = proposed_progress
         entry.status = proposed_status
+        if media.media_type == MediaType.movie:
+            entry.progress = 1 if proposed_status == "completed" else 0
         mark_status_change(entry, provider, latest_at)
         entry.start_date = proposed_start
         entry.finish_date = proposed_finish
@@ -267,7 +271,8 @@ async def reconcile_cloud_watch_events(
             await record_daily_activity(
                 db,user_id=user_id,media_id=root_id,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
-                episodes_watched=max(0,entry.progress-previous_progress),progress=entry.progress,
+                episodes_watched=max(0,entry.progress-previous_progress) if media.media_type == MediaType.series else 0,
+                progress=entry.progress if media.media_type == MediaType.series else None,
                 position=position,finished_seasons=finished,status_changed=changed,
             )
         if changed and not initial_import:

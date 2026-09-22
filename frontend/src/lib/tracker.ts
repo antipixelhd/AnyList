@@ -32,11 +32,11 @@ export function activityAction(activity: any) {
   if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
   }
-  if (finished.length) {
+  if (activity.media?.type === 'series' && finished.length) {
     const seasons = finished.join(finished.length > 1 ? ' and ' : '');
     return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
   }
-  if (details.episodes_watched) {
+  if (activity.media?.type === 'series' && details.episodes_watched) {
     const count = Number(details.episodes_watched);
     const end = Number(details.progress);
     if (Number.isFinite(end) && end > 0) {
@@ -45,9 +45,9 @@ export function activityAction(activity: any) {
     }
     return `Watched ${count === 1 ? 'an episode' : `${count} episodes`} of`;
   }
-  if (details.status_changed && activity.status === 'watching') return 'Watching';
+  if (details.status_changed && activity.status === 'watching') return 'Started Watching';
   if (details.rating_changed && activity.score != null) return 'Rated';
-  return activity.status === 'completed' ? 'Completed' : activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
+  return activity.status === 'completed' ? 'Completed' : activity.status === 'planning' ? 'Plans to watch' : activity.status === 'watching' ? 'Started Watching' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
 }
 
 export const activityLabel = activityAction;

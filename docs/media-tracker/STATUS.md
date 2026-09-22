@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Activity label and movie progress correction (2026-09-22)
+
+Activity cards now show the linked title in blue with a stable hover color and the action text in light text. The hierarchy places Started Watching after series season/episode progress and before rating-only activity. Movie activity never uses episode wording, including older cards whose payload retained a one-step movie progress change. Manual status changes and imported/reviewed changes set current movie progress to 1 for Completed and 0 otherwise; recorded watch history remains available. Migration `mt016` repairs existing movie rows without deleting their history.
+
+Local verification: the disposable PostgreSQL database upgraded to `mt016`, all 82 tracking API tests passed, and the Astro production build passed. The added regression covers Completed → Watching and subsequent movie states without episode activity.
+
 ## Compact incremental activity feeds (2026-09-22)
 
 Profile Overview and Home now share compact horizontal activity cards with 64px desktop artwork, one-line action/title copy, relative timestamps, and a single bottom-right rating chip. Home additionally shows linked member avatars and display names. Action copy follows the accepted daily hierarchy: status changes, completed seasons, episode ranges, then rating-only activity; a rating chip can accompany any higher-priority action without repeating its value in text.

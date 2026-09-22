@@ -199,6 +199,8 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             message=f'{conn.name}: playback disappeared without a matching completion. '+('A newer local edit was preserved; choose the correct status.' if conflict else f'Marked {proposed}. Review the change or add a rating.')))
         if not conflict:
             entry.status=proposed
+            if media.media_type==MediaType.movie:
+                entry.progress=0
             mark_status_change(entry,f'{conn.type}:{conn.id}')
             from core.stream_actions import queue_dismissals
             await queue_dismissals(db, conn, media)
@@ -260,6 +262,8 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
                     message=f'{conn.name}: playback timing cannot be ordered against another recent change. Your current value was preserved.'))
                 continue
             entry.status = proposed
+            if media.media_type == MediaType.movie:
+                entry.progress = 1 if proposed == 'completed' else 0
             mark_status_change(entry,f'{conn.type}:{conn.id}',provider_changed_at(row))
             entry.start_date, entry.finish_date = default_dates(previous_status, entry.status, entry.start_date, entry.finish_date, date.today())
             if newly_tracked:
@@ -271,7 +275,8 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
                 position, finished = await series_activity_details(db, media, entry.progress)
                 await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
                     score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
-                    episodes_watched=entry.progress if newly_tracked else max(0,entry.progress-previous_progress),progress=entry.progress,
+                    episodes_watched=(entry.progress if newly_tracked else max(0,entry.progress-previous_progress)) if media.media_type == MediaType.series else 0,
+                    progress=entry.progress if media.media_type == MediaType.series else None,
                     position=position,finished_seasons=finished,status_changed=entry.status != previous_status or newly_tracked)
             if row in changed_active and baseline.approved:
                 from core.stream_actions import queue_progress_update
