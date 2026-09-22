@@ -37,15 +37,15 @@ const notificationLabel = notificationTotal
   : 'Notifications: none unread';
 const active = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 const listItems = combineLists
-  ? [{href: `${profile}/list`, label: 'Movie/Series List', active: pathname.includes('/list')}]
+  ? [{href: `${profile}/list`, label: 'Movie/Series List', icon: 'list', active: pathname.includes('/list')}]
   : [
-      {href: `${profile}/movies`, label: 'Movie List', active: pathname.includes('/movies')},
-      {href: `${profile}/series`, label: 'Series List', active: pathname.includes('/series')},
+      {href: `${profile}/movies`, label: 'Movie List', icon: 'list', active: pathname.includes('/movies')},
+      {href: `${profile}/series`, label: 'Series List', icon: 'list', active: pathname.includes('/series')},
     ];
 const primaryItems = [
-  {href: '/home', label: 'Home', active: active('/home')},
+  {href: '/home', label: 'Home', icon: 'home', active: active('/home')},
   ...listItems,
-  {href: '/browse', label: 'Browse', active: active('/browse')},
+  {href: '/browse', label: 'Browse', icon: 'browse', active: active('/browse')},
 ];
 const mobileSection = primaryItems.find(item => item.active)?.label
   || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : pathname.includes('settings') ? 'Settings' : 'Browse');
@@ -62,7 +62,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     <details class="mobile-appbar-menu" data-mobile-appbar-menu>
       <summary aria-label={`${mobileSection}. Open main navigation`}><span>{mobileSection}</span><Icon name="chevron-down" /></summary>
       <nav aria-label="Mobile main navigation">
-        {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}>{item.label}</a>)}
+        {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}><Icon name={item.icon} />{item.label}</a>)}
       </nav>
     </details>
     <div class="account-nav">
