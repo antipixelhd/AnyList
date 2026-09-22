@@ -260,7 +260,11 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .join(StreamingLibraryIntent,StreamingLibraryIntent.id==StreamingLibraryDelivery.intent_id)
         .join(Media,Media.id==StreamingLibraryIntent.media_id)
         .join(MediaServerConnection,MediaServerConnection.id==StreamingLibraryDelivery.connection_id)
-        .where(StreamingLibraryIntent.user_id==viewer.id,StreamingLibraryDelivery.state=='pending')
+        # A disabled collection push is not an outstanding delivery.  Keep the
+        # persisted row so that enabling the connection can resume it, but do
+        # not surface a retry/error for a destination the owner has disabled.
+        .where(StreamingLibraryIntent.user_id==viewer.id,StreamingLibraryDelivery.state=='pending',
+            MediaServerConnection.push_collection.is_(True))
         .order_by(StreamingLibraryDelivery.id).limit(100))).all()
     review_media_ids={review.media_id for review,_ in outbound_review_rows if review.media_id is not None}
     marker_media_ids=review_media_ids|{media.id for _,media,_ in actions}|{media.id for _,media in cloud_actions}

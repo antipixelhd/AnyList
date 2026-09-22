@@ -971,6 +971,21 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         write.assert_not_awaited()
         self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'][0]['title'],self.movie.title)
 
+    async def test_disabled_library_push_is_not_a_pending_connection_update(self):
+        connection = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Read-only Stremio',
+            url='https://example.test', token='fixture', push_collection=False)
+        self.db.add(connection)
+        await self.db.flush()
+        intent = StreamingLibraryIntent(user_id=self.owner.id, media_id=self.movie.id, desired=True)
+        self.db.add(intent)
+        await self.db.flush()
+        self.db.add(StreamingLibraryDelivery(intent_id=intent.id, connection_id=connection.id,
+            desired=True, state='pending', attempts=1, last_error='StremioAPIError'))
+        await self.db.commit()
+
+        payload = (await self.client.get('/tracking/recent-events')).json()
+        self.assertEqual(payload['outbound'], [])
+
     async def test_later_connection_receives_saved_library_choice_after_review(self):
         from core.streaming_library import retry_pending_library_deliveries
         from core import stremio
