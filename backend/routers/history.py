@@ -70,11 +70,28 @@ async def _push_watch_state(
         )
     )
     connections = [c for c in conns_result.scalars().all() if c.id != exclude_connection_id]
+    from core.tracking_snapshot import require_stream_reconciliation
+    approved_connections = []
+    for connection in connections:
+        try:
+            await require_stream_reconciliation(db, connection)
+        except HTTPException:
+            continue
+        approved_connections.append(connection)
+    connections = approved_connections
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()
-    push_trakt = settings and settings.trakt_push_watched and settings.trakt_access_token
-    push_mdblist = settings and settings.mdblist_push_watched and settings.mdblist_api_key
+    from core.cloud_reconciliation import cloud_push_is_approved
+    push_trakt = bool(settings and settings.trakt_push_watched and settings.trakt_access_token)
+    push_mdblist = bool(settings and settings.mdblist_push_watched and settings.mdblist_api_key)
+    push_simkl = bool(settings and settings.simkl_push_watched and settings.simkl_access_token)
+    if push_trakt:
+        push_trakt = await cloud_push_is_approved(db, user_id, 'trakt')
+    if push_mdblist:
+        push_mdblist = await cloud_push_is_approved(db, user_id, 'mdblist')
+    if push_simkl:
+        push_simkl = await cloud_push_is_approved(db, user_id, 'simkl')
 
     resolved_watched_at: dict[int, datetime | None] = {}
     if watched:
@@ -144,7 +161,6 @@ async def _push_watch_state(
                     else:
                         tasks.append((label, emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
 
-    push_simkl = settings and settings.simkl_push_watched and settings.simkl_access_token
     if push_simkl and settings.simkl_client_id:
         from core import simkl as simkl_client
         simkl_media_res = await db.execute(select(Media).where(Media.id.in_(media_ids)))

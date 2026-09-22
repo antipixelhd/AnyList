@@ -368,6 +368,11 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
     fix is exclude_connection_id: the connection whose webhook triggered
     this push must be skipped, while other connections still get it."""
 
+    def setUp(self):
+        approval = patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock())
+        approval.start()
+        self.addCleanup(approval.stop)
+
     def _connections(self):
         conn_origin = SimpleNamespace(
             id=1, type="jellyfin", url="http://origin.local", token="tok1", server_user_id="u1",
@@ -426,6 +431,15 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("http://origin.local", calls)
         self.assertIn("http://other.local", calls)
+
+    async def test_unreviewed_connection_never_receives_watch_correction(self) -> None:
+        conn_origin, _ = self._connections()
+        db = _FakeSession([[conn_origin], None])
+        with patch('core.tracking_snapshot.require_stream_reconciliation',
+                   AsyncMock(side_effect=HTTPException(409, 'Review first'))), \
+             patch('routers.history.jellyfin_client.mark_unwatched', AsyncMock()) as push:
+            await history._push_watch_state(db, user_id=7, media_ids=[10], watched=False)
+        push.assert_not_awaited()
 
 
 class DismissSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -619,6 +633,11 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
     backdated watched_at slips past _write_watch_event's recent-event guard.
     Fix: register the push with mark_pushed_watched so the echo is caught."""
 
+    def setUp(self):
+        approval = patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock())
+        approval.start()
+        self.addCleanup(approval.stop)
+
     def _fixture(self, conn_type):
         conn = SimpleNamespace(id=1, type=conn_type, url="http://srv.local",
                                token="t", server_user_id="u1")
@@ -674,6 +693,11 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
 class PushWatchStateTraktTokenTests(unittest.IsolatedAsyncioTestCase):
     """#326: the Trakt history fan-out on a manual mark-watched must go through
     ensure_valid_trakt_token, not use the stored token blindly."""
+
+    def setUp(self):
+        approval = patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=True))
+        approval.start()
+        self.addCleanup(approval.stop)
 
     def _settings(self, **overrides):
         base = dict(
