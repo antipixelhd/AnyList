@@ -18,6 +18,10 @@ const {mediaId,status,type}=Astro.props;
   </dialog>
 </div>
 <script>
+let pageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+pageListeners?.abort();
+pageListeners = new AbortController();
 document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=>{
   const arrow=control.querySelector<HTMLButtonElement>('.status-arrow')!;
   const options=control.querySelector<HTMLElement>('.status-options')!;
@@ -29,7 +33,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
   arrow.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();options.hidden=false;arrow.setAttribute('aria-expanded','true');options.querySelector('button')?.focus();}});
   control.addEventListener('keydown',event=>{if(event.key==='Escape'&&!dialog.open){close();arrow.focus();}});
   control.addEventListener('focusout',event=>{if(!control.contains(event.relatedTarget as Node))close();});
-  document.addEventListener('click',event=>{if(!control.contains(event.target as Node))close();});
+  document.addEventListener('click',event=>{if(!control.contains(event.target as Node))close();},{signal:pageListeners.signal});
   options.querySelector('[data-edit-entry]')?.addEventListener('click',close);
   options.querySelectorAll<HTMLButtonElement>('[data-quick-status]').forEach(button=>button.addEventListener('click',async()=>{
     close();error.hidden=true;
@@ -48,6 +52,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
       location.reload();
     }catch(e){error.textContent=(e as Error).message;error.hidden=false;buttons.forEach(b=>b.disabled=false);arrow.focus();}
   }));
+});
 });
 </script>
 <style>

@@ -53,6 +53,8 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
   </div>
 </div></Tracker>
 <script>
+document.addEventListener('astro:page-load', () => {
+  if (!document.querySelector('[data-browse-form]')) return;
   const form=document.querySelector<HTMLFormElement>('[data-browse-form]');
   const query=form?.querySelector<HTMLInputElement>('[name=q]');
   const typeSelect=form?.querySelector<HTMLSelectElement>('[name=type]');
@@ -135,4 +137,5 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
   form?.addEventListener('submit',event=>{event.preventDefault();void load();});
   query?.addEventListener('input',()=>{window.clearTimeout(searchTimer);searchTimer=window.setTimeout(()=>void load(),280);});
   typeSelect?.addEventListener('change',()=>void load());
+});
 </script>

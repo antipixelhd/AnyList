@@ -31,6 +31,8 @@ const historyValue=(value:any)=>value==null||value===''?'Not set':String(value);
   <section class="shortcut-panel"><h2>Existing watch history</h2><p>Import existing history and ratings. Streaming-library membership stays separate.</p><button class="button-secondary" id="import-history">Import existing history</button><p id="import-result" role="status"></p></section></div></details>
 </div><TrackingEditor/></Tracker>
 <script>
+document.addEventListener('astro:page-load', () => {
+if (!document.querySelector('#event-error')) return;
 const error=document.querySelector<HTMLElement>('#event-error')!;
 async function request(path:string,body:any={},method='POST'){const response=await fetch(`/api/proxy/tracking/${path}`,{method,headers:{'Content-Type':'application/json'},body:method==='DELETE'?undefined:JSON.stringify(body)});if(!response.ok){const data=await response.json();throw new Error(typeof data.detail==='string'?data.detail:'Could not save this change.');}return response.json();}
 function fail(exception:any){error.textContent=exception.message;error.hidden=false;}
@@ -43,4 +45,5 @@ document.querySelectorAll<HTMLButtonElement>('[data-unignore]').forEach(button=>
 document.querySelector<HTMLButtonElement>('#import-history')?.addEventListener('click',async event=>{const button=event.currentTarget as HTMLButtonElement;button.disabled=true;try{const result=await request('import-history');document.querySelector('#import-result')!.textContent=`${result.added} entries imported.`;}catch(exception){fail(exception);}finally{button.disabled=false;}});
 const dismissibleIds=Array.from(document.querySelectorAll<HTMLElement>('[data-auto-seen]')).map(element=>Number(element.dataset.autoSeen));
 if(dismissibleIds.length)fetch('/api/proxy/tracking/recent-events/seen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:dismissibleIds})}).then(response=>{if(response.ok)document.dispatchEvent(new CustomEvent('media-tracker:notifications-changed'));}).catch(()=>{});
+});
 </script>

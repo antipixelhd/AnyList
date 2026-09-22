@@ -40,6 +40,11 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
   </form>
 </dialog>
 <script>
+let pageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  pageListeners?.abort();
+  pageListeners = new AbortController();
+  if (!document.querySelector('#tracking-editor')) return;
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
   let current: any = null;
@@ -108,7 +113,7 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
       if (loadController !== controller || !dialog.open || opener !== button) return;
       populateEditor(title);
     } catch(e) { if ((e as Error).name !== 'AbortError') { error.textContent = (e as Error).message; error.hidden = false; } }
-  });
+  }, { signal: pageListeners.signal });
   function ratedSeasonScores() {
     return Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
   }
@@ -168,4 +173,5 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
       location.reload();
     } catch(e) { error.textContent = (e as Error).message; error.hidden = false; submit.disabled = false; }
   });
+});
 </script>

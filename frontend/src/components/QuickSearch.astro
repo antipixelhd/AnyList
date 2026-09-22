@@ -22,9 +22,14 @@ const { combineLists = true } = Astro.props;
 </dialog>
 
 <script>
+let pageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  pageListeners?.abort();
+  pageListeners = new AbortController();
   type SearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null };
   const dialog = document.querySelector<HTMLDialogElement>('[data-quick-search]');
   const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
+  if (!dialog || !openButton) return;
   const closeButton = dialog?.querySelector<HTMLButtonElement>('[data-quick-search-close]');
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
   const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
@@ -152,8 +157,9 @@ const { combineLists = true } = Astro.props;
     showState('');
     timer = window.setTimeout(search, 180);
   });
-  window.addEventListener('resize', () => { if (matchMedia('(max-width:650px)').matches && dialog?.open) dialog.close(); });
+  window.addEventListener('resize', () => { if (matchMedia('(max-width:650px)').matches && dialog?.open) dialog.close(); }, { signal: pageListeners.signal });
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
-  });
+  }, { signal: pageListeners.signal });
+});
 </script>

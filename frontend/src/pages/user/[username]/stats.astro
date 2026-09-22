@@ -38,6 +38,7 @@ const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).
 
 <script>
 import Chart from 'chart.js/auto';
+document.addEventListener('astro:page-load', () => {
 const root=document.querySelector<HTMLElement>('#profile-stats');
 if(root){
   let data=JSON.parse(root.dataset.initial||'{}');
@@ -72,4 +73,5 @@ if(root){
   root.querySelectorAll<HTMLButtonElement>('[data-stats-media]').forEach(button=>button.addEventListener('click',()=>{media=button.dataset.statsMedia!;root.querySelectorAll('[data-stats-media]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));load();}));
   root.querySelector('#stats-year')?.addEventListener('change',load); render(data);
 }
+});
 </script>

@@ -6,6 +6,9 @@ if(!['movie','series'].includes(type!)||!Number.isSafeInteger(id)||id<=0)return 
 ---
 <Tracker title="Loading title"><div class="page-width"><p id="loading-title" role="status">Loading title details…</p><a href="/browse">Back to Browse</a><div id="resolve-title" data-type={type} data-id={id}></div></div></Tracker>
 <script>
+document.addEventListener('astro:page-load', () => {
 const target=document.querySelector<HTMLElement>('#resolve-title')!;
+if (!target) return;
 fetch(`/api/proxy/tracking/catalog/${target.dataset.type}/${target.dataset.id}`,{method:'POST'}).then(async response=>{if(!response.ok)throw new Error('Could not load the title. Check your metadata key in Settings and try again.');const result=await response.json();location.replace(`/title/${result.id}`);}).catch(e=>{document.querySelector('#loading-title')!.textContent=e.message;});
+});
 </script>

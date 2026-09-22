@@ -23,6 +23,11 @@ import Icon from './Icon.astro';
 </dialog>
 
 <script>
+let pageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  pageListeners?.abort();
+  pageListeners = new AbortController();
+  if (!document.querySelector('#quick-rating')) return;
   type QuickRateDetail = { id: number; title: string; poster?: string; score?: number | null; ratingMode?: 'manual' | 'average' };
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
@@ -187,6 +192,7 @@ import Icon from './Icon.astro';
       score: Number(button.dataset.quickRateScore) || null,
       ratingMode: button.dataset.quickRateMode === 'average' ? 'average' : 'manual',
     });
-  });
+  }, { signal: pageListeners.signal });
   (window as any).anyListQuickRate = open;
+});
 </script>

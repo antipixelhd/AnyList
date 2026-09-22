@@ -60,6 +60,11 @@ const canIncrement = (entry: any) => entry.type === 'movie'
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
+let pageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  pageListeners?.abort();
+  pageListeners = new AbortController();
+  if (!document.querySelector('#entry-groups')) return;
   const preview = document.querySelector<HTMLElement>('#cover-preview');
   const previewImage = preview?.querySelector('img');
   let previewDismissed = false;
@@ -83,9 +88,9 @@ const canIncrement = (entry: any) => entry.type === 'movie'
     row.addEventListener('click',hidePreview);
   });
   previewImage?.addEventListener('error',hidePreview);
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'){previewDismissed=true;hidePreview();}});
-  window.addEventListener('scroll',hidePreview,true);
-  window.addEventListener('resize',hidePreview);
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'){previewDismissed=true;hidePreview();}},{signal:pageListeners.signal});
+  window.addEventListener('scroll',hidePreview,{capture:true,signal:pageListeners.signal});
+  window.addEventListener('resize',hidePreview,{signal:pageListeners.signal});
   const groups = document.querySelector('#entry-groups');
   document.querySelectorAll<HTMLButtonElement>('[data-progress-increment]').forEach(button=>button.addEventListener('click',async()=>{
     const previousLabel=button.closest('.entry-progress')?.querySelector<HTMLElement>('[data-progress-label]')?.textContent;
@@ -147,8 +152,9 @@ const canIncrement = (entry: any) => entry.type === 'movie'
     function setFiltersOpen(open:boolean){filters.classList.toggle('open',open);mobileToggle.setAttribute('aria-expanded',String(open));if(open)input('list-search').focus();else mobileToggle.focus();}
     mobileToggle.addEventListener('click',()=>setFiltersOpen(!filters.classList.contains('open')));
     document.querySelector('[data-close-filters]')!.addEventListener('click',()=>setFiltersOpen(false));
-    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);});
-    document.addEventListener('media-tracker:rating-changed', filter);
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
+    document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});
     filter();
   }
+});
 </script>

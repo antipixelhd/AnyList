@@ -84,6 +84,10 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   </div>
 </header>
 {user && <script>
+  let notificationListeners: AbortController;
+  document.addEventListener('astro:page-load', () => {
+  notificationListeners?.abort();
+  notificationListeners = new AbortController();
   const link = document.querySelector<HTMLElement>('[data-notification-link]');
   const quietBadge = document.querySelector<HTMLElement>('[data-notification-quiet]');
   const attentionBadge = document.querySelector<HTMLElement>('[data-notification-attention]');
@@ -104,18 +108,23 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       if (link) link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread');
     } catch { /* Keep the last known server-rendered count during a transient failure. */ }
   }
-  document.addEventListener('media-tracker:notifications-changed', refreshNotificationBadge);
+  document.addEventListener('media-tracker:notifications-changed', refreshNotificationBadge, { signal: notificationListeners.signal });
+  });
 </script>}
 <script>
+  let appbarListeners: AbortController;
+  document.addEventListener('astro:page-load', () => {
+  appbarListeners?.abort();
+  appbarListeners = new AbortController();
   const appbar = document.querySelector<HTMLElement>('[data-appbar]');
   if (appbar) {
     let previousY = Math.max(0, window.scrollY);
     let scheduled = false;
     let keyboardFocus = false;
-    document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true });
-    document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true });
-    window.addEventListener('wheel', () => { keyboardFocus = false; }, { passive: true });
-    window.addEventListener('touchstart', () => { keyboardFocus = false; }, { passive: true });
+    document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
+    document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true, signal: appbarListeners.signal });
+    window.addEventListener('wheel', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
+    window.addEventListener('touchstart', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
     const reveal = () => appbar.classList.remove('appbar-hidden');
     const update = () => {
       const currentY = Math.max(0, window.scrollY);
@@ -132,9 +141,9 @@ const mobileSection = primaryItems.find(item => item.active)?.label
         scheduled = true;
         requestAnimationFrame(update);
       }
-    }, { passive: true });
+    }, { passive: true, signal: appbarListeners.signal });
     appbar.addEventListener('focusin', reveal);
-    window.addEventListener('pageshow', () => { previousY = Math.max(0, window.scrollY); reveal(); });
+    window.addEventListener('pageshow', () => { previousY = Math.max(0, window.scrollY); reveal(); }, { signal: appbarListeners.signal });
   }
   const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
   const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');
@@ -153,11 +162,12 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       mobileMenu.open = false;
       mobileMenuSummary?.focus();
     }
-  });
+  }, { signal: appbarListeners.signal });
   document.addEventListener('pointerdown', event => {
     if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
-  });
+  }, { signal: appbarListeners.signal });
   document.addEventListener('focusin', event => {
     if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
+  }, { signal: appbarListeners.signal });
   });
 </script>

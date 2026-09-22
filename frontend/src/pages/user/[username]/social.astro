@@ -26,9 +26,11 @@ const followers=(profile?.people||[]).filter((person:any)=>person.follower);
 </div></>:<div class="page-width"><p class="error-message">{error}</p></div>}
 </Tracker>
 <script>
+document.addEventListener('astro:page-load', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-follow]').forEach(button=>button.addEventListener('click',async()=>{
  button.disabled=true;const active=button.dataset.active==='yes';
  try{const response=await fetch(`/api/proxy/tracking/people/${encodeURIComponent(button.dataset.follow!)}/follow`,{method:active?'DELETE':'POST'});if(!response.ok)throw new Error();location.reload();}
  catch{button.textContent='Try again';button.disabled=false;}
 }));
+});
 </script>

@@ -1,5 +1,9 @@
 # AnyList implementation status
 
+## Client navigation control repair (2026-09-22)
+
+The AnyList `ClientRouter` replaces the page body during navigation, while Astro executes bundled component scripts only once per visit. Controls initialized directly by those scripts therefore lost their event listeners after a page change. An in-progress attempt to use `data-astro-rerun` also made TypeScript scripts inline, leaving uncompiled TypeScript in the browser response. Tracker page and shared-control initialization now runs on `astro:page-load`; document and window listeners that capture page elements are retired through `AbortController` before rebinding. The affected rating, editor, search, status, profile, browse, notification, and Stats controls retain client navigation. The Astro production build, emitted-client JavaScript syntax checks, and `git diff --check` pass. An authenticated browser regression on the deployed instance remains to be verified.
+
 Updated 2026-09-22. Release one is complete, validated locally, and deployed to the isolated test instance. Stage Two's additional local gates are implemented and awaiting owner manual verification before any VPS work. Production rollout is intentionally separate.
 
 The 2026-09-21 refinements now have local implementation evidence in [STAGE-TWO-PLAN.md](STAGE-TWO-PLAN.md) and the [public-ready gates](PUBLIC-READY-GATES.md). The disposable PostgreSQL suite passes 1,167 tests, the Astro production build passes, and the final implementation head passed public CI. Authenticated browser checks covered responsive canonical pages, offline in-tab list navigation, logout cache purge and a populated editor under reduced motion. Live provider delivery, deployed Google authentication, physical phones and owner acceptance remain open.

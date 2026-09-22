@@ -11,6 +11,10 @@
 </aside>
 
 <script>
+let pageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  pageListeners?.abort();
+  pageListeners = new AbortController();
   const prompt = document.querySelector<HTMLElement>('[data-attention-prompt]');
   const hiddenKey = 'anylist-hidden-attention-prompts';
   const readHidden = () => { try { return new Set<string>(JSON.parse(sessionStorage.getItem(hiddenKey) || '[]')); } catch { return new Set<string>(); } };
@@ -22,7 +26,7 @@
     let startX: number | null = null;
     prompt.addEventListener('pointerdown', event => { startX = event.clientX; });
     prompt.addEventListener('pointerup', event => { if (startX != null && Math.abs(event.clientX - startX) > 64) hide(); startX = null; });
-    document.addEventListener('media-tracker:rating-changed', hide);
+    document.addEventListener('media-tracker:rating-changed', hide, { signal: pageListeners.signal });
 
     fetch('/api/proxy/tracking/recent-events').then(response => response.ok ? response.json() : null).then(data => {
       if (!data) return;
@@ -56,4 +60,5 @@
       prompt.hidden = false;
     }).catch(() => {});
   }
+});
 </script>

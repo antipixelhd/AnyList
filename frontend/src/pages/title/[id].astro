@@ -179,6 +179,8 @@ const dateLabel = (value: string | null) => value
 </Tracker>
 
 <script>
+document.addEventListener('astro:page-load', () => {
+if (!document.querySelector('[data-favorite-toggle], [data-library-toggle], #refresh-episodes')) return;
 document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async(event)=>{
  const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.textContent='Loading episodes…';
  try{const res=await fetch(`/api/proxy/tracking/title/${button.dataset.media}/refresh-episodes`,{method:'POST'});if(!res.ok){const data=await res.json();throw new Error(data.detail||'Unable to refresh episodes');}location.reload();}
@@ -248,4 +250,5 @@ if(new URLSearchParams(location.search).get('rate')==='1'){
  const button=document.querySelector<HTMLElement>('[data-quick-rate-id]');
  if(button)setTimeout(()=>button.click(),0);
 }
+});
 </script>
