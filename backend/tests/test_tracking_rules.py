@@ -15,6 +15,14 @@ class TrackingRulesTests(unittest.TestCase):
             with self.subTest(score=score), self.assertRaises(ValueError):
                 normalize_score(score)
 
+    def test_manual_tenth_point_scores_and_unrated_zero(self):
+        for score in (0.1, 5.8, 7.3, 10):
+            self.assertEqual(normalize_score(score, 0.1), score)
+        self.assertIsNone(normalize_score(0, 0.1))
+        for score in (0.05, 7.35, 10.1):
+            with self.subTest(score=score), self.assertRaises(ValueError):
+                normalize_score(score, 0.1)
+
     def test_manual_score_does_not_inherit_or_average_seasons(self):
         self.assertEqual(effective_score('manual', 8, {'1': 6, '2': 10}), 8)
         self.assertIsNone(effective_score('manual', None, {'1': 8}))

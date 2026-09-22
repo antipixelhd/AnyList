@@ -12,12 +12,13 @@ class TrackingStatus(str, Enum):
     completed = "completed"
 
 
-def normalize_score(value: float | None) -> float | None:
+def normalize_score(value: float | None, increment: float = 0.5) -> float | None:
     if value is None or value == 0:
         return None
     score = Decimal(str(value))
-    if not score.is_finite() or not Decimal("0.5") <= score <= 10 or score % Decimal("0.5"):
-        raise ValueError("Choose a half-point score from 0.5 to 10, or 0 for unrated")
+    step = Decimal(str(increment))
+    if not score.is_finite() or not step <= score <= 10 or score % step:
+        raise ValueError(f"Choose a score in {step}-point increments from {step} to 10, or 0 for unrated")
     return float(score)
 
 

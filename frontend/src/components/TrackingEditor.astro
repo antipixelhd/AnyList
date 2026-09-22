@@ -20,7 +20,7 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
   <form id="tracking-form">
     <div class="editor-fields">
       <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><select name="status" class="editor-status-native" tabindex="-1" aria-hidden="true">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select><div class="editor-status-dropdown"><button type="button" id="editor-status-trigger" class="editor-status-trigger" aria-labelledby="editor-status-label editor-status-value" aria-expanded="false" aria-controls="editor-status-options"><span id="editor-status-value">Watching</span><Icon name="chevron-down" /></button><div id="editor-status-options" class="editor-status-options" hidden>{statuses.map(([value,label]) => <button type="button" data-editor-status={value}>{label}</button>)}</div></div></div>
-      <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.5" placeholder="Unrated"/><span class="hint" id="score-help">0 means unrated</span></label>
+      <label>Score<input name="manual_score" type="number" min="0" max="10" step="0.1" placeholder="Unrated"/><span class="hint">0 means unrated</span></label>
       <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
       <label class="editor-start-date">Start date<input name="start_date" type="date"/></label><label class="editor-finish-date">Finish date<input name="finish_date" type="date"/></label>
       <label class="editor-rewatches">Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
@@ -34,6 +34,7 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
 </dialog>
 <dialog class="score-override-dialog" id="editor-score-override" aria-labelledby="score-override-title">
   <form method="dialog">
+    <button type="submit" class="score-override-close editor-icon-button" value="cancel" aria-label="Close season rating confirmation"><Icon name="close" /></button>
     <span class="eyebrow">Season ratings</span>
     <h2 id="score-override-title">Use a separate show score?</h2>
     <p>Your current score is calculated from rated seasons. Saving this value will switch the show to a separate manual score; your season ratings stay unchanged.</p>
@@ -49,7 +50,6 @@ document.addEventListener('astro:page-load', () => {
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
   let current: any = null;
-  let initialState = '';
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
   let displayedScore = '';
@@ -97,12 +97,9 @@ document.addEventListener('astro:page-load', () => {
   });
   dialog.addEventListener('click', event => { if (!statusTrigger.contains(event.target as Node) && !statusOptions.contains(event.target as Node)) closeStatus(); });
   dialog.addEventListener('focusout', event => { if (!statusTrigger.contains(event.relatedTarget as Node) && !statusOptions.contains(event.relatedTarget as Node)) closeStatus(); });
-  const formState = () => JSON.stringify(Array.from(new FormData(form).entries()));
-  const isDirty = () => !!current && initialState !== '' && formState() !== initialState;
   const artwork = (path: string | null | undefined, size: string) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/${size}${path}` : (path || '');
   const closeEditor = () => {
     if (!dialog.open) return;
-    if (isDirty() && !confirm('Discard your unsaved changes?')) return;
     dialog.close();
   };
   function populateEditor(title: any) {
@@ -119,13 +116,11 @@ document.addEventListener('astro:page-load', () => {
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
     syncStatus(); closeStatus();
     const calculatedScore = current.rating_mode === 'average' ? current.score : current.manual_score;
-    field('manual_score').value = calculatedScore ?? '';
+    field('manual_score').value = calculatedScore == null ? '' : String(current.rating_mode === 'average' ? Number(Number(calculatedScore).toFixed(1)) : calculatedScore);
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
     field('progress').disabled = title.type === 'movie';
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
-    updateScoreHelp();
-    initialState = formState();
     saveButton.disabled = false;
   }
   document.addEventListener('click', async (event) => {
@@ -135,7 +130,6 @@ document.addEventListener('astro:page-load', () => {
     form.reset();
     syncStatus(); closeStatus();
     current = null;
-    initialState = '';
     opener = button;
     loadController?.abort();
     const controller = new AbortController();
@@ -160,23 +154,19 @@ document.addEventListener('astro:page-load', () => {
   function ratedSeasonScores() {
     return Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
   }
-  function updateScoreHelp() {
-    const seasonScores = Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
-    const calculated = seasonScores.length ? seasonScores.reduce((sum, score) => sum + score, 0) / seasonScores.length : null;
-    document.querySelector('#score-help')!.textContent = current?.rating_mode === 'average' && calculated != null
-      ? `Calculated from ${seasonScores.length} rated ${seasonScores.length === 1 ? 'season' : 'seasons'}. Changing it creates a separate show score.`
-      : '0 means unrated';
-  }
   async function confirmScoreOverride() {
     const confirmation = document.querySelector<HTMLDialogElement>('#editor-score-override')!;
     confirmation.returnValue = 'cancel';
     confirmation.showModal();
     return new Promise<boolean>(resolve => confirmation.addEventListener('close', () => resolve(confirmation.returnValue === 'confirm'), {once:true}));
   }
+  const confirmation = document.querySelector<HTMLDialogElement>('#editor-score-override')!;
+  confirmation.addEventListener('click', event => { if (event.target === confirmation) confirmation.close('cancel'); });
+  confirmation.addEventListener('cancel', () => { confirmation.returnValue = 'cancel'; });
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
-  dialog.addEventListener('close', () => { loadController?.abort(); loadController = null; current = null; initialState = ''; displayedScore = ''; opener?.focus(); opener = null; });
+  dialog.addEventListener('close', () => { loadController?.abort(); loadController = null; current = null; displayedScore = ''; form.reset(); opener?.focus(); opener = null; });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;

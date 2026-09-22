@@ -625,7 +625,7 @@ class EntryPatch(BaseModel):
     @field_validator("manual_score")
     @classmethod
     def score(cls, value):
-        return normalize_score(value)
+        return normalize_score(value, 0.1)
 
     @field_validator("season_scores")
     @classmethod
