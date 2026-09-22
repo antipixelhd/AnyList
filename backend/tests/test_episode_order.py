@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
+from fastapi import BackgroundTasks
 
 from core.episode_order import (
     _merge_episode_media,
@@ -257,6 +258,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
                     season_number=2,
                     episode_order="tvdb",
                 ),
+                background_tasks=BackgroundTasks(),
                 db=db,
                 current_user=SimpleNamespace(id=3),
             )

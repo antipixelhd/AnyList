@@ -26,6 +26,7 @@ from routers.tracking import router
 from routers.push import router as push_router
 from routers.comments import router as comments_router
 from routers.profile import router as profile_router
+from routers.ratings import router as ratings_router
 
 
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
@@ -51,7 +52,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             self.db.add(settings)
         await self.db.commit()
         self.viewer = self.owner
-        app=FastAPI(); app.include_router(router,prefix='/tracking'); app.include_router(push_router,prefix='/push'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile')
+        app=FastAPI(); app.include_router(router,prefix='/tracking'); app.include_router(push_router,prefix='/push'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile'); app.include_router(ratings_router,prefix='/ratings')
         async def session(): yield self.db
         app.dependency_overrides[get_db]=session
         app.dependency_overrides[get_current_user]=lambda:self.viewer
@@ -1384,6 +1385,25 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.local_outbound.assert_not_awaited()
         await self.db.refresh(rating)
         self.assertEqual(rating.rated_at, rated_at)
+
+    async def test_direct_rating_changes_dispatch_after_local_save(self):
+        payload = {'media_id': self.movie.id, 'media_type': 'movie', 'rating': 7, 'review': 'First'}
+        response = await self.client.post('/ratings', json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.local_outbound.assert_awaited_once_with(
+            self.owner.id, set(), {(self.movie.id, None): 7}, set(),
+        )
+        self.local_outbound.reset_mock()
+        response = await self.client.post('/ratings', json={**payload, 'review': 'Updated'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.local_outbound.assert_not_awaited()
+        response = await self.client.delete('/ratings', params={
+            'media_id': self.movie.id, 'media_type': 'movie',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.local_outbound.assert_awaited_once_with(
+            self.owner.id, set(), {}, {(self.movie.id, None)},
+        )
 
     async def test_series_progress_advances_from_paused_status_and_ignores_future_episodes(self):
         self.show.tmdb_id=987654322

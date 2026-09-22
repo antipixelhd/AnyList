@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete
@@ -10,7 +10,6 @@ from db import get_db
 from models.media import Media
 from models.ratings import Rating
 from models.base import MediaType
-from models.users import UserSettings
 from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User
 from core.enrichment import enrich_media, create_media_safely
@@ -67,6 +66,7 @@ async def clear_all_ratings(
 @router.post("")
 async def submit_rating(
     body: RatingIn,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
@@ -121,6 +121,7 @@ async def submit_rating(
         )
     )
     rating = result2.scalar_one_or_none()
+    rating_changed = rating is None or rating.rating != body.rating
 
     if rating:
         rating.rating = body.rating
@@ -154,22 +155,13 @@ async def submit_rating(
     # A rating made under a non-aired ordering isn't pushed to external
     # services - they'd misread the season number (same rule as the
     # Rating.episode_order.is_(None) push filters in trakt/simkl/mdblist).
-    if effective_episode_order is not None:
+    if effective_episode_order is not None or not rating_changed:
         return format_rating(rating, media)
 
-    settings_result = await db.execute(
-        select(UserSettings).where(UserSettings.user_id == current_user.id)
-    )
-    settings = settings_result.scalar_one_or_none()
-    from routers.sync import _fan_out_changes_to_other_connections
-
-    await _fan_out_changes_to_other_connections(
-        db,
-        current_user.id,
-        None,
-        set(),
-        {(media.id, effective_season): body.rating},
-        settings=settings,
+    from core.local_outbound import dispatch_local_tracking_delta
+    background_tasks.add_task(
+        dispatch_local_tracking_delta, current_user.id,
+        set(), {(media.id, effective_season): body.rating}, set(),
     )
 
     return format_rating(rating, media)
@@ -209,6 +201,7 @@ async def get_media_rating(
 @router.delete("")
 async def delete_rating(
     media_type: str,
+    background_tasks: BackgroundTasks,
     tmdb_id: Optional[int] = Query(None),
     tvdb_id: Optional[int] = Query(None),
     media_id: Optional[int] = Query(None),
@@ -250,20 +243,10 @@ async def delete_rating(
     if effective_episode_order is not None:
         return {"status": "deleted"}
 
-    settings_result = await db.execute(
-        select(UserSettings).where(UserSettings.user_id == current_user.id)
-    )
-    settings = settings_result.scalar_one_or_none()
-    from routers.sync import _fan_out_changes_to_other_connections
-
-    await _fan_out_changes_to_other_connections(
-        db,
-        current_user.id,
-        None,
-        set(),
-        {},
-        settings=settings,
-        removed_ratings={(media.id, effective_season)},
+    from core.local_outbound import dispatch_local_tracking_delta
+    background_tasks.add_task(
+        dispatch_local_tracking_delta, current_user.id,
+        set(), {}, {(media.id, effective_season)},
     )
 
     return {"status": "deleted"}
