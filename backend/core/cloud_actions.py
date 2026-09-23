@@ -30,11 +30,16 @@ async def queue_cloud_resets(db, user_id, media, episodes=()):
     if not settings:
         return []
     connected = []
-    if settings.trakt_access_token and settings.trakt_client_id:
+    if settings.trakt_access_token and settings.trakt_client_id and (
+        settings.trakt_push_watched or settings.trakt_push_ratings or settings.trakt_push_collection
+        or settings.trakt_push_dropped):
         connected.append("trakt")
-    if settings.simkl_access_token and settings.simkl_client_id:
+    if settings.simkl_access_token and settings.simkl_client_id and (
+        settings.simkl_push_watched or settings.simkl_push_ratings):
         connected.append("simkl")
-    if settings.mdblist_api_key:
+    if settings.mdblist_api_key and (
+        settings.mdblist_push_watched or settings.mdblist_push_ratings
+        or settings.mdblist_push_watchlist or settings.mdblist_push_dropped):
         connected.append("mdblist")
     payload = deletion_payload(media, episodes)
     for provider in connected:

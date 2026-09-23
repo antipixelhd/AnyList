@@ -4,7 +4,7 @@ This layer never treats a first/partial snapshot as a destructive removal and
 does not perform network writes. Provider dispatch remains a separate step.
 """
 from datetime import date, datetime, timezone
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from models import Media, User, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingDeletion
@@ -45,6 +45,38 @@ def completed_rows(progress):
         except (ValueError, TypeError):
             continue
     return result
+
+
+async def release_rewatched_deletions(db, conn, watched, progress, mappings):
+    """Accept a new provider watch only after every deletion reset was acknowledged."""
+    markers = (await db.execute(select(TrackingDeletion).where(
+        TrackingDeletion.user_id == conn.user_id))).scalars().all()
+    eligible = {marker.media_id: marker for marker in markers if not marker.pending_connections}
+    if not eligible:
+        return
+    ids = {mappings.get(str(row.get('content_id'))) for row in [*watched, *progress]}
+    ids.discard(None)
+    media = (await db.execute(select(Media).where(Media.tmdb_id.in_(ids),
+        Media.media_type.in_([MediaType.movie, MediaType.series])))).scalars().all()
+    lookup = {(item.tmdb_id, item.media_type.value): item for item in media}
+    released = set()
+    for row in [*watched, *progress]:
+        item = lookup.get((mappings.get(str(row.get('content_id'))), row.get('content_type')))
+        marker = eligible.get(item.id) if item else None
+        if not marker:
+            continue
+        # A remote metadata update cannot turn old watched history into a new
+        # watch. Require viewing time, even when the provider also has _mtime.
+        seen_at = provider_changed_at({'watched_at': row.get('watched_at'),
+            'last_watched': row.get('last_watched')})
+        if seen_at and seen_at > marker.deleted_at:
+            released.add(item.id)
+    if released:
+        await db.execute(delete(TrackingDeletion).where(
+            TrackingDeletion.user_id == conn.user_id, TrackingDeletion.media_id.in_(released)))
+        await db.execute(delete(SyncReview).where(
+            SyncReview.user_id == conn.user_id, SyncReview.media_id.in_(released),
+            SyncReview.kind == 'outbound_pending'))
 
 
 def same_playback(left, right):
@@ -139,11 +171,15 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
         watched = merge(records.get('watched', []), watched)
         progress = merge(records.get('progress', []), progress)
         tmdb_ids = {**baseline.snapshot.get('mappings', {}), **tmdb_ids}
-    # Import is additive and skips tombstones. It never creates tracked entries
-    # merely because a title appears in a streaming library.
+    # Import is additive. A tombstone is released only by a fresh viewing
+    # observation after all outbound deletion acknowledgments have arrived.
+    await db.execute(select(User.id).where(User.id==conn.user_id).with_for_update())
+    prior = await db.get(StreamBaseline,conn.id)
+    mappings = {**(prior.snapshot.get('mappings', {}) if prior else {}), **tmdb_ids}
+    await release_rewatched_deletions(db, conn, watched, progress, mappings)
+    # Streaming-library membership alone never creates a tracked entry.
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
     imported = await import_tracking_history(db,conn.user_id)
-    await db.execute(select(User.id).where(User.id==conn.user_id).with_for_update())
     baseline=await db.get(StreamBaseline,conn.id)
     first=baseline is None
     previous=baseline.snapshot if baseline else {}

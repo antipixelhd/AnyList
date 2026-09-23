@@ -300,7 +300,8 @@ async def queue_restorations(db, user_id, media):
 
 async def queue_resets(db,user_id,media,deleted_at):
     targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
-        MediaServerConnection.type.in_(['stremio','nuvio'])))).scalars().all()
+        MediaServerConnection.type.in_(['stremio','nuvio']),
+        (MediaServerConnection.push_watched.is_(True) | MediaServerConnection.push_playback.is_(True))))).scalars().all()
     for conn in targets:
         baseline=await db.get(StreamBaseline,conn.id)
         keys={key for key,tmdb_id in (baseline.snapshot.get('mappings',{}) if baseline else {}).items() if tmdb_id==media.tmdb_id}

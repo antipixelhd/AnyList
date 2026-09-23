@@ -1428,6 +1428,25 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone((await self.db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one_or_none())
         self.assertIsNotNone(await self.db.get(Media,self.movie.id))
 
+    async def test_deletion_waits_only_for_push_enabled_stream_connections(self):
+        disabled=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Read only',
+            url='https://example.test',token='fixture',push_watched=False,push_playback=False)
+        enabled=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Outbound',
+            url='https://example.test',token='fixture',push_watched=True,push_playback=False)
+        self.movie.tmdb_id=987654289
+        self.movie.imdb_id='tt-readd-target'
+        self.db.add_all([disabled,enabled]);await self.db.commit()
+        await self.save(self.movie,status='completed')
+
+        result=await self.client.delete(f'/tracking/entry/{self.movie.id}?confirmed=true')
+        self.assertEqual(result.status_code,200,result.text)
+        marker=(await self.db.execute(select(TrackingDeletion).where(
+            TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one()
+        self.assertEqual(marker.pending_connections,[f'connection:{enabled.id}'])
+        actions=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.action=='reset'))).scalars().all()
+        self.assertEqual({action.connection_id for action in actions},{enabled.id})
+
     async def test_history_import_ignores_library_only_items_and_deleted_items(self):
         self.db.add(Collection(user_id=self.owner.id,media_id=self.movie.id))
         await self.db.commit()
@@ -2353,7 +2372,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         from core.stream_actions import dispatch_stream_actions,RemotePlaybackChanged
         from models.tracking import StreamAction
         self.movie.tmdb_id=987654312
-        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=False,push_watched=False)
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=False,push_watched=True)
         self.db.add(conn);await self.db.commit()
         await self.save(self.movie,status='completed',manual_score=8)
         baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
@@ -2380,11 +2399,115 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action.payload,{})
         self.assertEqual(baseline.snapshot['library'],['tt-delete'])
 
+    async def test_tombstone_blocks_provider_readd_until_all_stream_resets_acknowledge(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.movie.tmdb_id=987654298
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_watched=True)
+        self.db.add(conn);await self.db.flush()
+        baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            snapshot={'mappings':{'tt-pending-reset':self.movie.tmdb_id},'library':[],'progress':{},'watched':[]})
+        marker=TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,
+            deleted_at=datetime(2026,1,1,12,0),pending_connections=[f'connection:{conn.id}'])
+        self.db.add_all([baseline,marker,WatchEvent(user_id=self.owner.id,media_id=self.movie.id,
+            completed=True,watched_at=datetime(2026,1,1,13,0))])
+        await self.db.commit()
+
+        await observe_stream_snapshot(
+            self.db,
+            conn,
+            [],
+            [{'content_id':'tt-pending-reset','content_type':'movie','watched_at':'2026-01-01T13:00:00Z'}],
+            [],
+            {'tt-pending-reset':self.movie.tmdb_id},
+        )
+
+        saved_marker=(await self.db.execute(select(TrackingDeletion).where(
+            TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one()
+        self.assertEqual(saved_marker.pending_connections,[f'connection:{conn.id}'])
+        self.assertIsNone((await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one_or_none())
+        self.assertEqual((await self.db.execute(select(WatchEvent).where(
+            WatchEvent.user_id==self.owner.id,WatchEvent.media_id==self.movie.id))).scalars().all(),[])
+
+    async def test_tombstone_readd_accepts_newer_provider_watch_after_all_resets(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.movie.tmdb_id=987654297
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_watched=True)
+        self.db.add(conn);await self.db.flush()
+        baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            snapshot={'mappings':{'tt-fresh-rewatch':self.movie.tmdb_id},'library':[],'progress':{},'watched':[]})
+        marker=TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,
+            deleted_at=datetime(2026,1,1,12,0),pending_connections=[])
+        review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='outbound_pending',state='pending',message='Pending reset')
+        self.db.add_all([
+            baseline,
+            marker,
+            review,
+            WatchEvent(user_id=self.owner.id,media_id=self.movie.id,completed=True,
+                watched_at=datetime(2026,1,1,13,0)),
+        ])
+        await self.db.commit()
+
+        await observe_stream_snapshot(
+            self.db,
+            conn,
+            [],
+            [{'content_id':'tt-fresh-rewatch','content_type':'movie','watched_at':'2026-01-01T13:00:00Z'}],
+            [],
+            {'tt-fresh-rewatch':self.movie.tmdb_id},
+        )
+
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        self.assertEqual(entry.status,'completed')
+        self.assertIsNone((await self.db.execute(select(TrackingDeletion).where(
+            TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one_or_none())
+        self.assertEqual((await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id==self.owner.id,SyncReview.media_id==self.movie.id,
+            SyncReview.kind=='outbound_pending'))).scalars().all(),[])
+
+    async def test_tombstone_readd_requires_a_strictly_new_provider_watch_timestamp(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_watched=True)
+        self.db.add(conn);await self.db.flush()
+        baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            snapshot={'library':[],'progress':{},'watched':[],'mappings':{}})
+        self.db.add(baseline)
+        deleted_at=datetime(2026,1,1,12,0)
+        cases=(
+            ('stale',deleted_at-timedelta(seconds=1)),
+            ('equal',deleted_at),
+            ('unknown',None),
+        )
+        for index,(label,watched_at) in enumerate(cases):
+            media=Media(title=f'Fixture {label}',media_type=MediaType.movie,tmdb_id=987654290-index)
+            key=f'tt-{label}-rewatch'
+            self.db.add(media);await self.db.flush()
+            baseline.snapshot['mappings'][key]=media.tmdb_id
+            self.db.add(TrackingDeletion(user_id=self.owner.id,media_id=media.id,
+                deleted_at=deleted_at,pending_connections=[]))
+            self.db.add(WatchEvent(user_id=self.owner.id,media_id=media.id,completed=True,watched_at=watched_at))
+            await self.db.commit()
+
+            row={'content_id':key,'content_type':'movie'}
+            if watched_at is not None:
+                row['watched_at']=watched_at.isoformat()+'Z'
+            await observe_stream_snapshot(self.db,conn,[],[row],[],{key:media.tmdb_id})
+
+            with self.subTest(timestamp=label):
+                self.assertIsNone((await self.db.execute(select(TrackedEntry).where(
+                    TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==media.id))).scalar_one_or_none())
+                self.assertIsNotNone((await self.db.execute(select(TrackingDeletion).where(
+                    TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==media.id))).scalar_one_or_none())
+
     async def test_local_deletion_cloud_reset_waits_for_first_import_approval(self):
         from core.cloud_actions import dispatch_cloud_actions
 
         self.movie.tmdb_id=987654299
-        self.db.add(UserSettings(user_id=self.owner.id,mdblist_api_key='fixture-key'))
+        self.db.add(UserSettings(user_id=self.owner.id,mdblist_api_key='fixture-key',mdblist_push_watched=True))
         self.db.add(CloudBaseline(user_id=self.owner.id,provider='mdblist',approved=False,snapshot={}))
         await self.db.commit()
         await self.save(self.movie,status='completed',manual_score=8)

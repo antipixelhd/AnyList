@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Readding a deleted title from streaming history (2026-09-23)
+
+Confirmed deletion now waits only for connected Stremio/Nuvio and cloud tracking providers with relevant outbound push enabled. The deletion marker remains until every queued reset succeeds. A later Stremio/Nuvio viewing observation with a watch timestamp strictly newer than the deletion releases the marker and can recreate the tracked entry; stale or undated history remains blocked. Explicit local readding continues to work independently.
+
+The six focused deletion/readd and cloud reset regressions passed against a freshly migrated disposable local PostgreSQL database. The broader tracking API module ran 88 tests before the final push-flag regression was added; 86 passed, while two existing activity date/grouping tests failed outside the changed paths. No VPS or provider writes were made.
+
 ## Shared visible notification refresh (2026-09-23)
 
 The app-bar notification badges, Home's Notifications summary, the nonmodal AttentionPrompt, and the `/recent-events` page now subscribe to one shared in-memory notification snapshot. It fetches the complete private `/tracking/recent-events` projection with no-store semantics, so newly created, changed, and resolved/removed cards are reconciled together; the separate pending connection-delivery queue remains on the Notifications page and does not inflate the app-bar badges.
