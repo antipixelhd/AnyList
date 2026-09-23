@@ -44,6 +44,21 @@ class ProfileBioSchemaTests(unittest.TestCase):
             UserProfileUpdate(bio='x' * 5001)
 
 
+class InitialImportRatingGraceTests(unittest.TestCase):
+    def test_only_completed_initial_imports_within_seven_days_are_quiet(self):
+        from core.activity import suppress_initial_import_rating
+
+        now = datetime(2026, 9, 23, 12)
+        entry = SimpleNamespace(status='completed', initial_import_completed_at=now - timedelta(days=6))
+        self.assertTrue(suppress_initial_import_rating(entry, now))
+        self.assertFalse(suppress_initial_import_rating(entry, now + timedelta(days=1)))
+        entry.status = 'watching'
+        self.assertFalse(suppress_initial_import_rating(entry, now))
+        entry.status = 'completed'
+        entry.initial_import_completed_at = None
+        self.assertFalse(suppress_initial_import_rating(entry, now))
+
+
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
 class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -274,6 +289,64 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(profile.json()['recent_activity']),1)
         self.assertEqual(profile.json()['recent_activity'][0]['status'],'paused')
         self.assertEqual((await self.client.get('/tracking/activity')).json()['results'],[])
+
+    async def test_initial_import_completion_suppresses_ratings_until_status_changes(self):
+        from core.tracking_import import import_tracking_history
+
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                               completed=True, watched_at=datetime.now(timezone.utc).replace(tzinfo=None)))
+        await self.db.commit()
+        self.assertEqual(await import_tracking_history(self.db, self.owner.id, initial_import=True), 1)
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.movie.id))).scalar_one()
+        self.assertEqual(entry.status, 'completed')
+        self.assertIsNotNone(entry.initial_import_completed_at)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+        self.db.add(Follow(follower_id=self.friend.id, following_id=self.owner.id))
+        await self.db.commit()
+
+        rated = await self.client.post('/ratings', json={
+            'media_id': self.movie.id, 'media_type': 'movie', 'rating': 7.5,
+        })
+        self.assertEqual(rated.status_code, 200, rated.text)
+        edited = await self.save(self.movie, manual_score=8)
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+        self.viewer = self.friend
+        self.assertEqual((await self.client.get('/tracking/activity')).json()['results'], [])
+        self.viewer = self.owner
+
+        changed = await self.save(self.movie, status='watching')
+        self.assertEqual(changed.status_code, 200, changed.text)
+        await self.db.refresh(entry)
+        self.assertIsNone(entry.initial_import_completed_at)
+        rated_again = await self.client.post('/ratings', json={
+            'media_id': self.movie.id, 'media_type': 'movie', 'rating': 9,
+        })
+        self.assertEqual(rated_again.status_code, 200, rated_again.text)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(activity), 1)
+        self.assertEqual(activity[0]['status'], 'watching')
+        self.assertEqual(activity[0]['score'], 9)
+        self.assertTrue(activity[0]['payload']['rating_changed'])
+        self.viewer = self.friend
+        followed = (await self.client.get('/tracking/activity')).json()['results']
+        self.assertEqual(len(followed), 1)
+        self.assertEqual(followed[0]['score'], 9)
+
+    async def test_initial_import_rating_grace_expires_after_seven_days(self):
+        imported_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7, seconds=1)
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='completed',
+                             rating_mode='manual', season_scores={}, progress=1, favorite=False,
+                             rewatch_count=0, initial_import_completed_at=imported_at)
+        self.db.add(entry)
+        await self.db.commit()
+        rated = await self.save(self.movie, manual_score=7)
+        self.assertEqual(rated.status_code, 200, rated.text)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(activity), 1)
+        self.assertEqual(activity[0]['score'], 7)
+        self.assertTrue(activity[0]['payload']['rating_changed'])
 
     async def test_home_activity_contains_followed_public_profiles_only(self):
         now=datetime.now(timezone.utc).replace(tzinfo=None)

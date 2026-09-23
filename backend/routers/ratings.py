@@ -168,12 +168,13 @@ async def submit_rating(
             entry.rating_mode = "manual"
             entry.manual_score = body.rating or None
         await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id)
-        from core.activity import record_daily_activity
-        await record_daily_activity(
-            db, user_id=current_user.id, media_id=media.id, status=entry.status,
-            score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
-            rating_changed=rating_changed,
-        )
+        from core.activity import record_daily_activity, suppress_initial_import_rating
+        if not suppress_initial_import_rating(entry):
+            await record_daily_activity(
+                db, user_id=current_user.id, media_id=media.id, status=entry.status,
+                score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+                rating_changed=rating_changed,
+            )
 
     await db.commit()
     await db.refresh(rating)

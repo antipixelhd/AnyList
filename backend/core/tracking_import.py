@@ -2,7 +2,7 @@
 
 Library membership is deliberately not consulted. This does not infer removals.
 """
-from datetime import date
+from datetime import date, datetime, timezone
 from sqlalchemy import select, or_
 from models import Media, WatchEvent, PlaybackProgress, Rating, Show, User
 from models.base import MediaType
@@ -11,7 +11,8 @@ from core.tracking_rules import observed_status
 from core.status_provenance import mark_status_change
 
 
-async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | None = None):
+async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | None = None,
+                                  *, initial_import: bool = False):
     await db.execute(select(User.id).where(User.id==user_id).with_for_update())
     deleted=set((await db.execute(select(TrackingDeletion.media_id).where(TrackingDeletion.user_id==user_id))).scalars())
     existing={e.media_id:e for e in (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==user_id))).scalars()}
@@ -76,6 +77,8 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
             start_date=min(item['dates']) if item['dates'] and not (media.media_type==MediaType.movie and complete) else None,
             finish_date=max(item['dates']) if complete and item['dates'] else None)
         mark_status_change(entry,'history-import')
+        if initial_import and status == 'completed':
+            entry.initial_import_completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.add(entry)
         if added_media_ids is not None:
             added_media_ids.add(media_id)

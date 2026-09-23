@@ -20,7 +20,7 @@
 | Friends' average | Average of eligible effective ratings from followed users, excluding private users' data. |
 | Public profile | Profile eligible to be viewed by other members; visitor access additionally requires the instance setting. |
 | Private profile | Personal list/rating/activity hidden from other users and their aggregates. |
-| Initial import | Loading existing remote data; does not flood the activity feed with historical events. |
+| Initial import | Loading existing remote data; does not flood the activity feed with historical events. Rating-only edits to titles imported already Completed stay off the feed for seven days, unless their status changes. |
 | Sync conflict | Incompatible changes whose precedence cannot be determined safely from available source information. |
 | Cumulative progress | A later watched episode/season implies preceding episodes were watched; keep underlying episode records. Exact order/specials rules pending. |
 | Entry deletion | Confirmed removal of all personal state for a main list entry, propagated where supported; not deletion of the shared title. |

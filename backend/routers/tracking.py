@@ -126,7 +126,7 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
 @router.post('/import-history')
 async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
     from core.tracking_import import import_tracking_history
-    return {'added':await import_tracking_history(db,viewer.id)}
+    return {'added':await import_tracking_history(db,viewer.id,initial_import=True)}
 
 
 class PreferencePatch(BaseModel):
@@ -428,9 +428,10 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
                     entry.rating_mode='manual'
                 else:
                     entry.season_scores={**(entry.season_scores or {}),str(event.season_number):event.proposed_score}
-                from core.activity import record_daily_activity
-                await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
-                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),rating_changed=True)
+                from core.activity import record_daily_activity, suppress_initial_import_rating
+                if not suppress_initial_import_rating(entry):
+                    await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                        score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),rating_changed=True)
             rating_query=select(Rating).where(Rating.user_id==viewer.id,Rating.media_id==event.media_id,
                 Rating.episode_order.is_(None))
             rating_query=rating_query.where(Rating.season_number.is_(None)) if event.season_number is None else rating_query.where(Rating.season_number==event.season_number)
@@ -1213,11 +1214,12 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
     progress_changed = entry.progress != old_progress
     if previous != entry.status or old_score != score or progress_changed:
-        from core.activity import record_daily_activity, series_activity_details
-        position, finished = await series_activity_details(db, media, entry.progress)
-        await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
-            episodes_watched=max(0, entry.progress-old_progress) if media.media_type == MediaType.series else 0, progress=entry.progress if media.media_type == MediaType.series else None,
-            position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
+        from core.activity import record_daily_activity, series_activity_details, suppress_initial_import_rating
+        if previous != entry.status or progress_changed or not suppress_initial_import_rating(entry):
+            position, finished = await series_activity_details(db, media, entry.progress)
+            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
+                episodes_watched=max(0, entry.progress-old_progress) if media.media_type == MediaType.series else 0, progress=entry.progress if media.media_type == MediaType.series else None,
+                position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}

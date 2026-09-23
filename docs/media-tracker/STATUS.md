@@ -701,3 +701,7 @@ Notifications now uses Home's left-hand card stream and a visible right-hand Inb
 The poster treatment was corrected after owner review: artwork has its original fixed dimensions and is centered vertically in the card. The Needs review accent now uses a named rose alert color shared with the app-bar attention badge, keeping yellow for rating actions.
 
 Owner clarification: only `rating_needed` cards use a full-height poster. Review and other cards retain the fixed, vertically centered poster; the rose alert treatment remains.
+
+## Initial import rating activity grace (2026-09-23)
+
+Initial provider snapshots already omit historical social activity. Completed titles first added through an initial history import now retain a per-entry import timestamp. Rating-only edits to those titles during the following seven days update the saved rating without creating a Profile or following-feed card. A status change creates its normal card and ends the grace period; later ratings merge into activity normally. Titles first seen on later syncs keep their existing activity and rating-prompt behavior. The current catalogue supports movies and series; the entry-level rule does not depend on media type and can cover games when that catalogue type is introduced.

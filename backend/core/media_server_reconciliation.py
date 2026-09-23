@@ -144,7 +144,7 @@ async def reconcile_media_server_pull(
     stats["rating_conflicts"] = rating_conflicts
     newly_tracked: set[int] = set()
     stats["tracked_entries"] = await import_tracking_history(
-        db, conn.user_id, added_media_ids=newly_tracked,
+        db, conn.user_id, added_media_ids=newly_tracked, initial_import=previous is None,
     )
     approved = bool(previous and previous.approved)
     if not approved:

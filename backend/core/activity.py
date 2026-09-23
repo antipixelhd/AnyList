@@ -1,10 +1,20 @@
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 
 from models import Media, Show
 from models.base import MediaType
-from models.tracking import TrackingActivity
+from models.tracking import TrackedEntry, TrackingActivity
+
+
+def suppress_initial_import_rating(entry: TrackedEntry, now: datetime | None = None) -> bool:
+    """Keep rating-only edits to an initially imported completion off the feed."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    imported_at = entry.initial_import_completed_at
+    return bool(
+        entry.status == "completed" and imported_at is not None
+        and imported_at <= now < imported_at + timedelta(days=7)
+    )
 
 
 def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
@@ -85,4 +95,11 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
         row = TrackingActivity(user_id=user_id, media_id=media_id, status=status, score=score,
                                payload=details, created_at=now)
         db.add(row)
+    if status_changed:
+        # Once the imported status changes, future ratings belong on its
+        # ordinary activity card even if the seven-day window has not elapsed.
+        await db.execute(update(TrackedEntry).where(
+            TrackedEntry.user_id == user_id, TrackedEntry.media_id == media_id,
+            TrackedEntry.initial_import_completed_at.is_not(None),
+        ).values(initial_import_completed_at=None))
     return row

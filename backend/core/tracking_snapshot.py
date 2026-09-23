@@ -179,9 +179,9 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
     await release_rewatched_deletions(db, conn, watched, progress, mappings)
     # Streaming-library membership alone never creates a tracked entry.
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
-    imported = await import_tracking_history(db,conn.user_id)
     baseline=await db.get(StreamBaseline,conn.id)
     first=baseline is None
+    imported = await import_tracking_history(db,conn.user_id,initial_import=first)
     previous=baseline.snapshot if baseline else {}
     active=_active(progress)
     completed = [*watched, *completed_rows(progress)]

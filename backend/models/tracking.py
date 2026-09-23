@@ -26,6 +26,9 @@ class TrackedEntry(Base):
     # favourites, so it cannot safely answer which side last changed status.
     status_source: Mapped[str | None] = mapped_column(String(64))
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Only Completed entries created by an initial history import receive this
+    # marker. Rating-only activity is quiet for the following seven days.
+    initial_import_completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 

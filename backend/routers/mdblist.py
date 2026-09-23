@@ -765,7 +765,10 @@ async def run_mdblist_sync(user_id: int, job_id: int) -> None:
 
             # Import and reconcile before exporting only approved changed fields.
             from core.tracking_import import import_tracking_history
-            stats["tracked_entries"] = await import_tracking_history(db, user_id)
+            from models.tracking import CloudBaseline
+            first_import = await db.scalar(select(CloudBaseline.id).where(
+                CloudBaseline.user_id == user_id, CloudBaseline.provider == "mdblist")) is None
+            stats["tracked_entries"] = await import_tracking_history(db, user_id, initial_import=first_import)
             from core.cloud_history_reconciliation import reconcile_cloud_watch_events
             accepted_watched: set[int] = set()
             history_reconciliation = await reconcile_cloud_watch_events(
