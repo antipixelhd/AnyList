@@ -1,11 +1,94 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
+import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
-if(Astro.locals.user?.username!==Astro.params.username)return Astro.redirect('/login');
-let profile:any=null,entries:any[]=[],error='';
-try{[profile,{results:entries}]=await Promise.all([tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token),tracker('library',Astro.locals.token)]);}catch(e){error=(e as Error).message;}
+
+if (Astro.locals.user?.username !== Astro.params.username) return Astro.redirect('/login');
+
+let profile: any = null, entries: any[] = [], error = '';
+try {
+  [profile, {results: entries}] = await Promise.all([
+    tracker(`people/${encodeURIComponent(Astro.params.username!)}`, Astro.locals.token),
+    tracker('library', Astro.locals.token),
+  ]);
+} catch (cause) {
+  error = (cause as Error).message;
+}
+
+const sections = [
+  {type: 'movie', heading: 'Movies', entries: entries.filter(entry => entry.type === 'movie')},
+  {type: 'series', heading: 'Series', entries: entries.filter(entry => entry.type === 'series')},
+];
 ---
-<Tracker title="Library">{profile&&<ProfileHeader profile={profile} active="library"/>}<div class="page-width"><h1>Your streaming library</h1><p>Library membership is separate from your movie and series lists. Only you can see this tab.</p>
-{error?<p class="error-message">{error}</p>:entries.length?<div class="card-grid">{entries.map(m=>{const image=responsiveArtwork(m.poster,{size:'w342',sizes:'(max-width:650px) calc((100vw - 57px) / 2), 190px',route:'direct'});return <a class="media-card" href={`/title/${m.id}`}>{image?.src&&<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>}<h2>{m.title}</h2><small>{m.type==='movie'?'Movie':'Series'}</small></a>})}</div>:<div class="empty-state"><h2>Your library is empty</h2><p>Add a movie or series from its title page.</p><a class="button-primary" href="/browse">Browse titles</a></div>}</div></Tracker>
+<Tracker title="Library">
+  {profile && <ProfileHeader profile={profile} active="library"/>}
+  <div class="page-width library-page">
+    <h1>Your streaming library</h1>
+    <p>Library membership is separate from your movie and series lists. Only you can see this tab.</p>
+    {error ? <p class="error-message">{error}</p> : <>
+      <p class="error-message" role="alert" data-library-error hidden></p>
+      <div class="library-sections" hidden={entries.length === 0}>
+        {sections.filter(section => section.entries.length > 0).map(section => <section class="library-section" data-library-group={section.type}>
+          <h2>{section.heading}</h2>
+          <div class="card-grid">
+            {section.entries.map(entry => {
+              const image = responsiveArtwork(entry.poster, {size:'w342', sizes:'(max-width:650px) calc((100vw - 57px) / 2), 190px', route:'direct'});
+              return <article class="library-card" data-library-entry>
+                <a class="media-card" href={`/title/${entry.id}`}>
+                  {image?.src && <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>}
+                  <h3>{entry.title}</h3>
+                </a>
+                <button type="button" class="library-remove" data-library-remove={entry.id} aria-label={`Remove ${entry.title} from library`} title={`Remove ${entry.title} from library`}><Icon name="close"/></button>
+              </article>;
+            })}
+          </div>
+        </section>)}
+      </div>
+      <div class="empty-state" data-library-empty hidden={entries.length > 0}>
+        <h2>Your library is empty</h2>
+        <p>Add a movie or series from its title page.</p>
+        <a class="button-primary" href="/browse">Browse titles</a>
+      </div>
+    </>}
+  </div>
+</Tracker>
+<script>
+let libraryListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  libraryListeners?.abort();
+  libraryListeners = new AbortController();
+  const page = document.querySelector<HTMLElement>('.library-page');
+  if (!page) return;
+  const error = page.querySelector<HTMLElement>('[data-library-error]')!;
+  page.addEventListener('click', async event => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-library-remove]');
+    if (!button) return;
+    button.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch(`/api/proxy/tracking/library/${button.dataset.libraryRemove}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({in_library: false}),
+      });
+      if (!response.ok) {
+        const details = await response.json().catch(() => null);
+        throw new Error(typeof details?.detail === 'string' ? details.detail : 'Could not remove this title from your library.');
+      }
+      const card = button.closest<HTMLElement>('[data-library-entry]')!;
+      const group = card.closest<HTMLElement>('[data-library-group]')!;
+      card.remove();
+      group.hidden = !group.querySelector('[data-library-entry]');
+      const hasEntries = !!page.querySelector('[data-library-entry]');
+      page.querySelector<HTMLElement>('.library-sections')!.hidden = !hasEntries;
+      page.querySelector<HTMLElement>('[data-library-empty]')!.hidden = hasEntries;
+    } catch (cause) {
+      error.textContent = cause instanceof Error ? cause.message : 'Could not remove this title from your library.';
+      error.hidden = false;
+      button.disabled = false;
+    }
+  }, {signal: libraryListeners.signal});
+});
+</script>

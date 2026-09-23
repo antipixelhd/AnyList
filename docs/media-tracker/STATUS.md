@@ -715,3 +715,7 @@ Verification used a separate migrated PostgreSQL database: 97 tracking and legac
 ## List editor selection and progress affordance (2026-09-23)
 
 Opening the editor now clears the originating list row's highlight and cover preview. Closing it returns focus to that row's section heading, so the edit button does not select the row again; pointer hover can resume after leaving and re-entering the row. The progress increment is an inline text plus styled like the progress value and revealed on row hover or keyboard focus. The frontend build passed, and local browser checks at desktop and 390px verified editor open/close, hidden progress control at rest, and no phone overflow.
+
+## Streaming library grouping and removal (2026-09-23)
+
+The private Library tab now groups movies and series into separate sections regardless of the profile list preference, omits empty sections and card type footers, and retains its browse prompt when the library is empty. Each card has an AnyList X in its top-right corner for local library removal. The control appears on hover or keyboard focus and stays visible on touch devices. Removal uses the existing library intent API, updates the page in place, and keeps tracked entries separate. The frontend build and local browser checks passed; temporary preview memberships were removed and the preview library is empty again.
