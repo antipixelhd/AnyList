@@ -142,6 +142,12 @@ document.addEventListener('astro:page-load', () => {
     syncStatus(); closeStatus();
     current = null;
     opener = button;
+    const listRow = button.closest<HTMLElement>('.entry-row');
+    if (listRow) {
+      listRow.dataset.editorDeselected = '';
+      const preview = document.querySelector<HTMLElement>('#cover-preview');
+      if (preview) preview.hidden = true;
+    }
     loadController?.abort();
     const controller = new AbortController();
     loadController = controller;
@@ -177,7 +183,19 @@ document.addEventListener('astro:page-load', () => {
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
-  dialog.addEventListener('close', () => { loadController?.abort(); loadController = null; current = null; displayedScore = ''; form.reset(); opener?.focus(); opener = null; });
+  dialog.addEventListener('close', () => {
+    loadController?.abort(); loadController = null; current = null; displayedScore = ''; form.reset();
+    const listRow = opener?.closest<HTMLElement>('.entry-row');
+    if (listRow) {
+      const sectionHeading = listRow.closest<HTMLElement>('.status-section')?.querySelector<HTMLElement>('h2');
+      if (sectionHeading) {
+        sectionHeading.tabIndex = -1;
+        sectionHeading.focus({preventScroll:true});
+      } else opener?.blur();
+      if (!listRow.matches(':hover')) delete listRow.dataset.editorDeselected;
+    } else opener?.focus();
+    opener = null;
+  });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;

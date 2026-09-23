@@ -55,7 +55,7 @@ const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42p
           <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={quickRatePoster(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
           <span class="entry-progress">
             <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
-            {data.owner && canIncrement(entry) && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'}><Icon name="plus"/></button>}
+            {data.owner && canIncrement(entry) && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'}>+</button>}
             {entry.status==='completed'&&entry.new_seasons>0&&<small class="unwatched-indicator">{entry.new_seasons} new {entry.new_seasons===1?'season':'seasons'}</small>}
           </span>
           {isCombined&&<span class="entry-type">{entry.type==='movie'?'Movie':'Series'}</span>}
@@ -104,7 +104,10 @@ document.addEventListener('astro:page-load', () => {
   }
   document.querySelectorAll<HTMLElement>('.entry-row').forEach(row => {
     row.addEventListener('pointerenter',()=>{previewDismissed=false;showPreview(row);});
-    row.addEventListener('pointerleave',hidePreview);
+    row.addEventListener('pointerleave',()=>{
+      hidePreview();
+      if (!document.querySelector<HTMLDialogElement>('#tracking-editor')?.open) delete row.dataset.editorDeselected;
+    });
     row.addEventListener('focusin',()=>{previewDismissed=false;showPreview(row);});
     row.addEventListener('focusout',hidePreview);
     row.addEventListener('click',hidePreview);
