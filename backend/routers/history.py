@@ -2280,6 +2280,7 @@ async def mark_as_watched(
         ))).scalar_one_or_none()
         if root_media and root_media.media_type in (MediaType.movie, MediaType.series) and not deleted:
             previous_status = entry.status if entry else None
+            previous_start_date = entry.start_date if entry else None
             previous_progress = entry.progress if entry else 0
             watched_count = 1
             progress_value = 1
@@ -2334,10 +2335,14 @@ async def mark_as_watched(
                         # episode write; only that written episode is today's activity.
                         previous_progress=max(previous_progress, entry.progress - 1),progress=entry.progress,
                         status=entry.status,score=activity_score,
-                        status_changed=next_status != previous_status and entry.progress == previous_progress)
+                        status_changed=next_status != previous_status and entry.progress == previous_progress,
+                        previous_status=previous_status,
+                        first_watching=previous_start_date is None and previous_status != 'watching')
             else:
                 await record_daily_activity(db,user_id=current_user.id,media_id=root_media_id,
-                    status=entry.status,score=activity_score,status_changed=next_status != previous_status)
+                    status=entry.status,score=activity_score,status_changed=next_status != previous_status,
+                    previous_status=previous_status,
+                    first_watching=previous_start_date is None and previous_status != 'watching')
             await db.commit()
 
     # 4. Push to media servers if outbound push is enabled

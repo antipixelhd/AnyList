@@ -23,7 +23,8 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
     previous = dict(older or {})
     current["episodes_watched"] = int(current.get("episodes_watched", 0)) + int(previous.get("episodes_watched", 0))
     current["finished_seasons"] = sorted(set(current.get("finished_seasons", [])) | set(previous.get("finished_seasons", [])))
-    current["status_changed"] = bool(current.get("status_changed") or previous.get("status_changed"))
+    if "status_start" not in current:
+        current["status_changed"] = bool(current.get("status_changed") or previous.get("status_changed"))
     if "rating_start_score" not in current:
         current["rating_changed"] = bool(current.get("rating_changed") or previous.get("rating_changed"))
     if "rating_start_score" not in current and ("rating_first" in current or "rating_first" in previous):
@@ -37,6 +38,30 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
     if not current.get("position") and previous.get("position"):
         current["position"] = previous["position"]
     return current
+
+
+def has_activity_event(status: str, details: dict) -> bool:
+    """Only persist and present cards with a qualifying daily action."""
+    status_event = bool(details.get("status_changed")) and (
+        status != "watching" or details.get("started_watching") is True
+    )
+    return bool(status_event or details.get("rating_changed")
+                or details.get("episodes_watched") or details.get("finished_seasons"))
+
+
+def _record_status_details(details: dict, *, status: str, status_changed: bool,
+                           previous_status: str | None, first_watching: bool | None) -> None:
+    if not status_changed:
+        details["status_changed"] = bool(details.get("status_changed"))
+        return
+    if "status_start" not in details:
+        details["status_start"] = previous_status
+    details["status_changed"] = details["status_start"] != status
+    if status == "watching":
+        details["started_watching"] = bool(
+            details.get("started_watching") or
+            (previous_status is None if first_watching is None else first_watching)
+        )
 
 
 def _record_rating_details(details: dict, *, rating_changed: bool,
@@ -130,6 +155,7 @@ async def series_activity_span(db, media: Media, start: int, end: int) -> tuple[
 async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
                                    progress: int, status: str, score: float | None,
                                    status_changed: bool = False, rating_changed: bool = False,
+                                   previous_status: str | None = None, first_watching: bool | None = None,
                                    previous_score: float | None = None,
                                    now: datetime | None = None) -> TrackingActivity | None:
     """Keep today's episode card equal to net forward progress after corrections."""
@@ -153,10 +179,11 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
     details["position_start"], details["position"], details["finished_seasons"] = (
         await series_activity_span(db, media, baseline, progress)
     )
-    details["status_changed"] = bool(details.get("status_changed") or status_changed)
+    _record_status_details(details, status=status, status_changed=status_changed,
+                           previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
                            previous_score=previous_score, score=score)
-    if watched == 0 and not details["status_changed"] and not details["rating_changed"]:
+    if not has_activity_event(status, details):
         if row:
             await db.delete(row)
         return None
@@ -179,6 +206,7 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                                 position: str | None = None,
                                 finished_seasons: list[int] | None = None,
                                 status_changed: bool = False, rating_changed: bool = False,
+                                previous_status: str | None = None, first_watching: bool | None = None,
                                 previous_score: float | None = None,
                                 now: datetime | None = None) -> TrackingActivity | None:
     """Merge one title's updates into its UTC-day activity card."""
@@ -193,10 +221,11 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
     if progress is not None: details["progress"] = progress
     if position is not None: details["position"] = position
     details["finished_seasons"] = sorted(set(details.get("finished_seasons", [])) | set(finished_seasons or []))
-    details["status_changed"] = bool(details.get("status_changed") or status_changed)
+    _record_status_details(details, status=status, status_changed=status_changed,
+                           previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
                            previous_score=previous_score, score=score)
-    if rating_changed and not details["rating_changed"] and not details["status_changed"] and not details["episodes_watched"]:
+    if not has_activity_event(status, details):
         if row:
             await db.delete(row)
         return None

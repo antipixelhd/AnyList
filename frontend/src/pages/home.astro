@@ -4,10 +4,10 @@ import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
 import {tracker} from '../lib/tracker';
 import {hasStreamingLibraryConnection} from '../lib/streaming-library-availability';
-let activities:any[]=[],activityCursor='',error='',pending:number|null=null,combineLists=true;
+let activities:any[]=[],error='',pending:number|null=null,combineLists=true;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const [activityResult,eventResult,preferenceResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token),tracker('preferences',Astro.locals.token)]);
-if(activityResult.status==='fulfilled'){activities=activityResult.value.results;activityCursor=activityResult.value.cursor||'';}
+if(activityResult.status==='fulfilled')activities=activityResult.value.results;
 else error=activityResult.reason.message;
 if(eventResult.status==='fulfilled')pending=eventResult.value.pending;
 if(preferenceResult.status==='fulfilled')combineLists=preferenceResult.value.combine_lists!==false;
@@ -16,7 +16,7 @@ const showLibrary=await hasStreamingLibraryConnection(Astro.locals.token);
 ---
 <Tracker title="Home"><div class="page-width dashboard">
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse">Find your next title</a></header>
-  <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-cursor={activityCursor}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
+  <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
   </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events" data-notification-summary><span class="eyebrow">Notifications</span><strong data-notification-summary-title>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p data-notification-summary-message>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
   <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}{showLibrary&&<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a>}</div></aside></div>
@@ -26,22 +26,23 @@ const showLibrary=await hasStreamingLibraryConnection(Astro.locals.token);
   <div class="event-body"><div class="event-meta"><div class="event-actor"><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a><a class="event-user"></a></div><time data-relative-time></time></div>
   <p class="event-action"><span></span> <a></a></p><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
 </article></template>
+<template id="activity-empty-template"><div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div></template>
 </Tracker>
 
 <script>
 import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
-import {startVisibleRefresh} from '../lib/visible-refresh';
+import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 
-let stopActivityFeed: (()=>void)|undefined;
+let activityFeedRefresh: VisibleRefreshHandle|undefined;
 
 document.addEventListener('astro:page-load',()=>{
-  stopActivityFeed?.();
-  stopActivityFeed=undefined;
+  activityFeedRefresh?.stop();
+  activityFeedRefresh=undefined;
   const feed=document.querySelector<HTMLElement>('[data-activity-feed]');
   const template=document.querySelector<HTMLTemplateElement>('#activity-card-template');
+  const emptyTemplate=document.querySelector<HTMLTemplateElement>('#activity-empty-template');
   if(!feed||!template)return;
-  let cursor=feed.dataset.cursor||'';
 
   const updateTimes=()=>document.querySelectorAll<HTMLTimeElement>('[data-relative-time]').forEach(time=>{
     if(!time.dateTime)return;
@@ -81,29 +82,31 @@ document.addEventListener('astro:page-load',()=>{
     return card;
   };
 
-  const merge=(activities:any[])=>{
-    if(!activities.length)return;
-    feed.querySelector('[data-activity-empty]')?.remove();feed.querySelector('[data-activity-error]')?.remove();
+  const reconcile=(activities:any[])=>{
+    feed.querySelector('[data-activity-error]')?.remove();
     const cards=new Map(Array.from(feed.querySelectorAll<HTMLElement>('[data-activity-card]')).map(card=>[card.dataset.activityKey,card]));
-    activities.forEach(activity=>{const replacement=render(activity);cards.get(activity.key)?.remove();cards.set(activity.key,replacement);feed.append(replacement);});
-    const ordered=Array.from(cards.values()).sort((left,right)=>Date.parse(right.dataset.createdAt!)-Date.parse(left.dataset.createdAt!));
-    ordered.forEach((card,index)=>index<60?feed.append(card):card.remove());
+    const visibleKeys=new Set(activities.map(activity=>activity.key));
+    cards.forEach((card,key)=>{if(!visibleKeys.has(key))card.remove();});
+    if(activities.length)feed.querySelector('[data-activity-empty]')?.remove();
+    activities.forEach(activity=>{
+      const existing=cards.get(activity.key);
+      const card=existing?.dataset.createdAt===activity.created_at?existing:render(activity);
+      if(card!==existing)existing?.remove();
+      feed.append(card);
+    });
+    if(!activities.length&&!feed.querySelector('[data-activity-empty]')&&emptyTemplate)
+      feed.append(emptyTemplate.content.firstElementChild!.cloneNode(true));
   };
 
   const refresh=async(signal:AbortSignal)=>{
     updateTimes();
     try{
-      do{
-        const url=cursor?`/api/proxy/tracking/activity?cursor=${encodeURIComponent(cursor)}`:'/api/proxy/tracking/activity';
-        const response=await fetch(url,{cache:'no-store',signal});
-        if(!response.ok)break;
-        const data=await response.json();merge(data.results||[]);cursor=data.cursor||cursor;feed.dataset.cursor=cursor;
-        if(!data.has_more)break;
-      }while(!signal.aborted);
+      const response=await fetch('/api/proxy/tracking/activity',{cache:'no-store',signal});
+      if(response.ok)reconcile((await response.json()).results||[]);
     }catch(error){if(!signal.aborted)console.debug('Activity refresh deferred.',error);}
   };
 
-  stopActivityFeed=startVisibleRefresh({refresh,intervalMs:60_000});
+  activityFeedRefresh=startVisibleRefresh({refresh,intervalMs:60_000});
   updateTimes();
 });
 </script>

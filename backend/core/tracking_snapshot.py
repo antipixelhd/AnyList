@@ -234,6 +234,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             previous_status=entry.status,proposed_status=proposed,
             message=f'{conn.name}: playback disappeared without a matching completion. '+('A newer local edit was preserved; choose the correct status.' if conflict else f'Marked {proposed}. Review the change or add a rating.')))
         if not conflict:
+            prior_status = entry.status
             entry.status=proposed
             if media.media_type==MediaType.movie:
                 entry.progress=0
@@ -243,7 +244,8 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             if auto_confirm:
                 from core.activity import record_daily_activity
                 await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=proposed,
-                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True)
+                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
+                    status_changed=True,previous_status=prior_status)
     # Only changed observations advance an existing tracked entry. Repeated
     # polling must not restore cleared dates or reinterpret the same playback.
     if not first:
@@ -270,6 +272,7 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
             if pending:
                 continue
             previous_status = entry.status
+            previous_start_date = entry.start_date
             previous_progress = entry.progress
             is_complete = media.media_type == MediaType.movie and row in new_completed
             # A newer local correction takes precedence over inferred history too.
@@ -313,10 +316,14 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
                     await record_progress_activity(db,user_id=conn.user_id,media=media,
                         previous_progress=0 if newly_tracked else previous_progress,progress=entry.progress,
                         status=entry.status,score=activity_score,
-                        status_changed=(entry.status != previous_status or newly_tracked) and not (progress_changed or newly_tracked and entry.progress > 0))
+                        status_changed=(entry.status != previous_status or newly_tracked) and not (progress_changed or newly_tracked and entry.progress > 0),
+                        previous_status=None if newly_tracked else previous_status,
+                        first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
                 else:
                     await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
-                        score=activity_score,status_changed=entry.status != previous_status or newly_tracked)
+                        score=activity_score,status_changed=entry.status != previous_status or newly_tracked,
+                        previous_status=None if newly_tracked else previous_status,
+                        first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
             if row in changed_active and baseline.approved:
                 from core.stream_actions import queue_progress_update
                 await queue_progress_update(db, conn, media, row)

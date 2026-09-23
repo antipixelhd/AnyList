@@ -71,9 +71,9 @@ export function activityAction(activity: any) {
     }
     return `Watched ${count === 1 ? 'an episode' : `${count} episodes`} of`;
   }
-  if (details.status_changed && activity.status === 'watching') return 'Started Watching';
+  if (details.status_changed && activity.status === 'watching' && details.started_watching === true) return 'Started Watching';
   if (details.rating_changed) return firstRating(details) ? 'Rated' : 'Changed Rating for';
-  return activity.status === 'completed' ? 'Completed' : activity.status === 'planning' ? 'Plans to watch' : activity.status === 'watching' ? 'Started Watching' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
+  return '';
 }
 
 export const activityLabel = activityAction;

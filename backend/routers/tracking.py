@@ -467,6 +467,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
         entry=(await db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
         if not entry:raise HTTPException(409,'The tracked entry no longer exists')
+        prior_status, prior_start_date = entry.status, entry.start_date
         if body.action not in {'confirm','keep','change'}:raise HTTPException(422,'Resolve or keep this imported history')
         status_changed = False
         if body.action!='keep':
@@ -490,10 +491,12 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             position, finished = await series_activity_details(db, media, entry.progress)
             await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
-                progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed)
+                progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed,
+                previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
     else:
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
         if not entry:raise HTTPException(409,'The tracked entry no longer exists')
+        prior_status, prior_start_date = entry.status, entry.start_date
         status=body.status.value if body.action=='change' and body.status else event.previous_status if body.action=='keep' else event.proposed_status
         if not status:raise HTTPException(422,'Choose a status')
         entry.status=status
@@ -506,7 +509,8 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             await queue_restorations(db,viewer.id,await db.get(Media,entry.media_id))
         from core.activity import record_daily_activity
         await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=status,
-            score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True)
+            score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True,
+            previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
     event.state='confirmed' if body.action=='confirm' else 'corrected'
     await db.commit()
     return {'state':event.state}
@@ -789,7 +793,7 @@ def media_data(media):
 
 def activity_data(rows, *, include_user=False, limit=12):
     """Collapse legacy and current rows into one newest-first UTC-day card."""
-    from core.activity import merge_activity_payload
+    from core.activity import has_activity_event, merge_activity_payload
     grouped = {}
     for row in rows:
         activity, media = row[0], row[1]
@@ -820,7 +824,7 @@ def activity_data(rows, *, include_user=False, limit=12):
             activity["payload"]["rating_first"] = False
             if activity["payload"].get("previous_score") is None:
                 activity["payload"]["rating_changed"] = False
-    return list(grouped.values())[:limit]
+    return [item for item in grouped.values() if has_activity_event(item["status"], item["payload"])][:limit]
 
 
 def encode_activity_cursor(created_at: datetime, row_id: int) -> str:
@@ -1189,6 +1193,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         result["delivery_job_id"] = latest_job_id
         return result
     previous = entry.status if entry else None
+    old_start_date = entry.start_date if entry else None
     old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
     old_season_scores = dict(entry.season_scores or {}) if entry else {}
@@ -1290,12 +1295,14 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             await record_progress_activity(db, user_id=viewer.id, media=media,
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
                 status_changed=status_changed and 'status' in fields, rating_changed=rating_changed,
+                previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
                 previous_score=old_score)
         elif status_changed or not suppress_initial_import_rating(entry):
             position, finished = await series_activity_details(db, media, entry.progress)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,
                 position=position, status_changed=status_changed, rating_changed=rating_changed,
+                previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
                 previous_score=old_score)
     changed_ratings = {}
     removed_ratings = set()

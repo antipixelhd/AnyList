@@ -246,6 +246,7 @@ async def reconcile_cloud_watch_events(
             continue
 
         previous_status = entry.status
+        previous_start_date = entry.start_date
         previous_progress = entry.progress
         changed = previous_status != proposed_status
         for episode in inferred_previous:
@@ -271,10 +272,13 @@ async def reconcile_cloud_watch_events(
             if media.media_type == MediaType.series:
                 await record_progress_activity(db,user_id=user_id,media=media,
                     previous_progress=previous_progress,progress=entry.progress,
-                    status=entry.status,score=activity_score,status_changed=changed and not progress_changed)
+                    status=entry.status,score=activity_score,status_changed=changed and not progress_changed,
+                    previous_status=previous_status,
+                    first_watching=previous_start_date is None and previous_status != 'watching')
             else:
                 await record_daily_activity(db,user_id=user_id,media_id=root_id,status=entry.status,
-                    score=activity_score,status_changed=changed)
+                    score=activity_score,status_changed=changed,previous_status=previous_status,
+                    first_watching=previous_start_date is None and previous_status != 'watching')
         if changed and not initial_import:
             if entry.status == "completed":
                 await queue_sync_completion_rating(

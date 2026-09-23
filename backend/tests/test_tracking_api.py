@@ -525,6 +525,35 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(activity[0]['payload']['rating_changed'])
         self.assertNotIn('previous_score', activity[0]['payload'])
 
+    async def test_status_reversal_removes_unqualified_daily_card(self):
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
+                                 status='watching', rating_mode='manual', manual_score=9,
+                                 season_scores={}, progress=0,
+                                 start_date=date.today() - timedelta(days=10)))
+        await self.db.commit()
+        self.assertEqual((await self.save(self.movie, status='paused', manual_score=8)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, status='watching', manual_score=9)).status_code, 200)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+
+    async def test_started_watching_requires_first_watching_transition(self):
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
+                                 status='paused', rating_mode='manual', season_scores={}, progress=0,
+                                 start_date=date.today() - timedelta(days=10)))
+        await self.db.commit()
+        self.assertEqual((await self.save(self.movie, status='watching')).status_code, 200)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.show.id,
+                                 status='planning', rating_mode='manual', season_scores={}, progress=0))
+        await self.db.commit()
+        self.assertEqual((await self.save(self.show, status='watching')).status_code, 200)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(activity), 1)
+        self.assertEqual(activity[0]['media']['id'], self.show.id)
+        self.assertTrue(activity[0]['payload']['started_watching'])
+        self.assertEqual((await self.save(self.show, status='planning')).status_code, 200)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+
     async def test_status_card_with_existing_score_has_no_rating_event(self):
         self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
                                  status='watching', rating_mode='manual', manual_score=8,
@@ -605,8 +634,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         results=(await self.client.get('/tracking/activity')).json()['results']
         by_media={row['media']['id']:row for row in results}
-        self.assertIsNone(by_media[self.movie.id]['score'])
-        self.assertFalse(by_media[self.movie.id]['payload']['rating_changed'])
+        self.assertNotIn(self.movie.id, by_media)
         self.assertEqual(by_media[self.show.id]['score'],7.5)
         self.assertTrue(by_media[self.show.id]['payload']['rating_changed'])
 

@@ -6,6 +6,10 @@ Activity cards show a rating only when that day's activity included a first rati
 
 Same-day rating reversals now use the score before that day's first edit as their baseline. Returning to it removes a rating-only card or clears the rating portion of a mixed card; returning to the initial score of a first rating keeps the “Rated” card without a score transition. Six focused tracking API tests passed against the disposable local test database.
 
+Activity actions now require their own trigger instead of falling back to the entry's current status. Status changes compare against the first status of the day, and “Started Watching” requires a first-watching transition. Reversing all qualifying changes removes the daily card; older rows with no qualifying event are omitted from both profile and following feeds.
+
+The visible Home feed reconciles its latest 60 cards on refresh, including removals, so a followed member's reverted card disappears without a page reload. The focused activity regressions and all 109 tracking API tests pass; the frontend production build passes.
+
 Five focused tracking API tests and the frontend production build passed against the disposable local test database. No VPS deployment was performed.
 
 ## Member profile colors (2026-09-23)
