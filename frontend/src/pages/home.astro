@@ -24,12 +24,12 @@ const showLibrary=await hasStreamingLibraryConnection(Astro.locals.token);
 <template id="activity-card-template"><article class="visual-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
   <div class="event-body"><div class="event-meta"><div class="event-actor"><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a><a class="event-user"></a></div><time data-relative-time></time></div>
-  <p class="event-action"><span></span> <a></a></p><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <b></b><small>/10</small></span></div></div>
+  <p class="event-action"><span></span> <a></a></p><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
 </article></template>
 </Tracker>
 
 <script>
-import {activityAction,activityTime,scoreLabel} from '../lib/tracker';
+import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh} from '../lib/visible-refresh';
 
@@ -69,7 +69,15 @@ document.addEventListener('astro:page-load',()=>{
     const action=card.querySelector<HTMLElement>('.event-action span')!;action.textContent=activityAction(activity);
     const title=card.querySelector<HTMLAnchorElement>('.event-action>a')!;title.href=mediaHref;title.textContent=activity.media.title;
     const footer=card.querySelector<HTMLElement>('.event-footer')!;
-    if(activity.score!=null){const score=scoreLabel(activity.score);footer.hidden=false;footer.querySelector('b')!.textContent=score;footer.querySelector('.score-pill')!.setAttribute('aria-label',`Rated ${score} out of 10`);}
+    const rating=activityRating(activity);
+    if(rating){
+      footer.hidden=false;
+      const previous=footer.querySelector<HTMLElement>('[data-rating-previous]')!;
+      previous.hidden=rating.previous==null;
+      if(rating.previous!=null)previous.querySelector<HTMLElement>('[data-rating-previous-value]')!.textContent=scoreLabel(rating.previous);
+      footer.querySelector<HTMLElement>('[data-rating-current]')!.textContent=scoreLabel(rating.current);
+      footer.querySelector('.score-pill')!.setAttribute('aria-label',rating.label);
+    }
     return card;
   };
 

@@ -26,6 +26,22 @@ export function artwork(path: string | null, size = 'w342') {
 
 export const scoreLabel = (value: number | null) => value == null || value === 0 ? '—' : Number(value.toFixed(1)).toString();
 
+function firstRating(details: any) {
+  // Earlier activity payloads did not distinguish a first rating from an edit.
+  return details.rating_first === true || (details.rating_first == null && details.previous_score == null);
+}
+
+export function activityRating(activity: any) {
+  const details = activity.payload || {};
+  if (!details.rating_changed) return null;
+  const previous = typeof details.previous_score === 'number' ? details.previous_score : null;
+  const current = typeof activity.score === 'number' ? activity.score : null;
+  const label = previous == null
+    ? `Rated ${scoreLabel(current)} out of 10`
+    : `Rating changed from ${scoreLabel(previous)} to ${scoreLabel(current)} out of 10`;
+  return { previous, current, label };
+}
+
 export function activityAction(activity: any) {
   const details = activity.payload || {};
   const finished = details.finished_seasons || [];
@@ -56,7 +72,7 @@ export function activityAction(activity: any) {
     return `Watched ${count === 1 ? 'an episode' : `${count} episodes`} of`;
   }
   if (details.status_changed && activity.status === 'watching') return 'Started Watching';
-  if (details.rating_changed && activity.score != null) return 'Rated';
+  if (details.rating_changed) return firstRating(details) ? 'Rated' : 'Changed Rating for';
   return activity.status === 'completed' ? 'Completed' : activity.status === 'planning' ? 'Plans to watch' : activity.status === 'watching' ? 'Started Watching' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
 }
 

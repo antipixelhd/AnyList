@@ -424,6 +424,80 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity[0]['score'], 7)
         self.assertTrue(activity[0]['payload']['rating_changed'])
 
+    async def test_rating_activity_retains_first_rating_for_day_then_marks_later_change(self):
+        self.assertEqual((await self.save(self.movie, status='watching')).status_code, 200)
+        first = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'][0]
+        self.assertFalse(first['payload'].get('rating_changed', False))
+
+        self.assertEqual((await self.save(self.movie, manual_score=7)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, manual_score=8)).status_code, 200)
+        today = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(today), 1)
+        self.assertEqual(today[0]['score'], 8)
+        self.assertTrue(today[0]['payload']['rating_changed'])
+        self.assertTrue(today[0]['payload']['rating_first'])
+        self.assertEqual(today[0]['payload']['previous_score'], 7)
+
+        row = (await self.db.execute(select(TrackingActivity).where(
+            TrackingActivity.user_id == self.owner.id,
+            TrackingActivity.media_id == self.movie.id,
+        ))).scalar_one()
+        row.created_at -= timedelta(days=1)
+        await self.db.commit()
+
+        self.assertEqual((await self.save(self.movie, status='completed', manual_score=9)).status_code, 200)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(activity), 2)
+        self.assertEqual(activity[0]['score'], 9)
+        self.assertTrue(activity[0]['payload']['rating_changed'])
+        self.assertFalse(activity[0]['payload'].get('rating_first', False))
+        self.assertEqual(activity[0]['payload']['previous_score'], 8)
+        self.assertTrue(activity[0]['payload']['status_changed'])
+
+    async def test_rating_api_marks_existing_score_change_and_omits_unchanged_rating(self):
+        first = await self.client.post('/ratings', json={
+            'media_id': self.show.id, 'media_type': 'series', 'rating': 7,
+        })
+        self.assertEqual(first.status_code, 200, first.text)
+        first_activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertTrue(next(item for item in first_activity if item['media']['id'] == self.show.id)['payload']['rating_first'])
+
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
+                                 status='watching', rating_mode='manual', manual_score=7,
+                                 season_scores={}, progress=0))
+        self.db.add(Rating(user_id=self.owner.id, media_id=self.movie.id, rating=7))
+        await self.db.commit()
+
+        updated = await self.client.post('/ratings', json={
+            'media_id': self.movie.id, 'media_type': 'movie', 'rating': 8,
+        })
+        self.assertEqual(updated.status_code, 200, updated.text)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        changed = next(item for item in activity if item['media']['id'] == self.movie.id)
+        self.assertEqual(changed['payload']['previous_score'], 7)
+        self.assertFalse(changed['payload'].get('rating_first', False))
+
+        same = await self.client.post('/ratings', json={
+            'media_id': self.movie.id, 'media_type': 'movie', 'rating': 8,
+        })
+        self.assertEqual(same.status_code, 200, same.text)
+        rows = (await self.db.execute(select(TrackingActivity).where(
+            TrackingActivity.user_id == self.owner.id,
+            TrackingActivity.media_id == self.movie.id,
+        ))).scalars().all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].payload['previous_score'], 7)
+
+    async def test_status_card_with_existing_score_has_no_rating_event(self):
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
+                                 status='watching', rating_mode='manual', manual_score=8,
+                                 season_scores={}, progress=0))
+        await self.db.commit()
+        self.assertEqual((await self.save(self.movie, status='paused')).status_code, 200)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'][0]
+        self.assertEqual(activity['score'], 8)
+        self.assertFalse(activity['payload'].get('rating_changed', False))
+
     async def test_home_activity_contains_followed_public_profiles_only(self):
         now=datetime.now(timezone.utc).replace(tzinfo=None)
         owner_activity=TrackingActivity(user_id=self.owner.id,media_id=self.movie.id,status='watching',score=None)

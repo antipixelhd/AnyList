@@ -421,6 +421,7 @@ body.tracker{font-size:14px;line-height:1.55}
 .entry-title{gap:12px}
 @media(max-width:900px){.profile-hero{height:230px}.profile-identity{padding-top:90px}.profile-avatar{width:140px;height:140px}.list-shell{grid-template-columns:180px minmax(0,1fr);gap:24px}.entry-head,.entry-row{padding-left:14px;padding-right:14px}}
 @media(max-width:650px){.profile-hero{height:180px}.profile-identity{padding:45px 20px 0;gap:18px}.profile-avatar{width:105px;height:105px}.profile-tabs{min-height:50px;gap:24px;padding:0 18px;overflow-x:auto}.profile-tabs a{padding:13px 0}.list-shell{display:block;margin:24px auto;padding:0 16px}.filters{gap:12px}.status-filters button{min-height:44px;padding:9px 12px}.entry-row{min-height:54px;padding:5px 10px}.entry-head{padding:7px 10px}.entry-thumbnail{width:44px;height:44px}.status-section h2{margin-left:4px}}
+@media(max-width:650px){#entry-groups:not(.grid-view) .entry-title>a{display:flex;align-items:center}}
 
 /* Statistics use type, icons, and measured whitespace instead of a card wall. */
 .stats-page{padding-top:38px}

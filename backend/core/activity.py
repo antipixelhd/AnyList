@@ -25,11 +25,30 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
     current["finished_seasons"] = sorted(set(current.get("finished_seasons", [])) | set(previous.get("finished_seasons", [])))
     current["status_changed"] = bool(current.get("status_changed") or previous.get("status_changed"))
     current["rating_changed"] = bool(current.get("rating_changed") or previous.get("rating_changed"))
+    if "rating_first" in current or "rating_first" in previous:
+        current["rating_first"] = bool(current.get("rating_first") or previous.get("rating_first"))
+    # The day card describes the full change, from its earliest score to the
+    # latest one, even when several writes or legacy rows were merged.
+    if previous.get("previous_score") is not None:
+        current["previous_score"] = previous["previous_score"]
     if current.get("progress") is None and previous.get("progress") is not None:
         current["progress"] = previous["progress"]
     if not current.get("position") and previous.get("position"):
         current["position"] = previous["position"]
     return current
+
+
+def _record_rating_details(details: dict, *, rating_changed: bool,
+                           previous_score: float | None, score: float | None) -> None:
+    if not rating_changed:
+        details["rating_changed"] = bool(details.get("rating_changed"))
+        return
+    details["rating_changed"] = True
+    details["rating_first"] = bool(
+        score is not None and (details.get("rating_first") or previous_score is None)
+    )
+    if previous_score is not None and details.get("previous_score") is None:
+        details["previous_score"] = previous_score
 
 
 async def series_activity_details(db, media: Media, progress: int) -> tuple[str | None, list[int]]:
@@ -102,6 +121,7 @@ async def series_activity_span(db, media: Media, start: int, end: int) -> tuple[
 async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
                                    progress: int, status: str, score: float | None,
                                    status_changed: bool = False, rating_changed: bool = False,
+                                   previous_score: float | None = None,
                                    now: datetime | None = None) -> TrackingActivity | None:
     """Keep today's episode card equal to net forward progress after corrections."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
@@ -125,7 +145,8 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
         await series_activity_span(db, media, baseline, progress)
     )
     details["status_changed"] = bool(details.get("status_changed") or status_changed)
-    details["rating_changed"] = bool(details.get("rating_changed") or rating_changed)
+    _record_rating_details(details, rating_changed=rating_changed,
+                           previous_score=previous_score, score=score)
     if watched == 0 and not details["status_changed"] and not details["rating_changed"]:
         if row:
             await db.delete(row)
@@ -149,6 +170,7 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                                 position: str | None = None,
                                 finished_seasons: list[int] | None = None,
                                 status_changed: bool = False, rating_changed: bool = False,
+                                previous_score: float | None = None,
                                 now: datetime | None = None) -> TrackingActivity:
     """Merge one title's updates into its UTC-day activity card."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
@@ -163,7 +185,8 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
     if position is not None: details["position"] = position
     details["finished_seasons"] = sorted(set(details.get("finished_seasons", [])) | set(finished_seasons or []))
     details["status_changed"] = bool(details.get("status_changed") or status_changed)
-    details["rating_changed"] = bool(details.get("rating_changed") or rating_changed)
+    _record_rating_details(details, rating_changed=rating_changed,
+                           previous_score=previous_score, score=score)
     if row:
         row.status, row.score, row.payload, row.created_at = status, score, details, now
     else:

@@ -1,4 +1,3 @@
-.tracker[data-theme-active] .score-pill,
 .tracker[data-theme-active] .count-pill {
   color: var(--blue);
   background: color-mix(in srgb, var(--blue) 17%, var(--panel));

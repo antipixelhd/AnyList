@@ -1,0 +1,14 @@
+.tracker .activity-stream .score-pill {
+  background: transparent;
+  color: var(--bright);
+  white-space: nowrap;
+}
+
+.tracker .activity-stream .score-pill svg {
+  color: #f6c655;
+}
+
+.tracker .activity-stream .score-transition {
+  color: var(--muted);
+  margin: 0 5px;
+}

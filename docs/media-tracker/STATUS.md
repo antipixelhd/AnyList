@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Activity rating cards and mobile list alignment (2026-09-23)
+
+Activity cards show a rating only when that day's activity included a first rating or a score change. A later rating-only edit reads “Changed Rating for”; a title first rated that day keeps “Rated” until the next UTC day. The feed records the earlier score so edits can show the score transition, including when paired with a status or progress update. The rating pill is transparent with a yellow star, and mobile movie/series list titles are vertically centered. Initial-import rating suppression remains in effect.
+
+Five focused tracking API tests and the frontend production build passed against the disposable local test database. No VPS deployment was performed.
+
 ## Member profile colors (2026-09-23)
 
 Profile settings now offer the AniList-inspired color presets, an unrestricted RGB picker, and a private “Apply site wide” toggle. Public profile pages use the profile owner's selected color for every viewer; the toggle applies that same color to the account owner's other pages without changing how visitors see their profile. The color is stored as a validated RGB hex value, and the site-wide choice is excluded from public profile responses.

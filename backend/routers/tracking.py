@@ -423,15 +423,17 @@ async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depen
             entry=(await db.execute(select(TrackedEntry).where(
                 TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
             if entry:
+                old_score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
                 if event.season_number is None:
                     entry.manual_score=event.proposed_score
                     entry.rating_mode='manual'
                 else:
                     entry.season_scores={**(entry.season_scores or {}),str(event.season_number):event.proposed_score}
                 from core.activity import record_daily_activity, suppress_initial_import_rating
-                if not suppress_initial_import_rating(entry):
+                new_score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
+                if old_score != new_score and not suppress_initial_import_rating(entry):
                     await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
-                        score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),rating_changed=True)
+                        score=new_score,rating_changed=True,previous_score=old_score)
             rating_query=select(Rating).where(Rating.user_id==viewer.id,Rating.media_id==event.media_id,
                 Rating.episode_order.is_(None))
             rating_query=rating_query.where(Rating.season_number.is_(None)) if event.season_number is None else rating_query.where(Rating.season_number==event.season_number)
@@ -813,9 +815,11 @@ def activity_data(rows, *, include_user=False, limit=12):
             grouped[key]["payload"] = merge_activity_payload(grouped[key]["payload"], activity.payload)
     for activity in grouped.values():
         if activity["score"] is None:
-            # Legacy rows can claim a rating change without retaining a score.
-            # Do not publish a false "Rated" event when the value is unknowable.
-            activity["payload"]["rating_changed"] = False
+            # A known previous score means the rating was cleared. A legacy row
+            # with no old or new score cannot establish that an edit occurred.
+            activity["payload"]["rating_first"] = False
+            if activity["payload"].get("previous_score") is None:
+                activity["payload"]["rating_changed"] = False
     return list(grouped.values())[:limit]
 
 
@@ -1285,12 +1289,14 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         if media.media_type == MediaType.series and progress_changed:
             await record_progress_activity(db, user_id=viewer.id, media=media,
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
-                status_changed=status_changed and 'status' in fields, rating_changed=rating_changed)
+                status_changed=status_changed and 'status' in fields, rating_changed=rating_changed,
+                previous_score=old_score)
         elif status_changed or not suppress_initial_import_rating(entry):
             position, finished = await series_activity_details(db, media, entry.progress)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,
-                position=position, status_changed=status_changed, rating_changed=rating_changed)
+                position=position, status_changed=status_changed, rating_changed=rating_changed,
+                previous_score=old_score)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}

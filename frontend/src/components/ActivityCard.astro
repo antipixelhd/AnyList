@@ -1,11 +1,13 @@
 ---
 import ActivityCover from './ActivityCover.astro';
 import Icon from './Icon.astro';
-import {activityAction,activityTime,scoreLabel} from '../lib/tracker';
+import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
+import '../styles/activity-card-rating.css';
 const {activity,showUser=false}=Astro.props;
 const time=activityTime(activity.created_at);
 const profileHref=showUser?`/user/${encodeURIComponent(activity.username)}`:'';
 const initial=(activity.display_name||activity.username||'?').trim().charAt(0).toUpperCase();
+const rating=activityRating(activity);
 ---
 <article class="visual-event" data-activity-card data-activity-key={activity.key} data-created-at={activity.created_at}>
   <ActivityCover media={activity.media}/>
@@ -20,6 +22,6 @@ const initial=(activity.display_name||activity.username||'?').trim().charAt(0).t
       <time datetime={time.datetime} title={time.exact} data-relative-time>{time.label}</time>
     </div>
     <p class="event-action"><span>{activityAction(activity)}</span> <a href={`/title/${activity.media.id}`}>{activity.media.title}</a></p>
-    {activity.score!=null&&<div class="event-footer"><span class="score-pill" aria-label={`Rated ${scoreLabel(activity.score)} out of 10`}><Icon name="star"/> {scoreLabel(activity.score)}<small>/10</small></span></div>}
+    {rating&&<div class="event-footer"><span class="score-pill" aria-label={rating.label}><Icon name="star"/> {rating.previous!=null&&<>{scoreLabel(rating.previous)}<span class="score-transition" aria-hidden="true">→</span></>}{scoreLabel(rating.current)}<small>/10</small></span></div>}
   </div>
 </article>

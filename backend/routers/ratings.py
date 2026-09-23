@@ -147,6 +147,8 @@ async def submit_rating(
             TrackedEntry.user_id == current_user.id,
             TrackedEntry.media_id == media.id,
         ))).scalar_one_or_none()
+        previous_score = (effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+                          if entry is not None else None)
         if entry is None:
             entry = TrackedEntry(
                 user_id=current_user.id, media_id=media.id, status="planning",
@@ -169,11 +171,11 @@ async def submit_rating(
             entry.manual_score = body.rating or None
         await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id)
         from core.activity import record_daily_activity, suppress_initial_import_rating
-        if not suppress_initial_import_rating(entry):
+        current_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+        if previous_score != current_score and not suppress_initial_import_rating(entry):
             await record_daily_activity(
                 db, user_id=current_user.id, media_id=media.id, status=entry.status,
-                score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
-                rating_changed=rating_changed,
+                score=current_score, rating_changed=True, previous_score=previous_score,
             )
 
     await db.commit()
