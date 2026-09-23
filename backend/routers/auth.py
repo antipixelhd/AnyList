@@ -465,6 +465,9 @@ async def update_user_settings(
         if hasattr(settings, field):
             setattr(settings, field, value)
 
+    from core.cloud_actions import cleanup_disabled_cloud_actions
+    await cleanup_disabled_cloud_actions(db, current_user.id, settings)
+
     await db.commit()
     await db.refresh(settings)
     return await _settings_response(settings, db)
@@ -687,6 +690,13 @@ async def update_connection(
 
     for field, value in update_data.items():
         setattr(conn, field, value)
+
+    if conn.type in ("stremio", "nuvio"):
+        # Drop queued work as soon as an owner disables its last applicable
+        # push direction. The same cleanup also runs from the dispatcher for
+        # older rows created before this guard existed.
+        from core.stream_actions import cleanup_disabled_stream_actions
+        await cleanup_disabled_stream_actions(db, current_user.id)
 
     await db.commit()
     await db.refresh(conn)

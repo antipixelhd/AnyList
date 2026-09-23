@@ -3035,4 +3035,90 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action.payload,{})
         self.assertEqual(marker.pending_connections,[])
 
+    async def test_disabled_stream_reset_is_cancelled_and_marker_tombstone_is_reconciled(self):
+        from core.stream_actions import dispatch_stream_actions
+
+        self.movie.tmdb_id=987654281
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Disabled',
+            url='https://example.test',token='fixture',push_watched=False,push_playback=False)
+        orphan_conn=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Disabled without key',
+            url='https://example.test',token='fixture',push_watched=False,push_playback=False)
+        self.db.add_all([conn,orphan_conn]);await self.db.flush()
+        action=StreamAction(user_id=self.owner.id,connection_id=conn.id,media_id=self.movie.id,
+            action='reset',payload={'content_id':'tt-disabled','content_type':'movie','deleted_at':'2026-01-01T12:00:00+00:00'},
+            state='pending',attempts=7,last_error='old retry error')
+        conflict=StreamAction(user_id=self.owner.id,connection_id=conn.id,media_id=self.movie.id,
+            action='reset',payload={'content_id':'tt-disabled','content_type':'movie','deleted_at':'2026-01-01T12:00:00+00:00'},
+            state='conflict',attempts=2,last_error='old conflict')
+        marker=TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,
+            pending_connections=[f'connection:{conn.id}',f'connection:{orphan_conn.id}'])
+        review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='outbound_pending',
+            state='pending',message='Reset pending')
+        conflict_review=SyncReview(user_id=self.owner.id,connection_id=conn.id,media_id=self.movie.id,
+            kind='deletion_conflict',state='pending',message='Conflict pending')
+        self.db.add_all([action,conflict,marker,review,conflict_review]);await self.db.commit()
+
+        with patch('core.stream_actions.dismiss_stremio',AsyncMock()) as write:
+            await dispatch_stream_actions(self.db,self.owner.id)
+            await dispatch_stream_actions(self.db,self.owner.id)
+            write.assert_not_awaited()
+
+        self.assertEqual(action.state,'cancelled')
+        self.assertEqual(action.payload,{})
+        self.assertEqual(action.last_error,None)
+        self.assertEqual(action.attempts,7)
+        self.assertEqual(conflict.state,'cancelled')
+        self.assertEqual(conflict.payload,{})
+        self.assertEqual(marker.pending_connections,[])
+        self.assertIsNotNone((await self.db.execute(select(TrackingDeletion).where(
+            TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one_or_none())
+        self.assertEqual(review.state,'corrected')
+        self.assertEqual(conflict_review.state,'corrected')
+
+    async def test_stream_cleanup_uses_action_specific_push_flags(self):
+        from core.stream_actions import cleanup_disabled_stream_actions
+
+        conn=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Watched only',
+            url='https://example.test',token='fixture',push_watched=True,push_playback=False,
+            push_collection=True)
+        self.db.add(conn);await self.db.flush()
+        reset=StreamAction(user_id=self.owner.id,connection_id=conn.id,media_id=self.movie.id,
+            action='reset',payload={'content_id':'tt-watch','content_type':'movie','deleted_at':'2026-01-01T12:00:00+00:00'})
+        progress=StreamAction(user_id=self.owner.id,connection_id=conn.id,media_id=self.movie.id,
+            action='upsert',payload={'content_id':'tt-watch','position':20})
+        marker=TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,
+            pending_connections=[f'connection:{conn.id}'])
+        self.db.add_all([reset,progress,marker]);await self.db.commit()
+
+        await cleanup_disabled_stream_actions(self.db,self.owner.id)
+
+        self.assertEqual(reset.state,'pending')
+        self.assertEqual(progress.state,'cancelled')
+        self.assertEqual(progress.payload,{})
+        self.assertEqual(marker.pending_connections,[f'connection:{conn.id}'])
+
+    async def test_disabled_cloud_reset_is_cancelled_and_provider_marker_reconciled(self):
+        from core.cloud_actions import dispatch_cloud_actions
+
+        settings=UserSettings(user_id=self.owner.id,mdblist_api_key='fixture-key')
+        action=CloudAction(user_id=self.owner.id,provider='mdblist',media_id=self.movie.id,
+            action='reset',payload={'media_type':'movie','tmdb_id':987654280},attempts=3,last_error='old retry error')
+        marker=TrackingDeletion(user_id=self.owner.id,media_id=self.movie.id,
+            pending_connections=['mdblist','connection:999'])
+        review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='outbound_pending',
+            state='pending',message='Reset pending')
+        self.db.add_all([settings,action,marker,review]);await self.db.commit()
+
+        with patch('core.cloud_actions._apply_reset',AsyncMock()) as write:
+            await dispatch_cloud_actions(self.db,self.owner.id)
+            await dispatch_cloud_actions(self.db,self.owner.id)
+            write.assert_not_awaited()
+
+        self.assertEqual(action.state,'cancelled')
+        self.assertEqual(action.payload,{})
+        self.assertEqual(action.last_error,None)
+        self.assertEqual(action.attempts,3)
+        self.assertEqual(marker.pending_connections,['connection:999'])
+        self.assertEqual(review.state,'pending')
+
 if __name__=='__main__': unittest.main()

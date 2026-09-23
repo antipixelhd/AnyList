@@ -192,17 +192,12 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
         snapshot['watched'] = [key for key in snapshot.get('watched', [])
             if not any(key.startswith(content_id + ':') for content_id in removed_keys)]
         baseline.snapshot=snapshot
-    connections=(await db.execute(select(MediaServerConnection.id).where(
-        MediaServerConnection.user_id==viewer.id,
-        MediaServerConnection.type.in_(['stremio','nuvio']),
-        or_(MediaServerConnection.push_watched.is_(True),MediaServerConnection.push_playback.is_(True))))).scalars().all()
-    pending=[f'connection:{i}' for i in connections]
     marker=(await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id==media_id))).scalar_one_or_none()
     if not marker:marker=TrackingDeletion(user_id=viewer.id,media_id=media_id);db.add(marker)
     marker.deleted_at=datetime.utcnow()
     from core.stream_actions import queue_resets
     from core.cloud_actions import queue_cloud_resets
-    await queue_resets(db,viewer.id,media,marker.deleted_at)
+    pending=await queue_resets(db,viewer.id,media,marker.deleted_at)
     pending.extend(await queue_cloud_resets(db,viewer.id,media,episodes))
     marker.pending_connections=list(pending)
     if pending:db.add(SyncReview(user_id=viewer.id,media_id=media_id,kind='outbound_pending',message='Local tracking data was deleted. Connected-service resets are pending; streaming-library membership is preserved.'))

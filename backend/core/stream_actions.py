@@ -6,6 +6,7 @@ from models import MediaServerConnection
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingDeletion
 from core import stremio, nuvio
 from core.status_provenance import provider_changed_at
+from core.deletion_markers import settle_marker_target
 
 
 class RemotePlaybackChanged(Exception):
@@ -302,13 +303,18 @@ async def queue_resets(db,user_id,media,deleted_at):
     targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
         MediaServerConnection.type.in_(['stremio','nuvio']),
         (MediaServerConnection.push_watched.is_(True) | MediaServerConnection.push_playback.is_(True))))).scalars().all()
+    queued = []
     for conn in targets:
         baseline=await db.get(StreamBaseline,conn.id)
         keys={key for key,tmdb_id in (baseline.snapshot.get('mappings',{}) if baseline else {}).items() if tmdb_id==media.tmdb_id}
         if not keys and media.imdb_id:keys={media.imdb_id}
+        if not keys:
+            continue
+        queued.append(f'connection:{conn.id}')
         for key in keys:
             db.add(StreamAction(user_id=user_id,connection_id=conn.id,media_id=media.id,action='reset',
                 payload={'content_id':key,'content_type':media.media_type.value,'deleted_at':deleted_at.replace(tzinfo=timezone.utc).isoformat()}))
+    return queued
 
 
 async def dispatch_stream_actions(db, user_id):
@@ -318,16 +324,22 @@ async def dispatch_stream_actions(db, user_id):
     from core.tracking_snapshot import require_stream_reconciliation
     from models import User
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+    await cleanup_disabled_stream_actions(db, user_id)
     actions = (await db.execute(select(StreamAction).where(StreamAction.user_id == user_id,
         StreamAction.state == 'pending').order_by(StreamAction.id).limit(100).with_for_update(skip_locked=True))).scalars().all()
     for action in actions:
         conn = await db.get(MediaServerConnection, action.connection_id)
         if not conn or action.action not in ('dismiss','restore','reset','upsert'):
             continue
-        # An explicit confirmed deletion is authoritative and is not an
-        # ordinary optional mirroring preference. It still waits for the
-        # connection's reviewed first-import baseline below.
-        if action.action!='reset' and not conn.push_playback:continue
+        enabled = ((conn.push_watched or conn.push_playback) if action.action == 'reset'
+            else conn.push_playback)
+        if not enabled:
+            action.state = 'cancelled'
+            action.payload = {}
+            action.last_error = None
+            if action.action == 'reset':
+                await settle_marker_target(db, user_id, action.media_id, f'connection:{conn.id}')
+            continue
         entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == action.media_id))).scalar_one_or_none()
         deleted = (await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id == user_id, TrackingDeletion.media_id == action.media_id))).scalar_one_or_none()
         valid_statuses = ('watching',) if action.action in ('restore','upsert') else ('planning','paused','dropped','completed')
@@ -394,3 +406,78 @@ async def dispatch_stream_actions(db, user_id):
         except Exception as error:
             action.last_error = type(error).__name__  # never persist tokens/remote bodies
     await db.commit()
+
+
+async def cleanup_disabled_stream_actions(db, user_id):
+    """Cancel pending stream work that is no longer enabled, including legacy rows.
+
+    Safe to run repeatedly: it only changes pending/conflict actions whose
+    action-specific push flags are disabled, and only removes their matching
+    reset target from a deletion marker. Empty deletion markers remain as
+    tombstones so an old provider snapshot cannot resurrect local tracking.
+    """
+    connections = (await db.execute(select(MediaServerConnection).where(
+        MediaServerConnection.user_id == user_id,
+        MediaServerConnection.type.in_(('stremio', 'nuvio')),
+    ))).scalars().all()
+    by_id = {conn.id: conn for conn in connections}
+    actions = (await db.execute(select(StreamAction).where(
+        StreamAction.user_id == user_id,
+        StreamAction.connection_id.in_(by_id) if by_id else False,
+        StreamAction.state.in_(('pending', 'conflict')),
+    ).order_by(StreamAction.id))).scalars().all()
+    for action in actions:
+        conn = by_id.get(action.connection_id)
+        if not conn:
+            continue
+        enabled = ((conn.push_watched or conn.push_playback) if action.action == 'reset'
+            else conn.push_playback)
+        if enabled:
+            continue
+        action.state = 'cancelled'
+        action.payload = {}
+        action.last_error = None
+        if action.action == 'reset':
+            await settle_marker_target(db, user_id, action.media_id, f'connection:{conn.id}')
+        await _correct_disabled_action_review(db, action)
+
+    # Older deletions recorded every push-enabled connection even when no
+    # content key existed, leaving a marker key with no StreamAction to cancel.
+    markers = (await db.execute(select(TrackingDeletion).where(
+        TrackingDeletion.user_id == user_id,
+    ))).scalars().all()
+    for marker in markers:
+        for target in marker.pending_connections or []:
+            if not target.startswith('connection:'):
+                continue
+            try:
+                connection_id = int(target.split(':', 1)[1])
+            except ValueError:
+                continue
+            conn = by_id.get(connection_id)
+            if not conn or not (conn.push_watched or conn.push_playback):
+                await settle_marker_target(db, user_id, marker.media_id, target)
+
+
+async def _correct_disabled_action_review(db, action):
+    """Retire a conflict review after its disabled outbound action is cancelled."""
+    await db.flush()
+    live = (await db.execute(select(StreamAction.id).where(
+        StreamAction.user_id == action.user_id,
+        StreamAction.connection_id == action.connection_id,
+        StreamAction.media_id == action.media_id,
+        StreamAction.action == action.action,
+        StreamAction.state.in_(('pending', 'conflict')),
+    ).limit(1))).first()
+    if live:
+        return
+    kind = 'deletion_conflict' if action.action == 'reset' else 'conflict'
+    reviews = (await db.execute(select(SyncReview).where(
+        SyncReview.user_id == action.user_id,
+        SyncReview.connection_id == action.connection_id,
+        SyncReview.media_id == action.media_id,
+        SyncReview.kind == kind,
+        SyncReview.state == 'pending',
+    ))).scalars()
+    for review in reviews:
+        review.state = 'corrected'

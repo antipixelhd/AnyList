@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from core import mdblist, simkl, trakt
 from core.cloud_reconciliation import require_cloud_reconciliation
+from core.deletion_markers import settle_marker_target
 from models import User, UserSettings
 from models.tracking import CloudAction, SyncReview, TrackedEntry, TrackingDeletion
 
@@ -106,6 +107,7 @@ async def dispatch_cloud_actions(db, user_id):
         return
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
+    await cleanup_disabled_cloud_actions(db, user_id, settings)
     actions = (await db.execute(select(CloudAction).where(
         CloudAction.user_id == user_id, CloudAction.state == "pending"
     ).order_by(CloudAction.id).limit(25).with_for_update(skip_locked=True))).scalars().all()
@@ -140,3 +142,40 @@ async def dispatch_cloud_actions(db, user_id):
         except Exception as error:
             action.last_error = type(error).__name__
     await db.commit()
+
+
+async def cleanup_disabled_cloud_actions(db, user_id, settings=None):
+    """Cancel legacy reset rows whose provider has no outbound push enabled."""
+    if settings is None:
+        settings = (await db.execute(select(UserSettings).where(
+            UserSettings.user_id == user_id))).scalar_one_or_none()
+    flags_by_provider = {
+        "trakt": ("trakt_push_watched", "trakt_push_ratings", "trakt_push_collection", "trakt_push_dropped"),
+        "simkl": ("simkl_push_watched", "simkl_push_ratings"),
+        "mdblist": ("mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist",
+                    "mdblist_push_collection", "mdblist_push_dropped"),
+    }
+    actions = (await db.execute(select(CloudAction).where(
+        CloudAction.user_id == user_id,
+        CloudAction.action == "reset",
+        CloudAction.state.in_(("pending", "conflict")),
+    ).order_by(CloudAction.id))).scalars().all()
+    for action in actions:
+        flags = flags_by_provider.get(action.provider, ())
+        if settings and any(bool(getattr(settings, flag, False)) for flag in flags):
+            continue
+        action.state = "cancelled"
+        action.payload = {}
+        action.last_error = None
+        await settle_marker_target(db, user_id, action.media_id, action.provider)
+
+    # Legacy deletion markers can list a provider even when no reset row was
+    # created (for example, an earlier connection lacked a usable media ID).
+    markers = (await db.execute(select(TrackingDeletion).where(
+        TrackingDeletion.user_id == user_id,
+    ))).scalars().all()
+    for marker in markers:
+        for provider in marker.pending_connections or []:
+            flags = flags_by_provider.get(provider)
+            if flags and not (settings and any(bool(getattr(settings, flag, False)) for flag in flags)):
+                await settle_marker_target(db, user_id, marker.media_id, provider)
