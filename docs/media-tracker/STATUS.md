@@ -749,3 +749,9 @@ The Library tab, Home shortcut, title-page Library button, and list-editor Libra
 The frontend build and all 97 tracking API tests passed on a separately migrated disposable PostgreSQL database. Local browser checks verified connected and unconnected visibility, desktop and phone Favorites layouts, drag and keyboard reordering, Save/Cancel behavior, persisted overview order, and X removal with a mocked response. The preview account's original favorite order was restored after testing.
 
 Detail Favorite label follow-up: the toggle now targets its text label explicitly, preserving the heart icon and switching only between Favorite and Favorited. Its background write no longer changes the separate status control. The frontend build passed, and mocked local browser toggles verified both directions without modifying the preview account.
+
+## Favorites and Library poster layout refinement (2026-09-23)
+
+The Library tab now follows Favorites immediately in profile navigation. Both pages use matching compact poster cards in dark panels, with Movie/Series as the combined section heading or nonempty Movies and Series sections when lists are separate. Other future media types get their own sections. Library cards omit title captions while retaining accessible names and the alert-colored removal control. Favorites' Reorder and Save Order controls use compact filled blue buttons beside the first section heading, with a quiet Cancel button.
+
+The frontend build passed. Local browser checks confirmed both layouts at desktop and 390px widths without horizontal overflow, the new tab order, matching poster widths, no Library captions, and Favorites drag/keyboard reorder with Cancel restoring the prior order.

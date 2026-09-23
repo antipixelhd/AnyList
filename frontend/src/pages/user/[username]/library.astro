@@ -4,7 +4,9 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
+import {profileMediaGroups} from '../../../lib/profile-media-groups';
 import {hasStreamingLibraryConnection} from '../../../lib/streaming-library-availability';
+import '../../../styles/library.css';
 
 if (Astro.locals.user?.username !== Astro.params.username) return Astro.redirect('/login');
 if (!await hasStreamingLibraryConnection(Astro.locals.token)) return Astro.redirect(`/user/${encodeURIComponent(Astro.params.username!)}/`);
@@ -19,28 +21,22 @@ try {
   error = (cause as Error).message;
 }
 
-const sections = [
-  {type: 'movie', heading: 'Movies', entries: entries.filter(entry => entry.type === 'movie')},
-  {type: 'series', heading: 'Series', entries: entries.filter(entry => entry.type === 'series')},
-];
+const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
 ---
 <Tracker title="Library">
   {profile && <ProfileHeader profile={profile} active="library"/>}
   <div class="page-width library-page">
-    <h1>Your streaming library</h1>
-    <p>Library membership is separate from your movie and series lists. Only you can see this tab.</p>
     {error ? <p class="error-message">{error}</p> : <>
       <p class="error-message" role="alert" data-library-error hidden></p>
       <div class="library-sections" hidden={entries.length === 0}>
-        {sections.filter(section => section.entries.length > 0).map(section => <section class="library-section" data-library-group={section.type}>
+        {sections.map(section => <section class="library-section" data-library-group={section.type}>
           <h2>{section.heading}</h2>
-          <div class="card-grid">
-            {section.entries.map(entry => {
-              const image = responsiveArtwork(entry.poster, {size:'w342', sizes:'(max-width:650px) calc((100vw - 57px) / 2), 190px', route:'direct'});
+          <div class="library-grid">
+            {section.items.map(entry => {
+              const image = responsiveArtwork(entry.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
               return <article class="library-card" data-library-entry>
-                <a class="media-card" href={`/title/${entry.id}`}>
+                <a class="library-poster" href={`/title/${entry.id}`} aria-label={entry.title} title={entry.title}>
                   {image?.src && <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>}
-                  <h3>{entry.title}</h3>
                 </a>
                 <button type="button" class="library-remove alert-icon-button" data-library-remove={entry.id} aria-label={`Remove ${entry.title} from library`} title={`Remove ${entry.title} from library`}><Icon name="close"/></button>
               </article>;

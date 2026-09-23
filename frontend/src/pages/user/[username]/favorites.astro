@@ -4,6 +4,7 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
+import {profileMediaGroups} from '../../../lib/profile-media-groups';
 import '../../../styles/profile-overview.css';
 import '../../../styles/favorites.css';
 
@@ -14,23 +15,26 @@ try {
   error = (cause as Error).message;
 }
 const favorites: any[] = profile?.favorites ?? [];
+const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== false);
 ---
 <Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`}>
   {profile ? <>
     <ProfileHeader profile={profile} active="favorites" />
     <div class="page-width favorites-page">
-      <div class="favorites-heading">
-        <div><h1>Favorites</h1><p>{profile.owner ? 'The titles you keep closest.' : `${profile.display_name}'s favorite titles.`}</p></div>
-        {profile.owner && <div class="favorites-actions" hidden={favorites.length === 0}>
-          <button type="button" class="button-secondary" data-favorites-cancel hidden>Cancel</button>
-          <button type="button" class="button-secondary" data-favorites-reorder>Reorder</button>
-        </div>}
-      </div>
       <p class="error-message" role="alert" data-favorites-error hidden></p>
       <p class="favorites-instructions" data-favorites-instructions hidden>Drag cards to arrange them. Focus a card and use the arrow keys to move it.</p>
       <span class="sr-only" aria-live="polite" data-favorites-feedback></span>
-      <div class="favorite-posters favorites-grid" data-favorites-grid hidden={favorites.length === 0}>
-        {favorites.map(item => {
+      <div class="favorites-groups" data-favorites-grid hidden={favorites.length === 0}>
+        {favoriteGroups.map((group, index) => <section class="favorites-group" data-favorites-group>
+          <div class="favorites-group-heading">
+            <h2 class="favorites-group-title">{group.heading}</h2>
+            {profile.owner && index === 0 && <div class="favorites-actions" hidden={favorites.length === 0}>
+              <button type="button" class="button-secondary favorites-cancel" data-favorites-cancel hidden>Cancel</button>
+              <button type="button" class="button-primary favorites-reorder" data-favorites-reorder>Reorder</button>
+            </div>}
+          </div>
+          <div class="favorite-posters favorites-grid">
+        {group.items.map(item => {
           const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
           return <article class="favorite-card" data-favorite-card data-media-id={item.id} data-title={item.title}>
             <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>
@@ -39,6 +43,8 @@ const favorites: any[] = profile?.favorites ?? [];
             {profile.owner && <button type="button" class="favorite-remove alert-icon-button" data-favorite-remove={item.id} aria-label={`Remove ${item.title} from favorites`} title={`Remove ${item.title} from favorites`}><Icon name="close"/></button>}
           </article>;
         })}
+          </div>
+        </section>)}
       </div>
       <div class="empty-state" data-favorites-empty hidden={favorites.length > 0}>
         <h2>No favorites yet</h2>
@@ -79,7 +85,14 @@ document.addEventListener('astro:page-load', () => {
     const hasCards = cards().length > 0;
     grid.hidden = !hasCards;
     page.querySelector<HTMLElement>('[data-favorites-empty]')!.hidden = hasCards;
-    if (actions) actions.hidden = !hasCards;
+    const visibleGroups = [...page.querySelectorAll<HTMLElement>('[data-favorites-group]')].filter(group => {
+      group.hidden = !group.querySelector('[data-favorite-card]');
+      return !group.hidden;
+    });
+    if (actions) {
+      actions.hidden = !hasCards;
+      if (hasCards) visibleGroups[0]?.querySelector('.favorites-group-heading')?.append(actions);
+    }
   };
 
   reorder?.addEventListener('click', async () => {
@@ -112,7 +125,9 @@ document.addEventListener('astro:page-load', () => {
 
   cancel?.addEventListener('click', () => {
     const byId = new Map(cards().map(card => [card.dataset.mediaId!, card]));
-    savedOrder.forEach(id => { const card = byId.get(id); if (card) grid.append(card); });
+    grid.querySelectorAll<HTMLElement>('.favorites-grid').forEach(groupGrid => {
+      savedOrder.forEach(id => { const card = byId.get(id); if (card?.parentElement === groupGrid) groupGrid.append(card); });
+    });
     setReordering(false);
     report('Favorite order unchanged.');
   }, {signal: favoritePageListeners.signal});
@@ -161,8 +176,8 @@ document.addEventListener('astro:page-load', () => {
   page.addEventListener('pointermove', event => {
     if (!dragging) return;
     const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-favorite-card]');
-    if (!target || target === dragging || target.parentElement !== grid) return;
-    const current = cards();
+    if (!target || target === dragging || target.parentElement !== dragging.parentElement) return;
+    const current = [...dragging.parentElement!.querySelectorAll<HTMLElement>('[data-favorite-card]')];
     if (current.indexOf(dragging) < current.indexOf(target)) target.after(dragging);
     else target.before(dragging);
   }, {signal: favoritePageListeners.signal});
@@ -175,7 +190,7 @@ document.addEventListener('astro:page-load', () => {
     if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
     const card = (event.target as HTMLElement).closest<HTMLElement>('[data-favorite-card]');
     if (!card) return;
-    const current = cards();
+    const current = [...card.parentElement!.querySelectorAll<HTMLElement>('[data-favorite-card]')];
     const index = current.indexOf(card);
     const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
     const neighbor = current[index + direction];

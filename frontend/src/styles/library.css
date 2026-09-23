@@ -1,0 +1,14 @@
+.library-page { max-width:1100px; }
+.library-sections { display:grid; gap:26px; }
+.library-section h2 { margin:0 0 10px; color:var(--text); font-size:16px; font-weight:600; }
+.library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,132px)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
+.library-card { position:relative; min-width:0; }
+.library-poster { display:block; width:100%; aspect-ratio:2/3; overflow:hidden; border-radius:4px; background:#243449; }
+.library-poster img { display:block; width:100%; height:100%; object-fit:cover; }
+.library-remove { position:absolute; z-index:1; top:5px; right:5px; opacity:0; }
+.library-card:hover .library-remove,.library-card:focus-within .library-remove { opacity:1; }
+.library-page .empty-state { margin-top:24px; }
+@media (hover:none) { .library-remove { opacity:1; } }
+@media (max-width:650px) {
+  .library-grid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:12px; padding:16px; }
+}
