@@ -24,12 +24,13 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
     current["episodes_watched"] = int(current.get("episodes_watched", 0)) + int(previous.get("episodes_watched", 0))
     current["finished_seasons"] = sorted(set(current.get("finished_seasons", [])) | set(previous.get("finished_seasons", [])))
     current["status_changed"] = bool(current.get("status_changed") or previous.get("status_changed"))
-    current["rating_changed"] = bool(current.get("rating_changed") or previous.get("rating_changed"))
-    if "rating_first" in current or "rating_first" in previous:
+    if "rating_start_score" not in current:
+        current["rating_changed"] = bool(current.get("rating_changed") or previous.get("rating_changed"))
+    if "rating_start_score" not in current and ("rating_first" in current or "rating_first" in previous):
         current["rating_first"] = bool(current.get("rating_first") or previous.get("rating_first"))
     # The day card describes the full change, from its earliest score to the
     # latest one, even when several writes or legacy rows were merged.
-    if previous.get("previous_score") is not None:
+    if "rating_start_score" not in current and previous.get("previous_score") is not None:
         current["previous_score"] = previous["previous_score"]
     if current.get("progress") is None and previous.get("progress") is not None:
         current["progress"] = previous["progress"]
@@ -43,12 +44,20 @@ def _record_rating_details(details: dict, *, rating_changed: bool,
     if not rating_changed:
         details["rating_changed"] = bool(details.get("rating_changed"))
         return
-    details["rating_changed"] = True
-    details["rating_first"] = bool(
-        score is not None and (details.get("rating_first") or previous_score is None)
-    )
-    if previous_score is not None and details.get("previous_score") is None:
-        details["previous_score"] = previous_score
+    if "rating_start_score" not in details:
+        details["rating_start_score"] = (
+            None if details.get("rating_first") else details.get("previous_score", previous_score)
+        )
+    start_score = details["rating_start_score"]
+    if start_score is None and score is not None and "rating_first_score" not in details:
+        details["rating_first_score"] = score
+    details["rating_changed"] = start_score != score
+    details["rating_first"] = start_score is None and score is not None
+    comparison_score = details.get("rating_first_score") if start_score is None else start_score
+    if details["rating_changed"] and comparison_score is not None and comparison_score != score:
+        details["previous_score"] = comparison_score
+    else:
+        details.pop("previous_score", None)
 
 
 async def series_activity_details(db, media: Media, progress: int) -> tuple[str | None, list[int]]:
@@ -171,7 +180,7 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                                 finished_seasons: list[int] | None = None,
                                 status_changed: bool = False, rating_changed: bool = False,
                                 previous_score: float | None = None,
-                                now: datetime | None = None) -> TrackingActivity:
+                                now: datetime | None = None) -> TrackingActivity | None:
     """Merge one title's updates into its UTC-day activity card."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     start = datetime(now.year, now.month, now.day)
@@ -187,6 +196,10 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
     details["status_changed"] = bool(details.get("status_changed") or status_changed)
     _record_rating_details(details, rating_changed=rating_changed,
                            previous_score=previous_score, score=score)
+    if rating_changed and not details["rating_changed"] and not details["status_changed"] and not details["episodes_watched"]:
+        if row:
+            await db.delete(row)
+        return None
     if row:
         row.status, row.score, row.payload, row.created_at = status, score, details, now
     else:

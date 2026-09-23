@@ -488,6 +488,43 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].payload['previous_score'], 7)
 
+        reverted = await self.client.post('/ratings', json={
+            'media_id': self.movie.id, 'media_type': 'movie', 'rating': 7,
+        })
+        self.assertEqual(reverted.status_code, 200, reverted.text)
+        remaining = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertFalse(any(item['media']['id'] == self.movie.id for item in remaining))
+
+    async def test_reverting_rating_within_day_removes_net_change(self):
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
+                                 status='watching', rating_mode='manual', manual_score=9,
+                                 season_scores={}, progress=0))
+        await self.db.commit()
+        self.assertEqual((await self.save(self.movie, manual_score=8)).status_code, 200)
+        changed = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(changed[0]['payload']['previous_score'], 9)
+        self.assertEqual((await self.save(self.movie, manual_score=9)).status_code, 200)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+
+        self.assertEqual((await self.save(self.movie, status='paused')).status_code, 200)
+        self.assertEqual((await self.save(self.movie, manual_score=8)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, manual_score=9)).status_code, 200)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(activity), 1)
+        self.assertTrue(activity[0]['payload']['status_changed'])
+        self.assertFalse(activity[0]['payload']['rating_changed'])
+        self.assertNotIn('previous_score', activity[0]['payload'])
+
+    async def test_first_rating_returned_to_initial_score_keeps_rated_card_without_transition(self):
+        self.assertEqual((await self.save(self.movie, manual_score=7)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, manual_score=8)).status_code, 200)
+        self.assertEqual((await self.save(self.movie, manual_score=7)).status_code, 200)
+        activity = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(activity), 1)
+        self.assertTrue(activity[0]['payload']['rating_first'])
+        self.assertTrue(activity[0]['payload']['rating_changed'])
+        self.assertNotIn('previous_score', activity[0]['payload'])
+
     async def test_status_card_with_existing_score_has_no_rating_event(self):
         self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
                                  status='watching', rating_mode='manual', manual_score=8,
