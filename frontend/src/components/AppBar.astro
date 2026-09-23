@@ -191,6 +191,11 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     appbar.addEventListener('pointerover', syncPointerState, { signal: appbarListeners.signal });
     appbar.addEventListener('pointermove', syncPointerState, { signal: appbarListeners.signal });
     appbar.addEventListener('pointerdown', syncPointerState, { signal: appbarListeners.signal });
+    appbar.addEventListener('click', event => {
+      if (event.detail === 0) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.appbar-nav a') : null;
+      link?.blur();
+    }, { signal: appbarListeners.signal });
     appbar.addEventListener('pointerleave', clearPointerState, { signal: appbarListeners.signal });
     document.addEventListener('pointermove', event => {
       if (event.pointerType === 'touch') return;
