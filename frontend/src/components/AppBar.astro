@@ -132,9 +132,11 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       const event = rawEvent as Event & { newDocument?: Document };
       const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
       if (!incomingAppbar) return;
-      const startsTransparent = !mobile() && incomingAppbar.classList.contains('appbar-fade-capable');
+      const listLanding = event.newDocument?.body.hasAttribute('data-list-landing') ?? false;
+      const startsTransparent = !listLanding && !mobile() && incomingAppbar.classList.contains('appbar-fade-capable');
       incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
-      if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
+      if (listLanding) incomingAppbar.classList.add('appbar-hidden');
+      else if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
     };
     document.addEventListener('astro:before-swap', prepareIncomingAppbar, { signal: appbarListeners.signal });
     document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
