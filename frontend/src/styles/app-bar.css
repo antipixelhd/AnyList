@@ -1,13 +1,17 @@
 /* The desktop app bar shares one visual scale across the site. */
 @media (min-width: 651px) {
   .tracker .topbar {
-    transition: transform .22s ease, background-color .45s ease, box-shadow .45s ease;
+    transition: transform .22s ease, background-color 500ms ease, box-shadow 500ms ease;
+  }
+
+  .tracker .topbar .brand {
+    font-weight: 400;
   }
 
   .tracker .appbar-nav {
     gap: 34px;
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 400;
     letter-spacing: .005em;
   }
 
@@ -40,9 +44,8 @@
   }
 
   .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) {
-    background-color: rgb(20 33 49 / 28%);
+    background-color: rgb(20 33 49 / 12%);
     box-shadow: none;
-    animation: appbar-breathe 10s ease-in-out infinite;
   }
 
   .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .brand,
@@ -58,14 +61,8 @@
 
   .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):hover,
   .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within {
-    animation: none;
     background-color: rgb(20 33 49 / 96%);
     box-shadow: 0 2px 14px rgb(7 17 29 / 24%);
-  }
-
-  @keyframes appbar-breathe {
-    0%, 100% { background-color: rgb(20 33 49 / 58%); }
-    50% { background-color: rgb(20 33 49 / 8%); }
   }
 }
 
@@ -78,5 +75,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tracker .topbar { transition: none; }
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) { animation: none; }
+}
+
+.tracker .mobile-appbar-menu summary,
+.tracker .mobile-appbar-menu nav {
+  font-weight: 400;
 }
