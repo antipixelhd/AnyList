@@ -723,3 +723,7 @@ The private Library tab now groups movies and series into separate sections rega
 ## Quick-search list editor shortcut (2026-09-23)
 
 Quick-search results now reveal a pale circular plus on hover or keyboard focus, with a separate title link. The plus opens the shared list editor directly; remote catalogue results resolve to a local media ID first. One editor instance is mounted with the app bar, so the shortcut works from pages such as Home, while the list page retains its embedded first-load entry cache. The frontend build passed. Local browser checks verified the icon's hover appearance, direct editor opening without navigation, an isolated remote-resolution path, and the existing list editor cache.
+
+## Detail score card alignment (2026-09-23)
+
+The Your score action now uses the same padding, vertical alignment, and divider as the adjacent Following score. The frontend build passed. Local desktop and 390px browser checks confirmed aligned labels and no horizontal overflow, including the rated-season average text shown in the reported case.
