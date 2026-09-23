@@ -116,6 +116,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
 </script>}
 <script>
   let appbarListeners: AbortController;
+  let pointerPosition: { x: number; y: number } | null = null;
   document.addEventListener('astro:page-load', () => {
   appbarListeners?.abort();
   appbarListeners = new AbortController();
@@ -134,20 +135,29 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     };
     const syncPointerState = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return;
+      pointerPosition = { x: event.clientX, y: event.clientY };
       appbar.classList.add('appbar-pointer-active');
       const hoveredLink = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.appbar-nav a') : null;
       for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
         link.classList.toggle('appbar-pointer-hover', link === hoveredLink);
       }
     };
-    const syncPointerStateFromViewport = () => {
+    const syncPointerStateFromViewport = (retry = true) => {
       if (mobile()) {
         clearPointerState();
         return;
       }
-      const pointerActive = appbar.matches(':hover');
-      const hoveredLink = pointerActive
-        ? appbar.querySelector<HTMLAnchorElement>('.appbar-nav a:hover')
+      const pointerTarget = pointerPosition
+        ? document.elementFromPoint(pointerPosition.x, pointerPosition.y)
+        : null;
+      const pointerActive = !!pointerTarget && appbar.contains(pointerTarget);
+      if (!pointerActive && retry && pointerPosition && appbar.classList.contains('appbar-pointer-active')) {
+        // The new layout can miss hit testing for one frame during the swap.
+        requestAnimationFrame(() => syncPointerStateFromViewport(false));
+        return;
+      }
+      const hoveredLink = pointerActive && pointerTarget
+        ? pointerTarget.closest<HTMLAnchorElement>('.appbar-nav a')
         : null;
       appbar.classList.toggle('appbar-pointer-active', pointerActive);
       for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
@@ -175,11 +185,13 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     appbar.addEventListener('pointerover', syncPointerState, { signal: appbarListeners.signal });
     appbar.addEventListener('pointermove', syncPointerState, { signal: appbarListeners.signal });
     appbar.addEventListener('pointerleave', clearPointerState, { signal: appbarListeners.signal });
-    window.addEventListener('blur', clearPointerState, { signal: appbarListeners.signal });
-    // before-swap carries the hovered link into the incoming bar so its color
-    // does not flash during navigation. Reconcile it before the next paint in
-    // case the pointer is no longer over that link after the layout changes.
-    requestAnimationFrame(syncPointerStateFromViewport);
+    window.addEventListener('blur', () => {
+      pointerPosition = null;
+      clearPointerState();
+    }, { signal: appbarListeners.signal });
+    // Carry the hover through the swap. CSS :hover can briefly be unset while
+    // Astro replaces the bar, so reconcile against the last pointer position.
+    requestAnimationFrame(() => syncPointerStateFromViewport());
     document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
     document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true, signal: appbarListeners.signal });
     window.addEventListener('wheel', event => {
