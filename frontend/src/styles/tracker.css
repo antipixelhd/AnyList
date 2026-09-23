@@ -492,9 +492,10 @@ main{transition:opacity var(--content-reveal) ease}
 #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column){flex:1 1 0%;min-width:0}
 #entry-groups:not(.grid-view) .entry-title{padding:18px 20px 18px 15px;color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
 #entry-groups:not(.grid-view) .entry-title>a{color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
-#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column){padding:20px;color:#9fadbD;font-size:15px;font-weight:500;line-height:17.25px}
+#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column){padding:18px 20px 20px;color:#9fadbD;font-size:15px;font-weight:500;line-height:17.25px}
 #entry-groups:not(.grid-view) .entry-head>span.entry-title-column{padding-left:15px}
 #entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type{flex:1 1 0%;min-width:0;padding:18px 20px;color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
+#entry-groups:not(.grid-view) .entry-head.combined-row>span:last-child,#entry-groups:not(.grid-view) .entry-row.combined-row>.entry-type{max-width:120px}
 #entry-groups:not(.grid-view) .entry-score-button{min-height:17.25px;padding:0;border-radius:3px;line-height:17.25px}
 #entry-groups:not(.grid-view) .entry-thumbnail .entry-availability{left:5px;top:50%}
 .entry-title-link{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
