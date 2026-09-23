@@ -1,0 +1,132 @@
+---
+/**
+ * A compact, reusable selector for profile sub-pages.
+ *
+ * Listen for `profile-section-change` on this element to render the selected
+ * section without navigating. The event detail is `{ value: string }`.
+ */
+interface Props {
+  options: Array<{ id: string; label: string }>;
+  active: string;
+  heading?: string;
+  ariaLabel?: string;
+  width?: string;
+}
+
+const {
+  options,
+  active,
+  heading,
+  ariaLabel = heading ?? "Profile sections",
+  width = "160px",
+} = Astro.props;
+---
+
+<nav
+  class="profile-section-selector"
+  data-profile-section-selector
+  aria-label={ariaLabel}
+  style={`--profile-section-selector-width: ${width}`}
+>
+  {heading && <div class="profile-section-selector__heading">{heading}</div>}
+  <div class="profile-section-selector__options">
+    {options.map(({ id, label }) => (
+      <button
+        class:list={[
+          "profile-section-selector__option",
+          { "is-selected": id === active },
+        ]}
+        type="button"
+        data-section={id}
+        aria-pressed={id === active ? "true" : "false"}
+      >
+        {label}
+      </button>
+    ))}
+  </div>
+</nav>
+
+<style>
+  .profile-section-selector {
+    box-sizing: border-box;
+    width: min(var(--profile-section-selector-width, 160px), 100%);
+    min-width: 0;
+    color: var(--text-secondary, #8b9bb4);
+  }
+
+  .profile-section-selector__heading {
+    margin: 0 0 0.65rem;
+    color: var(--text-secondary, #8b9bb4);
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+
+  .profile-section-selector__options {
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .profile-section-selector__option {
+    display: block;
+    width: 100%;
+    border: 0;
+    border-radius: 4px;
+    padding: 0.38rem 0.7rem;
+    background: transparent;
+    color: var(--text-secondary, #8b9bb4);
+    font: inherit;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+
+  .profile-section-selector__option:hover,
+  .profile-section-selector__option:focus-visible {
+    background: color-mix(in srgb, var(--surface-raised, #151f30) 72%, transparent);
+    color: var(--text-primary, #e5edf8);
+    outline: none;
+  }
+
+  .profile-section-selector__option.is-selected {
+    background: var(--surface-raised, #151f30);
+    color: var(--text-primary, #e5edf8);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .profile-section-selector__option {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const button = target.closest<HTMLButtonElement>(
+      ".profile-section-selector__option[data-section]",
+    );
+    if (!button) return;
+
+    const selector = button.closest<HTMLElement>(".profile-section-selector");
+    if (!selector) return;
+
+    const value = button.dataset.section;
+    if (!value) return;
+
+    selector.querySelectorAll<HTMLButtonElement>(".profile-section-selector__option").forEach((option) => {
+      const selected = option === button;
+      option.classList.toggle("is-selected", selected);
+      option.setAttribute("aria-pressed", String(selected));
+    });
+
+    selector.dispatchEvent(
+      new CustomEvent("profile-section-change", {
+        bubbles: true,
+        detail: { value },
+      }),
+    );
+  });
+</script>

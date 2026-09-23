@@ -1,37 +1,208 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
+import ProfileSectionSelector from '../../../components/ProfileSectionSelector.astro';
+import SocialPersonCard from '../../../components/SocialPersonCard.astro';
+import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
-import {plainBioExcerpt} from '../../../lib/profile-markdown';
-const username=Astro.params.username!;
-let profile:any=null,error='',results:any[]=[];
-const query=Astro.url.searchParams.get('q')?.trim()||'';
-try{
-  profile=await tracker(`people/${encodeURIComponent(username)}`,Astro.locals.token);
-  if(Astro.locals.user&&query)results=(await tracker(`people-search?q=${encodeURIComponent(query)}`,Astro.locals.token)).results;
-}catch(e){error=(e as Error).message;}
-const following=(profile?.people||[]).filter((person:any)=>person.following);
-const followers=(profile?.people||[]).filter((person:any)=>person.follower);
+import '../../../styles/social.css';
+
+const username = Astro.params.username!;
+const query = Astro.url.searchParams.get('q')?.trim() || '';
+const initialSection = query ? 'search' : 'following';
+let profile: any = null, error = '';
+try {
+  profile = await tracker(`people/${encodeURIComponent(username)}`, Astro.locals.token);
+} catch (cause) {
+  error = (cause as Error).message;
+}
+const following = (profile?.people || []).filter((person: any) => person.following);
+const followers = (profile?.people || []).filter((person: any) => person.follower);
 ---
-<Tracker title={`${profile?.display_name||username} · Social`}>
-{profile?<><ProfileHeader profile={profile} active="social"/><div class="page-width">
-  <header class="page-intro"><div><span class="eyebrow">One-way following</span><h1>Social</h1><p>Find public profiles and choose whose activity and ratings you want to see.</p></div></header>
-  {Astro.locals.user&&<form class="people-search" method="get"><input type="search" name="q" value={query} placeholder="Search public profiles" aria-label="Search public profiles"/><button class="button-primary">Search</button></form>}
-  {query&&<section><h2>Search results</h2>{results.length?<div class="people-list">{results.map((person:any)=><article class="person-row">
-    {person.has_avatar?<img class="person-avatar" src={`/api/proxy/profile/avatar/${person.id}`} alt=""/>:<span class="person-avatar" aria-hidden="true">{person.display_name[0].toUpperCase()}</span>}
-    <a class="person-copy" href={`/user/${encodeURIComponent(person.username)}`}><strong>{person.display_name}</strong><span>@{person.username}{person.bio&&` · ${plainBioExcerpt(person.bio)}`}</span></a>
-    {!person.owner&&<button class={person.following?'button-secondary':'button-primary'} data-follow={person.username} data-active={person.following?'yes':'no'}>{person.following?'Following':'Follow'}</button>}
-  </article>)}</div>:<p class="section-empty">No public profiles match that search.</p>}</section>}
-  <div class="social-columns"><section><h2>Following <span class="count-pill">{profile.counts.following}</span></h2>{following.length?<div class="people-list">{following.map((person:any)=><a class="person-row" href={`/user/${encodeURIComponent(person.username)}`}><span class="person-avatar" aria-hidden="true">{person.display_name[0].toUpperCase()}</span><span class="person-copy"><strong>{person.display_name}</strong><span>@{person.username}</span></span></a>)}</div>:<p class="section-empty">No public profiles followed yet.</p>}</section>
-  <section><h2>Followers <span class="count-pill">{profile.counts.followers}</span></h2>{followers.length?<div class="people-list">{followers.map((person:any)=><a class="person-row" href={`/user/${encodeURIComponent(person.username)}`}><span class="person-avatar" aria-hidden="true">{person.display_name[0].toUpperCase()}</span><span class="person-copy"><strong>{person.display_name}</strong><span>@{person.username}</span></span></a>)}</div>:<p class="section-empty">No public followers to show.</p>}</section></div>
-</div></>:<div class="page-width"><p class="error-message">{error}</p></div>}
+<Tracker title={`${profile?.display_name || username} · Social`}>
+  {profile ? <>
+    <ProfileHeader profile={profile} active="social"/>
+    <div class="page-width social-page" data-social-page data-profile-username={username} data-profile-owner={profile.owner ? 'yes' : 'no'}>
+      <ProfileSectionSelector heading="Social" ariaLabel="Social sections" options={[{id:'following',label:'Following'},{id:'followers',label:'Followers'},{id:'search',label:'Search'}]} active={initialSection}/>
+      <div class="social-content">
+        <p class="error-message" role="alert" data-social-error hidden></p>
+        <section data-social-panel="following" aria-label="Following" hidden={initialSection !== 'following'}>
+          <div class="social-people-grid" data-social-grid="following">
+            {following.map((person: any) => <SocialPersonCard person={person} action={profile.owner ? 'remove' : 'none'}/>)}
+          </div>
+          <p class="social-empty" data-social-empty="following" hidden={following.length > 0}>No public profiles followed yet.</p>
+        </section>
+        <section data-social-panel="followers" aria-label="Followers" hidden={initialSection !== 'followers'}>
+          <div class="social-people-grid" data-social-grid="followers">
+            {followers.map((person: any) => <SocialPersonCard person={person}/>)}
+          </div>
+          <p class="social-empty" data-social-empty="followers" hidden={followers.length > 0}>No public followers to show.</p>
+        </section>
+        <section data-social-panel="search" aria-label="Search public profiles" hidden={initialSection !== 'search'}>
+          {Astro.locals.user ? <>
+            <form class="social-search" method="get" data-social-search-form>
+              <label class="sr-only" for="social-search-input">Search public profiles</label>
+              <input id="social-search-input" type="search" name="q" value={query} placeholder="Search public profiles" autocomplete="off"/>
+              <button type="submit" class="button-primary"><Icon name="search"/> Search</button>
+            </form>
+            <div class="social-people-grid" data-social-grid="search"></div>
+            <p class="social-empty" data-social-empty="search">{query ? 'Searching public profiles…' : 'Search for public profiles by name.'}</p>
+          </> : <p class="social-empty">Sign in to search public profiles.</p>}
+        </section>
+      </div>
+      <template data-social-action-icon="close"><Icon name="close"/></template>
+      <template data-social-action-icon="plus"><Icon name="plus"/></template>
+    </div>
+  </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
+
 <script>
-document.addEventListener('astro:page-load', () => {
-document.querySelectorAll<HTMLButtonElement>('[data-follow]').forEach(button=>button.addEventListener('click',async()=>{
- button.disabled=true;const active=button.dataset.active==='yes';
- try{const response=await fetch(`/api/proxy/tracking/people/${encodeURIComponent(button.dataset.follow!)}/follow`,{method:active?'DELETE':'POST'});if(!response.ok)throw new Error();location.reload();}
- catch{button.textContent='Try again';button.disabled=false;}
-}));
-});
+  interface SocialPerson {
+    id?: number;
+    username: string;
+    display_name: string;
+    has_avatar?: boolean;
+    following?: boolean;
+    follower?: boolean;
+    owner?: boolean;
+  }
+
+  let socialListeners: AbortController | undefined;
+  document.addEventListener('astro:page-load', () => {
+    socialListeners?.abort();
+    socialListeners = new AbortController();
+    const signal = socialListeners.signal;
+    const page = document.querySelector<HTMLElement>('[data-social-page]');
+    if (!page) return;
+    const profileUsername = page.dataset.profileUsername!;
+    const owner = page.dataset.profileOwner === 'yes';
+    const error = page.querySelector<HTMLElement>('[data-social-error]')!;
+    const searchForm = page.querySelector<HTMLFormElement>('[data-social-search-form]');
+    const searchInput = searchForm?.querySelector<HTMLInputElement>('input[name=q]');
+    let searchRequest = 0;
+
+    function showError(message: string) {
+      error.textContent = message;
+      error.hidden = false;
+    }
+
+    function createCard(person: SocialPerson, action: 'remove' | 'toggle' | 'none') {
+      const name = person.display_name || person.username;
+      const card = document.createElement('article');
+      card.className = 'social-person-card';
+      card.dataset.socialPerson = person.username;
+      const link = document.createElement('a');
+      link.className = 'social-person-link';
+      link.href = `/user/${encodeURIComponent(person.username)}`;
+      link.setAttribute('aria-label', `View ${name}'s profile`);
+      link.title = name;
+      if (person.has_avatar && person.id) {
+        const image = document.createElement('img');
+        image.src = `/api/proxy/profile/avatar/${person.id}`;
+        image.alt = '';
+        image.loading = 'lazy';
+        link.append(image);
+      } else {
+        const placeholder = document.createElement('span');
+        placeholder.className = 'social-person-placeholder';
+        placeholder.setAttribute('aria-hidden', 'true');
+        placeholder.textContent = name.slice(0, 1).toUpperCase();
+        link.append(placeholder);
+      }
+      const label = document.createElement('span');
+      label.className = 'social-person-name';
+      label.textContent = name;
+      link.append(label);
+      card.append(link);
+      if (action === 'remove' || (action === 'toggle' && !person.owner)) {
+        const following = action === 'remove' || !!person.following;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `social-person-action ${following ? 'alert-icon-button' : 'social-person-add'}`;
+        button.dataset.socialFollow = person.username;
+        button.dataset.followState = following ? 'yes' : 'no';
+        button.setAttribute('aria-label', `${following ? 'Unfollow' : 'Follow'} ${name}`);
+        button.title = `${following ? 'Unfollow' : 'Follow'} ${name}`;
+        const icon = page.querySelector<HTMLTemplateElement>(`[data-social-action-icon="${following ? 'close' : 'plus'}"]`);
+        if (icon) button.append(icon.content.cloneNode(true));
+        card.append(button);
+      }
+      return card;
+    }
+
+    function renderGroup(group: 'following' | 'followers' | 'search', people: SocialPerson[], emptyText: string) {
+      const grid = page.querySelector<HTMLElement>(`[data-social-grid="${group}"]`);
+      const empty = page.querySelector<HTMLElement>(`[data-social-empty="${group}"]`);
+      if (!grid || !empty) return;
+      const action = group === 'following' && owner ? 'remove' : group === 'search' ? 'toggle' : 'none';
+      grid.replaceChildren(...people.map(person => createCard(person, action)));
+      empty.textContent = emptyText;
+      empty.hidden = people.length > 0;
+    }
+
+    async function refreshLists() {
+      const response = await fetch(`/api/proxy/tracking/people/${encodeURIComponent(profileUsername)}`, {signal});
+      if (!response.ok) throw new Error('Could not refresh the social lists.');
+      const profile = await response.json();
+      const people: SocialPerson[] = profile.people || [];
+      renderGroup('following', people.filter(person => person.following), 'No public profiles followed yet.');
+      renderGroup('followers', people.filter(person => person.follower), 'No public followers to show.');
+    }
+
+    async function searchPeople() {
+      const q = searchInput?.value.trim() || '';
+      const request = ++searchRequest;
+      const empty = page.querySelector<HTMLElement>('[data-social-empty="search"]');
+      if (!q) {
+        renderGroup('search', [], 'Search for public profiles by name.');
+        return;
+      }
+      if (empty) { empty.textContent = 'Searching public profiles…'; empty.hidden = false; }
+      try {
+        const response = await fetch(`/api/proxy/tracking/people-search?q=${encodeURIComponent(q)}`, {signal});
+        if (!response.ok) throw new Error('Could not search public profiles.');
+        const data = await response.json();
+        if (request !== searchRequest) return;
+        renderGroup('search', data.results || [], 'No public profiles match that search.');
+      } catch (cause) {
+        if (signal.aborted || request !== searchRequest) return;
+        if (empty) { empty.textContent = cause instanceof Error ? cause.message : 'Could not search public profiles.'; empty.hidden = false; }
+      }
+    }
+
+    page.addEventListener('profile-section-change', event => {
+      const section = (event as CustomEvent<{value: string}>).detail.value;
+      page.querySelectorAll<HTMLElement>('[data-social-panel]').forEach(panel => {
+        panel.hidden = panel.dataset.socialPanel !== section;
+      });
+      error.hidden = true;
+      if (section === 'search') searchInput?.focus();
+    }, {signal});
+
+    searchForm?.addEventListener('submit', event => {
+      event.preventDefault();
+      void searchPeople();
+    }, {signal});
+
+    page.addEventListener('click', async event => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-social-follow]');
+      if (!button || button.disabled) return;
+      button.disabled = true;
+      error.hidden = true;
+      try {
+        const response = await fetch(`/api/proxy/tracking/people/${encodeURIComponent(button.dataset.socialFollow!)}/follow`, {
+          method: button.dataset.followState === 'yes' ? 'DELETE' : 'POST', signal,
+        });
+        if (!response.ok) throw new Error('Could not update following.');
+        await refreshLists();
+        if (searchInput?.value.trim()) await searchPeople();
+      } catch (cause) {
+        if (!signal.aborted) showError(cause instanceof Error ? cause.message : 'Could not update following.');
+      } finally {
+        button.disabled = false;
+      }
+    }, {signal});
+
+    if (searchInput?.value.trim()) void searchPeople();
+  });
 </script>

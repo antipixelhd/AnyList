@@ -1,0 +1,31 @@
+---
+import Icon from './Icon.astro';
+
+interface Person {
+  id?: number;
+  username: string;
+  display_name: string;
+  has_avatar?: boolean;
+  following?: boolean;
+  owner?: boolean;
+}
+
+interface Props {
+  person: Person;
+  action?: 'remove' | 'toggle' | 'none';
+}
+
+const {person, action = 'none'} = Astro.props;
+const name = person.display_name || person.username;
+const followState = person.following ? 'yes' : 'no';
+---
+<article class="social-person-card" data-social-person={person.username}>
+  <a class="social-person-link" href={`/user/${encodeURIComponent(person.username)}`} aria-label={`View ${name}'s profile`} title={name}>
+    {person.has_avatar && person.id
+      ? <img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>
+      : <span class="social-person-placeholder" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>}
+    <span class="social-person-name">{name}</span>
+  </a>
+  {action === 'remove' && <button type="button" class="social-person-action alert-icon-button" data-social-follow={person.username} data-follow-state="yes" aria-label={`Unfollow ${name}`} title={`Unfollow ${name}`}><Icon name="close"/></button>}
+  {action === 'toggle' && !person.owner && <button type="button" class:list={['social-person-action', person.following ? 'alert-icon-button' : 'social-person-add']} data-social-follow={person.username} data-follow-state={followState} aria-label={`${person.following ? 'Unfollow' : 'Follow'} ${name}`} title={`${person.following ? 'Unfollow' : 'Follow'} ${name}`}><Icon name={person.following ? 'close' : 'plus'}/></button>}
+</article>

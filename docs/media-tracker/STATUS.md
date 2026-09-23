@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Profile Social layout (2026-09-23)
+
+Social now uses a reusable 160px profile section selector aligned with the desktop profile avatar. Following, Followers, and Search switch within the page. Public profiles appear as square avatar cards with names revealed on hover or keyboard focus; the owner can unfollow from a card, and Search can follow or unfollow without reloading. The people projection now includes public avatar IDs and availability while retaining its privacy filter.
+
+The frontend build and focused tracking API test passed after the dedicated test database was migrated to `mt022`. Desktop and 390px mobile browser checks covered section switching, in-page search, and follow/unfollow; the temporary local follow was reverted.
+
 ## Scoped external entry API and delivery receipts (2026-09-23)
 
 External clients can obtain a revocable `tracking:write` device credential and edit an existing tracked title's status, progress, and rating through the narrow entry endpoint documented in [EXTERNAL-API.md](../EXTERNAL-API.md). Each entry write returns a durable delivery job ID. The job distinguishes no provider work, queued or dispatching work, a local dispatcher failure, and an attempted provider delivery whose acceptance cannot yet be verified.

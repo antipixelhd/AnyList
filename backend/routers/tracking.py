@@ -518,7 +518,9 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     following_ids = (await db.execute(select(Follow.following_id).where(Follow.follower_id == user.id))).scalars().all()
     followers_ids = (await db.execute(select(Follow.follower_id).where(Follow.following_id == user.id))).scalars().all()
     people = (await db.execute(select(User, UserProfileData).join(UserProfileData, UserProfileData.user_id == User.id).where(User.id.in_(set(following_ids + followers_ids)), UserProfileData.privacy_level == PrivacyLevel.public))).all()
-    visible = [{"username":u.username, "display_name":p.display_name or u.username, "following":u.id in following_ids, "follower":u.id in followers_ids} for u,p in people]
+    visible = [{"id":u.id, "username":u.username, "display_name":p.display_name or u.username,
+                "has_avatar":bool(p.avatar_path), "following":u.id in following_ids, "follower":u.id in followers_ids}
+               for u,p in people]
     scores = [score for entry, _ in entries if (score := effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)) is not None]
     activity_rows = (await db.execute(select(TrackingActivity, Media).join(Media, Media.id == TrackingActivity.media_id)
         .where(TrackingActivity.user_id == user.id).order_by(TrackingActivity.created_at.desc()).limit(60))).all()
