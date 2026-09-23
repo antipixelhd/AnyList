@@ -52,7 +52,7 @@ const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px
           {Astro.locals.user && (
             <div class="detail-controls">
               <StatusControl mediaId={title.id} status={title.entry?.status} type={title.type} />
-              <button class="button-secondary favorite-toggle" type="button" aria-pressed={title.entry?.favorite?'true':'false'} data-favorite-toggle data-media={title.id} data-favorite={title.entry?.favorite?'true':'false'}><Icon name="heart"/><span>{title.entry?.favorite?'Favorited':'Favorite'}</span></button>
+              <button class="button-secondary favorite-toggle" type="button" aria-pressed={title.entry?.favorite?'true':'false'} data-favorite-toggle data-media={title.id} data-favorite={title.entry?.favorite?'true':'false'}><Icon name="heart"/><span data-favorite-label>{title.entry?.favorite?'Favorited':'Favorite'}</span></button>
               <p class="status-error" role="alert" data-favorite-error hidden></p>
               {canUseStreamingLibrary&&<button class="button-secondary library-toggle" type="button" aria-pressed={library?.desired?'true':'false'} aria-label={library?.desired?'Remove from library':'Add to library'} data-library-toggle data-media={title.id} data-desired={library?.desired?'true':'false'} disabled={!library}><Icon name="list"/><span data-library-label>{library?.desired?'In Library':'Add to library'}</span></button>}
               <p class="status-error" role="alert" data-library-error hidden={!libraryError}>{libraryError}</p>
@@ -186,7 +186,6 @@ const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px
 
 <script>
 import { setupScoreSteppers } from '../../lib/scoreStepper';
-import { statuses } from '../../lib/tracker';
 let titlePageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
 titlePageListeners?.abort();
@@ -242,14 +241,12 @@ if(favoriteButton){
  const render=(value:boolean)=>{
   favoriteButton.dataset.favorite=String(value);
   favoriteButton.setAttribute('aria-pressed',String(value));
-  favoriteButton.querySelector<HTMLElement>('span')!.textContent=value?'Favorited':'Favorite';
+  favoriteButton.querySelector<HTMLElement>('[data-favorite-label]')!.textContent=value?'Favorited':'Favorite';
  };
  coalescedToggle(favoriteButton,favoriteButton.dataset.favorite==='true',document.querySelector<HTMLElement>('[data-favorite-error]')!,render,async value=>{
   const response=await fetch(`/api/proxy/tracking/entry/${favoriteButton.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({favorite:value}),keepalive:true});
   if(!response.ok){const data=await response.json().catch(()=>null);throw new Error(typeof data?.detail==='string'?data.detail:'Could not update this favorite.');}
   const entry=await response.json();
-  const statusButton=document.querySelector<HTMLButtonElement>('[data-status-control] [data-edit-entry]');
-  if(statusButton)statusButton.textContent=statuses.find(([status])=>status===entry.status)?.[1]||statusButton.textContent;
   document.dispatchEvent(new CustomEvent('anylist:data-changed'));
   return entry.favorite===true;
  },'Could not update this favorite.');

@@ -747,3 +747,5 @@ Profiles now show Favorites immediately after the movie/series list tabs. The ne
 The Library tab, Home shortcut, title-page Library button, and list-editor Library icon are shown only when the owner has a Stremio or Nuvio connection. The direct Library page redirects to the profile while neither is connected. The editor's icon toggles membership in place and coalesces repeated clicks to the final state.
 
 The frontend build and all 97 tracking API tests passed on a separately migrated disposable PostgreSQL database. Local browser checks verified connected and unconnected visibility, desktop and phone Favorites layouts, drag and keyboard reordering, Save/Cancel behavior, persisted overview order, and X removal with a mocked response. The preview account's original favorite order was restored after testing.
+
+Detail Favorite label follow-up: the toggle now targets its text label explicitly, preserving the heart icon and switching only between Favorite and Favorited. Its background write no longer changes the separate status control. The frontend build passed, and mocked local browser toggles verified both directions without modifying the preview account.
