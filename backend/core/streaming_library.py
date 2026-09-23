@@ -119,6 +119,7 @@ async def set_library_intent(db: AsyncSession, user_id: int, media_id: int, desi
         ))).scalars().all()
     }
     target_ids = {conn.id for conn in targets}
+    delivery_queued = False
     for row in existing.values():
         if row.connection_id not in target_ids and row.state == "pending":
             row.state = "cancelled"
@@ -126,11 +127,18 @@ async def set_library_intent(db: AsyncSession, user_id: int, media_id: int, desi
         row = existing.get(conn.id)
         if row is None:
             db.add(StreamingLibraryDelivery(intent_id=intent.id, connection_id=conn.id, desired=desired))
+            delivery_queued = True
         elif changed or row.desired != desired or row.state == "cancelled":
             row.desired, row.state, row.attempts, row.last_error = desired, "pending", 0, None
+            delivery_queued = True
     await _set_manual_anchor(db, user_id, media_id, desired)
     await db.commit()  # The decision survives a failed provider request.
-    return await library_state(db, user_id, media_id)
+    state = await library_state(db, user_id, media_id)
+    # Internal hint lets the route avoid starting another retry for an
+    # unchanged pending delivery. Explicit retry and connection sync still
+    # process pending rows.
+    state["_delivery_queued"] = delivery_queued
+    return state
 
 
 async def deliver_library_intent(user_id: int, media_id: int) -> None:
@@ -186,7 +194,9 @@ async def _write_nuvio(db: AsyncSession, conn: MediaServerConnection, item: dict
 
     async def persist_refresh(session: nuvio.NuvioSession) -> None:
         conn.token = session.refresh_token
-        await db.commit()
+        # Keep dispatch_library_deliveries' user row lock held until every
+        # provider delivery for this intent has finished.
+        await db.flush()
 
     async with nuvio.connection_lock(conn.id):
         await db.refresh(conn)
@@ -234,6 +244,10 @@ async def _record_membership(db: AsyncSession, user_id: int, media_id: int,
 
 
 async def dispatch_library_deliveries(db: AsyncSession, user_id: int, media_id: int) -> None:
+    # Intent writes use this same per-user row lock. Holding it through the
+    # provider write serializes concurrent dispatches and prevents an older
+    # delivery from applying after a newer library choice has been committed.
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     intent = (await db.execute(select(StreamingLibraryIntent).where(
         StreamingLibraryIntent.user_id == user_id,
         StreamingLibraryIntent.media_id == media_id,
@@ -261,7 +275,6 @@ async def dispatch_library_deliveries(db: AsyncSession, user_id: int, media_id: 
         conn = await db.get(MediaServerConnection, row.connection_id)
         if not conn or conn.user_id != user_id or not conn.push_collection or conn.type not in ("stremio", "nuvio"):
             row.state = "cancelled"
-            await db.commit()
             continue
         row.attempts += 1
         try:
@@ -276,7 +289,9 @@ async def dispatch_library_deliveries(db: AsyncSession, user_id: int, media_id: 
             row.last_error = str(error.detail)
         except Exception as error:
             row.last_error = type(error).__name__  # Never persist provider response bodies or tokens.
-        await db.commit()
+    # Commit only after all connections have been attempted. The row lock then
+    # prevents a newer intent from committing between fanout targets.
+    await db.commit()
 
 
 async def retry_pending_library_deliveries(db: AsyncSession, user_id: int, connection_id: int) -> None:

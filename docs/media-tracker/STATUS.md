@@ -727,3 +727,9 @@ Quick-search results now reveal a pale circular plus on hover or keyboard focus,
 ## Detail score card alignment (2026-09-23)
 
 The Your score action now uses the same padding, vertical alignment, and divider as the adjacent Following score. The frontend build passed. Local desktop and 390px browser checks confirmed aligned labels and no horizontal overflow, including the rated-season average text shown in the reported case.
+
+## Detail favorite and library toggle coalescing (2026-09-23)
+
+The detail-page Favorite and Library buttons now update their visible state immediately without reloading. A short debounce collapses rapid clicks to the final choice; a second write is sent only when that choice changes during an in-flight request. An unsuccessful latest write restores the confirmed state and shows the error. Repeated identical favorite-only API writes skip delivery-job creation, while repeated identical Library intents do not schedule another provider attempt. Library provider fanout holds the per-user intent lock until all connection writes finish, preventing an older delivery from overtaking a newer choice.
+
+Verification used a separately migrated disposable PostgreSQL database: all 95 tracking API tests passed, including favorite idempotency and library fanout checks. The frontend build passed. Local browser checks confirmed immediate button updates, persistence without navigation, rapid-click coalescing, and restoration of the preview account's initial states. The disposable test database was removed afterward.

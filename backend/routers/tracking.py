@@ -608,7 +608,8 @@ async def update_library_state(media_id: int, body: LibraryIntentPatch, backgrou
                                db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     from core.streaming_library import deliver_library_intent, set_library_intent
     state = await set_library_intent(db, viewer.id, media_id, body.in_library)
-    if state['pending']:
+    should_deliver = state.pop('_delivery_queued', False)
+    if should_deliver:
         background_tasks.add_task(deliver_library_intent, viewer.id, media_id)
     return state
 
@@ -1121,6 +1122,15 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
     # Serialize edits for this user, including first insertion of a title.
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
+    if (entry is not None and body.model_fields_set == {"favorite"}
+            and entry.favorite == body.favorite):
+        result = entry_data(entry, media, True)
+        latest_job_id = (await db.execute(select(TrackingDeliveryJob.id).where(
+            TrackingDeliveryJob.user_id == viewer.id,
+            TrackingDeliveryJob.media_id == media_id,
+        ).order_by(TrackingDeliveryJob.id.desc()).limit(1))).scalar_one_or_none()
+        result["delivery_job_id"] = latest_job_id
+        return result
     previous = entry.status if entry else None
     old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None

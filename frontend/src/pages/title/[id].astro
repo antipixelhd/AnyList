@@ -184,7 +184,11 @@ const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px
 
 <script>
 import { setupScoreSteppers } from '../../lib/scoreStepper';
+import { statuses } from '../../lib/tracker';
+let titlePageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
+titlePageListeners?.abort();
+titlePageListeners = new AbortController();
 if (!document.querySelector('[data-favorite-toggle], [data-library-toggle], #refresh-episodes')) return;
 const seasons = document.querySelector<HTMLElement>('.seasons-section');
 if (seasons) setupScoreSteppers(seasons);
@@ -193,34 +197,75 @@ document.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener
  try{const res=await fetch(`/api/proxy/tracking/title/${button.dataset.media}/refresh-episodes`,{method:'POST'});if(!res.ok){const data=await res.json();throw new Error(data.detail||'Unable to refresh episodes');}location.reload();}
  catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;button.textContent='Refresh episode metadata';}
 });
-document.querySelector<HTMLButtonElement>('[data-favorite-toggle]')?.addEventListener('click',async event=>{
- const button=event.currentTarget as HTMLButtonElement;
- const error=document.querySelector<HTMLElement>('[data-favorite-error]')!;
- const next=button.dataset.favorite!=='true';button.disabled=true;error.hidden=true;
- try{
-  const response=await fetch(`/api/proxy/tracking/entry/${button.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({favorite:next})});
-  if(!response.ok){const data=await response.json();throw new Error(typeof data.detail==='string'?data.detail:'Could not update this favorite.');}
-  location.reload();
- }catch(cause){error.textContent=(cause as Error).message;error.hidden=false;button.disabled=false;}
-});
-async function changeLibrary(button:HTMLButtonElement){
- const error=document.querySelector<HTMLElement>('[data-library-error]')!;button.disabled=true;button.setAttribute('aria-busy','true');error.hidden=true;
- try{
-  const next=button.dataset.desired!=='true';
-  const response=await fetch(`/api/proxy/tracking/library/${button.dataset.media}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({in_library:next})});
-  if(!response.ok){const data=await response.json();throw new Error(typeof data.detail==='string'?data.detail:'Could not update the streaming library.');}
-  const state=await response.json();
-  button.dataset.desired=String(state.desired);button.setAttribute('aria-pressed',String(state.desired));
-  button.setAttribute('aria-label',state.desired?'Remove from library':'Add to library');
-  button.querySelector<HTMLElement>('[data-library-label]')!.textContent=state.desired?'In Library':'Add to library';
-  button.removeAttribute('aria-busy');
-  button.disabled=false;
- }catch(cause){error.textContent=(cause as Error).message;error.hidden=false;button.removeAttribute('aria-busy');button.disabled=false;}
+function coalescedToggle(button:HTMLButtonElement, initial:boolean, error:HTMLElement,
+ render:(value:boolean)=>void, save:(value:boolean)=>Promise<boolean>, failureMessage:string){
+ let desired=initial, confirmed=initial, revision=0, sending=false, timer=0;
+ const schedule=()=>{
+  clearTimeout(timer);
+  if(sending)return;
+  if(desired===confirmed){button.removeAttribute('aria-busy');return;}
+  button.setAttribute('aria-busy','true');
+  timer=window.setTimeout(flush,300);
+ };
+ async function flush(){
+  if(sending||desired===confirmed)return;
+  clearTimeout(timer);
+  const sent=desired, sentRevision=revision;
+  sending=true;
+  try{
+   const actual=await save(sent);
+   confirmed=actual;
+   if(revision===sentRevision)desired=actual;
+   render(desired);
+  }catch(cause){
+   if(revision===sentRevision){
+    desired=confirmed;render(desired);
+    error.textContent=cause instanceof Error?cause.message:failureMessage;error.hidden=false;
+   }
+  }finally{
+   sending=false;
+   if(desired!==confirmed)schedule();
+   else button.removeAttribute('aria-busy');
+  }
+ }
+ button.addEventListener('click',()=>{
+  desired=!desired;revision++;render(desired);error.hidden=true;schedule();
+ },{signal:titlePageListeners.signal});
+ const flushBeforeLeave=()=>{if(!sending)void flush();};
+ window.addEventListener('pagehide',flushBeforeLeave,{signal:titlePageListeners.signal});
+ document.addEventListener('astro:before-swap',flushBeforeLeave,{signal:titlePageListeners.signal});
 }
-document.querySelector<HTMLButtonElement>('[data-library-toggle]')?.addEventListener('click',event=>{
- const button=event.currentTarget as HTMLButtonElement;
- changeLibrary(button);
-});
+const favoriteButton=document.querySelector<HTMLButtonElement>('[data-favorite-toggle]');
+if(favoriteButton){
+ const render=(value:boolean)=>{
+  favoriteButton.dataset.favorite=String(value);
+  favoriteButton.setAttribute('aria-pressed',String(value));
+  favoriteButton.querySelector<HTMLElement>('span')!.textContent=value?'Favorited':'Favorite';
+ };
+ coalescedToggle(favoriteButton,favoriteButton.dataset.favorite==='true',document.querySelector<HTMLElement>('[data-favorite-error]')!,render,async value=>{
+  const response=await fetch(`/api/proxy/tracking/entry/${favoriteButton.dataset.media}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({favorite:value}),keepalive:true});
+  if(!response.ok){const data=await response.json().catch(()=>null);throw new Error(typeof data?.detail==='string'?data.detail:'Could not update this favorite.');}
+  const entry=await response.json();
+  const statusButton=document.querySelector<HTMLButtonElement>('[data-status-control] [data-edit-entry]');
+  if(statusButton)statusButton.textContent=statuses.find(([status])=>status===entry.status)?.[1]||statusButton.textContent;
+  document.dispatchEvent(new CustomEvent('anylist:data-changed'));
+  return entry.favorite===true;
+ },'Could not update this favorite.');
+}
+const libraryButton=document.querySelector<HTMLButtonElement>('[data-library-toggle]');
+if(libraryButton&&!libraryButton.disabled){
+ const render=(value:boolean)=>{
+  libraryButton.dataset.desired=String(value);
+  libraryButton.setAttribute('aria-pressed',String(value));
+  libraryButton.setAttribute('aria-label',value?'Remove from library':'Add to library');
+  libraryButton.querySelector<HTMLElement>('[data-library-label]')!.textContent=value?'In Library':'Add to library';
+ };
+ coalescedToggle(libraryButton,libraryButton.dataset.desired==='true',document.querySelector<HTMLElement>('[data-library-error]')!,render,async value=>{
+  const response=await fetch(`/api/proxy/tracking/library/${libraryButton.dataset.media}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({in_library:value}),keepalive:true});
+  if(!response.ok){const data=await response.json().catch(()=>null);throw new Error(typeof data?.detail==='string'?data.detail:'Could not update the streaming library.');}
+  return (await response.json()).desired===true;
+ },'Could not update the streaming library.');
+}
 document.querySelectorAll<HTMLButtonElement>('[data-season-progress]').forEach(button=>button.addEventListener('click',async()=>{
  button.disabled=true;
  const body={watched:button.dataset.watched==='true',confirm_rollback:false};

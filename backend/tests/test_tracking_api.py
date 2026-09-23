@@ -19,7 +19,7 @@ from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key, get_tracking_write_user
 from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
+from models.tracking import TrackedEntry, TrackingDeletion, TrackingDeliveryJob, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
 from models.streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from models.sync import SyncJob, SyncStatus
 from routers.tracking import router
@@ -1177,6 +1177,28 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'],[])
 
+    async def test_favorite_only_patch_does_not_dispatch_provider_work(self):
+        response = await self.save(self.movie, favorite=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()['favorite'])
+        self.local_outbound.assert_not_awaited()
+        first_job_id = response.json()['delivery_job_id']
+        jobs_before = len((await self.db.execute(select(TrackingDeliveryJob).where(
+            TrackingDeliveryJob.user_id == self.owner.id,
+            TrackingDeliveryJob.media_id == self.movie.id,
+        ))).scalars().all())
+
+        repeated = await self.save(self.movie, favorite=True)
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertTrue(repeated.json()['favorite'])
+        self.assertEqual(repeated.json()['delivery_job_id'], first_job_id)
+        jobs_after = len((await self.db.execute(select(TrackingDeliveryJob).where(
+            TrackingDeliveryJob.user_id == self.owner.id,
+            TrackingDeliveryJob.media_id == self.movie.id,
+        ))).scalars().all())
+        self.assertEqual(jobs_after, jobs_before)
+        self.local_outbound.assert_not_awaited()
+
     async def test_library_action_saves_without_a_connection_and_survives_refresh(self):
         response=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
         self.assertEqual(response.status_code,200,response.text)
@@ -1258,10 +1280,21 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         remote={'_id':'tt1234567','name':self.movie.title,'type':'movie','removed':False,
             'temp':False,'_ctime':'2026-01-01T00:00:00Z','_mtime':'2026-01-01T00:00:00Z',
             'state':{'timesWatched':1,'custom':'preserve'}}
-        with (patch.object(stremio,'datastore_get',AsyncMock(return_value=[])),
+        original_commit = self.db.commit
+        commit_count = 0
+        async def counted_commit():
+            nonlocal commit_count
+            commit_count += 1
+            await original_commit()
+        async def fail_nuvio(*args, **kwargs):
+            self.assertEqual(commit_count, 1, 'user intent lock must remain held across provider fanout')
+            raise RuntimeError('provider unavailable')
+        with (patch.object(self.db, 'commit', counted_commit),
+              patch.object(stremio,'datastore_get',AsyncMock(return_value=[])),
               patch.object(stremio,'datastore_put',AsyncMock()) as stremio_put,
-              patch.object(nuvio,'merge_library',AsyncMock(side_effect=RuntimeError('provider unavailable')))):
+              patch.object(nuvio,'merge_library',AsyncMock(side_effect=fail_nuvio))):
             added=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+        self.assertEqual(commit_count, 2, 'one intent commit plus one fanout commit')
         self.assertEqual(added.status_code,200,added.text)
         self.assertTrue(added.json()['desired'])
         self.assertTrue(added.json()['pending'])
@@ -1270,6 +1303,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             {'Stremio':'applied','Nuvio':'pending'})
         self.assertEqual(next(row for row in state['connections'] if row['name']=='Nuvio')['error'],'RuntimeError')
         self.assertFalse(stremio_put.await_args.args[1][0]['removed'])
+        # Repeating the same desired value must leave the failed delivery
+        # pending for explicit retry without starting another provider call.
+        with patch.object(nuvio,'merge_library',AsyncMock()) as duplicate_call:
+            repeated=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+        self.assertEqual(repeated.status_code,200,repeated.text)
+        self.assertTrue(repeated.json()['pending'])
+        duplicate_call.assert_not_awaited()
         grouped=(await self.client.get('/tracking/recent-events')).json()['outbound']
         self.assertEqual(len(grouped),1)
         self.assertEqual([row['connection'] for row in grouped[0]['deliveries']],['Nuvio · Library'])
