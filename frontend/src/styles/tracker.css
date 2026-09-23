@@ -494,7 +494,7 @@ main{transition:opacity var(--content-reveal) ease}
 #entry-groups:not(.grid-view) .entry-progress .progress-increment{position:absolute;min-height:17.25px;height:17.25px}
 #entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):hover .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):focus-within .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-progress .progress-increment:focus-visible{position:static}
 #entry-groups:not(.grid-view) .entry-title{padding:18px 20px 18px 15px;color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
-#entry-groups:not(.grid-view) .entry-title>a{color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
+#entry-groups:not(.grid-view) .entry-title>a{color:#9fadbD;font-size:15px;font-weight:400;line-height:20px}
 #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column){padding:18px 20px 20px;color:#9fadbD;font-size:15px;font-weight:500;line-height:17.25px}
 #entry-groups:not(.grid-view) .entry-head>span.entry-title-column{padding-left:15px}
 #entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type{flex:1 1 0%;min-width:0;padding:18px 20px;color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
