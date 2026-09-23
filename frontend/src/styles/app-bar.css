@@ -16,10 +16,6 @@ html.appbar-nav-transition-cursor {
     justify-self: end;
   }
 
-  .tracker .account-nav {
-    justify-self: start;
-  }
-
   .tracker .topbar {
     transition: transform .22s ease, background-color 500ms ease, box-shadow 500ms ease;
   }
