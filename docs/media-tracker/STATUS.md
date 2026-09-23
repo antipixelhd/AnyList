@@ -1,8 +1,12 @@
 # AnyList implementation status
 
+## History repair control removed from the interface (2026-09-23)
+
+The manual “Import history” control was removed from Settings → Connections after the owner confirmed it is an internal repair operation rather than a normal import workflow. The AnyList export ZIP import remains available. Automatic provider-to-tracked-list import and the internal history import endpoint remain intact. The frontend production build passed; no VPS work was performed.
+
 ## Notifications sidebar and rating popup preference (2026-09-23)
 
-The Notifications sidebar now uses the shared AnyList field styling for its retention-days selector. Its existing-history import action has moved to a Watch History section immediately below Import in Settings → Connections, with inline progress and result feedback.
+The Notifications sidebar now uses the shared AnyList field styling for its retention-days selector. Its existing-history import action was initially moved to Settings → Connections and was subsequently removed from the interface after owner review, as described above.
 
 Inbox preferences now include “Show new ratings popup,” enabled by default. Turning it off suppresses only the bottom-right rating prompt and acknowledges rating prompts seen while disabled so they do not appear later when reenabled. Rating requests remain in the ordinary Notifications list, and high-priority needs-review prompts still appear. The preference is stored per user through migration `mt019`.
 

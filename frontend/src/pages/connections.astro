@@ -1486,19 +1486,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         </div>
       </section>
 
-      <!-- Existing watch history -->
-      <section>
-        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Watch History</h2>
-        <div class="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div class="space-y-1">
-            <p class="text-sm font-semibold text-zinc-100">Import existing history</p>
-            <p class="text-sm text-zinc-400">Import existing history and ratings. Streaming-library membership stays separate.</p>
-          </div>
-          <button type="button" class="shrink-0 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" id="import-history">Import history</button>
-        </div>
-        <p id="import-result" class="mt-3 text-sm text-zinc-400" role="status"></p>
-      </section>
-
       <!-- API Key -->
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">API Key</h2>
@@ -1795,34 +1782,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     if (window._messageTimeout) clearTimeout(window._messageTimeout);
     window._messageTimeout = setTimeout(() => msg.classList.add('hidden'), 4000);
-  }
-
-  function setupHistoryImport() {
-    const button = document.getElementById('import-history') as HTMLButtonElement | null;
-    const result = document.getElementById('import-result');
-    if (!button || !result || button.dataset.bound === 'true') return;
-
-    button.dataset.bound = 'true';
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      result.className = 'mt-3 text-sm text-zinc-400';
-      result.textContent = 'Importing history…';
-      try {
-        const response = await fetch('/api/proxy/tracking/import-history', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.detail || 'Could not import history.');
-        result.className = 'mt-3 text-sm text-emerald-400';
-        result.textContent = `${data.added ?? 0} entries imported.`;
-      } catch (error) {
-        result.className = 'mt-3 text-sm text-red-400';
-        result.textContent = error instanceof Error ? error.message : 'Could not import history.';
-      } finally {
-        button.disabled = false;
-      }
-    });
   }
 
   window.addEventListener('scroll', () => {
@@ -6074,7 +6033,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     };
   }
 
-  setupHistoryImport();
   setupActions();
   setupPasswordToggles();
   setupConnections();
@@ -6090,7 +6048,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   setupSeasonRemap();
 
   document.addEventListener('astro:after-swap', () => {
-    setupHistoryImport();
     setupActions();
     setupPasswordToggles();
     setupConnections();
