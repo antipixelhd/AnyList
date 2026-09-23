@@ -667,3 +667,7 @@ Public CI passed both backend and frontend jobs for every resumed Stage Two impl
 The floating rating prompt now responds to the shared background notification snapshot, opens the existing quick-rate dialog on the current page, and shows a linked blue title beside its poster in the original compact footprint. Dismissal and visiting Notifications save account-scoped opaque prompt acknowledgments in this browser without dismissing inbox cards. A new notification fetched after leaving Notifications remains eligible for a prompt. This supersedes the session-only suppression described above.
 
 The frontend production build passed. Synthetic notifications injected into the local preview browser verified background appearance, same-page quick rating, persistent Dismiss, conflict-to-rating transitions, acknowledgment while Notifications is open, and a new prompt after leaving. No provider sync or VPS operation was performed in this UI check.
+
+## Notifications layout follow-up (2026-09-23)
+
+Notifications now uses Home's left-hand card stream and a visible right-hand Inbox tools rail; phones stack the tools after the cards. Card posters stretch to card height, titles use blue, rating-needed cards omit their repeated completion sentence, and the page and floating prompt share yellow Rate now buttons. The frontend build passed, and synthetic local-preview notifications verified desktop and phone layouts without horizontal overflow. No provider or VPS state was changed.

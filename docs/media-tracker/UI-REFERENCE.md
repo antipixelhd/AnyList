@@ -60,6 +60,8 @@ The app-bar badges, Home's Notifications summary, the nonmodal AttentionPrompt, 
 
 This is evidence of the current design problem, not a target to reproduce. The cards use too much repeated category/severity/status prose, weak spacing hierarchy, oversized action pills, and page-specific geometry. Replace them with a shared notification/card primitive whose variants retain consistent media, content, metadata, and action regions. Convey hierarchy primarily through spacing, alignment, weight, imagery, and restrained accents. Direct local edits do not appear here; only their queued delivery state may appear separately under pending connection updates.
 
+Notifications now uses Home's two-column rhythm: notification cards and pending deliveries on the left, with Inbox preferences, ignored imports, and history import visible in a compact right rail. On phones the tools follow the cards. Card posters fill the card height, linked titles use the blue accent, rating-request cards omit the redundant completion sentence, and every Rate now control uses the shared yellow treatment.
+
 ## Navigation and shared profile lists
 
 Accepted navigation: Home, Movie List, Series List, Browse, Profile; Settings contains connections/preferences. Movie/Series List links open the current user's profile list, not a separate owner-only list design. Owners and visitors see the same presentation; edit permissions and private notes remain owner-only. Render status groups one below another and support filtering by status. Home shows self/followed activity and the pending Notifications count. Streaming Library is an owner-only tab on the profile.
