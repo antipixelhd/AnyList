@@ -1,3 +1,5 @@
+import { responsiveArtwork } from "./responsive-artwork";
+
 const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BASE = `http://localhost:${BACKEND_PORT}`;
 
@@ -1580,14 +1582,5 @@ export const api = {
 // the origin otherwise). TheTVDB artwork has no size variants, so it uses the
 // synthetic "tvdb" size bucket.
 export function tmdbImageUrl(path: string | null | undefined, size: string = "w500"): string | null {
-  if (!path) return null;
-  if (path.startsWith("http://") || path.startsWith("https://")) {
-    const tmdb = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-    if (tmdb) return `/api/proxy/media/image/${tmdb[1]}${tmdb[2]}`;
-    const tvdb = /artworks\.thetvdb\.com(\/.+)$/.exec(path);
-    if (tvdb) return `/api/proxy/media/image/tvdb${tvdb[1]}`;
-    return path;
-  }
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  return `/api/proxy/media/image/${size}${cleanPath}`;
+  return responsiveArtwork(path, { size, route: "proxy" })?.src ?? null;
 }

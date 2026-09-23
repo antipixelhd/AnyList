@@ -1,6 +1,7 @@
 ---
 import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 import CardActionBar from "./CardActionBar.astro";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
@@ -27,6 +28,10 @@ const rawImage = isSeries
   ? (item.backdrop_path ?? item.poster_path)
   : (item.poster_path ?? item.show_backdrop_path ?? item.show_poster_path);
 const imageUrl = tmdbImageUrl(rawImage, "w780");
+const image = responsiveArtwork(imageUrl, {
+  size: "w780",
+  sizes: "(min-width: 1024px) calc((100vw - 7.5rem) / 6), (min-width: 768px) calc((100vw - 4.5rem) / 4), (min-width: 640px) calc((100vw - 3rem) / 3), calc((100vw - 1.5rem) / 2)",
+});
 
 const watched = item.watched ?? false;
 const inLists = item.in_lists ?? [];
@@ -50,9 +55,9 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
     <a href={href} class="block">
       <!-- Backdrop container: 3:2 (no title info here — info is below action bar) -->
       <div class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300">
-        {imageUrl ? (
+        {image ? (
           <img
-            src={imageUrl}
+            {...image}
             alt={item.title}
             class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             loading="lazy"
@@ -84,9 +89,9 @@ const collectionPct = item.collection_pct ?? (inLibrary ? 100 : 0);
     <div class="block">
       <!-- Backdrop container: no link when metadata is incomplete -->
       <div class="aspect-[3/2] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5">
-        {imageUrl ? (
+        {image ? (
           <img
-            src={imageUrl}
+            {...image}
             alt={item.title}
             class="w-full h-full object-cover"
             loading="lazy"

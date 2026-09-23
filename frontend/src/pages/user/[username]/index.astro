@@ -4,7 +4,8 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ActivityCard from '../../../components/ActivityCard.astro';
 import Icon from '../../../components/Icon.astro';
 import {renderProfileBio} from '../../../lib/profile-markdown';
-import {tracker,artwork,scoreLabel} from '../../../lib/tracker';
+import {tracker,scoreLabel} from '../../../lib/tracker';
+import {responsiveArtwork} from '../../../lib/responsive-artwork';
 import '../../../styles/profile-overview.css';
 let profile:any=null,error='';
 try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
@@ -29,7 +30,7 @@ const favoriteGroups=profile?.combine_lists===false
     </section>
     {profile.bio && <section class="overview-bio" aria-labelledby="profile-bio-heading"><div class="section-heading"><h2 id="profile-bio-heading">Bio</h2></div><div class="profile-bio" set:html={renderProfileBio(profile.bio)} />}</section>}
     {favoriteGroups.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2></div>
-      {favoriteGroups.map(group=><div class="favorite-group"><h3>{group.label}</h3><div class="favorite-posters">{group.items.map((item:any)=><a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{artwork(item.poster,'w185')?<img src={artwork(item.poster,'w185')} alt="" loading="lazy"/>:<span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}</a>)}</div></div>)}
+      {favoriteGroups.map(group=><div class="favorite-group"><h3>{group.label}</h3><div class="favorite-posters">{group.items.map((item:any)=>{const image=responsiveArtwork(item.poster,{size:'w342',sizes:'(max-width:700px) 30vw, 130px',route:'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}</a>})}</div></div>)}
     </section>}
   </div>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>

@@ -27,7 +27,8 @@ const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 </Tracker>
 
 <script>
-import {activityAction,activityTime,artwork,scoreLabel} from '../lib/tracker';
+import {activityAction,activityTime,scoreLabel} from '../lib/tracker';
+import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh} from '../lib/visible-refresh';
 
 let stopActivityFeed: (()=>void)|undefined;
@@ -53,8 +54,7 @@ document.addEventListener('astro:page-load',()=>{
     const cover=card.querySelector<HTMLAnchorElement>('.event-cover')!;
     cover.href=mediaHref;cover.setAttribute('aria-label',`View ${activity.media.title}`);
     const coverImage=cover.querySelector('img')!;const coverFallback=cover.querySelector<HTMLElement>('.cover-placeholder')!;
-    const source=artwork(activity.media.poster);
-    if(source){coverImage.src=source;coverFallback.hidden=true;}else{coverImage.remove();coverFallback.hidden=false;}
+    if(activity.media.poster){applyResponsiveArtwork(coverImage,activity.media.poster,{size:'w342',sizes:'(max-width:700px) 56px, 64px',route:'direct'});coverImage.alt='';coverFallback.hidden=true;}else{coverImage.removeAttribute('src');coverImage.removeAttribute('srcset');coverImage.removeAttribute('sizes');coverFallback.hidden=false;}
     const profileHref=`/user/${encodeURIComponent(activity.username)}`;
     const avatar=card.querySelector<HTMLAnchorElement>('.event-avatar')!;
     avatar.href=profileHref;avatar.setAttribute('aria-label',`View ${activity.display_name}'s profile`);

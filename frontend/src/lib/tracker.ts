@@ -1,3 +1,5 @@
+import { responsiveArtwork } from "./responsive-artwork";
+
 export async function tracker(path: string, token?: string) {
   const port = import.meta.env.BACKEND_PORT ?? '7331';
   const response = await fetch(`http://localhost:${port}/tracking/${path}`, {
@@ -14,12 +16,10 @@ export const statuses = [
 
 export function artwork(path: string | null, size = 'w342') {
   if (!path) return '';
-  if (path.startsWith('/') && !path.startsWith('//')) return `https://image.tmdb.org/t/p/${size}${path}`;
+  const image = responsiveArtwork(path, { size, route: 'direct' });
+  if (!image) return '';
   try {
-    const url = new URL(path);
-    if (url.hostname === 'image.tmdb.org') {
-      url.pathname = url.pathname.replace(/^\/t\/p\/(?:w\d+|h\d+|original)(?=\/)/, `/t/p/${size}`);
-    }
+    const url = new URL(image.src);
     return url.protocol === 'https:' ? url.href : '';
   } catch { return ''; }
 }

@@ -43,6 +43,7 @@ const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
 </dialog>
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
+import { applyResponsiveArtwork } from '../lib/responsive-artwork';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -99,7 +100,6 @@ document.addEventListener('astro:page-load', () => {
   });
   dialog.addEventListener('click', event => { if (!statusTrigger.contains(event.target as Node) && !statusOptions.contains(event.target as Node)) closeStatus(); });
   dialog.addEventListener('focusout', event => { if (!statusTrigger.contains(event.relatedTarget as Node) && !statusOptions.contains(event.relatedTarget as Node)) closeStatus(); });
-  const artwork = (path: string | null | undefined, size: string) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/${size}${path}` : (path || '');
   const closeEditor = () => {
     if (!dialog.open) return;
     dialog.close();
@@ -113,8 +113,17 @@ document.addEventListener('astro:page-load', () => {
     document.querySelector('#editor-media-type')!.textContent = title.type === 'series' ? 'TV series' : 'Movie';
     const poster = document.querySelector<HTMLImageElement>('#editor-poster')!;
     const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
-    poster.src = artwork(title.poster, 'w342'); poster.alt = title.poster ? `${title.title} poster` : ''; poster.hidden = !title.poster;
-    backdrop.src = artwork(title.backdrop || title.poster, 'w1280'); backdrop.hidden = !(title.backdrop || title.poster);
+    if (title.poster) {
+      applyResponsiveArtwork(poster,title.poster,{size:'w342',sizes:'(max-width:760px) 78px, 104px',route:'direct'});
+      poster.alt = `${title.title} poster`;
+    } else {
+      poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.alt = '';
+    }
+    poster.hidden = !title.poster;
+    const backdropPath = title.backdrop || title.poster;
+    if (backdropPath) applyResponsiveArtwork(backdrop,backdropPath,{size:'w1280',sizes:'(max-width:760px) calc(100vw - 18px), min(980px, calc(100vw - 32px))',route:'direct'});
+    else { backdrop.removeAttribute('src'); backdrop.removeAttribute('srcset'); backdrop.removeAttribute('sizes'); }
+    backdrop.hidden = !backdropPath;
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
     syncStatus(); closeStatus();
     const calculatedScore = current.rating_mode === 'average' ? current.score : current.manual_score;

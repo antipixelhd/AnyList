@@ -2,6 +2,7 @@
 import type { ContinueWatchingItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
 
@@ -22,6 +23,10 @@ const posterSrc = ratingPosterUrl(tmdbImageUrl(
   isEpisode && media.show_poster_path ? media.show_poster_path : media.poster_path,
   "w500"
 ), media, Astro.locals.hasRpdbKey);
+const posterImage = responsiveArtwork(posterSrc, {
+  size: "w500",
+  sizes: "(min-width: 1024px) calc((100vw - 7.5rem) / 6), (min-width: 768px) calc((100vw - 4.5rem) / 4), (min-width: 640px) calc((100vw - 3rem) / 3), calc((100vw - 1.5rem) / 2)",
+});
 
 const href = episodeHref(media) ?? `/media/${media.type}/${media.tmdb_id}`;
 ---
@@ -35,9 +40,9 @@ const href = episodeHref(media) ?? `/media/${media.type}/${media.tmdb_id}`;
       class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300"
     >
       {
-        posterSrc ? (
+        posterImage ? (
           <img
-            src={posterSrc}
+            {...posterImage}
             alt={media.title}
             class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
             loading="lazy"

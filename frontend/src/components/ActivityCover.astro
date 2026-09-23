@@ -1,9 +1,9 @@
 ---
-import {artwork} from '../lib/tracker';
+import {responsiveArtwork} from '../lib/responsive-artwork';
 import Icon from './Icon.astro';
 const {media}=Astro.props;
-const source=artwork(media?.poster);
+const image=responsiveArtwork(media?.poster,{size:'w342',sizes:'(max-width:700px) 56px, 64px',route:'direct'});
 ---
 {media?<a class="event-cover" href={`/title/${media.id}`} aria-label={`View ${media.title}`}>
-  {source?<img src={source} alt="" loading="lazy"/>:<span class="cover-placeholder"><Icon name="play" /></span>}
+  {image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="cover-placeholder"><Icon name="play" /></span>}
 </a>:<div class="event-cover connection-cover" aria-hidden="true"><Icon name="arrows-rotate" /></div>}

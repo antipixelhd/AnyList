@@ -1,7 +1,8 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
 import {api} from '../lib/api';
-import {tracker,artwork} from '../lib/tracker';
+import {tracker} from '../lib/tracker';
+import {responsiveArtwork} from '../lib/responsive-artwork';
 
 const type = Astro.url.searchParams.get('type')==='series'?'series':'movie';
 const q = Astro.url.searchParams.get('q')?.trim()||'';
@@ -36,6 +37,7 @@ try{
 }catch(e){error=(e as Error).message;}
 const heading=q?'Search results':trending?`Trending ${type==='movie'?'movies':'series'}`:`Browse ${type==='movie'?'movies':'series'}`;
 const intro=q?`Live results for “${q}”.`:'See what people are watching now.';
+const browseImageOptions={size:'w342',sizes:'(max-width: 650px) calc((100vw - 57px) / 2), 190px',route:'direct' as const};
 ---
 <Tracker title="Browse"><div class="page-width browse-page">
   <header class="browse-heading"><span class="eyebrow">Browse</span><h1 data-browse-heading>{heading}</h1><p data-browse-intro>{intro}</p></header>
@@ -47,12 +49,13 @@ const intro=q?`Live results for “${q}”.`:'See what people are watching now.'
   <p class="browse-status" role="status" aria-live="polite" data-browse-status>{notice}</p>
   <div data-browse-region aria-busy="false">
     {error?<p class="error-message" data-browse-error>{error}</p>:<p class="error-message" data-browse-error hidden></p>}
-    <div class="card-grid" data-browse-results hidden={results.length===0}>{results.map(m=><a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{artwork(m.poster)?<img src={artwork(m.poster)} alt="" loading="lazy"/>:<span class="media-card-placeholder" aria-hidden="true">{m.title.slice(0,1)}</span>}<h2>{m.title}</h2><small>{m.year}</small></a>)}</div>
+    <div class="card-grid" data-browse-results hidden={results.length===0}>{results.map(m=>{const image=responsiveArtwork(m.poster,browseImageOptions);return <a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="media-card-placeholder" aria-hidden="true">{m.title.slice(0,1)}</span>}<h2>{m.title}</h2><small>{m.year}</small></a>})}</div>
     <div class="card-grid browse-skeleton-grid" data-browse-skeleton aria-hidden="true" hidden>{Array.from({length:10},(_,index)=><div class="browse-skeleton-card" data-skeleton-card={index}><span class="skeleton-block skeleton-poster"></span><span class="skeleton-block skeleton-title"></span><span class="skeleton-block skeleton-meta"></span></div>)}</div>
     <div class="empty-state" data-browse-empty hidden={results.length>0}><h2>No matching titles</h2><p>Try another title or media type.</p></div>
   </div>
 </div></Tracker>
 <script>
+import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 document.addEventListener('astro:page-load', () => {
   if (!document.querySelector('[data-browse-form]')) return;
   const form=document.querySelector<HTMLFormElement>('[data-browse-form]');
@@ -69,7 +72,7 @@ document.addEventListener('astro:page-load', () => {
   let searchTimer:number|undefined;
   let controller:AbortController|undefined;
 
-  const posterUrl=(value:string|null)=>value?.startsWith('/')?`https://image.tmdb.org/t/p/w342${value}`:value||'';
+  const imageOptions={size:'w342',sizes:'(max-width: 650px) calc((100vw - 57px) / 2), 190px',route:'direct' as const};
   const normalize=(item:any,type:string)=>({
     id:item.id??null,tmdb_id:item.tmdb_id??null,type:item.type?.value||item.type||type,
     title:item.title,poster:item.poster??item.poster_path??null,
@@ -86,8 +89,7 @@ document.addEventListener('astro:page-load', () => {
       const card=document.createElement('a');card.className='media-card browse-result-card';
       card.style.setProperty('--reveal-delay',`${Math.min(grid.childElementCount*25,150)}ms`);
       card.href=item.id?`/title/${item.id}`:`/discover-title?type=${encodeURIComponent(item.type)}&id=${item.tmdb_id}`;
-      const image=posterUrl(item.poster);
-      if(image){const img=document.createElement('img');img.src=image;img.alt='';img.loading='lazy';card.append(img);}
+      if(item.poster){const img=document.createElement('img');applyResponsiveArtwork(img,item.poster,imageOptions);img.alt='';img.loading='lazy';card.append(img);}
       else{const placeholder=document.createElement('span');placeholder.className='media-card-placeholder';placeholder.ariaHidden='true';placeholder.textContent=item.title.slice(0,1);card.append(placeholder);}
       const title=document.createElement('h2');title.textContent=item.title;card.append(title);
       const year=document.createElement('small');year.textContent=item.year;card.append(year);grid.append(card);

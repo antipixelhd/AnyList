@@ -16,7 +16,7 @@
 
 <script>
 import {refreshNotifications, subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
-import {artwork} from '../lib/tracker';
+import {applyResponsiveArtwork, responsiveArtwork} from '../lib/responsive-artwork';
 
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
@@ -64,6 +64,8 @@ document.addEventListener('astro:page-load', () => {
   }, { signal: pageListeners.signal });
   prompt.querySelector<HTMLImageElement>('[data-attention-poster]')?.addEventListener('error', event => {
     (event.currentTarget as HTMLImageElement).hidden = true;
+    (event.currentTarget as HTMLImageElement).removeAttribute('srcset');
+    (event.currentTarget as HTMLImageElement).removeAttribute('sizes');
     const rate = prompt.querySelector<HTMLButtonElement>('[data-attention-rate]');
     if (rate) delete rate.dataset.quickRatePoster;
   }, { signal: pageListeners.signal });
@@ -94,6 +96,8 @@ document.addEventListener('astro:page-load', () => {
       titleLink.removeAttribute('href');
       poster.hidden = true;
       poster.removeAttribute('src');
+      poster.removeAttribute('srcset');
+      poster.removeAttribute('sizes');
       rate.hidden = true;
       rate.removeAttribute('data-quick-rate-id');
       rate.removeAttribute('data-quick-rate-title');
@@ -133,13 +137,13 @@ document.addEventListener('astro:page-load', () => {
       titleLink.href = `/title/${media.id}`;
       titleLink.hidden = false;
       title.append(titleLink);
-      const posterUrl = artwork(media.poster, 'w185');
-      if (posterUrl) { poster.src = posterUrl; poster.hidden = false; }
+      const posterImage = responsiveArtwork(media.poster,{size:'w185',sizes:'185px',route:'direct'});
+      if (posterImage?.src) { applyResponsiveArtwork(poster,media.poster,{size:'w185',sizes:'185px',route:'direct'}); poster.hidden = false; }
       action.hidden = true;
       rate.hidden = false;
       rate.dataset.quickRateId = String(media.id);
       rate.dataset.quickRateTitle = media.title || 'Rate title';
-      if (posterUrl) rate.dataset.quickRatePoster = posterUrl;
+      if (posterImage?.src) rate.dataset.quickRatePoster = posterImage.src;
       rate.dataset.quickRateScore = '';
     }
     prompt.hidden = false;

@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import { api, type MediaRequestItem } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 
 const { token, user } = Astro.locals;
 
@@ -35,11 +36,16 @@ const itemUrl = (r: MediaRequestItem) =>
         <div class="space-y-3">
           {pending.map(r => {
             const posterPath = ratingPosterUrl(r.poster_path, r, Astro.locals.hasRpdbKey);
+            const poster = responsiveArtwork(posterPath, {
+              size: "w500",
+              sizes: "40px",
+              route: posterPath?.startsWith("/api/proxy/") ? "proxy" : "direct",
+            });
             return (
             <div class="flex items-center gap-4 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3" data-request-id={r.id}>
               <a href={itemUrl(r)} class="flex items-center gap-4 flex-1 min-w-0 transition-all active:scale-95 active:opacity-70">
-              {posterPath && (
-                <img src={posterPath} alt={r.title} class="w-10 h-14 rounded object-cover shrink-0" />
+              {poster?.src && (
+                <img src={poster.src} srcset={poster.srcset} sizes={poster.sizes} alt={r.title} class="w-10 h-14 rounded object-cover shrink-0" loading="lazy" decoding="async" />
               )}
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-zinc-100 truncate">{r.title}</p>
@@ -86,11 +92,16 @@ const itemUrl = (r: MediaRequestItem) =>
         <div class="space-y-2">
           {approved.map(r => {
             const posterPath = ratingPosterUrl(r.poster_path, r, Astro.locals.hasRpdbKey);
+            const poster = responsiveArtwork(posterPath, {
+              size: "w500",
+              sizes: "32px",
+              route: posterPath?.startsWith("/api/proxy/") ? "proxy" : "direct",
+            });
             return (
             <div class="flex items-center gap-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-3 opacity-75">
               <a href={itemUrl(r)} class="flex items-center gap-4 flex-1 min-w-0 transition-all active:scale-95 active:opacity-70">
-              {posterPath && (
-                <img src={posterPath} alt={r.title} class="w-8 h-12 rounded object-cover shrink-0" />
+              {poster?.src && (
+                <img src={poster.src} srcset={poster.srcset} sizes={poster.sizes} alt={r.title} class="w-8 h-12 rounded object-cover shrink-0" loading="lazy" decoding="async" />
               )}
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-zinc-300 truncate">{r.title}</p>
@@ -123,11 +134,16 @@ const itemUrl = (r: MediaRequestItem) =>
         ) : (
           rejected.map(r => {
             const posterPath = ratingPosterUrl(r.poster_path, r, Astro.locals.hasRpdbKey);
+            const poster = responsiveArtwork(posterPath, {
+              size: "w500",
+              sizes: "32px",
+              route: posterPath?.startsWith("/api/proxy/") ? "proxy" : "direct",
+            });
             return (
             <div class="flex items-center gap-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-3 opacity-75" data-request-id={r.id}>
               <a href={itemUrl(r)} class="flex items-center gap-4 flex-1 min-w-0 transition-all active:scale-95 active:opacity-70">
-              {posterPath && (
-                <img src={posterPath} alt={r.title} class="w-8 h-12 rounded object-cover shrink-0" />
+              {poster?.src && (
+                <img src={poster.src} srcset={poster.srcset} sizes={poster.sizes} alt={r.title} class="w-8 h-12 rounded object-cover shrink-0" loading="lazy" decoding="async" />
               )}
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-semibold text-zinc-300 truncate">{r.title}</p>

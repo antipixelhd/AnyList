@@ -2,6 +2,7 @@
 import type { WatchEvent } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 import { episodeHref } from "../lib/episodeHref";
 import { displaySeasonEpisode } from "../lib/media-format";
 
@@ -24,6 +25,7 @@ const year = media.release_date?.slice(0, 4);
 
 const rawPoster = isEpisode ? (media.show_poster_path || media.poster_path) : media.poster_path;
 const posterPath = ratingPosterUrl(tmdbImageUrl(rawPoster, "w500"), media, Astro.locals.hasRpdbKey);
+const posterImage = responsiveArtwork(posterPath, { size: "w500", sizes: "80px" });
 
 // Watch history is movie/episode only (enforced server-side, see #358).
 // Anything else still routes through episodeHref rather than a movie URL that
@@ -38,9 +40,9 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
 >
   <!-- Poster -->
   <div class="w-20 shrink-0 aspect-[2/3] rounded-xl overflow-hidden bg-zinc-950 shadow-2xl ring-1 ring-white/5 group-hover/card:ring-blue-500/30 transition-all duration-300">
-    {posterPath ? (
+    {posterImage ? (
       <img
-        src={posterPath}
+        {...posterImage}
         alt={showOrMovieTitle}
         class="w-full h-full object-cover group-hover/card:scale-110 transition-transform duration-500"
         loading="lazy"

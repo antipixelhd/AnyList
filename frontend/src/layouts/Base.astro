@@ -667,6 +667,15 @@ const bottomNavItem = (active: boolean) =>
     });
   </script>
 
+  <script>
+    import { applyResponsiveArtwork } from "../lib/responsive-artwork";
+
+    // The layout's long-running inline scripts render a few images after the
+    // initial HTML is parsed. Keep those paths on the same shared responsive
+    // artwork implementation as server-rendered images.
+    (window as any).__applyResponsiveArtwork = applyResponsiveArtwork;
+  </script>
+
   <script define:vars={{ __layoutAuthToken: token ?? '', __use24h: use24h, __isAdmin: user?.is_admin === true, __radarrCustomizeOnAdd: radarrCustomizeOnAdd, __sonarrCustomizeOnAdd: sonarrCustomizeOnAdd }}>
     // Expose the server-side token for the card action script (httpOnly cookie is not JS-readable)
     window.__AUTH_TOKEN__ = __layoutAuthToken;
@@ -810,7 +819,7 @@ const bottomNavItem = (active: boolean) =>
             <div class="absolute inset-0 bg-zinc-900"></div>
             ${href ? `<a href="${esc(href)}" class="relative flex items-center gap-3 px-6 md:px-8 py-2.5 max-w-screen-xl mx-auto hover:brightness-110 transition-all">` : `<div class="relative flex items-center gap-3 px-6 md:px-8 py-2.5 max-w-screen-xl mx-auto">`}
               ${posterUrl
-                ? `<img src="${esc(posterUrl)}" alt="" class="shrink-0 w-7 h-10 rounded object-cover opacity-90" loading="lazy" decoding="async" />`
+                ? `<img data-artwork-path="${esc(posterUrl)}" alt="" class="shrink-0 w-7 h-10 rounded object-cover opacity-90" loading="lazy" decoding="async" />`
                 : `<div class="shrink-0 w-7 h-10 rounded bg-zinc-800 flex items-center justify-center text-zinc-600"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/></svg></div>`
               }
               ${indicator}
@@ -881,6 +890,20 @@ const bottomNavItem = (active: boolean) =>
         const data = await res.json();
         const sessions = data.now_playing ?? [];
         container.innerHTML = renderNowPlaying(sessions);
+        const applyArtwork = (window as any).__applyResponsiveArtwork;
+        if (typeof applyArtwork === 'function') {
+          container.querySelectorAll<HTMLImageElement>('img[data-artwork-path]').forEach(img => {
+            applyArtwork(img, img.dataset.artworkPath, {
+              size: 'w185',
+              sizes: '28px',
+              route: 'proxy',
+            });
+          });
+        } else {
+          container.querySelectorAll<HTMLImageElement>('img[data-artwork-path]').forEach(img => {
+            if (img.dataset.artworkPath) img.src = img.dataset.artworkPath;
+          });
+        }
 
         const liveKeys = new Set(sessions.map(s => s.session_key));
         for (const [key, media] of _npPrev) {
@@ -1113,18 +1136,32 @@ const bottomNavItem = (active: boolean) =>
         itemSubEl.textContent = itemInfo.subtitle ?? '';
         itemSubEl.classList.toggle('hidden', !itemInfo.subtitle);
         if (itemInfo.posterUrl) {
-          itemPosterEl.src = itemInfo.posterUrl;
+          const applyArtwork = (window as any).__applyResponsiveArtwork;
+          if (typeof applyArtwork === 'function') {
+            applyArtwork(itemPosterEl, itemInfo.posterUrl, {
+              size: itemInfo.landscape ? 'w780' : 'w500',
+              sizes: itemInfo.landscape ? '76px' : '40px',
+              route: itemInfo.posterUrl.startsWith('/api/proxy/') ? 'proxy' : 'direct',
+            });
+          } else {
+            itemPosterEl.src = itemInfo.posterUrl;
+          }
           // Episodes use a landscape still; everything else a portrait poster.
           itemPosterEl.className = itemInfo.landscape
             ? 'shrink-0 w-[4.75rem] h-[2.75rem] rounded object-cover bg-zinc-800'
             : 'shrink-0 w-10 h-14 rounded object-cover bg-zinc-800';
         } else {
           itemPosterEl.removeAttribute('src');
+          itemPosterEl.removeAttribute('srcset');
+          itemPosterEl.removeAttribute('sizes');
           itemPosterEl.className = 'hidden';
         }
         itemEl.classList.remove('hidden');
       } else {
         itemEl.classList.add('hidden');
+        itemPosterEl.removeAttribute('src');
+        itemPosterEl.removeAttribute('srcset');
+        itemPosterEl.removeAttribute('sizes');
       }
 
       removeBtn.classList.toggle('hidden', currentRating == null);

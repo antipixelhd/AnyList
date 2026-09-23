@@ -1,6 +1,7 @@
 ---
 import type { PrivacyLevel } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 
 interface Props {
   id: number;
@@ -14,8 +15,8 @@ interface Props {
 
 const { id, name, description, privacy_level, item_count, preview_posters = [], username } = Astro.props;
 
-function posterSrc(path: string): string {
-  return tmdbImageUrl(path, "w185") ?? "";
+function posterImage(path: string) {
+  return responsiveArtwork(tmdbImageUrl(path, "w185"), { size: "w185", sizes: "56px" });
 }
 
 const p = preview_posters;
@@ -34,17 +35,17 @@ const p = preview_posters;
     )}
     {p.length >= 3 && (
       <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 origin-bottom rotate-[8deg] opacity-50" data-adult={p[2].adult ? "true" : undefined} data-no-label="true">
-        <img src={posterSrc(p[2].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
+        <img {...posterImage(p[2].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
       </div>
     )}
     {p.length >= 2 && (
       <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 origin-bottom rotate-[4deg] opacity-75" data-adult={p[1].adult ? "true" : undefined} data-no-label="true">
-        <img src={posterSrc(p[1].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
+        <img {...posterImage(p[1].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
       </div>
     )}
     {p.length >= 1 && (
       <div class="absolute inset-0 rounded-xl overflow-hidden bg-zinc-800 shadow-lg" data-adult={p[0].adult ? "true" : undefined} data-no-label="true">
-        <img src={posterSrc(p[0].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
+        <img {...posterImage(p[0].url)} alt="" aria-hidden="true" class="w-full h-full object-cover" loading="lazy" />
       </div>
     )}
   </div>

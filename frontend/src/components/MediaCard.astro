@@ -2,6 +2,7 @@
 import type { MediaItem } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 import CardActionBar from "./CardActionBar.astro";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
@@ -35,6 +36,10 @@ const posterPath = ratingPosterUrl(tmdbImageUrl(
   (isEpisode || isSeason) && item.show_poster_path ? item.show_poster_path : item.poster_path,
   "w500"
 ), item, Astro.locals.hasRpdbKey);
+const posterImage = responsiveArtwork(posterPath, {
+  size: "w500",
+  sizes: "(min-width: 1024px) calc((100vw - 7.5rem) / 6), (min-width: 768px) calc((100vw - 4.5rem) / 4), (min-width: 640px) calc((100vw - 3rem) / 3), calc((100vw - 1.5rem) / 2)",
+});
 
 const showActionBar = !isPerson && !isCollection && !!user;
 // Seasons get the same percentage-style Watched/Collected labels as a whole show
@@ -63,10 +68,10 @@ const inLibrary = item.in_library ?? false;
   {href ? (
     <a href={href} class="block">
       <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5 group-hover:ring-blue-500/30 transition-all duration-300" data-adult={item.adult ? "true" : undefined}>
-        {posterPath ? (
+        {posterImage ? (
           <>
             <img
-              src={posterPath}
+              {...posterImage}
               alt={cardTitle}
               class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
               loading="lazy"
@@ -103,9 +108,9 @@ const inLibrary = item.in_library ?? false;
   ) : (
     <div class="block">
       <div class="aspect-[2/3] bg-zinc-950 relative overflow-hidden ring-1 ring-white/5" data-adult={item.adult ? "true" : undefined}>
-        {posterPath ? (
+        {posterImage ? (
           <img
-            src={posterPath}
+            {...posterImage}
             alt={cardTitle}
             class="w-full h-full object-cover"
             loading="lazy"

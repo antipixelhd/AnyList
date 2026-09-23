@@ -4,6 +4,7 @@
 // gradient tiles when the instance has no TMDB key yet. Sits behind page
 // content at z-0 with a theme-aware wash over it for legibility.
 import { api } from "../lib/api";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 
 const pwIcon = (paths: string): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
@@ -36,7 +37,7 @@ const pwColumns: { poster: (typeof posters)[number] | null; depth: number }[][] 
           poster ? (
             <div class="pw-card pw-card--poster">
               <img
-                src={`https://image.tmdb.org/t/p/w342${poster.poster_path}`}
+                {...responsiveArtwork(poster.poster_path, { size: "w342", route: "direct", sizes: "clamp(140px, 13vw, 210px)" })}
                 alt=""
                 loading="lazy"
                 referrerpolicy="no-referrer"

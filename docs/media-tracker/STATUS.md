@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Responsive artwork (2026-09-23)
+
+TMDB artwork across both frontend layouts now offers `srcset` candidates from the image sizes accepted by the existing backend proxy, with `sizes` matched to each rendered slot. This covers server-rendered cards, grids, detail artwork and the title backdrop, plus images inserted by search, notifications, connections, dialogs, and hover previews. Compact/grid switches update the requested image size. Direct TMDB paths remain direct and proxied paths remain proxied; TheTVDB and rating-overlay posters continue as single-source images because those providers have no supported size variants in this app. Browser HTTP caching and the server image cache are unchanged.
+
+The production frontend build passes. Focused helper checks covered TMDB URL normalization and candidate widths, TheTVDB proxy routing, and preservation of rating-overlay paths. A live browser comparison of cold-cache image bytes remains to be measured on a running instance; no VPS deployment was performed.
+
 ## Readding a deleted title from streaming history (2026-09-23)
 
 Confirmed deletion now waits only for connected Stremio/Nuvio and cloud tracking providers with relevant outbound push enabled. The deletion marker remains until every queued reset succeeds. A later Stremio/Nuvio viewing observation with a watch timestamp strictly newer than the deletion releases the marker and can recreate the tracked entry; stale or undated history remains blocked. Explicit local readding continues to work independently.

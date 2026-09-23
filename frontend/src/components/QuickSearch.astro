@@ -22,6 +22,8 @@ const { combineLists = true } = Astro.props;
 </dialog>
 
 <script>
+import { responsiveArtwork } from '../lib/responsive-artwork';
+
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -41,7 +43,6 @@ document.addEventListener('astro:page-load', () => {
   let progressTimer = 0;
   let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
 
-  const imageUrl = (path?: string | null) => path?.startsWith('/') ? `https://image.tmdb.org/t/p/w92${path}` : (path || '');
   const resultUrl = (item: SearchResult) => item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
   function interleave(first: SearchResult[], second: SearchResult[]) {
     const merged: SearchResult[] = [];
@@ -63,10 +64,17 @@ document.addEventListener('astro:page-load', () => {
     const link = document.createElement('a');
     link.className = 'quick-search-result';
     link.href = resultUrl(item);
-    const image = imageUrl(item.poster);
-    if (image) {
+    const artwork = responsiveArtwork(item.poster, {
+      size: 'w92',
+      sizes: '(max-width: 650px) 52px, 48px',
+      route: 'direct',
+    });
+    if (artwork?.src) {
       const poster = document.createElement('img');
-      poster.src = image; poster.alt = ''; poster.loading = 'lazy';
+      if (artwork.srcset) poster.srcset = artwork.srcset;
+      if (artwork.sizes) poster.sizes = artwork.sizes;
+      poster.src = artwork.src;
+      poster.alt = ''; poster.loading = 'lazy';
       link.append(poster);
     } else {
       const fallback = document.createElement('span');

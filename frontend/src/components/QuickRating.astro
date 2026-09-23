@@ -23,6 +23,7 @@ import Icon from './Icon.astro';
 </dialog>
 
 <script>
+import { applyResponsiveArtwork } from '../lib/responsive-artwork';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -135,8 +136,9 @@ document.addEventListener('astro:page-load', () => {
     savedScore = detail.score || null;
     pendingScore = null;
     title.textContent = detail.title;
+    if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'direct'});
+    else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
     poster.hidden = !detail.poster;
-    if (detail.poster) poster.src = detail.poster;
     remove.hidden = savedScore == null || detail.ratingMode === 'average';
     confirmation.hidden = true;
     help.hidden = false;

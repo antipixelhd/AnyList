@@ -3,7 +3,8 @@ import Tracker from '../../layouts/Tracker.astro';
 import StatusControl from '../../components/StatusControl.astro';
 import TrackingEditor from '../../components/TrackingEditor.astro';
 import Icon from '../../components/Icon.astro';
-import { tracker, artwork, scoreLabel } from '../../lib/tracker';
+import { tracker, scoreLabel } from '../../lib/tracker';
+import { responsiveArtwork } from '../../lib/responsive-artwork';
 
 let title: any = null;
 let library: any = null;
@@ -32,18 +33,20 @@ const personalScoreLabel = (value: number | null) => value == null || value === 
 const dateLabel = (value: string | null) => value
   ? new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(`${value.slice(0, 10)}T00:00:00`))
   : null;
+const backdropImage = responsiveArtwork(title?.backdrop,{size:'w1280',sizes:'100vw',route:'direct'});
+const posterImage = responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:650px) 100px, 200px',route:'direct'});
+const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px',route:'direct'});
 ---
 <Tracker title={title?.title || 'Title'}>
   {title ? (
     <>
-      <div
-        class="detail-banner"
-        style={{ backgroundImage: artwork(title.backdrop, 'w1280') ? `url("${artwork(title.backdrop, 'w1280')}")` : undefined }}
-      ></div>
+      <div class="detail-banner">
+        {backdropImage?.src && <img class="detail-banner-image" src={backdropImage.src} srcset={backdropImage.srcset} sizes={backdropImage.sizes} alt="" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center" />}
+      </div>
       <div class="detail-layout">
         <aside class="detail-sidebar">
-          {artwork(title.poster, 'w500') ? (
-            <img class="detail-poster" src={artwork(title.poster, 'w500')} alt={`${title.title} poster`} />
+          {posterImage?.src ? (
+            <img class="detail-poster" src={posterImage.src} srcset={posterImage.srcset} sizes={posterImage.sizes} alt={`${title.title} poster`} />
           ) : <div class="detail-poster detail-poster-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</div>}
           {Astro.locals.user && (
             <div class="detail-controls">
@@ -91,7 +94,7 @@ const dateLabel = (value: string | null) => value
           <section class="ratings-overview" aria-label="Ratings">
             <div class="personal-scores">
               {Astro.locals.user ? (
-                <button class="personal-score-button" aria-label={`Rate ${title.title}. Current score: ${personalScoreLabel(title.entry?.score ?? null)}`} data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={artwork(title.poster,'w185')} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label data-score-format="out-of-ten">{personalScoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
+                <button class="personal-score-button" aria-label={`Rate ${title.title}. Current score: ${personalScoreLabel(title.entry?.score ?? null)}`} data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={quickRatePoster?.src || ''} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'}><span>Your score</span><strong data-score-label data-score-format="out-of-ten">{personalScoreLabel(title.entry?.score ?? null)}</strong><small data-rating-mode-label>{title.entry?.rating_mode === 'average' ? 'Rated-season average' : title.entry?.score ? 'Manual rating' : 'Unrated'}</small></button>
               ) : (
                 <a class="personal-score-button" href={`/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`} aria-label={`Sign in to rate ${title.title}`}><span>Your score</span><strong>—</strong><small>Sign in to rate</small></a>
               )}
@@ -135,10 +138,12 @@ const dateLabel = (value: string | null) => value
                 <div><span class="eyebrow">Episode history</span><h2>Seasons</h2></div>
                 {Astro.locals.user && <button class="button-secondary" id="refresh-episodes" data-media={title.id}>Refresh episode metadata</button>}
               </div>
-              {title.seasons.length ? title.seasons.map((season: any) => (
+              {title.seasons.length ? title.seasons.map((season: any) => {
+                const seasonImage = responsiveArtwork(season.poster_path,{size:'w185',sizes:'64px',route:'direct'});
+                return (
                 <article class="season-card">
-                  {artwork(season.poster_path, 'w185') ? (
-                    <img src={artwork(season.poster_path, 'w185')} alt="" />
+                  {seasonImage?.src ? (
+                    <img src={seasonImage.src} srcset={seasonImage.srcset} sizes={seasonImage.sizes} alt="" />
                   ) : <div class="season-poster-placeholder" aria-hidden="true">S{season.season_number}</div>}
                   <div class="season-copy">
                     <h3>{season.name || `Season ${season.season_number}`}</h3>
@@ -160,7 +165,8 @@ const dateLabel = (value: string | null) => value
                     </div>
                   )}
                 </article>
-              )) : <p class="section-empty">Season metadata has not been loaded yet.</p>}
+                );
+              }) : <p class="section-empty">Season metadata has not been loaded yet.</p>}
             </section>
           )}
           <p id="season-message" role="status"></p>

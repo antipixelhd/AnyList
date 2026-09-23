@@ -1738,12 +1738,24 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 </TrackerSettings>
 
 <script>
+  import { applyResponsiveArtwork } from "../lib/responsive-artwork";
+
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
 
   function esc(s) {
     if (s == null) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function applyResponsiveImages(root: ParentNode) {
+    root.querySelectorAll<HTMLImageElement>('img[data-artwork-path]').forEach(img => {
+      applyResponsiveArtwork(img, img.dataset.artworkPath, {
+        size: 'w185',
+        sizes: '32px',
+        route: 'direct',
+      });
+    });
   }
 
   // Keeps the toast below the nav (so it never covers it or the account
@@ -5649,6 +5661,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     document.getElementById('remap-clear-selection')?.addEventListener('click', () => {
       (document.getElementById('remap-selected-area') as HTMLElement).classList.add('hidden');
+      const selectedPoster = document.getElementById('remap-selected-poster') as HTMLImageElement;
+      selectedPoster.removeAttribute('src');
+      selectedPoster.removeAttribute('srcset');
+      selectedPoster.removeAttribute('sizes');
       (document.getElementById('remap-seasons-list') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-save') as HTMLButtonElement).disabled = true;
       targetTmdbId = 0;
@@ -5665,12 +5681,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       resultsEl.innerHTML = `
         <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
           data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${escapeHtml(year)}" data-poster="${escapeHtml(r.poster_path ?? '')}">
-          <img src="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+          <img data-artwork-path="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
           <div class="flex-1 min-w-0">
             <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
             <p class="text-xs text-zinc-500">${escapeHtml(year)}</p>
           </div>
         </button>`;
+      applyResponsiveImages(resultsEl);
       resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
     };
 
@@ -5686,7 +5703,19 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           targetTvdbId = 0;
         }
         targetSeasonNumber = null;
-        (document.getElementById('remap-selected-poster') as HTMLImageElement).src = btn.dataset.poster ?? '';
+        const selectedPoster = document.getElementById('remap-selected-poster') as HTMLImageElement;
+        const selectedPosterPath = btn.dataset.poster ?? '';
+        selectedPoster.removeAttribute('srcset');
+        selectedPoster.removeAttribute('sizes');
+        if (tvdbId) {
+          selectedPoster.src = selectedPosterPath;
+        } else {
+          applyResponsiveArtwork(selectedPoster, selectedPosterPath, {
+            size: 'w185',
+            sizes: '40px',
+            route: 'direct',
+          });
+        }
         (document.getElementById('remap-selected-title') as HTMLElement).textContent = btn.dataset.title ?? '';
         (document.getElementById('remap-selected-year') as HTMLElement).textContent = btn.dataset.year ?? '';
         (document.getElementById('remap-selected-area') as HTMLElement).classList.remove('hidden');
@@ -5731,7 +5760,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             seasonBtn.className = 'remap-season-pick w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-transparent hover:border-blue-600/50 hover:bg-blue-600/10 transition-colors cursor-pointer text-left';
             seasonBtn.dataset.season = String(s.season_number);
             seasonBtn.innerHTML = `
-              <img src="${escapeHtml(s.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+              <img data-artwork-path="${escapeHtml(s.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
               <div class="flex-1 min-w-0">
                 <p class="text-sm text-zinc-100">${escapeHtml(s.name ?? `Season ${s.season_number}`)}</p>
                 <p class="text-xs text-zinc-500">Season ${s.season_number}${s.episode_count ? ` · ${s.episode_count} eps` : ''}</p>
@@ -5748,6 +5777,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             });
             seasonsList.appendChild(seasonBtn);
           });
+          applyResponsiveImages(seasonsList);
         } catch (_) {
           seasonsLoading.classList.add('hidden');
           seasonsList.innerHTML = '<p class="text-xs text-red-400 py-1">Could not load seasons.</p>';
@@ -5788,13 +5818,14 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           return `
           <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
             data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${year}" data-poster="${escapeHtml(r.poster_path ?? '')}">
-            <img src="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+            <img data-artwork-path="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
             <div class="flex-1 min-w-0">
               <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
               <p class="text-xs text-zinc-500">${subtitle}</p>
             </div>
           </button>`;
         }).join('');
+        applyResponsiveImages(resultsEl);
         resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
       } catch (_) {
         resultsEl.innerHTML = '<p class="text-xs text-red-400 py-2">Search failed.</p>';

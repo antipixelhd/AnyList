@@ -7,6 +7,7 @@
 import type { WatchEvent } from "../lib/api";
 import { tmdbImageUrl } from "../lib/api";
 import { ratingPosterUrl } from "../lib/posters";
+import { responsiveArtwork } from "../lib/responsive-artwork";
 import { episodeHref } from "../lib/episodeHref";
 import { episodeCode } from "../lib/media-format";
 
@@ -20,6 +21,7 @@ const first = events[0].media;
 const showTitle = first.show_title || first.title;
 const rawPoster = first.show_poster_path || first.poster_path;
 const posterPath = ratingPosterUrl(tmdbImageUrl(rawPoster, "w500"), first, Astro.locals.hasRpdbKey);
+const posterImage = responsiveArtwork(posterPath, { size: "w500", sizes: "80px" });
 
 function fmtTime(watchedAt: string | null): string | null {
   return watchedAt
@@ -43,9 +45,9 @@ const codes = chronological.map((e) => episodeCode(e.media)).filter((c): c is st
 <div class="history-group rounded-2xl border border-zinc-800/50 bg-zinc-900/40 overflow-hidden transition-all duration-300 hover:border-blue-500/30">
   <button type="button" class="history-group-toggle w-full flex gap-5 p-4 text-left cursor-pointer group/card">
     <div class="w-20 shrink-0 aspect-[2/3] rounded-xl overflow-hidden bg-zinc-950 shadow-2xl ring-1 ring-white/5 group-hover/card:ring-blue-500/30 transition-all duration-300">
-      {posterPath ? (
+      {posterImage ? (
         <img
-          src={posterPath}
+          {...posterImage}
           alt={showTitle}
           class="w-full h-full object-cover"
           loading="lazy"
