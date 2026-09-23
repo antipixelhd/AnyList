@@ -491,7 +491,7 @@ main{transition:opacity var(--content-reveal) ease}
 #entry-groups:not(.grid-view) .entry-title,#entry-groups:not(.grid-view) .entry-title-column{flex:5 1 0%;min-width:0}
 #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column){flex:1 1 0%;min-width:0}
 #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column),#entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type{justify-content:center;text-align:center}
-#entry-groups:not(.grid-view) .entry-progress .progress-increment{position:absolute}
+#entry-groups:not(.grid-view) .entry-progress .progress-increment{position:absolute;min-height:17.25px;height:17.25px}
 #entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):hover .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):focus-within .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-progress .progress-increment:focus-visible{position:static}
 #entry-groups:not(.grid-view) .entry-title{padding:18px 20px 18px 15px;color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
 #entry-groups:not(.grid-view) .entry-title>a{color:#9fadbD;font-size:15px;font-weight:400;line-height:17.25px}
