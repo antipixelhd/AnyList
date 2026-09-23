@@ -50,24 +50,8 @@
   opacity: 0;
   transition: opacity .16s ease;
 }
-.social-person-action { position: absolute; z-index: 1; top: 4px; right: 4px; opacity: 0; }
 .social-person-card:hover .social-person-name,
-.social-person-card:focus-within .social-person-name,
-.social-person-card:hover .social-person-action,
-.social-person-card:focus-within .social-person-action { opacity: 1; }
-.social-person-add {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 5px;
-  background: var(--blue);
-  color: #fff;
-  box-shadow: 0 2px 8px #07111d80;
-}
-.social-person-add:hover,.social-person-add:focus-visible { background: #60c5f6; }
-.social-person-action:disabled { cursor: wait; }
+.social-person-card:focus-within .social-person-name { opacity: 1; }
 .social-empty { margin: 0; color: var(--muted); }
 .social-search { display: flex; gap: 10px; max-width: 520px; margin: 0 0 28px; }
 .social-search input {
@@ -83,8 +67,7 @@
 .social-content .error-message { margin: 0 0 20px; }
 
 @media (hover: none) {
-  .social-person-name, .social-person-action { opacity: 1; }
-  .social-person-action { top: 3px; right: 3px; }
+  .social-person-name { opacity: 1; }
 }
 @media (max-width: 650px) {
   .social-page { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-inline: 16px; }

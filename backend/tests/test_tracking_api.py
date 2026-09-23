@@ -212,6 +212,43 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         followed = await self.client.post(f'/profile/{self.friend.id}/follow')
         self.assertEqual(followed.status_code, 200, followed.text)
 
+    async def test_public_profile_reports_reverse_follow_for_one_way_and_mutual_relationships(self):
+        friend_profile = await self.db.scalar(
+            select(UserProfileData).where(UserProfileData.user_id == self.friend.id)
+        )
+        friend_profile.privacy_level = PrivacyLevel.public
+        await self.db.commit()
+
+        async def profile_relationships():
+            responses = [
+                await self.client.get(f'/tracking/people/{self.friend.username}'),
+                await self.client.get(f'/tracking/profile/{self.friend.username}/movie'),
+                await self.client.get(f'/tracking/profile/{self.friend.username}/stats/summary'),
+            ]
+            for response in responses:
+                self.assertEqual(response.status_code, 200, response.text)
+            return [(response.json()['following'], response.json()['follows_you']) for response in responses]
+
+        self.assertEqual(await profile_relationships(), [(False, False)] * 3)
+
+        self.db.add(Follow(follower_id=self.friend.id, following_id=self.owner.id))
+        await self.db.commit()
+        self.assertEqual(await profile_relationships(), [(False, True)] * 3)
+
+        follow = await self.client.post(f'/tracking/people/{self.friend.username}/follow')
+        self.assertEqual(follow.status_code, 200, follow.text)
+        self.assertEqual(await profile_relationships(), [(True, True)] * 3)
+
+        unfollow = await self.client.delete(f'/tracking/people/{self.friend.username}/follow')
+        self.assertEqual(unfollow.status_code, 200, unfollow.text)
+        self.assertEqual(await profile_relationships(), [(False, True)] * 3)
+
+        settings = await self.db.get(GlobalSettings, 1)
+        settings.enable_logged_out_navigation = True
+        await self.db.commit()
+        self.viewer = None
+        self.assertEqual(await profile_relationships(), [(False, False)] * 3)
+
     async def test_season_average_and_manual_restoration(self):
         self.assertEqual((await self.save(self.show,manual_score=9)).status_code,200)
         res=await self.save(self.show,season_scores={'1':6})

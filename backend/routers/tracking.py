@@ -532,7 +532,9 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     order_index = {media_id: index for index, media_id in enumerate(favorite_order)}
     favorite_entries.sort(key=lambda row: (order_index.get(row[0].media_id, len(order_index)), row[2]))
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
-        "owner":owner,"following":bool(viewer and viewer.id in followers_ids),"has_avatar":bool(user.profile and user.profile.avatar_path),
+        "owner":owner,"following":bool(viewer and viewer.id in followers_ids),
+        "follows_you":bool(viewer and not owner and viewer.id in following_ids),
+        "has_avatar":bool(user.profile and user.profile.avatar_path),
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "counts":{"movies":sum(m.media_type==MediaType.movie for e,m in entries),"series":sum(m.media_type==MediaType.series for e,m in entries),
                   "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids),
@@ -855,8 +857,10 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     rows=(await db.execute(query.order_by(Media.title))).all()
     if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
     following = False
+    follows_you = False
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
+        follows_you = (await db.execute(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))).scalar_one_or_none() is not None
     entries = [entry_data(e, m, owner) for e, m in rows]
     movie_ids = [m.id for _, m in rows if m.media_type == MediaType.movie]
     watched_movies = set((await db.execute(select(WatchEvent.media_id).where(
@@ -901,7 +905,8 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     return {
         "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
                     "bio": user.profile.bio if user.profile else None, "has_avatar": bool(user.profile and user.profile.avatar_path)},
-        "owner": owner, "following": following,"combine_lists":True if prefs is None else prefs.combine_lists,
+        "owner": owner, "following": following, "follows_you": follows_you,
+        "combine_lists":True if prefs is None else prefs.combine_lists,
         "entries": entries,
     }
 
@@ -912,6 +917,11 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
                         viewer: User | None = Depends(get_optional_user)):
     """Current list totals plus documented viewing statistics for a profile."""
     user, owner = await profile_access(db, username, viewer)
+    following = False
+    follows_you = False
+    if viewer and not owner:
+        following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
+        follows_you = (await db.execute(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))).scalar_one_or_none() is not None
     query = select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(
         TrackedEntry.user_id == user.id, Media.media_type.in_([MediaType.movie, MediaType.series]))
     if media_type != "all": query = query.where(Media.media_type == MediaType(media_type))
@@ -947,7 +957,8 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
     prefs = await db.get(TrackingPreferences, user.id)
     return {"profile":{"id":user.id,"username":user.username,"display_name":user.display_name,
                        "bio":user.profile.bio if user.profile else None,"has_avatar":bool(user.profile and user.profile.avatar_path)},
-            "owner":owner,"combine_lists":True if prefs is None else prefs.combine_lists,"media_type":media_type,"year":year,
+            "owner":owner,"following":following,"follows_you":follows_you,
+            "combine_lists":True if prefs is None else prefs.combine_lists,"media_type":media_type,"year":year,
             "current":{"total":len(entries),"statuses":statuses},
             "viewing":{"unique_titles":len(movies)+len(shows),"unique_movies":len(movies),"unique_episodes":len(episodes),
                        "unique_seasons":len(seasons),"repeat_views":max(0,documented_plays-len(movies)-len(episodes)),

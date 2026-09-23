@@ -1,8 +1,14 @@
 # AnyList implementation status
 
+## Profile-based following (2026-09-23)
+
+Public profile headers now provide the only Follow/Unfollow control. Follow changes immediately to Following; hovering or focusing a settled Following button reveals Unfollow. Rapid clicks reconcile to the final selected state through serial requests, and a failed write restores the confirmed state. A Follows you tag appears beside the profile name when the viewed account follows the signed-in viewer. Overview, lists, Stats, Favorites, and Social receive the same relationship fields.
+
+Social Following, Followers, and Search cards now only navigate to profiles. The focused relationship API test and frontend build passed. Browser checks covered optimistic follow, state after moving to another profile tab, search cards without actions, and mobile header layout. The local backend was restarted to serve the updated fields; the temporary test follow was reverted.
+
 ## Profile Social layout (2026-09-23)
 
-Social now uses a reusable 160px profile section selector aligned with the desktop profile avatar. Following, Followers, and Search switch within the page. Public profiles appear as square avatar cards with names revealed on hover or keyboard focus; the owner can unfollow from a card, and Search can follow or unfollow without reloading. The people projection now includes public avatar IDs and availability while retaining its privacy filter.
+Social now uses a reusable 160px profile section selector aligned with the desktop profile avatar. Following, Followers, and Search switch within the page. Public profiles appear as square avatar cards with names revealed on hover or keyboard focus. The people projection includes public avatar IDs and availability while retaining its privacy filter.
 
 The frontend build and focused tracking API test passed after the dedicated test database was migrated to `mt022`. Desktop and 390px mobile browser checks covered section switching, in-page search, and follow/unfollow; the temporary local follow was reverted.
 

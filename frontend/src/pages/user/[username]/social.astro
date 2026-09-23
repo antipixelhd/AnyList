@@ -22,13 +22,12 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
 <Tracker title={`${profile?.display_name || username} · Social`}>
   {profile ? <>
     <ProfileHeader profile={profile} active="social"/>
-    <div class="page-width social-page" data-social-page data-profile-username={username} data-profile-owner={profile.owner ? 'yes' : 'no'}>
+    <div class="page-width social-page" data-social-page>
       <ProfileSectionSelector heading="Social" ariaLabel="Social sections" options={[{id:'following',label:'Following'},{id:'followers',label:'Followers'},{id:'search',label:'Search'}]} active={initialSection}/>
       <div class="social-content">
-        <p class="error-message" role="alert" data-social-error hidden></p>
         <section data-social-panel="following" aria-label="Following" hidden={initialSection !== 'following'}>
           <div class="social-people-grid" data-social-grid="following">
-            {following.map((person: any) => <SocialPersonCard person={person} action={profile.owner ? 'remove' : 'none'}/>)}
+            {following.map((person: any) => <SocialPersonCard person={person}/>)}
           </div>
           <p class="social-empty" data-social-empty="following" hidden={following.length > 0}>No public profiles followed yet.</p>
         </section>
@@ -50,8 +49,6 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
           </> : <p class="social-empty">Sign in to search public profiles.</p>}
         </section>
       </div>
-      <template data-social-action-icon="close"><Icon name="close"/></template>
-      <template data-social-action-icon="plus"><Icon name="plus"/></template>
     </div>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
@@ -62,9 +59,6 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
     username: string;
     display_name: string;
     has_avatar?: boolean;
-    following?: boolean;
-    follower?: boolean;
-    owner?: boolean;
   }
 
   let socialListeners: AbortController | undefined;
@@ -74,19 +68,11 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
     const signal = socialListeners.signal;
     const page = document.querySelector<HTMLElement>('[data-social-page]');
     if (!page) return;
-    const profileUsername = page.dataset.profileUsername!;
-    const owner = page.dataset.profileOwner === 'yes';
-    const error = page.querySelector<HTMLElement>('[data-social-error]')!;
     const searchForm = page.querySelector<HTMLFormElement>('[data-social-search-form]');
     const searchInput = searchForm?.querySelector<HTMLInputElement>('input[name=q]');
     let searchRequest = 0;
 
-    function showError(message: string) {
-      error.textContent = message;
-      error.hidden = false;
-    }
-
-    function createCard(person: SocialPerson, action: 'remove' | 'toggle' | 'none') {
+    function createCard(person: SocialPerson) {
       const name = person.display_name || person.username;
       const card = document.createElement('article');
       card.className = 'social-person-card';
@@ -114,19 +100,6 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
       label.textContent = name;
       link.append(label);
       card.append(link);
-      if (action === 'remove' || (action === 'toggle' && !person.owner)) {
-        const following = action === 'remove' || !!person.following;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = `social-person-action ${following ? 'alert-icon-button' : 'social-person-add'}`;
-        button.dataset.socialFollow = person.username;
-        button.dataset.followState = following ? 'yes' : 'no';
-        button.setAttribute('aria-label', `${following ? 'Unfollow' : 'Follow'} ${name}`);
-        button.title = `${following ? 'Unfollow' : 'Follow'} ${name}`;
-        const icon = page.querySelector<HTMLTemplateElement>(`[data-social-action-icon="${following ? 'close' : 'plus'}"]`);
-        if (icon) button.append(icon.content.cloneNode(true));
-        card.append(button);
-      }
       return card;
     }
 
@@ -134,19 +107,9 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
       const grid = page.querySelector<HTMLElement>(`[data-social-grid="${group}"]`);
       const empty = page.querySelector<HTMLElement>(`[data-social-empty="${group}"]`);
       if (!grid || !empty) return;
-      const action = group === 'following' && owner ? 'remove' : group === 'search' ? 'toggle' : 'none';
-      grid.replaceChildren(...people.map(person => createCard(person, action)));
+      grid.replaceChildren(...people.map(createCard));
       empty.textContent = emptyText;
       empty.hidden = people.length > 0;
-    }
-
-    async function refreshLists() {
-      const response = await fetch(`/api/proxy/tracking/people/${encodeURIComponent(profileUsername)}`, {signal});
-      if (!response.ok) throw new Error('Could not refresh the social lists.');
-      const profile = await response.json();
-      const people: SocialPerson[] = profile.people || [];
-      renderGroup('following', people.filter(person => person.following), 'No public profiles followed yet.');
-      renderGroup('followers', people.filter(person => person.follower), 'No public followers to show.');
     }
 
     async function searchPeople() {
@@ -175,32 +138,12 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
       page.querySelectorAll<HTMLElement>('[data-social-panel]').forEach(panel => {
         panel.hidden = panel.dataset.socialPanel !== section;
       });
-      error.hidden = true;
       if (section === 'search') searchInput?.focus();
     }, {signal});
 
     searchForm?.addEventListener('submit', event => {
       event.preventDefault();
       void searchPeople();
-    }, {signal});
-
-    page.addEventListener('click', async event => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-social-follow]');
-      if (!button || button.disabled) return;
-      button.disabled = true;
-      error.hidden = true;
-      try {
-        const response = await fetch(`/api/proxy/tracking/people/${encodeURIComponent(button.dataset.socialFollow!)}/follow`, {
-          method: button.dataset.followState === 'yes' ? 'DELETE' : 'POST', signal,
-        });
-        if (!response.ok) throw new Error('Could not update following.');
-        await refreshLists();
-        if (searchInput?.value.trim()) await searchPeople();
-      } catch (cause) {
-        if (!signal.aborted) showError(cause instanceof Error ? cause.message : 'Could not update following.');
-      } finally {
-        button.disabled = false;
-      }
     }, {signal});
 
     if (searchInput?.value.trim()) void searchPeople();
