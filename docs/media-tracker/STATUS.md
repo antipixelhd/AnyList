@@ -673,3 +673,5 @@ The frontend production build passed. Synthetic notifications injected into the 
 Notifications now uses Home's left-hand card stream and a visible right-hand Inbox tools rail; phones stack the tools after the cards. Card posters stretch to card height, titles use blue, rating-needed cards omit their repeated completion sentence, and the page and floating prompt share yellow Rate now buttons. The frontend build passed, and synthetic local-preview notifications verified desktop and phone layouts without horizontal overflow. No provider or VPS state was changed.
 
 The poster treatment was corrected after owner review: artwork has its original fixed dimensions and is centered vertically in the card. The Needs review accent now uses a named rose alert color shared with the app-bar attention badge, keeping yellow for rating actions.
+
+Owner clarification: only `rating_needed` cards use a full-height poster. Review and other cards retain the fixed, vertically centered poster; the rose alert treatment remains.
