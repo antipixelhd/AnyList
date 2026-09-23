@@ -1,11 +1,10 @@
 ---
 import TrackerSettings from "../layouts/TrackerSettings.astro";
+import BioEditor from "../components/BioEditor";
 import { api } from "../lib/api";
 import { tracker } from "../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
 import '../styles/profile-color-settings.css';
-import '@toast-ui/editor/dist/toastui-editor.css';
-import '@toast-ui/editor/dist/theme/toastui-editor-dark.css';
 
 const { token } = Astro.locals;
 const [profileData, me, trackingPrefs] = await Promise.all([
@@ -206,10 +205,7 @@ const COUNTRIES = [
           </div>
           <div class="space-y-2">
             <div class="setting-label-line"><label id="bio-label" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
-            <div class="bio-mode-row"><label for="bio-raw-toggle"><input id="bio-raw-toggle" type="checkbox" /> Raw Markdown</label><span id="bio-count">0 / 5,000</span></div>
-            <div id="bio-editor" aria-labelledby="bio-label" data-initial-bio={prefs.bio ?? ''}></div>
-            <textarea id="bio-raw" aria-labelledby="bio-label" maxlength={5000} class="hidden"></textarea>
-            <button id="bio-save" type="button" class="button-primary hidden">Save bio</button>
+            <BioEditor client:load initialMarkdown={prefs.bio ?? ''} token={token!} />
           </div>
         </div>
       </section>
@@ -489,10 +485,7 @@ const COUNTRIES = [
 </TrackerSettings>
 
 <script>
-  let bioEditor: import('@toast-ui/editor').default | undefined;
   function setup() {
-    bioEditor?.destroy();
-    bioEditor = undefined;
     const appData = document.getElementById('app-data');
     const token = appData?.dataset.token ?? '';
 
@@ -886,71 +879,6 @@ const COUNTRIES = [
       }
     });
     refreshPushState();
-
-    const editorHost = document.getElementById('bio-editor');
-    const rawBio = document.getElementById('bio-raw') as HTMLTextAreaElement | null;
-    const rawToggle = document.getElementById('bio-raw-toggle') as HTMLInputElement | null;
-    const bioSave = document.getElementById('bio-save') as HTMLButtonElement | null;
-    const bioCount = document.getElementById('bio-count');
-    let savedBio = editorHost?.dataset.initialBio || '';
-    let savedVisualBio = savedBio;
-    let enforcingBioLimit = false;
-    const currentBio = () => rawToggle?.checked ? rawBio?.value || '' : bioEditor?.getMarkdown() || '';
-    const updateBio = () => {
-      const markdown = currentBio();
-      if (markdown.length > 5000) {
-        if (!rawToggle?.checked && bioEditor && !enforcingBioLimit) {
-          enforcingBioLimit = true;
-          bioEditor.setMarkdown(markdown.slice(0, 5000));
-          enforcingBioLimit = false;
-        }
-      }
-      const current = currentBio();
-      if (bioCount) bioCount.textContent = `${current.length} / 5,000`;
-      bioSave?.classList.toggle('hidden', current === (rawToggle?.checked ? savedBio : savedVisualBio));
-      if (current.length > 5000) setStatus('bio', 'Bio must be 5,000 characters or fewer.', 'error');
-      else if (document.querySelector<HTMLElement>('[data-save-state="bio"]')?.dataset.state === 'error') setStatus('bio', '');
-    };
-    if (editorHost && rawBio && rawToggle && bioSave) {
-      rawBio.value = savedBio;
-      rawBio.addEventListener('input', updateBio);
-      void import('@toast-ui/editor').then(({ default: Editor }) => {
-        if (!editorHost.isConnected) return;
-        bioEditor = new Editor({ el: editorHost, height: '220px', initialValue: savedBio,
-          initialEditType: 'wysiwyg', theme: 'dark', hideModeSwitch: true, usageStatistics: false,
-          placeholder: 'Write a short bio…',
-          toolbarItems: [['heading', 'bold', 'italic']] });
-        savedVisualBio = bioEditor.getMarkdown();
-        bioEditor.on('change', () => { if (!enforcingBioLimit) updateBio(); });
-        updateBio();
-      });
-      rawToggle.addEventListener('change', () => {
-        if (rawToggle.checked) rawBio.value = bioEditor?.getMarkdown() === savedVisualBio ? savedBio : bioEditor?.getMarkdown() || rawBio.value;
-        else {
-          bioEditor?.setMarkdown(rawBio.value);
-          if (rawBio.value === savedBio) savedVisualBio = bioEditor?.getMarkdown() || savedBio;
-        }
-        editorHost.classList.toggle('hidden', rawToggle.checked);
-        rawBio.classList.toggle('hidden', !rawToggle.checked);
-        updateBio();
-      });
-      bioSave.addEventListener('click', async () => {
-        const markdown = currentBio();
-        if (markdown.length > 5000) { updateBio(); return; }
-        bioSave.disabled = true;
-        setStatus('bio', 'Saving…', 'saving');
-        try {
-          await patchProfile({ bio: markdown || null });
-          savedBio = markdown;
-          if (rawToggle.checked) bioEditor?.setMarkdown(markdown);
-          savedVisualBio = bioEditor?.getMarkdown() || markdown;
-          setStatus('bio', 'Saved');
-          updateBio();
-        } catch (error) {
-          setStatus('bio', error instanceof Error ? error.message : 'Could not save bio.', 'error');
-        } finally { bioSave.disabled = false; }
-      });
-    }
 
     // ── Translation backfill ──────────────────────────────────────────────────
     const backfillSection    = document.getElementById('backfill-section') as HTMLDivElement | null;

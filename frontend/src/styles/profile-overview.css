@@ -78,6 +78,23 @@
 .overview-bio .profile-bio blockquote { margin-inline: 0; padding-left: 14px; border-left: 3px solid #41657f; color: var(--muted); }
 .overview-bio .profile-bio pre { max-width: 100%; overflow-x: auto; padding: 12px; border-radius: 4px; background: #101c29; }
 .overview-bio .profile-bio img { max-width: 100%; height: auto; }
+.overview-bio .profile-bio u { text-underline-offset: 2px; }
+.overview-bio .profile-bio .profile-bio-align { margin-block: 10px; }
+.overview-bio .profile-bio .profile-bio-align-center { text-align: center; }
+.overview-bio .profile-bio .profile-bio-align-right { text-align: right; }
+.overview-bio .profile-bio .profile-bio-align-left { text-align: left; }
+.overview-bio .profile-bio .profile-bio-spoiler { position: relative; display: inline; }
+.overview-bio .profile-bio .profile-bio-spoiler input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.overview-bio .profile-bio .profile-bio-spoiler-label { cursor: pointer; color: var(--muted); text-decoration: underline dotted; text-underline-offset: 2px; }
+.overview-bio .profile-bio .profile-bio-spoiler-label::before { content: ' '; }
+.overview-bio .profile-bio .profile-bio-spoiler-content { display: none; }
+.overview-bio .profile-bio .profile-bio-spoiler input:checked ~ .profile-bio-spoiler-content { display: inline; }
+.overview-bio .profile-bio .profile-bio-spoiler input:focus-visible ~ .profile-bio-spoiler-label { outline: 2px solid var(--blue); outline-offset: 2px; }
+.overview-bio .profile-bio .profile-bio-embed { display: inline-block; max-width: 100%; margin-block: 12px; overflow: hidden; vertical-align: middle; border: 1px solid var(--border); border-radius: 6px; background: #101c29; }
+.overview-bio .profile-bio .profile-bio-embed-video { width: min(100%, 560px); aspect-ratio: 16 / 9; }
+.overview-bio .profile-bio .profile-bio-embed iframe,
+.overview-bio .profile-bio .profile-bio-embed video { display: block; width: 100%; height: 100%; border: 0; }
+.overview-bio .profile-bio .profile-bio-embed-invalid { color: var(--muted); overflow-wrap: anywhere; }
 
 .favorite-posters {
   display: grid;

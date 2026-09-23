@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Profile bio editor (2026-09-24)
+
+Profile settings now use an MDXEditor React island with AnyList styling, rich text controls, and a Raw Markdown source toggle. The toolbar includes emphasis, underline, strikethrough, spoiler, headings, links, images, YouTube and video embeds, lists, centered text, quotes, and code. The existing 5,000-character limit and explicit bio save remain in place. Public profiles safely render the matching spoiler, underline, alignment, and validated video syntax while leaving arbitrary raw HTML disabled. The synthetic preview bio was restored after browser verification.
+
+The frontend production build passes. Authenticated local browser checks covered the toolbar, rich/source round trips, saving, public rendering, spoiler reveal, and restoration of the preview account. The local preview remains available at `http://localhost:7340`; no VPS deployment was performed.
+
 ## Activity rating cards and mobile list alignment (2026-09-23)
 
 Activity cards show a rating only when that day's activity included a first rating or a score change. A later rating-only edit reads “Changed Rating for”; a title first rated that day keeps “Rated” until the next UTC day. The feed records the earlier score so edits can show the score transition, including when paired with a status or progress update. The rating pill is transparent with a yellow star, and mobile movie/series list titles are vertically centered. Initial-import rating suppression remains in effect.

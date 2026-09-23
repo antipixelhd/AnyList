@@ -94,6 +94,8 @@ Build reusable behavior where the product needs it—status menus, list editors,
 
 Use the official Font Awesome SVG core and free-solid package as the single product-control icon source. Render only imported icons to server-side SVG through the shared Astro `Icon` component; do not load the browser kit or the full icon library. This replaces copied inline SVGs and text glyphs while keeping the server-first architecture and predictable accessibility attributes. Shared `NoticeCard`, button, field, navigation, dialog, and responsive rules provide the common geometry. Respect `prefers-reduced-motion` and use reusable lifecycle-safe setup functions for shared interactions. This decision may be revisited if the frontend later adopts a single client framework.
 
+The user requested a scoped exception on 2026-09-24: the profile bio editor uses MDXEditor in an Astro React island for its rich-text and Raw Markdown controls. Astro remains the page framework and the shared visual system applies to the island.
+
 ## ADR-019 — Status-specific provenance and local decision precedence (accepted)
 
 Record the source and effective change time of each tracked status separately from the entry's general update time. Notes, ratings, favorites, and other edits must not make an old status appear newer. A reliably newer provider status may be reconciled normally; an explicit local status decision remains authoritative over older provider observations and creates the supported outbound correction. If ordering is missing or uncertain, preserve the local value and require review.
