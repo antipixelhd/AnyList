@@ -2280,6 +2280,7 @@ async def mark_as_watched(
         ))).scalar_one_or_none()
         if root_media and root_media.media_type in (MediaType.movie, MediaType.series) and not deleted:
             previous_status = entry.status if entry else None
+            previous_progress = entry.progress if entry else 0
             watched_count = 1
             progress_value = 1
             complete = root_media.media_type == MediaType.movie
@@ -2323,18 +2324,20 @@ async def mark_as_watched(
             if next_status != previous_status:
                 mark_status_change(entry, 'history-api')
             await db.flush()
-            from core.activity import record_daily_activity, series_activity_details
+            from core.activity import record_daily_activity, record_progress_activity
             from core.tracking_rules import effective_score
-            position, finished_seasons = await series_activity_details(db, root_media, watched_count)
-            await record_daily_activity(
-                db, user_id=current_user.id, media_id=root_media_id,
-                status=entry.status,
-                score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
-                episodes_watched=1 if root_media.media_type == MediaType.series else 0,
-                progress=entry.progress, position=position,
-                finished_seasons=finished_seasons,
-                status_changed=next_status != previous_status,
-            )
+            activity_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+            if root_media.media_type == MediaType.series:
+                if entry.progress != previous_progress or next_status != previous_status:
+                    await record_progress_activity(db,user_id=current_user.id,media=root_media,
+                        # Earlier episodes may be inferred from one explicit
+                        # episode write; only that written episode is today's activity.
+                        previous_progress=max(previous_progress, entry.progress - 1),progress=entry.progress,
+                        status=entry.status,score=activity_score,
+                        status_changed=next_status != previous_status and entry.progress == previous_progress)
+            else:
+                await record_daily_activity(db,user_id=current_user.id,media_id=root_media_id,
+                    status=entry.status,score=activity_score,status_changed=next_status != previous_status)
             await db.commit()
 
     # 4. Push to media servers if outbound push is enabled

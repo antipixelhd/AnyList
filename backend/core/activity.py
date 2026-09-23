@@ -36,6 +36,15 @@ async def series_activity_details(db, media: Media, progress: int) -> tuple[str 
     """Return the cumulative SxEy position and fully released, watched seasons."""
     if media.media_type != MediaType.series or progress <= 0:
         return None, []
+    episodes, expected = await _series_activity_catalog(db, media)
+    if not episodes:
+        return None, []
+    watched = episodes[:min(progress, len(episodes))]
+    latest = watched[-1]
+    return f"S{latest.season_number}E{latest.episode_number}", _finished_seasons(episodes, expected, progress)
+
+
+async def _series_activity_catalog(db, media: Media):
     identities = []
     if media.tmdb_id:
         identities.append(Show.tmdb_id == media.tmdb_id)
@@ -43,30 +52,96 @@ async def series_activity_details(db, media: Media, progress: int) -> tuple[str 
         identities.append(Show.tvdb_id == media.tvdb_id)
     show = (await db.execute(select(Show).where(or_(*identities)))).scalars().first() if identities else None
     if not show:
-        return None, []
-    episodes = (await db.execute(select(Media).where(
+        return [], {}
+    query = select(Media).where(
         Media.show_id == show.id,
         Media.media_type == MediaType.episode,
         Media.season_number > 0,
         Media.release_date.is_not(None),
         Media.release_date <= date.today().isoformat(),
-    ).order_by(Media.season_number, Media.episode_number))).scalars().all()
-    if not episodes:
-        return None, []
-    watched = episodes[:min(progress, len(episodes))]
-    latest = watched[-1]
+    )
+    catalogue_ids = (media.tmdb_data or {}).get("tracking_episode_ids")
+    if catalogue_ids is not None:
+        provider = (media.tmdb_data or {}).get("tracking_catalogue_provider", "tmdb")
+        identity = Media.tvdb_id if provider == "tvdb" else Media.tmdb_id
+        query = query.where(identity.in_(catalogue_ids))
+    episodes = (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
     expected = {
         int(season.get("season_number", 0)): int(season.get("episode_count", 0))
         for season in (media.tmdb_data or {}).get("seasons", [])
         if isinstance(season, dict)
     }
+    return episodes, expected
+
+
+def _finished_seasons(episodes, expected: dict[int, int], progress: int) -> list[int]:
+    watched = episodes[:min(progress, len(episodes))]
     finished = []
     for season_number in {episode.season_number for episode in watched if (episode.season_number or 0) > 0}:
         released_count = sum(1 for episode in episodes if episode.season_number == season_number)
         watched_count = sum(1 for episode in watched if episode.season_number == season_number)
         if expected.get(season_number, 0) > 0 and released_count == expected[season_number] == watched_count:
             finished.append(season_number)
-    return f"S{latest.season_number}E{latest.episode_number}", sorted(finished)
+    return sorted(finished)
+
+
+async def series_activity_span(db, media: Media, start: int, end: int) -> tuple[str | None, str | None, list[int]]:
+    """Describe only episodes watched between two cumulative progress values."""
+    if media.media_type != MediaType.series or end <= start:
+        return None, None, []
+    episodes, expected = await _series_activity_catalog(db, media)
+    if start >= len(episodes) or end > len(episodes):
+        return None, None, []
+    first, last = episodes[start], episodes[end - 1]
+    beginning = f"S{first.season_number}E{first.episode_number}"
+    ending = f"S{last.season_number}E{last.episode_number}"
+    finished = sorted(set(_finished_seasons(episodes, expected, end)) - set(_finished_seasons(episodes, expected, start)))
+    return beginning, ending, finished
+
+
+async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
+                                   progress: int, status: str, score: float | None,
+                                   status_changed: bool = False, rating_changed: bool = False,
+                                   now: datetime | None = None) -> TrackingActivity | None:
+    """Keep today's episode card equal to net forward progress after corrections."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    start = datetime(now.year, now.month, now.day)
+    row = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media.id,
+        TrackingActivity.created_at >= start, TrackingActivity.created_at < start + timedelta(days=1),
+    ).order_by(TrackingActivity.created_at.desc()).limit(1))).scalar_one_or_none()
+    details = dict(row.payload or {}) if row else {}
+    baseline = details.get("progress_start")
+    if baseline is None:
+        prior_end = details.get("progress")
+        prior_count = int(details.get("episodes_watched") or 0)
+        baseline = max(0, int(prior_end) - prior_count) if prior_end is not None and prior_count else previous_progress
+    baseline = int(baseline)
+    watched = max(0, progress - baseline)
+    details["episodes_watched"] = watched
+    details["progress_start"] = baseline
+    details["progress"] = progress
+    details["position_start"], details["position"], details["finished_seasons"] = (
+        await series_activity_span(db, media, baseline, progress)
+    )
+    details["status_changed"] = bool(details.get("status_changed") or status_changed)
+    details["rating_changed"] = bool(details.get("rating_changed") or rating_changed)
+    if watched == 0 and not details["status_changed"] and not details["rating_changed"]:
+        if row:
+            await db.delete(row)
+        return None
+    if row:
+        row.status, row.score, row.payload, row.created_at = status, score, details, now
+    else:
+        row = TrackingActivity(user_id=user_id, media_id=media.id, status=status, score=score,
+                               payload=details, created_at=now)
+        db.add(row)
+    if status_changed:
+        await db.execute(update(TrackedEntry).where(
+            TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id,
+            TrackedEntry.initial_import_completed_at.is_not(None),
+        ).values(initial_import_completed_at=None))
+    return row
 
 
 async def record_daily_activity(db, *, user_id: int, media_id: int, status: str, score: float | None,

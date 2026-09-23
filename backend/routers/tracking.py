@@ -1214,12 +1214,20 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
     progress_changed = entry.progress != old_progress
     if previous != entry.status or old_score != score or progress_changed:
-        from core.activity import record_daily_activity, series_activity_details, suppress_initial_import_rating
-        if previous != entry.status or progress_changed or not suppress_initial_import_rating(entry):
+        from core.activity import record_daily_activity, record_progress_activity, series_activity_details, suppress_initial_import_rating
+        status_changed = previous != entry.status
+        if status_changed:
+            entry.initial_import_completed_at = None
+        rating_changed = old_score != score and (status_changed or not suppress_initial_import_rating(entry))
+        if media.media_type == MediaType.series and progress_changed:
+            await record_progress_activity(db, user_id=viewer.id, media=media,
+                previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
+                status_changed=status_changed and 'status' in fields, rating_changed=rating_changed)
+        elif status_changed or not suppress_initial_import_rating(entry):
             position, finished = await series_activity_details(db, media, entry.progress)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
-                episodes_watched=max(0, entry.progress-old_progress) if media.media_type == MediaType.series else 0, progress=entry.progress if media.media_type == MediaType.series else None,
-                position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
+                progress=entry.progress if media.media_type == MediaType.series else None,
+                position=position, status_changed=status_changed, rating_changed=rating_changed)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}
@@ -1265,6 +1273,11 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         background_tasks.add_task(dispatch_local_watch_rollback, viewer.id, removed_watched_ids,
                                   delivery_job_id=job.id)
     result = entry_data(entry, media, True)
+    if media.media_type == MediaType.series and episodes:
+        latest = episodes[entry.progress - 1] if 0 < entry.progress <= len(episodes) else None
+        result["season_position"] = f"S{latest.season_number}E{latest.episode_number}" if latest else None
+        result["released_episodes"] = len(episodes)
+        result["new_seasons"] = len({episode.season_number for episode in episodes[entry.progress:]}) if entry.status == "completed" else 0
     result["delivery_job_id"] = job.id
     return result
 

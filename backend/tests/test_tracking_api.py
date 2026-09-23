@@ -468,6 +468,63 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(movie_rows[0].payload['rating_changed'])
         self.assertTrue(movie_rows[0].payload['status_changed'])
 
+    async def test_series_progress_correction_shrinks_then_removes_daily_card(self):
+        self.show.tmdb_id = 456790
+        canonical = Show(title='Fixture Show', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical)
+        await self.db.flush()
+        episodes = [Media(title=f'S{season}E{number}', media_type=MediaType.episode,
+                          tmdb_id=900000 + season * 100 + number, show_id=canonical.id,
+                          season_number=season, episode_number=number, release_date='2025-01-01')
+                    for season in range(1, 6) for number in range(1, 9)]
+        self.show.tmdb_data = {
+            'tracking_catalogue_refreshed_at': '2026-01-01T00:00:00',
+            'tracking_episode_ids': [episode.tmdb_id for episode in episodes],
+            'seasons': [{'season_number': season, 'episode_count': 8} for season in range(1, 6)],
+        }
+        self.db.add_all(episodes)
+        await self.db.flush()
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.show.id,
+                                 status='watching', progress=40, rating_mode='manual', season_scores={}))
+        self.db.add_all(WatchEvent(user_id=self.owner.id, media_id=episode.id,
+                                   completed=True, watched_at=None, provisional=True) for episode in episodes)
+        await self.db.commit()
+
+        self.assertEqual((await self.save(self.show, progress=38, confirm_rollback=True)).status_code, 200)
+        activity_query = select(TrackingActivity).where(
+            TrackingActivity.user_id == self.owner.id, TrackingActivity.media_id == self.show.id)
+        self.assertEqual((await self.db.execute(activity_query)).scalars().all(), [])
+
+        forward = await self.save(self.show, progress=40)
+        self.assertEqual(forward.status_code, 200, forward.text)
+        self.assertEqual(forward.json()['season_position'], 'S5E8')
+        rows = (await self.db.execute(activity_query)).scalars().all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].payload['episodes_watched'], 2)
+        self.assertEqual(rows[0].payload['position_start'], 'S5E7')
+        self.assertEqual(rows[0].payload['position'], 'S5E8')
+        self.assertEqual(rows[0].payload['finished_seasons'], [5])
+
+        self.assertEqual((await self.save(self.show, progress=39, confirm_rollback=True)).status_code, 200)
+        rows = (await self.db.execute(activity_query)).scalars().all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].payload['episodes_watched'], 1)
+        self.assertEqual(rows[0].payload['position_start'], 'S5E7')
+        self.assertEqual(rows[0].payload['position'], 'S5E7')
+        self.assertEqual(rows[0].payload['finished_seasons'], [])
+
+        self.assertEqual((await self.save(self.show, progress=38, confirm_rollback=True)).status_code, 200)
+        self.assertEqual((await self.db.execute(activity_query)).scalars().all(), [])
+
+        self.assertEqual((await self.save(self.show, manual_score=8)).status_code, 200)
+        self.assertEqual((await self.save(self.show, progress=39)).status_code, 200)
+        self.assertEqual((await self.save(self.show, progress=38, confirm_rollback=True)).status_code, 200)
+        rows = (await self.db.execute(activity_query)).scalars().all()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].payload['rating_changed'])
+        self.assertEqual(rows[0].payload['episodes_watched'], 0)
+        self.assertEqual(rows[0].payload['finished_seasons'], [])
+
     async def test_profile_stats_separate_current_totals_from_dated_viewing(self):
         self.movie.runtime = 100
         self.movie.tmdb_data = {'genres': [{'name': 'Drama'}]}

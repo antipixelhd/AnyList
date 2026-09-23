@@ -307,13 +307,16 @@ async def observe_stream_snapshot(db,conn,library,watched,progress,tmdb_ids,*,co
                 if entry.status=='completed' and entry.finish_date is None:entry.finish_date=date.today()
             progress_changed = entry.progress != previous_progress
             if entry.status != previous_status or progress_changed or newly_tracked:
-                from core.activity import record_daily_activity, series_activity_details
-                position, finished = await series_activity_details(db, media, entry.progress)
-                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
-                    score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
-                    episodes_watched=(entry.progress if newly_tracked else max(0,entry.progress-previous_progress)) if media.media_type == MediaType.series else 0,
-                    progress=entry.progress if media.media_type == MediaType.series else None,
-                    position=position,finished_seasons=finished,status_changed=entry.status != previous_status or newly_tracked)
+                from core.activity import record_daily_activity, record_progress_activity
+                activity_score = effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
+                if media.media_type == MediaType.series:
+                    await record_progress_activity(db,user_id=conn.user_id,media=media,
+                        previous_progress=0 if newly_tracked else previous_progress,progress=entry.progress,
+                        status=entry.status,score=activity_score,
+                        status_changed=(entry.status != previous_status or newly_tracked) and not (progress_changed or newly_tracked and entry.progress > 0))
+                else:
+                    await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
+                        score=activity_score,status_changed=entry.status != previous_status or newly_tracked)
             if row in changed_active and baseline.approved:
                 from core.stream_actions import queue_progress_update
                 await queue_progress_update(db, conn, media, row)

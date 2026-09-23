@@ -266,15 +266,15 @@ async def reconcile_cloud_watch_events(
         entry.finish_date = proposed_finish
         progress_changed = entry.progress != previous_progress
         if (changed or progress_changed) and not initial_import:
-            from core.activity import record_daily_activity, series_activity_details
-            position, finished = await series_activity_details(db, media, entry.progress)
-            await record_daily_activity(
-                db,user_id=user_id,media_id=root_id,status=entry.status,
-                score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
-                episodes_watched=max(0,entry.progress-previous_progress) if media.media_type == MediaType.series else 0,
-                progress=entry.progress if media.media_type == MediaType.series else None,
-                position=position,finished_seasons=finished,status_changed=changed,
-            )
+            from core.activity import record_daily_activity, record_progress_activity
+            activity_score = effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
+            if media.media_type == MediaType.series:
+                await record_progress_activity(db,user_id=user_id,media=media,
+                    previous_progress=previous_progress,progress=entry.progress,
+                    status=entry.status,score=activity_score,status_changed=changed and not progress_changed)
+            else:
+                await record_daily_activity(db,user_id=user_id,media_id=root_id,status=entry.status,
+                    score=activity_score,status_changed=changed)
         if changed and not initial_import:
             if entry.status == "completed":
                 await queue_sync_completion_rating(
