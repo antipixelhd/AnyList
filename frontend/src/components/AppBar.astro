@@ -128,6 +128,15 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     const mobile = () => matchMedia('(max-width:650px)').matches;
     const topThreshold = () => mobile() ? 16 : 0;
     const syncTopFade = (y: number) => appbar.classList.toggle('appbar-at-top', !mobile() && y <= 0);
+    const prepareIncomingAppbar = (rawEvent: Event) => {
+      const event = rawEvent as Event & { newDocument?: Document };
+      const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
+      if (!incomingAppbar) return;
+      const startsTransparent = !mobile() && incomingAppbar.classList.contains('appbar-fade-capable');
+      incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
+      if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
+    };
+    document.addEventListener('astro:before-swap', prepareIncomingAppbar, { signal: appbarListeners.signal });
     document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
     document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true, signal: appbarListeners.signal });
     window.addEventListener('wheel', event => {
@@ -135,11 +144,16 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       if (!mobile() && event.deltaY > 0) wheelDown = true;
       if (!mobile() && event.deltaY < 0) {
         wheelDown = false;
-        reveal();
       }
     }, { passive: true, signal: appbarListeners.signal });
     window.addEventListener('touchstart', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
-    const reveal = () => appbar.classList.remove('appbar-hidden');
+    const reveal = () => {
+      if (appbar.classList.contains('appbar-hidden') && appbar.classList.contains('appbar-at-top')) {
+        // Resolve the transparent background while the bar is still off-screen.
+        void appbar.offsetWidth;
+      }
+      appbar.classList.remove('appbar-hidden');
+    };
     syncTopFade(previousY);
     if (previousY <= topThreshold()) reveal();
     const update = () => {

@@ -43,19 +43,23 @@
     margin-bottom: -72px;
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) {
+  .tracker .topbar.appbar-fade-capable.appbar-at-top {
     background-color: rgb(20 33 49 / 12%);
     box-shadow: none;
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .brand,
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a,
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-icon-link {
+  .tracker .topbar.appbar-fade-capable.appbar-at-top.appbar-hidden {
+    transition: transform .22s ease, background-color 0s, box-shadow 0s;
+  }
+
+  .tracker .topbar.appbar-fade-capable.appbar-at-top .brand,
+  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-nav a,
+  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-icon-link {
     color: #e1effb;
     text-shadow: 0 1px 4px rgb(3 13 24 / 60%);
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a.active {
+  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-nav a.active {
     color: #89d3fa;
   }
 
