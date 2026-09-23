@@ -57,7 +57,6 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
-      <span>AnyList</span>
     </a>
     <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} transition:persist="desktop-main-nav">
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
