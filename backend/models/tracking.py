@@ -58,6 +58,7 @@ class TrackingPreferences(Base):
     default_sort: Mapped[str] = mapped_column(String(16), default="title", server_default="title")
     low_priority_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     low_priority_retention_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
+    show_new_ratings_popup: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
 class SyncReview(Base):

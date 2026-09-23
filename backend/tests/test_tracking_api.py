@@ -908,14 +908,17 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'auto_confirm':False,'combine_lists':True,
             'default_sort':'title',
             'low_priority_notifications':True,'low_priority_retention_days':7,
+            'show_new_ratings_popup':True,
         })
         changed=await self.client.patch('/tracking/preferences',json={
-            'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,'low_priority_retention_days':14,
+            'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,
+            'low_priority_retention_days':14,'show_new_ratings_popup':False,
         })
         self.assertEqual(changed.status_code,200,changed.text)
         self.assertFalse(changed.json()['combine_lists'])
         self.assertEqual(changed.json()['default_sort'],'updated')
         self.assertEqual(changed.json()['low_priority_retention_days'],14)
+        self.assertFalse(changed.json()['show_new_ratings_popup'])
         invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
         self.assertEqual(invalid.status_code,422,invalid.text)
 

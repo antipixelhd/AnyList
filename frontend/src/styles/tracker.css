@@ -101,6 +101,9 @@ body.settings-app{--color-bg-page:var(--bg);--color-bg-card:var(--panel);--color
 .review-inbox-tools .review-preferences label{margin-top:14px}
 .review-inbox-tools .retention-field{display:grid;gap:6px}
 .review-inbox-tools .retention-field select{width:100%;min-width:0}
+.review-inbox-tools .inbox-days-select{min-height:40px;padding:9px 38px 9px 12px;border:1px solid #30475d;border-radius:5px;background-color:#0d1926;color:var(--bright);font-size:13px;line-height:1.3;cursor:pointer;transition:border-color .15s,background-color .15s}
+.review-inbox-tools .inbox-days-select:hover{border-color:#4b7694;background-color:#112236}
+.review-inbox-tools .inbox-days-select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 @media(max-width:760px){.review-dashboard .dashboard-columns{display:flex;flex-direction:column}.review-dashboard .dashboard-columns>section,.review-inbox-tools{width:100%}}
 .connection-queue{border:1px solid #203347;border-radius:5px;background:#111e2c;overflow:hidden}
 .connection-queue>summary{list-style:none;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text)}

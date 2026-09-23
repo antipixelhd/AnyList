@@ -135,6 +135,7 @@ class PreferencePatch(BaseModel):
     default_sort: Literal['title', 'score', 'progress', 'updated'] | None = None
     low_priority_notifications: bool | None = None
     low_priority_retention_days: int | None = Field(None, ge=1, le=90)
+    show_new_ratings_popup: bool | None = None
 
 
 @router.get('/preferences')
@@ -146,6 +147,7 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
         'default_sort': 'title' if row is None else row.default_sort,
         'low_priority_notifications': True if row is None else row.low_priority_notifications,
         'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
+        'show_new_ratings_popup': True if row is None else row.show_new_ratings_popup,
     }
 
 

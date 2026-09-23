@@ -42,6 +42,10 @@ document.addEventListener('astro:page-load', () => {
   const isNotificationsPage = () => location.pathname === '/recent-events';
   let visibleIds: string[] = [];
   let currentRatings: any[] = [];
+  let showNewRatingsPopup = false;
+  let preferencesLoaded = false;
+  let preferenceChangedLocally = false;
+  let lastSnapshot: NotificationSnapshot | null = null;
   const hide = (acknowledge = true) => {
     if (acknowledge) writeAcknowledged(visibleIds);
     prompt.hidden = true;
@@ -71,9 +75,13 @@ document.addEventListener('astro:page-load', () => {
   }, { signal: pageListeners.signal });
 
   const renderPrompt = (data: NotificationSnapshot) => {
+    lastSnapshot = data;
+    if (!preferencesLoaded) { prompt.hidden = true; return; }
     const acknowledged = readAcknowledged();
     const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high');
-    const ratings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media);
+    const allRatings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media);
+    if (!showNewRatingsPopup) writeAcknowledged(allRatings.map(token));
+    const ratings = showNewRatingsPopup ? allRatings : [];
     const eligible = [...conflicts, ...ratings];
     // Being on Notifications acknowledges items present in each live snapshot.
     // A later snapshot after leaving will still contain fresh, unacknowledged IDs.
@@ -148,6 +156,29 @@ document.addEventListener('astro:page-load', () => {
     }
     prompt.hidden = false;
   };
+  document.addEventListener('anylist:rating-popup-preference', event => {
+    preferenceChangedLocally = true;
+    showNewRatingsPopup = Boolean((event as CustomEvent<{enabled: boolean}>).detail?.enabled);
+    preferencesLoaded = true;
+    if (lastSnapshot) renderPrompt(lastSnapshot);
+  }, { signal: pageListeners.signal });
+  void fetch('/api/proxy/tracking/preferences', {cache: 'no-store', signal: pageListeners.signal})
+    .then(response => response.ok ? response.json() : Promise.reject(new Error('Preferences unavailable')))
+    .then(preferences => {
+      if (pageListeners.signal.aborted) return;
+      if (preferenceChangedLocally) return;
+      showNewRatingsPopup = preferences.show_new_ratings_popup !== false;
+      preferencesLoaded = true;
+      if (lastSnapshot) renderPrompt(lastSnapshot);
+    })
+    .catch(error => {
+      if (pageListeners.signal.aborted) return;
+      if (preferenceChangedLocally) return;
+      console.debug('Rating popup preference refresh deferred.', error);
+      showNewRatingsPopup = true;
+      preferencesLoaded = true;
+      if (lastSnapshot) renderPrompt(lastSnapshot);
+    });
   subscribeNotifications(renderPrompt, {signal: pageListeners.signal});
 });
 </script>

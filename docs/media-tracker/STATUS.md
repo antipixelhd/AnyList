@@ -1,5 +1,13 @@
 # AnyList implementation status
 
+## Notifications sidebar and rating popup preference (2026-09-23)
+
+The Notifications sidebar now uses the shared AnyList field styling for its retention-days selector. Its existing-history import action has moved to a Watch History section immediately below Import in Settings → Connections, with inline progress and result feedback.
+
+Inbox preferences now include “Show new ratings popup,” enabled by default. Turning it off suppresses only the bottom-right rating prompt and acknowledges rating prompts seen while disabled so they do not appear later when reenabled. Rating requests remain in the ordinary Notifications list, and high-priority needs-review prompts still appear. The preference is stored per user through migration `mt019`.
+
+Local verification: migration to `mt019` and the focused preference API test passed against a disposable PostgreSQL database; the frontend production build and `git diff --check` passed. No VPS or provider writes were made.
+
 ## Responsive artwork (2026-09-23)
 
 TMDB artwork across both frontend layouts now offers `srcset` candidates from the image sizes accepted by the existing backend proxy, with `sizes` matched to each rendered slot. This covers server-rendered cards, grids, detail artwork and the title backdrop, plus images inserted by search, notifications, connections, dialogs, and hover previews. Compact/grid switches update the requested image size. Direct TMDB paths remain direct and proxied paths remain proxied; TheTVDB and rating-overlay posters continue as single-source images because those providers have no supported size variants in this app. Browser HTTP caching and the server image cache are unchanged.
