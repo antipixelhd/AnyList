@@ -3,6 +3,7 @@ import '../styles/global.css';
 import '../styles/tracker.css';
 import '../styles/checkbox.css';
 import '../styles/action-controls.css';
+import '../styles/footer.css';
 import Icon from '../components/Icon.astro';
 import AppBar from '../components/AppBar.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
@@ -59,7 +60,7 @@ if (user?.is_admin) {
       </nav>
       <main id="settings-content" class="settings-content"><slot /></main>
     </div>
-    <footer class="page-footer">AnyList</footer>
+    <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
     <PwaRuntime />
     <NavigationRuntime />
   </body>

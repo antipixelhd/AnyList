@@ -1,0 +1,82 @@
+/* The desktop app bar shares one visual scale across the site. */
+@media (min-width: 651px) {
+  .tracker .topbar {
+    transition: transform .22s ease, background-color .45s ease, box-shadow .45s ease;
+  }
+
+  .tracker .appbar-nav {
+    gap: 34px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: .005em;
+  }
+
+  .tracker .account-nav {
+    gap: 13px;
+  }
+
+  .tracker .account-nav .appbar-icon-link {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+
+  .tracker .account-nav .quick-search-trigger {
+    display: grid;
+    color: #b2c8dc;
+    font-size: 20px;
+  }
+
+  .tracker .account-nav .profile-action {
+    width: 41px;
+    height: 41px;
+    border-radius: 5px;
+    font-size: 17px;
+  }
+
+  /* The hero and banner sit beneath the transparent bar only on these routes. */
+  .tracker .topbar.appbar-fade-capable {
+    margin-bottom: -72px;
+  }
+
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) {
+    background-color: rgb(20 33 49 / 42%);
+    box-shadow: none;
+    animation: appbar-breathe 9s ease-in-out infinite;
+  }
+
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .brand,
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a,
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-icon-link {
+    color: #e1effb;
+    text-shadow: 0 1px 4px rgb(3 13 24 / 60%);
+  }
+
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a.active {
+    color: #89d3fa;
+  }
+
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):hover,
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within {
+    animation: none;
+    background-color: rgb(20 33 49 / 96%);
+    box-shadow: 0 2px 14px rgb(7 17 29 / 24%);
+  }
+
+  @keyframes appbar-breathe {
+    0%, 100% { background-color: rgb(20 33 49 / 46%); }
+    50% { background-color: rgb(20 33 49 / 30%); }
+  }
+}
+
+@media (min-width: 651px) and (max-width: 980px) {
+  .tracker .appbar-nav { gap: 15px; font-size: 14px; }
+  .tracker .account-nav { gap: 8px; }
+  .tracker .account-nav .appbar-icon-link { width: 37px; height: 37px; font-size: 16px; }
+  .tracker .account-nav .profile-action { width: 38px; height: 38px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tracker .topbar { transition: none; }
+  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) { animation: none; }
+}

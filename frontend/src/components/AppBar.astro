@@ -5,10 +5,12 @@ import TrackingEditor from './TrackingEditor.astro';
 import BrandMark from './BrandMark.astro';
 import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
+import '../styles/app-bar.css';
 
 const {user, token} = Astro.locals;
 const {initiallyHidden = false} = Astro.props;
 const pathname = Astro.url.pathname;
+const fadesAtTop = pathname.startsWith('/user/') || pathname.startsWith('/title/') || pathname.startsWith('/media/');
 const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
 let combineLists = true;
 let quietNotifications = 0;
@@ -51,7 +53,7 @@ const primaryItems = [
 const mobileSection = primaryItems.find(item => item.active)?.label
   || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : pathname.includes('settings') ? 'Settings' : 'Browse');
 ---
-<header class:list={['topbar', {'appbar-hidden': initiallyHidden}]} data-appbar>
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar>
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
@@ -122,20 +124,35 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     let previousY = Math.max(0, window.scrollY);
     let scheduled = false;
     let keyboardFocus = false;
+    let wheelDown = false;
+    const mobile = () => matchMedia('(max-width:650px)').matches;
+    const topThreshold = () => mobile() ? 16 : 0;
+    const syncTopFade = (y: number) => appbar.classList.toggle('appbar-at-top', !mobile() && y <= 0);
     document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
     document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true, signal: appbarListeners.signal });
-    window.addEventListener('wheel', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
+    window.addEventListener('wheel', event => {
+      keyboardFocus = false;
+      if (!mobile() && event.deltaY > 0) wheelDown = true;
+      if (!mobile() && event.deltaY < 0) {
+        wheelDown = false;
+        reveal();
+      }
+    }, { passive: true, signal: appbarListeners.signal });
     window.addEventListener('touchstart', () => { keyboardFocus = false; }, { passive: true, signal: appbarListeners.signal });
     const reveal = () => appbar.classList.remove('appbar-hidden');
-    if (previousY <= 16) reveal();
+    syncTopFade(previousY);
+    if (previousY <= topThreshold()) reveal();
     const update = () => {
       const currentY = Math.max(0, window.scrollY);
       const delta = currentY - previousY;
       const ownsFocus = keyboardFocus && appbar.contains(document.activeElement);
-      const hideAfter = matchMedia('(max-width:650px)').matches ? appbar.offsetHeight : 16;
-      if (currentY <= 16 || delta < -4 || ownsFocus) reveal();
-      else if (delta > 6 && currentY > hideAfter) appbar.classList.add('appbar-hidden');
+      const isMobile = mobile();
+      const hideAfter = isMobile ? appbar.offsetHeight : 0;
+      syncTopFade(currentY);
+      if (currentY <= topThreshold() || delta < -4 || ownsFocus) reveal();
+      else if ((delta > 6 || (!isMobile && wheelDown && delta > 0)) && currentY > hideAfter) appbar.classList.add('appbar-hidden');
       previousY = currentY;
+      if (currentY > hideAfter || delta < 0) wheelDown = false;
       scheduled = false;
     };
     window.addEventListener('scroll', () => {
@@ -147,8 +164,10 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     appbar.addEventListener('focusin', reveal);
     window.addEventListener('pageshow', () => {
       previousY = Math.max(0, window.scrollY);
-      if (previousY <= 16 || !document.body.hasAttribute('data-list-landing')) reveal();
+      syncTopFade(previousY);
+      if (previousY <= topThreshold() || !document.body.hasAttribute('data-list-landing')) reveal();
     }, { signal: appbarListeners.signal });
+    window.addEventListener('resize', () => syncTopFade(Math.max(0, window.scrollY)), { passive: true, signal: appbarListeners.signal });
   }
   const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
   const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');

@@ -1,0 +1,32 @@
+/* Keep short pages tall enough that the footer begins below the initial view. */
+body.tracker #content,
+body.tracker.settings-app .settings-shell {
+  min-height: 100vh;
+}
+
+body.tracker .page-footer {
+  --footer-background: #11161d;
+  display: block;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--footer-background);
+  color: #a5b4c4;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.page-footer-inner {
+  width: 100%;
+  max-width: 1340px;
+  margin: 0 auto;
+  padding: 38px 24px 48px;
+}
+
+@media (max-width: 650px) {
+  .page-footer-inner {
+    padding: 30px 20px 38px;
+  }
+}
