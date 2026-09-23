@@ -128,10 +128,29 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     const mobile = () => matchMedia('(max-width:650px)').matches;
     const topThreshold = () => mobile() ? 16 : 0;
     const syncTopFade = (y: number) => appbar.classList.toggle('appbar-at-top', !mobile() && y <= 0);
+    const clearPointerState = () => {
+      appbar.classList.remove('appbar-pointer-active');
+      appbar.querySelectorAll('.appbar-pointer-hover').forEach(link => link.classList.remove('appbar-pointer-hover'));
+    };
+    const syncPointerState = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return;
+      appbar.classList.add('appbar-pointer-active');
+      const hoveredLink = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.appbar-nav a') : null;
+      for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
+        link.classList.toggle('appbar-pointer-hover', link === hoveredLink);
+      }
+    };
     const prepareIncomingAppbar = (rawEvent: Event) => {
       const event = rawEvent as Event & { newDocument?: Document };
       const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
       if (!incomingAppbar) return;
+      const pointerActive = appbar.classList.contains('appbar-pointer-active') || appbar.matches(':hover');
+      const hoveredHref = appbar.querySelector<HTMLAnchorElement>('.appbar-nav a.appbar-pointer-hover')?.getAttribute('href')
+        ?? appbar.querySelector<HTMLAnchorElement>('.appbar-nav a:hover')?.getAttribute('href');
+      incomingAppbar.classList.toggle('appbar-pointer-active', pointerActive);
+      for (const link of incomingAppbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
+        link.classList.toggle('appbar-pointer-hover', pointerActive && link.getAttribute('href') === hoveredHref);
+      }
       const listLanding = event.newDocument?.body.hasAttribute('data-list-landing') ?? false;
       const startsTransparent = !listLanding && !mobile() && incomingAppbar.classList.contains('appbar-fade-capable');
       incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
@@ -139,6 +158,14 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       else if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
     };
     document.addEventListener('astro:before-swap', prepareIncomingAppbar, { signal: appbarListeners.signal });
+    appbar.addEventListener('pointerover', syncPointerState, { signal: appbarListeners.signal });
+    appbar.addEventListener('pointermove', syncPointerState, { signal: appbarListeners.signal });
+    appbar.addEventListener('pointerleave', clearPointerState, { signal: appbarListeners.signal });
+    window.addEventListener('blur', clearPointerState, { signal: appbarListeners.signal });
+    if (appbar.matches(':hover')) {
+      appbar.classList.add('appbar-pointer-active');
+      appbar.querySelector<HTMLAnchorElement>('.appbar-nav a:hover')?.classList.add('appbar-pointer-hover');
+    }
     document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
     document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true, signal: appbarListeners.signal });
     window.addEventListener('wheel', event => {

@@ -67,7 +67,7 @@
     color: #89d3fa;
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):hover,
+  .tracker .topbar.appbar-fade-capable.appbar-at-top.appbar-pointer-active:not(.appbar-hidden),
   .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within {
     background-color: rgb(20 33 49 / 96%);
     box-shadow: 0 2px 14px rgb(7 17 29 / 24%);

@@ -471,5 +471,5 @@ main{transition:opacity var(--content-reveal) ease}
 /* The desktop app-bar navigation uses hover feedback without marking the current route. */
 .topbar{box-shadow:none!important}
 .topbar .appbar-nav a.active{color:inherit!important}
-.topbar .appbar-nav a:hover,.topbar .appbar-nav a:focus-visible{color:var(--bright)!important}
-.topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):hover,.topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within{box-shadow:none!important}
+.topbar .appbar-nav a.appbar-pointer-hover{color:var(--bright)!important}
+.topbar.appbar-fade-capable.appbar-at-top.appbar-pointer-active:not(.appbar-hidden),.topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within{box-shadow:none!important}
