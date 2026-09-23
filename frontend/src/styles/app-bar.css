@@ -1,4 +1,8 @@
 /* The desktop app bar shares one visual scale across the site. */
+html.appbar-nav-transition-cursor {
+  cursor: pointer !important;
+}
+
 @media (min-width: 651px) {
   .tracker .topbar {
     transition: transform .22s ease, background-color 500ms ease, box-shadow 500ms ease;
