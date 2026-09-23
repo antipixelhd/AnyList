@@ -1,0 +1,189 @@
+---
+import Tracker from '../../../layouts/Tracker.astro';
+import ProfileHeader from '../../../components/ProfileHeader.astro';
+import Icon from '../../../components/Icon.astro';
+import {tracker} from '../../../lib/tracker';
+import {responsiveArtwork} from '../../../lib/responsive-artwork';
+import '../../../styles/profile-overview.css';
+import '../../../styles/favorites.css';
+
+let profile: any = null, error = '';
+try {
+  profile = await tracker(`people/${encodeURIComponent(Astro.params.username!)}`, Astro.locals.token);
+} catch (cause) {
+  error = (cause as Error).message;
+}
+const favorites: any[] = profile?.favorites ?? [];
+---
+<Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`}>
+  {profile ? <>
+    <ProfileHeader profile={profile} active="favorites" />
+    <div class="page-width favorites-page">
+      <div class="favorites-heading">
+        <div><h1>Favorites</h1><p>{profile.owner ? 'The titles you keep closest.' : `${profile.display_name}'s favorite titles.`}</p></div>
+        {profile.owner && <div class="favorites-actions" hidden={favorites.length === 0}>
+          <button type="button" class="button-secondary" data-favorites-cancel hidden>Cancel</button>
+          <button type="button" class="button-secondary" data-favorites-reorder>Reorder</button>
+        </div>}
+      </div>
+      <p class="error-message" role="alert" data-favorites-error hidden></p>
+      <p class="favorites-instructions" data-favorites-instructions hidden>Drag cards to arrange them. Focus a card and use the arrow keys to move it.</p>
+      <span class="sr-only" aria-live="polite" data-favorites-feedback></span>
+      <div class="favorite-posters favorites-grid" data-favorites-grid hidden={favorites.length === 0}>
+        {favorites.map(item => {
+          const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
+          return <article class="favorite-card" data-favorite-card data-media-id={item.id} data-title={item.title}>
+            <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>
+              {image?.src ? <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}
+            </a>
+            {profile.owner && <button type="button" class="favorite-remove alert-icon-button" data-favorite-remove={item.id} aria-label={`Remove ${item.title} from favorites`} title={`Remove ${item.title} from favorites`}><Icon name="close"/></button>}
+          </article>;
+        })}
+      </div>
+      <div class="empty-state" data-favorites-empty hidden={favorites.length > 0}>
+        <h2>No favorites yet</h2>
+        <p>{profile.owner ? 'Mark a title as a favorite to see it here.' : `${profile.display_name} has not added any favorites.`}</p>
+        {profile.owner && <a class="button-primary" href="/browse">Browse titles</a>}
+      </div>
+    </div>
+  </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
+</Tracker>
+<script>
+let favoritePageListeners: AbortController;
+document.addEventListener('astro:page-load', () => {
+  favoritePageListeners?.abort();
+  favoritePageListeners = new AbortController();
+  const page = document.querySelector<HTMLElement>('.favorites-page');
+  const grid = page?.querySelector<HTMLElement>('[data-favorites-grid]');
+  if (!page || !grid) return;
+  const reorder = page.querySelector<HTMLButtonElement>('[data-favorites-reorder]');
+  const cancel = page.querySelector<HTMLButtonElement>('[data-favorites-cancel]');
+  const actions = page.querySelector<HTMLElement>('.favorites-actions');
+  const instructions = page.querySelector<HTMLElement>('[data-favorites-instructions]')!;
+  const error = page.querySelector<HTMLElement>('[data-favorites-error]')!;
+  const feedback = page.querySelector<HTMLElement>('[data-favorites-feedback]')!;
+  let savedOrder = [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')].map(card => card.dataset.mediaId!);
+  let dragging: HTMLElement | null = null;
+  const cards = () => [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')];
+  const order = () => cards().map(card => card.dataset.mediaId!);
+  const report = (message: string) => { feedback.textContent = message; };
+  const setReordering = (active: boolean) => {
+    page.dataset.reordering = String(active);
+    if (reorder) reorder.textContent = active ? 'Save Order' : 'Reorder';
+    if (cancel) cancel.hidden = !active;
+    instructions.hidden = !active;
+    cards().forEach(card => { if (active) card.tabIndex = 0; else card.removeAttribute('tabindex'); });
+    error.hidden = true;
+  };
+  const updateEmpty = () => {
+    const hasCards = cards().length > 0;
+    grid.hidden = !hasCards;
+    page.querySelector<HTMLElement>('[data-favorites-empty]')!.hidden = hasCards;
+    if (actions) actions.hidden = !hasCards;
+  };
+
+  reorder?.addEventListener('click', async () => {
+    if (page.dataset.reordering !== 'true') { setReordering(true); return; }
+    const current = order();
+    if (current.join(',') === savedOrder.join(',')) { setReordering(false); return; }
+    reorder.disabled = true;
+    if (cancel) cancel.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch('/api/proxy/tracking/favorites/order', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({media_ids: current.map(Number)}),
+      });
+      if (!response.ok) {
+        const details = await response.json().catch(() => null);
+        throw new Error(typeof details?.detail === 'string' ? details.detail : 'Could not save favorite order.');
+      }
+      savedOrder = current;
+      setReordering(false);
+      report('Favorite order saved.');
+    } catch (cause) {
+      error.textContent = cause instanceof Error ? cause.message : 'Could not save favorite order.';
+      error.hidden = false;
+    } finally {
+      reorder.disabled = false;
+      if (cancel) cancel.disabled = false;
+    }
+  }, {signal: favoritePageListeners.signal});
+
+  cancel?.addEventListener('click', () => {
+    const byId = new Map(cards().map(card => [card.dataset.mediaId!, card]));
+    savedOrder.forEach(id => { const card = byId.get(id); if (card) grid.append(card); });
+    setReordering(false);
+    report('Favorite order unchanged.');
+  }, {signal: favoritePageListeners.signal});
+
+  page.addEventListener('click', async event => {
+    if (page.dataset.reordering === 'true' && (event.target as HTMLElement).closest('.favorite-card')) {
+      event.preventDefault();
+      return;
+    }
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-favorite-remove]');
+    if (!button || page.dataset.reordering === 'true') return;
+    button.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch(`/api/proxy/tracking/entry/${button.dataset.favoriteRemove}`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({favorite: false}),
+      });
+      if (!response.ok) {
+        const details = await response.json().catch(() => null);
+        throw new Error(typeof details?.detail === 'string' ? details.detail : 'Could not remove this favorite.');
+      }
+      const card = button.closest<HTMLElement>('[data-favorite-card]')!;
+      const title = card.dataset.title || 'Title';
+      card.remove();
+      savedOrder = order();
+      updateEmpty();
+      report(`${title} removed from favorites.`);
+      document.dispatchEvent(new CustomEvent('anylist:data-changed'));
+    } catch (cause) {
+      error.textContent = cause instanceof Error ? cause.message : 'Could not remove this favorite.';
+      error.hidden = false;
+      button.disabled = false;
+    }
+  }, {signal: favoritePageListeners.signal});
+
+  page.addEventListener('pointerdown', event => {
+    if (page.dataset.reordering !== 'true' || event.button !== 0) return;
+    const card = (event.target as HTMLElement).closest<HTMLElement>('[data-favorite-card]');
+    if (!card) return;
+    event.preventDefault();
+    dragging = card;
+    card.classList.add('is-dragging');
+    card.setPointerCapture(event.pointerId);
+  }, {signal: favoritePageListeners.signal});
+  page.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-favorite-card]');
+    if (!target || target === dragging || target.parentElement !== grid) return;
+    const current = cards();
+    if (current.indexOf(dragging) < current.indexOf(target)) target.after(dragging);
+    else target.before(dragging);
+  }, {signal: favoritePageListeners.signal});
+  const stopDragging = () => { dragging?.classList.remove('is-dragging'); dragging = null; };
+  page.addEventListener('pointerup', stopDragging, {signal: favoritePageListeners.signal});
+  page.addEventListener('pointercancel', stopDragging, {signal: favoritePageListeners.signal});
+  page.addEventListener('keydown', event => {
+    if (page.dataset.reordering !== 'true') return;
+    if (event.key === 'Escape') { cancel?.click(); return; }
+    if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+    const card = (event.target as HTMLElement).closest<HTMLElement>('[data-favorite-card]');
+    if (!card) return;
+    const current = cards();
+    const index = current.indexOf(card);
+    const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+    const neighbor = current[index + direction];
+    if (!neighbor) return;
+    event.preventDefault();
+    if (direction < 0) neighbor.before(card); else neighbor.after(card);
+    card.focus();
+    report(`${card.dataset.title} moved to position ${index + direction + 1}.`);
+  }, {signal: favoritePageListeners.signal});
+});
+</script>

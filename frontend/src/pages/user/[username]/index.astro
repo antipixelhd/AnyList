@@ -16,12 +16,6 @@ const highlights=profile?[
   {label:'Average score',value:profile.average_score==null?'—':scoreLabel(profile.average_score),detail:`${profile.counts.rated} rated`},
 ]:[];
 const favorites:any[]=profile?.favorites||[];
-const favoriteGroups=profile?.combine_lists===false
-  ? [
-      {label:'Movies',items:favorites.filter((item:any)=>item.type==='movie')},
-      {label:'Series',items:favorites.filter((item:any)=>item.type==='series')},
-    ].filter(group=>group.items.length)
-  : [{label:'Movies/Series',items:favorites}].filter(group=>group.items.length);
 ---
 <Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
   <div class="profile-overview-left">
@@ -29,8 +23,8 @@ const favoriteGroups=profile?.combine_lists===false
       <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
     </section>
     {profile.bio && <section class="overview-bio" aria-labelledby="profile-bio-heading"><div class="section-heading"><h2 id="profile-bio-heading">Bio</h2></div><div class="profile-bio" set:html={renderProfileBio(profile.bio)} />}</section>}
-    {favoriteGroups.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2></div>
-      {favoriteGroups.map(group=><div class="favorite-group"><h3>{group.label}</h3><div class="favorite-posters">{group.items.map((item:any)=>{const image=responsiveArtwork(item.poster,{size:'w342',sizes:'(max-width:700px) 30vw, 130px',route:'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}</a>})}</div></div>)}
+    {favorites.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2></div>
+      <div class="favorite-posters">{favorites.map((item:any)=>{const image=responsiveArtwork(item.poster,{size:'w342',sizes:'(max-width:700px) 30vw, 130px',route:'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}</a>})}</div>
     </section>}
   </div>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>

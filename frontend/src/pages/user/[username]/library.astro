@@ -4,8 +4,10 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
+import {hasStreamingLibraryConnection} from '../../../lib/streaming-library-availability';
 
 if (Astro.locals.user?.username !== Astro.params.username) return Astro.redirect('/login');
+if (!await hasStreamingLibraryConnection(Astro.locals.token)) return Astro.redirect(`/user/${encodeURIComponent(Astro.params.username!)}/`);
 
 let profile: any = null, entries: any[] = [], error = '';
 try {
@@ -40,7 +42,7 @@ const sections = [
                   {image?.src && <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>}
                   <h3>{entry.title}</h3>
                 </a>
-                <button type="button" class="library-remove" data-library-remove={entry.id} aria-label={`Remove ${entry.title} from library`} title={`Remove ${entry.title} from library`}><Icon name="close"/></button>
+                <button type="button" class="library-remove alert-icon-button" data-library-remove={entry.id} aria-label={`Remove ${entry.title} from library`} title={`Remove ${entry.title} from library`}><Icon name="close"/></button>
               </article>;
             })}
           </div>

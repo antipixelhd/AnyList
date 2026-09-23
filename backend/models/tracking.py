@@ -77,6 +77,7 @@ class TrackingPreferences(Base):
     low_priority_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     low_priority_retention_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
     show_new_ratings_popup: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    favorite_order: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
 
 
 class SyncReview(Base):

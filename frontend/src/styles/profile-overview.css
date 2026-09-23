@@ -79,17 +79,6 @@
 .overview-bio .profile-bio pre { max-width: 100%; overflow-x: auto; padding: 12px; border-radius: 4px; background: #101c29; }
 .overview-bio .profile-bio img { max-width: 100%; height: auto; }
 
-.favorite-group + .favorite-group {
-  margin-top: 18px;
-}
-
-.favorite-group h3 {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .favorite-posters {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(76px, 96px));

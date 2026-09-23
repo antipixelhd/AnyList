@@ -3,6 +3,7 @@ import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
 import {tracker} from '../lib/tracker';
+import {hasStreamingLibraryConnection} from '../lib/streaming-library-availability';
 let activities:any[]=[],activityCursor='',error='',pending:number|null=null,combineLists=true;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const [activityResult,eventResult,preferenceResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token),tracker('preferences',Astro.locals.token)]);
@@ -11,13 +12,14 @@ else error=activityResult.reason.message;
 if(eventResult.status==='fulfilled')pending=eventResult.value.pending;
 if(preferenceResult.status==='fulfilled')combineLists=preferenceResult.value.combine_lists!==false;
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
+const showLibrary=await hasStreamingLibraryConnection(Astro.locals.token);
 ---
 <Tracker title="Home"><div class="page-width dashboard">
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse">Find your next title</a></header>
   <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-cursor={activityCursor}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
   </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events" data-notification-summary><span class="eyebrow">Notifications</span><strong data-notification-summary-title>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p data-notification-summary-message>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
-  <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a></div></aside></div>
+  <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}{showLibrary&&<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a>}</div></aside></div>
 </div>
 <template id="activity-card-template"><article class="visual-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>

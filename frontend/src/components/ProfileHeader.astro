@@ -1,13 +1,15 @@
 ---
 const {profile,active='overview'}=Astro.props;
 const base=`/user/${encodeURIComponent(profile.username)}`;
+import {hasStreamingLibraryConnection} from '../lib/streaming-library-availability';
+const showLibrary=profile.owner&&await hasStreamingLibraryConnection(Astro.locals.token);
 ---
 <section class="profile-hero"><div class="profile-identity">
 {profile.has_avatar?<img class="profile-avatar" src={`/api/proxy/profile/avatar/${profile.id}`} alt=""/>:<div class="profile-avatar" aria-hidden="true">{profile.display_name.slice(0,1).toUpperCase()}</div>}
 <div><h1 style="transform: translateY(-15px)">{profile.display_name}</h1></div>
 {!profile.owner&&Astro.locals.user&&<button class="button-primary" id="follow-profile" data-user={profile.id} data-following={profile.following?'yes':'no'}>{profile.following?'Following':'Follow'}</button>}
 </div></section>
-<nav class="profile-tabs" aria-label="Profile" data-profile-owner={profile.owner?'yes':'no'} data-profile-base={base}><a href={base} class:list={{active:active==='overview'}} aria-current={active==='overview'?'page':undefined}>Overview</a>{profile.combine_lists!==false?<a href={`${base}/list`} class:list={{active:active==='list'}} aria-current={active==='list'?'page':undefined}>Movie/Series List</a>:<><a href={`${base}/movies`} class:list={{active:active==='movies'}} aria-current={active==='movies'?'page':undefined}>Movie List</a><a href={`${base}/series`} class:list={{active:active==='series'}} aria-current={active==='series'?'page':undefined}>Series List</a></>}<a href={`${base}/stats`} class:list={{active:active==='stats'}} aria-current={active==='stats'?'page':undefined}>Stats</a>{profile.owner&&<a href={`${base}/library`} class:list={{active:active==='library'}} aria-current={active==='library'?'page':undefined}>Library</a>}<a href={`${base}/social`} class:list={{active:active==='social'}} aria-current={active==='social'?'page':undefined}>Social</a></nav>
+<nav class="profile-tabs" aria-label="Profile" data-profile-owner={profile.owner?'yes':'no'} data-profile-base={base}><a href={base} class:list={{active:active==='overview'}} aria-current={active==='overview'?'page':undefined}>Overview</a>{profile.combine_lists!==false?<a href={`${base}/list`} class:list={{active:active==='list'}} aria-current={active==='list'?'page':undefined}>Movie/Series List</a>:<><a href={`${base}/movies`} class:list={{active:active==='movies'}} aria-current={active==='movies'?'page':undefined}>Movie List</a><a href={`${base}/series`} class:list={{active:active==='series'}} aria-current={active==='series'?'page':undefined}>Series List</a></>}<a href={`${base}/favorites`} class:list={{active:active==='favorites'}} aria-current={active==='favorites'?'page':undefined}>Favorites</a><a href={`${base}/stats`} class:list={{active:active==='stats'}} aria-current={active==='stats'?'page':undefined}>Stats</a>{showLibrary&&<a href={`${base}/library`} class:list={{active:active==='library'}} aria-current={active==='library'?'page':undefined}>Library</a>}<a href={`${base}/social`} class:list={{active:active==='social'}} aria-current={active==='social'?'page':undefined}>Social</a></nav>
 <script>
 document.addEventListener('astro:page-load', () => {
 const tabs = document.querySelector<HTMLElement>('.profile-tabs');
@@ -18,11 +20,11 @@ document.addEventListener('anylist:combine-lists-changed', rawEvent => {
  const combined = (rawEvent as CustomEvent<{combineLists:boolean}>).detail.combineLists;
  const base = tabs.dataset.profileBase!;
  tabs.querySelectorAll(`a[href="${base}/list"], a[href="${base}/movies"], a[href="${base}/series"]`).forEach(link => link.remove());
- const stats = tabs.querySelector(`a[href="${base}/stats"]`);
+ const favorites = tabs.querySelector(`a[href="${base}/favorites"]`);
  for (const [path,label] of (combined ? [['list','Movie/Series List']] : [['movies','Movie List'],['series','Series List']])) {
    const link = document.createElement('a'); link.href = `${base}/${path}`; link.textContent = label;
    if (location.pathname === link.pathname) { link.classList.add('active'); link.setAttribute('aria-current','page'); }
-   stats?.before(link);
+   favorites?.before(link);
  }
 }, { signal: controller.signal });
 document.querySelector<HTMLButtonElement>('#follow-profile')?.addEventListener('click',async event=>{

@@ -285,6 +285,10 @@ body.tracker{font-size:14px;line-height:1.55}
 .editor-favorite .ui-icon{font-size:21px;pointer-events:none}
 .editor-favorite:has(input:checked){color:#ef81a5!important}
 .editor-favorite:has(input:focus-visible){outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.editor-library{border:0;background:transparent;color:#d6e2ed}
+.editor-library .ui-icon{font-size:20px}
+.editor-library.is-active{color:var(--blue)}
+.editor-library:disabled{opacity:.55;cursor:wait}
 .editor-save{min-width:76px;min-height:40px;padding:9px 17px}
 .editor form{padding:52px 36px 22px}
 .editor-fields{column-gap:30px;row-gap:20px}

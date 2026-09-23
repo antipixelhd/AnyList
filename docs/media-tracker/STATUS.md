@@ -739,3 +739,11 @@ Verification used a separately migrated disposable PostgreSQL database: all 95 t
 Visible native checkboxes across AnyList now use the same AniList-inspired light square and blue checked state. The background and checkmark size animate in both directions, with a reduced-motion fallback and a visible keyboard focus outline. Existing switches, filter chips, hidden tag inputs, and the favorite heart keep their dedicated visuals. The shared CSS is loaded by all three page layouts.
 
 The frontend production build passed. A local browser rendering check confirmed the unchecked, checked, and disabled visuals, 16px sizing, and the two-way transition properties.
+
+## Favorites tab and connected Library visibility (2026-09-23)
+
+Profiles now show Favorites immediately after the movie/series list tabs. The new poster grid uses the overview's visual treatment, adds an alert-colored hover/focus X for owner removal, and lets the owner drag cards or use arrow keys in Reorder mode. Save Order persists the sequence, which also controls the overview favorites; Cancel restores the previous sequence. The same reusable alert X style is applied to Library cards. A new tracking-preferences migration stores favorite order.
+
+The Library tab, Home shortcut, title-page Library button, and list-editor Library icon are shown only when the owner has a Stremio or Nuvio connection. The direct Library page redirects to the profile while neither is connected. The editor's icon toggles membership in place and coalesces repeated clicks to the final state.
+
+The frontend build and all 97 tracking API tests passed on a separately migrated disposable PostgreSQL database. Local browser checks verified connected and unconnected visibility, desktop and phone Favorites layouts, drag and keyboard reordering, Save/Cancel behavior, persisted overview order, and X removal with a mocked response. The preview account's original favorite order was restored after testing.

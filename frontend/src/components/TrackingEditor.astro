@@ -9,6 +9,7 @@ import Icon from './Icon.astro';
     <img id="editor-poster" class="editor-poster" alt="" />
     <div class="editor-heading"><span id="editor-media-type">Entry</span><h2 id="editor-title">Edit entry</h2></div>
     <div class="editor-hero-actions">
+      <button type="button" class="editor-library editor-icon-button" data-editor-library hidden aria-label="Add to library" aria-pressed="false"><Icon name="list" /></button>
       <label class="editor-favorite" title="Favorite"><input name="favorite" type="checkbox" form="tracking-form" aria-label="Favorite"/><Icon name="heart" /></label>
       <button type="submit" form="tracking-form" class="button-primary editor-save">Save</button>
     </div>
@@ -53,6 +54,13 @@ document.addEventListener('astro:page-load', () => {
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
   let displayedScore = '';
+  const libraryButton = dialog.querySelector<HTMLButtonElement>('[data-editor-library]')!;
+  let libraryRequest: AbortController | null = null;
+  let libraryDesired = false;
+  let libraryCommitted = false;
+  let libraryRevision = 0;
+  let libraryEpoch = 0;
+  let librarySyncing = false;
   const retained = new Map<number, any>((JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]') as any[]).map(entry => [entry.id, entry]));
   // The embedded list entries are only a first-load shortcut. A quick rating or
   // another in-place write makes them stale even while this page stays mounted.
@@ -127,9 +135,77 @@ document.addEventListener('astro:page-load', () => {
     field('manual_score').value = calculatedScore == null ? '' : String(current.rating_mode === 'average' ? Number(Number(calculatedScore).toFixed(1)) : calculatedScore);
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
+    loadLibraryState(current.id);
     field('progress').disabled = title.type === 'movie';
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
     saveButton.disabled = false;
+  }
+  async function loadLibraryState(mediaId: number) {
+    libraryRequest?.abort();
+    const epoch = ++libraryEpoch;
+    librarySyncing = false;
+    const controller = new AbortController();
+    libraryRequest = controller;
+    libraryButton.hidden = true;
+    libraryButton.disabled = true;
+    try {
+      const response = await fetch(`/api/proxy/tracking/library/${mediaId}`, {signal: controller.signal});
+      if (!response.ok) return;
+      const state = await response.json();
+      if (libraryRequest !== controller || libraryEpoch !== epoch || current?.id !== mediaId) return;
+      if (!Array.isArray(state.connections) || state.connections.length === 0) return;
+      libraryDesired = state.desired === true;
+      libraryCommitted = libraryDesired;
+      renderLibraryButton();
+      libraryButton.hidden = false;
+      libraryButton.disabled = false;
+    } catch (cause) { if ((cause as Error).name !== 'AbortError') console.warn('Could not load streaming-library state.', cause); }
+  }
+  function renderLibraryButton() {
+    libraryButton.setAttribute('aria-pressed', String(libraryDesired));
+    libraryButton.setAttribute('aria-label', libraryDesired ? 'Remove from library' : 'Add to library');
+    libraryButton.title = libraryDesired ? 'Remove from library' : 'Add to library';
+    libraryButton.classList.toggle('is-active', libraryDesired);
+  }
+  libraryButton.addEventListener('click', () => {
+    if (!current || libraryButton.disabled) return;
+    libraryDesired = !libraryDesired;
+    libraryRevision++;
+    renderLibraryButton();
+    void syncLibraryIntent(current.id, libraryEpoch);
+  });
+  async function syncLibraryIntent(mediaId: number, epoch: number) {
+    if (librarySyncing || epoch !== libraryEpoch) return;
+    librarySyncing = true;
+    libraryButton.setAttribute('aria-busy', 'true');
+    while (epoch === libraryEpoch && current?.id === mediaId && libraryDesired !== libraryCommitted) {
+      const target = libraryDesired;
+      const revision = libraryRevision;
+      try {
+        const response = await fetch(`/api/proxy/tracking/library/${mediaId}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({in_library:target})});
+        if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(typeof data?.detail === 'string' ? data.detail : 'Could not update the streaming library.'); }
+        const state = await response.json();
+        if (epoch !== libraryEpoch || current?.id !== mediaId) return;
+        libraryCommitted = state.desired === true;
+        if (revision === libraryRevision) libraryDesired = libraryCommitted;
+        renderLibraryButton();
+        document.dispatchEvent(new CustomEvent('anylist:data-changed'));
+      } catch (cause) {
+        if (epoch !== libraryEpoch || current?.id !== mediaId) return;
+        if (revision === libraryRevision) {
+          libraryDesired = libraryCommitted;
+          renderLibraryButton();
+          error.textContent = cause instanceof Error ? cause.message : 'Could not update the streaming library.';
+          error.hidden = false;
+          break;
+        }
+        // A newer click arrived during this failed write; try to apply that final intent.
+      }
+    }
+    if (epoch === libraryEpoch) {
+      librarySyncing = false;
+      libraryButton.removeAttribute('aria-busy');
+    }
   }
   async function openEditor(mediaId: number, button: HTMLElement) {
     if (!Number.isSafeInteger(mediaId) || mediaId <= 0) return;
@@ -137,6 +213,11 @@ document.addEventListener('astro:page-load', () => {
     form.reset();
     syncStatus(); closeStatus();
     current = null;
+    libraryRequest?.abort();
+    libraryRequest = null;
+    libraryEpoch++;
+    librarySyncing = false;
+    libraryButton.hidden = true;
     opener = button;
     const listRow = button.closest<HTMLElement>('.entry-row');
     if (listRow) {
@@ -188,7 +269,7 @@ document.addEventListener('astro:page-load', () => {
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
   dialog.addEventListener('close', () => {
-    loadController?.abort(); loadController = null; current = null; displayedScore = ''; form.reset();
+    loadController?.abort(); loadController = null; libraryRequest?.abort(); libraryRequest = null; libraryEpoch++; librarySyncing = false; libraryButton.hidden = true; libraryButton.disabled = true; libraryButton.removeAttribute('aria-busy'); current = null; displayedScore = ''; form.reset();
     const listRow = opener?.closest<HTMLElement>('.entry-row');
     if (listRow) {
       const sectionHeading = listRow.closest<HTMLElement>('.status-section')?.querySelector<HTMLElement>('h2');

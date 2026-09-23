@@ -525,6 +525,10 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     if not await anime_is_visible(db):
         activity_rows = [row for row in activity_rows if not is_anime(row[1])]
     prefs=await db.get(TrackingPreferences,user.id)
+    favorite_entries = [(e, m, index) for index, (e, m) in enumerate(entries) if e.favorite]
+    favorite_order = list((prefs.favorite_order if prefs else None) or [])
+    order_index = {media_id: index for index, media_id in enumerate(favorite_order)}
+    favorite_entries.sort(key=lambda row: (order_index.get(row[0].media_id, len(order_index)), row[2]))
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),"has_avatar":bool(user.profile and user.profile.avatar_path),
         "combine_lists":True if prefs is None else prefs.combine_lists,
@@ -532,8 +536,41 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
                   "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids),
                   "favorites":sum(e.favorite for e,m in entries),"rated":len(scores)},
         "average_score":round(sum(scores)/len(scores),1) if scores else None,
-        "favorites":[media_data(m) for e,m in entries if e.favorite],"people":visible,
+        "favorites":[media_data(m) for e,m,_ in favorite_entries],"people":visible,
         "recent_activity":activity_data(activity_rows,limit=12)}
+
+
+class FavoriteOrderBody(BaseModel):
+    media_ids: list[int] = Field(max_length=500)
+
+    @field_validator("media_ids")
+    @classmethod
+    def unique_media_ids(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("media_ids must not contain duplicates")
+        return value
+
+
+@router.put('/favorites/order')
+async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    favorite_rows = (await db.execute(select(TrackedEntry.media_id, Media).join(
+        Media, Media.id == TrackedEntry.media_id
+    ).where(TrackedEntry.user_id == viewer.id, TrackedEntry.favorite.is_(True)))).all()
+    show_anime = await anime_is_visible(db)
+    visible_ids = {media_id for media_id, media in favorite_rows if show_anime or not is_anime(media)}
+    hidden_ids = {media_id for media_id, media in favorite_rows if not show_anime and is_anime(media)}
+    requested_ids = set(body.media_ids)
+    if requested_ids != visible_ids:
+        raise HTTPException(409, 'Favorite order must include every visible favorite exactly once')
+    prefs = await db.get(TrackingPreferences, viewer.id)
+    if prefs is None:
+        prefs = TrackingPreferences(user_id=viewer.id)
+        db.add(prefs)
+    existing_hidden = [media_id for media_id in (prefs.favorite_order or []) if media_id in hidden_ids]
+    new_hidden = [media_id for media_id, _ in favorite_rows if media_id in hidden_ids and media_id not in existing_hidden]
+    prefs.favorite_order = [*body.media_ids, *existing_hidden, *new_hidden]
+    await db.commit()
+    return {"media_ids": body.media_ids}
 
 
 @router.get('/people-search')

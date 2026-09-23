@@ -117,6 +117,31 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def save(self, media, **body):
         return await self.client.patch(f'/tracking/entry/{media.id}',json=body)
 
+    async def test_favorites_can_be_reordered_and_profile_reads_saved_order(self):
+        other = Media(title='Second Fixture Film', media_type=MediaType.movie)
+        self.db.add(other)
+        await self.db.flush()
+        self.db.add_all([
+            TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='planning', favorite=True),
+            TrackedEntry(user_id=self.owner.id, media_id=other.id, status='planning', favorite=True),
+        ])
+        await self.db.commit()
+
+        saved = await self.client.put('/tracking/favorites/order', json={'media_ids': [other.id, self.movie.id]})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        profile = await self.client.get(f'/tracking/people/{self.owner.username}')
+        self.assertEqual(profile.status_code, 200, profile.text)
+        self.assertEqual([item['id'] for item in profile.json()['favorites']], [other.id, self.movie.id])
+
+    async def test_favorite_order_rejects_missing_duplicate_and_nonfavorite_ids(self):
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='planning', favorite=True))
+        await self.db.commit()
+        for ids in ([], [self.show.id]):
+            response = await self.client.put('/tracking/favorites/order', json={'media_ids': ids})
+            self.assertEqual(response.status_code, 409, response.text)
+        duplicate = await self.client.put('/tracking/favorites/order', json={'media_ids': [self.movie.id, self.movie.id]})
+        self.assertEqual(duplicate.status_code, 422, duplicate.text)
+
     async def test_planning_rating_and_private_notes(self):
         res=await self.save(self.movie,status='planning',manual_score=7.5,notes='private journal')
         self.assertEqual(res.status_code,200,res.text)
