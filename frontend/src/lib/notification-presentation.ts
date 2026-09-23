@@ -20,6 +20,9 @@ export const eventIcon = (event: any) => event.kind === 'rating_needed' ? 'star'
 export const eventBadge = (event: any) => event.kind === 'connection_failure' ? 'Connection issue' : event.state === 'pending' ? 'Needs review' : undefined;
 export const eventHref = (event: any) => event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
 export const eventImage = (event: any) => event.media?.poster || null;
+export const eventCanChooseStatus = (event: any) => Boolean(event.media && event.previous_status && event.proposed_status && event.previous_status !== event.proposed_status && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
+export const eventCanKeepPrevious = (event: any) => Boolean(event.media && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
+export const eventMessage = (event: any) => event.kind === 'rating_needed' || (event.state === 'pending' && (eventCanChooseStatus(event) || event.kind === 'rating_conflict')) ? undefined : event.message;
 export const historyChanges = (event: any) => (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
 export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress' } as Record<string, string>)[field] || field;
 export const historyValue = (value: any) => value == null || value === '' ? 'Not set' : String(value);

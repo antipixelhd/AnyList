@@ -8,6 +8,8 @@ The six focused deletion/readd and cloud reset regressions passed against a fres
 
 ## Shared visible notification refresh (2026-09-23)
 
+Pending status-review cards now use a compact four-row layout. Confirm applies the proposed status or a changed inline selection, while Keep previous remains available. Rating, deletion, import, and matching reviews retain only their relevant actions. The Astro production build passes; this change is local only.
+
 The app-bar notification badges, Home's Notifications summary, the nonmodal AttentionPrompt, and the `/recent-events` page now subscribe to one shared in-memory notification snapshot. It fetches the complete private `/tracking/recent-events` projection with no-store semantics, so newly created, changed, and resolved/removed cards are reconciled together; the separate pending connection-delivery queue remains on the Notifications page and does not inflate the app-bar badges.
 
 The shared lifecycle refreshes immediately when a surface subscribes, then only while the document is visible every 60 seconds and when the tab regains focus. Hidden pages pause polling, overlapping requests coalesce, and Astro navigation or an account switch aborts the old lifecycle and clears its private snapshot. Successful non-GET proxy mutations use the existing data-changed event to trigger an immediate refresh, with stale in-flight responses prevented from replacing newer state. No notification data is persisted in localStorage.

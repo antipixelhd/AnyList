@@ -118,6 +118,14 @@ body.settings-app{--color-bg-page:var(--bg);--color-bg-card:var(--panel);--color
 .review-dashboard .notice-list.compact .notice-visual.has-image{width:58px;height:84px;margin:0}
 .review-dashboard .notice-content h2{color:var(--blue)}
 .review-dashboard .notice-content h2 a{color:inherit}
+.review-dashboard .notice-card[data-notification-state="pending"] .notice-content{padding-top:11px;padding-bottom:11px}
+.review-dashboard .notice-card[data-notification-state="pending"] .status-transition{margin-top:5px}
+.review-dashboard .notice-card[data-notification-state="pending"] .notice-actions{align-items:center;margin-top:7px;gap:6px}
+.review-dashboard .notice-card[data-notification-state="pending"] .notice-actions button{min-height:32px;padding:5px 9px;white-space:nowrap}
+.review-dashboard .notice-card[data-notification-state="pending"] .status-select:not([hidden]){display:inline-flex;align-items:center;gap:5px}
+.review-dashboard .notice-card[data-notification-state="pending"] .status-select span{margin:0}
+.review-dashboard .notice-card[data-notification-state="pending"] .status-select select{min-height:32px;padding:5px;font-size:12px;max-width:110px}
+@media(max-width:460px){.review-dashboard .notice-card[data-notification-state="pending"] .notice-actions{gap:4px}.review-dashboard .notice-card[data-notification-state="pending"] .notice-actions button{padding:5px 6px;font-size:11px}.review-dashboard .notice-card[data-notification-state="pending"] .status-select{gap:3px}.review-dashboard .notice-card[data-notification-state="pending"] .status-select select{max-width:96px;font-size:11px}}
 
 /* AniList-derived type scale with restrained weight for dense catalogue screens. */
 body.tracker{font-size:14px;line-height:1.55}
