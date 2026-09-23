@@ -661,3 +661,9 @@ The same five canonical surfaces measured exactly to the viewport with no horizo
 Migration `mt015` is current on a disposable PostgreSQL 16 database. The complete backend suite passes all 1,145 tests outside the filesystem sandbox; the earlier sandboxed attempt was discarded because Windows denied the interpreter access to its installed `httpcore` package and prevented mocked HTTP clients from starting. The production Astro build passes.
 
 Public CI passed both backend and frontend jobs for every resumed Stage Two implementation slice. The final interface-review head `8f78f6a` passed in [run 35580287287](https://github.com/antipixelhd/AnyList/actions/runs/35580287287). The remaining automated step is CI for the final gate-record commit; the remaining release work is isolated deployment verification, real disposable-provider Library delivery, physical Android/iPhone checks and owner acceptance.
+
+## Local attention-prompt follow-up (2026-09-23)
+
+The floating rating prompt now responds to the shared background notification snapshot, opens the existing quick-rate dialog on the current page, and shows a linked blue title beside its poster in the original compact footprint. Dismissal and visiting Notifications save account-scoped opaque prompt acknowledgments in this browser without dismissing inbox cards. A new notification fetched after leaving Notifications remains eligible for a prompt. This supersedes the session-only suppression described above.
+
+The frontend production build passed. Synthetic notifications injected into the local preview browser verified background appearance, same-page quick rating, persistent Dismiss, conflict-to-rating transitions, acknowledgment while Notifications is open, and a new prompt after leaving. No provider sync or VPS operation was performed in this UI check.

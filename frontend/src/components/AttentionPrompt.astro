@@ -1,67 +1,149 @@
 <aside class="attention-prompt" data-attention-prompt hidden aria-live="polite" aria-label="Notification requiring attention">
-  <div class="attention-prompt-copy">
-    <span class="eyebrow" data-attention-kicker>Needs attention</span>
-    <strong data-attention-title></strong>
-    <p data-attention-message></p>
-  </div>
-  <div class="attention-prompt-actions">
-    <a class="button-primary" href="/recent-events" data-attention-action>Review</a>
-    <button class="button-quiet" type="button" data-attention-close aria-label="Hide this prompt for this browsing session">Dismiss</button>
+  <img class="attention-prompt-poster" data-attention-poster alt="" hidden />
+  <div class="attention-prompt-content">
+    <div class="attention-prompt-copy">
+      <span class="eyebrow" data-attention-kicker>Needs attention</span>
+      <strong data-attention-title><a data-attention-title-link></a></strong>
+      <p data-attention-message></p>
+    </div>
+    <div class="attention-prompt-actions">
+      <a class="button-primary" href="/recent-events" data-attention-action>Review</a>
+      <button class="button-primary" type="button" data-attention-rate hidden>Rate Now</button>
+      <button class="button-quiet" type="button" data-attention-close aria-label="Dismiss this prompt">Dismiss</button>
+    </div>
   </div>
 </aside>
 
 <script>
-import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
+import {refreshNotifications, subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
+import {artwork} from '../lib/tracker';
 
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
   const prompt = document.querySelector<HTMLElement>('[data-attention-prompt]');
-  const hiddenKey = 'anylist-hidden-attention-prompts';
-  const readHidden = () => { try { return new Set<string>(JSON.parse(sessionStorage.getItem(hiddenKey) || '[]')); } catch { return new Set<string>(); } };
-  const writeHidden = (ids: string[]) => { try { sessionStorage.setItem(hiddenKey, JSON.stringify([...readHidden(), ...ids])); } catch {} };
-  if (prompt) {
-    let visibleIds: string[] = [];
-    const hide = () => { writeHidden(visibleIds); prompt.hidden = true; };
-    prompt.querySelector('[data-attention-close]')?.addEventListener('click', hide);
-    let startX: number | null = null;
-    prompt.addEventListener('pointerdown', event => { startX = event.clientX; });
-    prompt.addEventListener('pointerup', event => { if (startX != null && Math.abs(event.clientX - startX) > 64) hide(); startX = null; });
-    document.addEventListener('media-tracker:rating-changed', hide, { signal: pageListeners.signal });
+  if (!prompt) return;
+  const titleLink = prompt.querySelector<HTMLAnchorElement>('[data-attention-title-link]')!;
 
-    const renderPrompt = (data: NotificationSnapshot) => {
-      const hidden = readHidden();
-      const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high' && !hidden.has(String(item.id)));
-      const ratings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media && !hidden.has(String(item.id)));
-      const items = [...conflicts, ...ratings];
-      if (!items.length) { visibleIds = []; prompt.hidden = true; return; }
-      visibleIds = items.map((item: any) => String(item.id));
-      const title = prompt.querySelector<HTMLElement>('[data-attention-title]')!;
-      const message = prompt.querySelector<HTMLElement>('[data-attention-message]')!;
-      const action = prompt.querySelector<HTMLAnchorElement>('[data-attention-action]')!;
-      action.href = '/recent-events';
-      if (items.length > 1) {
-        const summary = [];
-        if (ratings.length) summary.push(`${ratings.length} ${ratings.length === 1 ? 'title' : 'titles'} ready to rate`);
-        if (conflicts.length) summary.push(`${conflicts.length} ${conflicts.length === 1 ? 'change' : 'changes'} need review`);
-        title.textContent = summary.join(' · ');
-        message.textContent = 'Open Notifications to work through the queue one item at a time.';
-        action.textContent = 'Open notifications';
-      } else if (conflicts.length) {
-        title.textContent = 'A change needs your review';
-        message.textContent = conflicts[0].message || 'A connected service reported a change that conflicts with your list.';
-        action.textContent = 'Review change';
-      } else {
-        const item = ratings[0];
-        title.textContent = `${item.media.title} is ready to rate`;
-        message.textContent = 'Your completed title is still unrated.';
-        action.textContent = 'Rate now';
-        action.href = `/title/${item.media.id}?rate=1`;
-      }
-      prompt.hidden = false;
+  const account = document.body.dataset.cacheUser || 'anonymous';
+  const hiddenKey = `anylist-acknowledged-attention:${encodeURIComponent(account)}`;
+  const readAcknowledged = () => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem(hiddenKey) || '[]')); }
+    catch { return new Set<string>(); }
+  };
+  const writeAcknowledged = (ids: string[]) => {
+    if (!ids.length) return;
+    try { localStorage.setItem(hiddenKey, JSON.stringify([...readAcknowledged(), ...ids])); } catch {}
+  };
+  // Event IDs are opaque acknowledgement tokens. Include creation time because
+  // some synthetic connection failures reuse an ID for a later occurrence.
+  const token = (item: any) => `${item.id}:${item.created_at || ''}`;
+  const isNotificationsPage = () => location.pathname === '/recent-events';
+  let visibleIds: string[] = [];
+  let currentRatings: any[] = [];
+  const hide = (acknowledge = true) => {
+    if (acknowledge) writeAcknowledged(visibleIds);
+    prompt.hidden = true;
+  };
+  prompt.querySelector('[data-attention-close]')?.addEventListener('click', () => hide());
+  let startX: number | null = null;
+  prompt.addEventListener('pointerdown', event => { startX = event.clientX; });
+  prompt.addEventListener('pointerup', event => { if (startX != null && Math.abs(event.clientX - startX) > 64) hide(); startX = null; });
+  document.addEventListener('media-tracker:rating-changed', event => {
+    const mediaId = Number((event as CustomEvent<{id?: number}>).detail?.id);
+    if (!Number.isFinite(mediaId)) return;
+    const ratedTokens = currentRatings.filter((item: any) => Number(item.media?.id) === mediaId).map(token);
+    if (!ratedTokens.length) return;
+    writeAcknowledged(ratedTokens);
+    void refreshNotifications({force: true});
+  }, { signal: pageListeners.signal });
+  document.addEventListener('click', event => {
+    const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('[data-notification-link]');
+    if (link || (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href="/recent-events"]')) hide();
+  }, { signal: pageListeners.signal });
+  prompt.querySelector<HTMLImageElement>('[data-attention-poster]')?.addEventListener('error', event => {
+    (event.currentTarget as HTMLImageElement).hidden = true;
+    const rate = prompt.querySelector<HTMLButtonElement>('[data-attention-rate]');
+    if (rate) delete rate.dataset.quickRatePoster;
+  }, { signal: pageListeners.signal });
+
+  const renderPrompt = (data: NotificationSnapshot) => {
+    const acknowledged = readAcknowledged();
+    const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high');
+    const ratings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media);
+    const eligible = [...conflicts, ...ratings];
+    // Being on Notifications acknowledges items present in each live snapshot.
+    // A later snapshot after leaving will still contain fresh, unacknowledged IDs.
+    if (isNotificationsPage()) writeAcknowledged(eligible.map(token));
+    const unresolvedConflicts = conflicts.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
+    const unresolvedRatings = ratings.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
+    const items = [...unresolvedConflicts, ...unresolvedRatings];
+    visibleIds = items.map(token);
+    currentRatings = unresolvedRatings;
+
+    const kicker = prompt.querySelector<HTMLElement>('[data-attention-kicker]')!;
+    const title = prompt.querySelector<HTMLElement>('[data-attention-title]')!;
+    const message = prompt.querySelector<HTMLElement>('[data-attention-message]')!;
+    const action = prompt.querySelector<HTMLAnchorElement>('[data-attention-action]')!;
+    const rate = prompt.querySelector<HTMLButtonElement>('[data-attention-rate]')!;
+    const poster = prompt.querySelector<HTMLImageElement>('[data-attention-poster]')!;
+    const resetSingleRating = () => {
+      title.after(message);
+      titleLink.hidden = true;
+      titleLink.removeAttribute('href');
+      poster.hidden = true;
+      poster.removeAttribute('src');
+      rate.hidden = true;
+      rate.removeAttribute('data-quick-rate-id');
+      rate.removeAttribute('data-quick-rate-title');
+      rate.removeAttribute('data-quick-rate-poster');
+      rate.removeAttribute('data-quick-rate-score');
+      action.hidden = false;
+      kicker.hidden = false;
     };
-    subscribeNotifications(renderPrompt, {signal: pageListeners.signal});
-  }
+
+    if (!items.length) {
+      resetSingleRating();
+      prompt.hidden = true;
+      return;
+    }
+    resetSingleRating();
+    if (items.length > 1) {
+      const summary = [];
+      if (unresolvedRatings.length) summary.push(`${unresolvedRatings.length} ${unresolvedRatings.length === 1 ? 'title' : 'titles'} ready to rate`);
+      if (unresolvedConflicts.length) summary.push(`${unresolvedConflicts.length} ${unresolvedConflicts.length === 1 ? 'change' : 'changes'} need review`);
+      title.textContent = summary.join(' · ');
+      message.textContent = 'Open Notifications to work through the queue one item at a time.';
+      action.href = '/recent-events';
+      action.textContent = 'Open notifications';
+    } else if (unresolvedConflicts.length) {
+      title.textContent = 'A change needs your review';
+      message.textContent = unresolvedConflicts[0].message || 'A connected service reported a change that conflicts with your list.';
+      action.href = '/recent-events';
+      action.textContent = 'Review change';
+    } else {
+      const item = unresolvedRatings[0];
+      const media = item.media;
+      kicker.hidden = true;
+      message.textContent = 'You have completed';
+      title.before(message);
+      title.textContent = '';
+      titleLink.textContent = media.title || 'Untitled';
+      titleLink.href = `/title/${media.id}`;
+      titleLink.hidden = false;
+      title.append(titleLink);
+      const posterUrl = artwork(media.poster, 'w185');
+      if (posterUrl) { poster.src = posterUrl; poster.hidden = false; }
+      action.hidden = true;
+      rate.hidden = false;
+      rate.dataset.quickRateId = String(media.id);
+      rate.dataset.quickRateTitle = media.title || 'Rate title';
+      if (posterUrl) rate.dataset.quickRatePoster = posterUrl;
+      rate.dataset.quickRateScore = '';
+    }
+    prompt.hidden = false;
+  };
+  subscribeNotifications(renderPrompt, {signal: pageListeners.signal});
 });
 </script>
