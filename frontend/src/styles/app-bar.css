@@ -61,7 +61,6 @@ html.appbar-nav-transition-cursor {
   }
 
   .tracker .topbar.appbar-fade-capable.appbar-at-top .brand,
-  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-nav a,
   .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-icon-link {
     color: #e1effb;
     text-shadow: 0 1px 4px rgb(3 13 24 / 60%);
