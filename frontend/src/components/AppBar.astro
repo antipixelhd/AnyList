@@ -60,7 +60,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       <span>AnyList</span>
     </a>
     <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile}>
-      {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}>{item.label}</a>)}
+      {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
     <details class="mobile-appbar-menu" data-mobile-appbar-menu>
       <summary aria-label={`${mobileSection}. Open main navigation`}><span>{mobileSection}</span><Icon name="chevron-down" /></summary>
@@ -242,7 +242,10 @@ const mobileSection = primaryItems.find(item => item.active)?.label
         link.href = `${base}/${path}`;
         if (listIcon) link.append(listIcon.cloneNode(true));
         link.append(label);
-        if (location.pathname === link.pathname) { link.classList.add('active'); link.setAttribute('aria-current', 'page'); }
+        if (location.pathname === link.pathname) {
+          link.setAttribute('aria-current', 'page');
+          if (nav.matches('[data-mobile-main-nav]')) link.classList.add('active');
+        }
         browse?.before(link);
       }
     }
