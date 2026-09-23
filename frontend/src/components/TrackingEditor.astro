@@ -1,10 +1,7 @@
 ---
 import {statuses} from '../lib/tracker';
 import Icon from './Icon.astro';
-const { entries = [] } = Astro.props;
-const retainedEntries = JSON.stringify(entries).replace(/</g, '\\u003c');
 ---
-<script id="tracking-editor-data" type="application/json" set:html={retainedEntries}></script>
 <dialog class="editor" id="tracking-editor" aria-labelledby="editor-title">
   <div class="editor-hero">
     <img id="editor-backdrop" class="editor-backdrop" alt="" />
@@ -56,7 +53,7 @@ document.addEventListener('astro:page-load', () => {
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
   let displayedScore = '';
-  const retained = new Map<number, any>((JSON.parse(document.querySelector('#tracking-editor-data')?.textContent || '[]') as any[]).map(entry => [entry.id, entry]));
+  const retained = new Map<number, any>((JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]') as any[]).map(entry => [entry.id, entry]));
   // The embedded list entries are only a first-load shortcut. A quick rating or
   // another in-place write makes them stale even while this page stays mounted.
   document.addEventListener('anylist:data-changed', () => retained.clear(), { signal: pageListeners.signal });
@@ -134,9 +131,8 @@ document.addEventListener('astro:page-load', () => {
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
     saveButton.disabled = false;
   }
-  document.addEventListener('click', async (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
-    if (!button) return;
+  async function openEditor(mediaId: number, button: HTMLElement) {
+    if (!Number.isSafeInteger(mediaId) || mediaId <= 0) return;
     error.hidden = true;
     form.reset();
     syncStatus(); closeStatus();
@@ -151,7 +147,7 @@ document.addEventListener('astro:page-load', () => {
     loadController?.abort();
     const controller = new AbortController();
     loadController = controller;
-    const cached = retained.get(Number(button.dataset.editEntry));
+    const cached = retained.get(mediaId);
     if (cached) {
       populateEditor(cached);
       dialog.showModal();
@@ -161,12 +157,20 @@ document.addEventListener('astro:page-load', () => {
     document.querySelector('#editor-title')!.textContent = 'Loading entry…';
     saveButton.disabled = true;
     try {
-      const res = await fetch(`/api/proxy/tracking/title/${button.dataset.editEntry}`, { signal: controller.signal });
+      const res = await fetch(`/api/proxy/tracking/title/${mediaId}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Unable to load this entry. Try again.');
       const title = await res.json();
       if (loadController !== controller || !dialog.open || opener !== button) return;
       populateEditor(title);
     } catch(e) { if ((e as Error).name !== 'AbortError') { error.textContent = (e as Error).message; error.hidden = false; } }
+  }
+  document.addEventListener('click', event => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
+    if (button) void openEditor(Number(button.dataset.editEntry), button);
+  }, { signal: pageListeners.signal });
+  document.addEventListener('anylist:open-editor', event => {
+    const {mediaId, opener} = (event as CustomEvent<{mediaId:number;opener:HTMLElement}>).detail;
+    if (Number.isSafeInteger(mediaId) && mediaId > 0 && opener instanceof HTMLElement) void openEditor(mediaId, opener);
   }, { signal: pageListeners.signal });
   function ratedSeasonScores() {
     return Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));

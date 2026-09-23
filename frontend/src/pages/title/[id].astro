@@ -1,7 +1,6 @@
 ---
 import Tracker from '../../layouts/Tracker.astro';
 import StatusControl from '../../components/StatusControl.astro';
-import TrackingEditor from '../../components/TrackingEditor.astro';
 import Icon from '../../components/Icon.astro';
 import { tracker, scoreLabel } from '../../lib/tracker';
 import { responsiveArtwork } from '../../lib/responsive-artwork';
@@ -172,7 +171,6 @@ const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px
           <p id="season-message" role="status"></p>
         </div>
       </div>
-      <TrackingEditor />
       <dialog class="editor" id="season-mode">
         <div class="editor-header"><h2>How should your show score work?</h2></div>
         <form method="dialog" class="season-mode-form">

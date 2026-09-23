@@ -719,3 +719,7 @@ Opening the editor now clears the originating list row's highlight and cover pre
 ## Streaming library grouping and removal (2026-09-23)
 
 The private Library tab now groups movies and series into separate sections regardless of the profile list preference, omits empty sections and card type footers, and retains its browse prompt when the library is empty. Each card has an AnyList X in its top-right corner for local library removal. The control appears on hover or keyboard focus and stays visible on touch devices. Removal uses the existing library intent API, updates the page in place, and keeps tracked entries separate. The frontend build and local browser checks passed; temporary preview memberships were removed and the preview library is empty again.
+
+## Quick-search list editor shortcut (2026-09-23)
+
+Quick-search results now reveal a pale circular plus on hover or keyboard focus, with a separate title link. The plus opens the shared list editor directly; remote catalogue results resolve to a local media ID first. One editor instance is mounted with the app bar, so the shortcut works from pages such as Home, while the list page retains its embedded first-load entry cache. The frontend build passed. Local browser checks verified the icon's hover appearance, direct editor opening without navigation, an isolated remote-resolution path, and the existing list editor cache.

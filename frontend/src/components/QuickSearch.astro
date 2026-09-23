@@ -20,6 +20,7 @@ const { combineLists = true } = Astro.props;
     <section class="quick-search-card" data-search-section="series" hidden><h2>Series</h2><div data-search-results="series"></div></section>
   </div>
 </dialog>
+<template data-search-add-icon><Icon name="plus" /></template>
 
 <script>
 import { responsiveArtwork } from '../lib/responsive-artwork';
@@ -38,6 +39,7 @@ document.addEventListener('astro:page-load', () => {
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
   const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
+  const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
   let controller: AbortController | null = null;
   let timer = 0;
   let progressTimer = 0;
@@ -61,8 +63,10 @@ document.addEventListener('astro:page-load', () => {
     });
   }
   function resultNode(item: SearchResult) {
+    const row = document.createElement('div');
+    row.className = 'quick-search-result';
     const link = document.createElement('a');
-    link.className = 'quick-search-result';
+    link.className = 'quick-search-result-link';
     link.href = resultUrl(item);
     const artwork = responsiveArtwork(item.poster, {
       size: 'w92',
@@ -85,7 +89,18 @@ document.addEventListener('astro:page-load', () => {
     const name = document.createElement('strong'); name.textContent = item.title;
     const meta = document.createElement('small'); meta.textContent = [item.year, item.type === 'movie' ? 'Movie' : 'Series'].filter(Boolean).join(' · ');
     copy.append(name, meta); link.append(copy);
-    return link;
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'quick-search-add';
+    add.dataset.searchAdd = '';
+    if (item.id) add.dataset.mediaId = String(item.id);
+    else if (item.tmdb_id) add.dataset.tmdbId = String(item.tmdb_id);
+    add.dataset.mediaType = item.type;
+    add.setAttribute('aria-label', `Open list editor for ${item.title}`);
+    add.title = `Open list editor for ${item.title}`;
+    if (addIcon) add.append(addIcon.content.cloneNode(true));
+    row.append(link, add);
+    return row;
   }
   function fill(kind: 'all'|'movie'|'series', items: SearchResult[]) {
     const target = dialog?.querySelector<HTMLElement>(`[data-search-results="${kind}"]`);
@@ -155,6 +170,32 @@ document.addEventListener('astro:page-load', () => {
   }
   openButton?.addEventListener('click', open);
   closeButton?.addEventListener('click', () => dialog?.close());
+  resultShell?.addEventListener('click', async event => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-search-add]');
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    try {
+      let mediaId = Number(button.dataset.mediaId);
+      if (!mediaId) {
+        const response = await fetch(`/api/proxy/tracking/catalog/${button.dataset.mediaType}/${button.dataset.tmdbId}`, {method:'POST'});
+        if (!response.ok) {
+          const details = await response.json().catch(() => null);
+          throw new Error(typeof details?.detail === 'string' ? details.detail : 'Could not load this title. Try again.');
+        }
+        mediaId = Number((await response.json()).id);
+      }
+      if (!Number.isSafeInteger(mediaId) || mediaId <= 0) throw new Error('Could not load this title. Try again.');
+      if (!dialog?.open) return;
+      dialog.close();
+      document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId, opener:openButton}}));
+    } catch (cause) {
+      showState(cause instanceof Error ? cause.message : 'Could not load this title. Try again.');
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    }
+  }, {signal: pageListeners.signal});
   dialog?.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); });
   input?.addEventListener('input', () => {

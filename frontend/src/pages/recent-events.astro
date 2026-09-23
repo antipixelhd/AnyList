@@ -1,6 +1,5 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
-import TrackingEditor from '../components/TrackingEditor.astro';
 import NoticeCard from '../components/NoticeCard.astro';
 import Icon from '../components/Icon.astro';
 import {tracker,statuses} from '../lib/tracker';
@@ -29,7 +28,7 @@ const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42p
 <template id="notification-outbound-template"><NoticeCard cardKey="template" version="template" kind="outbound" variant="info" icon="arrows-rotate" title="Pending connection update" source="Connected services" badge="Pending" message="1 service awaiting delivery"><Fragment slot="detail"><div data-notification-detail></div></Fragment></NoticeCard></template>
 <template id="notification-icon-info"><Icon name="info"/></template><template id="notification-icon-warning"><Icon name="warning"/></template><template id="notification-icon-star"><Icon name="star"/></template><template id="notification-icon-search"><Icon name="search"/></template><template id="notification-icon-arrows-rotate"><Icon name="arrows-rotate"/></template><template id="notification-icon-inbox"><Icon name="inbox"/></template><template id="notification-icon-check"><Icon name="check"/></template><template id="notification-icon-arrow-right"><Icon name="arrow-right"/></template>
 
-</div><TrackingEditor/></Tracker>
+</div></Tracker>
 
 <script>
 import { subscribeNotifications } from '../lib/notification-store';

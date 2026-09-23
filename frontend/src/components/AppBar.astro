@@ -1,6 +1,7 @@
 ---
 import Icon from './Icon.astro';
 import QuickSearch from './QuickSearch.astro';
+import TrackingEditor from './TrackingEditor.astro';
 import BrandMark from './BrandMark.astro';
 import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
@@ -84,6 +85,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     </div>
   </div>
 </header>
+{user && <TrackingEditor />}
 {user && <script>
   import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
 
