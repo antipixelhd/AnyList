@@ -733,3 +733,9 @@ The Your score action now uses the same padding, vertical alignment, and divider
 The detail-page Favorite and Library buttons now update their visible state immediately without reloading. A short debounce collapses rapid clicks to the final choice; a second write is sent only when that choice changes during an in-flight request. An unsuccessful latest write restores the confirmed state and shows the error. Repeated identical favorite-only API writes skip delivery-job creation, while repeated identical Library intents do not schedule another provider attempt. Library provider fanout holds the per-user intent lock until all connection writes finish, preventing an older delivery from overtaking a newer choice.
 
 Verification used a separately migrated disposable PostgreSQL database: all 95 tracking API tests passed, including favorite idempotency and library fanout checks. The frontend build passed. Local browser checks confirmed immediate button updates, persistence without navigation, rapid-click coalescing, and restoration of the preview account's initial states. The disposable test database was removed afterward.
+
+## Shared checkbox appearance (2026-09-23)
+
+Visible native checkboxes across AnyList now use the same AniList-inspired light square and blue checked state. The background and checkmark size animate in both directions, with a reduced-motion fallback and a visible keyboard focus outline. Existing switches, filter chips, hidden tag inputs, and the favorite heart keep their dedicated visuals. The shared CSS is loaded by all three page layouts.
+
+The frontend production build passed. A local browser rendering check confirmed the unchecked, checked, and disabled visuals, 16px sizing, and the two-way transition properties.

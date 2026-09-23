@@ -1,0 +1,47 @@
+/* Shared visible checkbox. Hidden checkbox inputs still drive switches, chips,
+   and the favorite heart through their existing custom visuals. */
+input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input) {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  vertical-align: middle;
+  border: 1px solid #dfe6ee;
+  border-radius: 3px;
+  background-color: #f1f4f8;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m3.5 8 3 3 6-6' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0 0;
+  cursor: pointer;
+  transition: background-color 180ms ease, border-color 180ms ease, background-size 180ms ease;
+}
+
+input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input):checked {
+  border-color: #3b88df;
+  background-color: #3b88df;
+  background-size: 14px 14px;
+}
+
+input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input):focus-visible {
+  outline: 2px solid #8bd5ff;
+  outline-offset: 3px;
+}
+
+input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input):disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input) {
+    transition: none;
+  }
+}
