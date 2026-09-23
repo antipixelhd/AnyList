@@ -140,6 +140,20 @@ const mobileSection = primaryItems.find(item => item.active)?.label
         link.classList.toggle('appbar-pointer-hover', link === hoveredLink);
       }
     };
+    const syncPointerStateFromViewport = () => {
+      if (mobile()) {
+        clearPointerState();
+        return;
+      }
+      const pointerActive = appbar.matches(':hover');
+      const hoveredLink = pointerActive
+        ? appbar.querySelector<HTMLAnchorElement>('.appbar-nav a:hover')
+        : null;
+      appbar.classList.toggle('appbar-pointer-active', pointerActive);
+      for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
+        link.classList.toggle('appbar-pointer-hover', link === hoveredLink);
+      }
+    };
     const prepareIncomingAppbar = (rawEvent: Event) => {
       const event = rawEvent as Event & { newDocument?: Document };
       const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
@@ -162,10 +176,10 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     appbar.addEventListener('pointermove', syncPointerState, { signal: appbarListeners.signal });
     appbar.addEventListener('pointerleave', clearPointerState, { signal: appbarListeners.signal });
     window.addEventListener('blur', clearPointerState, { signal: appbarListeners.signal });
-    if (appbar.matches(':hover')) {
-      appbar.classList.add('appbar-pointer-active');
-      appbar.querySelector<HTMLAnchorElement>('.appbar-nav a:hover')?.classList.add('appbar-pointer-hover');
-    }
+    // before-swap carries the hovered link into the incoming bar so its color
+    // does not flash during navigation. Reconcile it before the next paint in
+    // case the pointer is no longer over that link after the layout changes.
+    requestAnimationFrame(syncPointerStateFromViewport);
     document.addEventListener('keydown', () => { keyboardFocus = true; }, { capture: true, signal: appbarListeners.signal });
     document.addEventListener('pointerdown', () => { keyboardFocus = false; }, { capture: true, signal: appbarListeners.signal });
     window.addEventListener('wheel', event => {
