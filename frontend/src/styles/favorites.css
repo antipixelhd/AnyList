@@ -1,4 +1,4 @@
-.favorites-page { max-width: 1100px; }
+.favorites-page { max-width:1340px; padding-inline:24px; }
 .favorites-group-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin:0 0 10px; }
 .favorites-actions { display:flex; align-items:center; gap:8px; flex:none; }
 .favorites-actions[hidden] { display:none; }
@@ -9,7 +9,7 @@
 .favorites-groups { display:grid; gap:24px; }
 .favorites-group { min-width:0; }
 .favorites-group-title { margin:0; color:var(--bright); font-size:16px; font-weight:600; }
-.favorites-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,132px)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
+.favorites-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
 .favorites-grid[hidden],.favorites-group[hidden] { display:none; }
 .favorite-card { position:relative; min-width:0; }
 .favorites-grid .favorite-poster { width:100%; background:#243449; }
@@ -23,6 +23,7 @@
 .favorites-page .empty-state { margin-top:24px; }
 @media (hover:none) { .favorite-remove { opacity:1; } }
 @media (max-width:650px) {
+  .favorites-page { padding-inline:16px; }
   .favorites-group-heading { align-items:center; flex-wrap:wrap; }
   .favorites-actions { margin-left:auto; }
   .favorites-grid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:12px; padding:16px; }

@@ -26,6 +26,10 @@ const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
 <Tracker title="Library">
   {profile && <ProfileHeader profile={profile} active="library"/>}
   <div class="page-width library-page">
+    <header class="library-intro">
+      <h1>Streaming Library</h1>
+      <p>This list syncs to connected Stremio/Nuvio accounts.</p>
+    </header>
     {error ? <p class="error-message">{error}</p> : <>
       <p class="error-message" role="alert" data-library-error hidden></p>
       <div class="library-sections" hidden={entries.length === 0}>
