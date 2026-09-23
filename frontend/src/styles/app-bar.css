@@ -5,13 +5,13 @@
   }
 
   .tracker .topbar .brand {
-    font-weight: 400;
+    font-weight: 600;
   }
 
   .tracker .appbar-nav {
     gap: 0;
-    font-size: 1.4rem;
-    font-weight: 600;
+    font-size: 0.9rem;
+    font-weight: 650;
     letter-spacing: .01em;
   }
 
@@ -36,8 +36,8 @@
   }
 
   .tracker .account-nav .profile-action {
-    width: 41px;
-    height: 41px;
+    width: 43px;
+    height: 43px;
     border-radius: 5px;
     font-size: 17px;
   }
