@@ -473,3 +473,9 @@ main{transition:opacity var(--content-reveal) ease}
 .topbar .appbar-nav a.active{color:inherit!important}
 .topbar .appbar-nav a.appbar-pointer-hover{color:var(--bright)!important}
 .topbar.appbar-fade-capable.appbar-at-top.appbar-pointer-active:not(.appbar-hidden),.topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within{box-shadow:none!important}
+
+/* Release availability marker for tracked series. */
+.entry-title{position:relative}
+.entry-availability{position:absolute;z-index:2;left:-18px;top:50%;width:9px;height:9px;transform:translateY(-50%);border-radius:50%;background:#72d84f;box-shadow:0 0 7px rgba(114,216,79,.82)}
+.grid-view .entry-availability{top:9px;left:9px;transform:none}
+@media(max-width:650px){.entry-availability{left:-8px;width:8px;height:8px;box-shadow:0 0 6px rgba(114,216,79,.78)}}

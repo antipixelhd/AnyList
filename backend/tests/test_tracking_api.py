@@ -73,6 +73,47 @@ class InitialImportRatingGraceTests(unittest.TestCase):
         self.assertFalse(suppress_initial_import_rating(entry, now))
 
 
+class AvailabilityDotTests(unittest.TestCase):
+    def test_airing_requires_started_season_with_future_scheduled_episode(self):
+        from routers.tracking import availability_dot
+        today = date(2026, 9, 23)
+        metadata = {'seasons': [{'season_number': 3, 'episode_count': 8, 'air_date': '2026-09-01'}]}
+        episodes = [(3, '2026-09-01', 1), (3, '2026-09-08', 2), (3, '2026-10-01', 3)]
+        self.assertEqual(availability_dot(metadata, episodes, {1, 2}, 'completed', today), (True, 'airing'))
+
+        pointer_only = {**metadata, 'next_episode_to_air': {
+            'season_number': 3, 'episode_number': 3, 'air_date': '2026-10-01',
+        }}
+        self.assertEqual(availability_dot(pointer_only, episodes[:2], {1, 2}, 'completed', today), (True, 'airing'))
+
+    def test_fully_released_batch_is_not_airing(self):
+        from routers.tracking import availability_dot
+        today = date(2026, 9, 23)
+        metadata = {'seasons': [{'season_number': 2, 'episode_count': 2, 'air_date': '2026-09-01'}]}
+        episodes = [(2, '2026-09-01', 1), (2, '2026-09-01', 2)]
+        self.assertEqual(availability_dot(metadata, episodes, set(), 'planning', today), (True, 'new_season'))
+
+    def test_recent_unwatched_season_respects_status_watch_history_and_expiry(self):
+        from routers.tracking import availability_dot
+        today = date(2026, 9, 23)
+        metadata = {'seasons': [{'season_number': 4, 'episode_count': 3, 'air_date': '2026-09-01'}]}
+        episodes = [(4, '2026-09-01', 1), (4, '2026-09-02', 2)]
+        self.assertEqual(availability_dot(metadata, episodes, {1}, 'paused', today), (True, 'new_season'))
+        self.assertEqual(availability_dot(metadata, episodes, {1}, 'watching', today), (False, None))
+        self.assertEqual(availability_dot(metadata, episodes, {1, 2}, 'paused', today), (False, None))
+        expired = {'seasons': [{'season_number': 4, 'episode_count': 2, 'air_date': '2026-08-23'}]}
+        self.assertEqual(availability_dot(expired, episodes, set(), 'planning', today), (False, None))
+
+    def test_future_and_special_seasons_are_ignored(self):
+        from routers.tracking import availability_dot
+        today = date(2026, 9, 23)
+        metadata = {'seasons': [
+            {'season_number': 0, 'episode_count': 1, 'air_date': '2026-09-01'},
+            {'season_number': 5, 'episode_count': 3, 'air_date': '2026-10-01'},
+        ]}
+        self.assertEqual(availability_dot(metadata, [(5, '2026-10-01', 1)], set(), 'planning', today), (False, None))
+
+
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
 class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -28,6 +28,7 @@ const canIncrement = (entry: any) => entry.type === 'movie'
   : entry.released_episodes !== undefined && entry.progress < entry.released_episodes;
 const compactImageSizes='(max-width:650px) 32px, 42px';
 const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:'direct'})?.src || '';
+const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently airing':'New season available';
 ---
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
   {data ? <>
@@ -50,7 +51,7 @@ const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42p
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span>Title</span><span>Score</span><span>Progress</span>{isCombined&&<span>Type</span>}</div>
         {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-media-type={entry.type} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
-          <div class="entry-title"><div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:'direct'}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><a href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a></div>
+          <div class="entry-title"><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span><div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:'direct'}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><a href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a></div>
           <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={quickRatePoster(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
           <span class="entry-progress">
             <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
@@ -89,6 +90,14 @@ document.addEventListener('astro:page-load', () => {
     if(image && source) applyResponsiveArtwork(image,source,grid?gridImageOptions:compactImageOptions);
   });
   let previewDismissed = false;
+  function syncAvailability(row: HTMLElement, updated: any) {
+    const indicator = row.querySelector<HTMLElement>('.entry-availability');
+    if (!indicator) return;
+    const label = updated.availability_reason === 'airing' ? 'Currently airing' : 'New season available';
+    indicator.hidden = updated.availability_dot !== true;
+    indicator.title = label;
+    indicator.setAttribute('aria-label', label);
+  }
   function hidePreview() { if (preview) preview.hidden = true; }
   function showPreview(row: HTMLElement) {
     const thumbnail = row.querySelector<HTMLElement>('.entry-thumbnail');
@@ -128,6 +137,7 @@ document.addEventListener('astro:page-load', () => {
       const updated=await response.json();
       row.dataset.progress=String(updated.progress);
       row.dataset.updated=updated.updated_at||new Date().toISOString();
+      syncAvailability(row, updated);
       const label=row.querySelector<HTMLElement>('[data-progress-label]')!;
       label.textContent=row.dataset.mediaType==='movie'?String(updated.progress):(updated.season_position||'—');
       const indicator=row.querySelector<HTMLElement>('.unwatched-indicator');
