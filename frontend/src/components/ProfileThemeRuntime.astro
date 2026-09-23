@@ -14,6 +14,7 @@
     const override = window.__anyListThemeChoice?.user === user ? window.__anyListThemeChoice : null;
     const viewerColor = override?.profileColor ?? validColor(body.dataset.themeViewerColor);
     const applySiteWide = override?.applySiteWide ?? body.dataset.themeSiteWide === 'true';
+    body.dataset.themeSiteWide = String(applySiteWide);
     const ownerColor = body.dataset.themeOwnerColor;
     const effectiveOwnerColor = ownerColor && body.dataset.themeOwnerSelf === 'true' && override
       ? override.profileColor : ownerColor;

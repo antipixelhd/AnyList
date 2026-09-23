@@ -30,6 +30,12 @@ input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favo
   background-size: 14px 14px;
 }
 
+:is(body.tracker[data-theme-active], body[data-theme-site-wide="true"])
+  input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input):checked {
+  border-color: var(--accent-500, #3db4f2);
+  background-color: var(--accent-500, #3db4f2);
+}
+
 input[type="checkbox"]:not(.sr-only, .hidden, .peer, .tag-checkbox, .editor-favorite input, .setting-switch-row input):focus-visible {
   outline: 2px solid #8bd5ff;
   outline-offset: 3px;
