@@ -12,8 +12,10 @@ html.appbar-nav-transition-cursor {
 }
 
 @media (min-width: 651px) {
+  /* Mirror the search control around the centered nav without moving the right controls. */
   .tracker .topbar .brand {
-    justify-self: end;
+    justify-self: start;
+    margin-left: 218px;
   }
 
   .tracker .topbar {
@@ -90,6 +92,7 @@ html.appbar-nav-transition-cursor {
 }
 
 @media (min-width: 651px) and (max-width: 980px) {
+  .tracker .topbar .brand { margin-left: 182.5px; }
   .tracker .appbar-nav { gap: 0; }
   .tracker .account-nav { gap: 8px; }
   .tracker .account-nav .appbar-icon-link { width: 37px; height: 37px; font-size: 15px; }
