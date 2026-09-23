@@ -418,6 +418,8 @@ export interface OidcExchangeResponse {
 export type PrivacyLevel = "public" | "friends_only" | "private";
 
 export interface UserPreferences {
+  profile_color: string;
+  apply_site_wide: boolean;
   display_name: string | null;
   bio: string | null;
   country: string | null;
@@ -1087,6 +1089,7 @@ export interface ProfileCommentItem {
 }
 
 export interface PublicProfile {
+  profile_color: string;
   id: number;
   username: string;
   display_name: string;

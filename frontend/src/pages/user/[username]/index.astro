@@ -17,7 +17,7 @@ const highlights=profile?[
 ]:[];
 const favorites:any[]=profile?.favorites||[];
 ---
-<Tracker title={profile?.display_name||'Profile'}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
+<Tracker title={profile?.display_name||'Profile'} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
   <div class="profile-overview-left">
     <section class="overview-summary" aria-labelledby="overview-highlights"><div class="section-heading"><h2 id="overview-highlights">Overview</h2></div>
       <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>

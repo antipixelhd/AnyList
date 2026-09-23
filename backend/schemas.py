@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator, model_validator
 from typing import Optional
 from datetime import datetime
+import re
 from models.base import UserRole, MediaType, PrivacyLevel
 
 class UserBase(BaseModel):
@@ -422,6 +423,15 @@ class UserProfileUpdate(BaseModel):
     content_language: Optional[str] = None
     metadata_language: Optional[str] = None
     privacy_level: Optional[PrivacyLevel] = None
+    profile_color: str = Field(default="#3db4f2", min_length=7, max_length=7)
+    apply_site_wide: bool = False
+
+    @field_validator('profile_color')
+    @classmethod
+    def validate_profile_color(cls, value: str) -> str:
+        if not re.fullmatch(r'#[0-9a-fA-F]{6}', value):
+            raise ValueError('Profile color must be a six-digit RGB hex color')
+        return value.lower()
 
 class UserProfileResponse(BaseModel):
     display_name: Optional[str] = None
@@ -435,6 +445,8 @@ class UserProfileResponse(BaseModel):
     metadata_language: Optional[str] = None
     privacy_level: PrivacyLevel = PrivacyLevel.private
     avatar_url: Optional[str] = None
+    profile_color: str = "#3db4f2"
+    apply_site_wide: bool = False
 
     @field_validator('movie_genres', 'show_genres', 'disliked_genres', 'streaming_services', mode='before')
     @classmethod
@@ -449,6 +461,7 @@ class PublicProfileResponse(BaseModel):
     username: str
     display_name: str
     bio: Optional[str] = None
+    profile_color: str = "#3db4f2"
     country: Optional[str] = None
     movie_genres: list[str] = []
     show_genres: list[str] = []

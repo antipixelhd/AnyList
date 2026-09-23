@@ -3,6 +3,7 @@ import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import { tracker } from "../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
+import '../styles/profile-color-settings.css';
 import '@toast-ui/editor/dist/toastui-editor.css';
 import '@toast-ui/editor/dist/theme/toastui-editor-dark.css';
 
@@ -24,6 +25,8 @@ const prefs: UserPreferences = {
   content_language: null,
   metadata_language: null,
   privacy_level: "private",
+  profile_color: "#3db4f2",
+  apply_site_wide: false,
   ...(profileData ?? {}),
 };
 // Release one exposes the agreed profile-level private/public choice. Older
@@ -34,6 +37,18 @@ const PRIVACY_LEVELS: [PrivacyLevel, string, string][] = [
   ["private", "Private", "Only you can see your profile and activity."],
   ["public", "Public", "Anyone on this instance can see your profile and activity."],
 ];
+
+const PROFILE_COLORS = [
+  ["#3db4f2", "Blue"],
+  ["#c063ff", "Purple"],
+  ["#4cca51", "Green"],
+  ["#ef881a", "Orange"],
+  ["#e13333", "Red"],
+  ["#fc9dd6", "Pink"],
+  ["#677b94", "Slate"],
+] as const;
+const profileColor = /^#[0-9a-f]{6}$/i.test(prefs.profile_color ?? '') ? prefs.profile_color!.toLowerCase() : '#3db4f2';
+const customColor = PROFILE_COLORS.some(([color]) => color === profileColor) ? '#3db4f2' : profileColor;
 
 const CONTENT_LANGUAGES: [string, string][] = [
   ["en", "English"],
@@ -197,6 +212,28 @@ const COUNTRIES = [
             <button id="bio-save" type="button" class="button-primary hidden">Save bio</button>
           </div>
         </div>
+      </section>
+
+      <!-- Profile color -->
+      <section class="profile-color-settings" aria-labelledby="profile-color-heading">
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 id="profile-color-heading" class="section-headline">Profile Color</h2>
+          <span class="setting-save-state" data-save-state="profile-appearance" role="status"></span>
+        </div>
+        <div class="profile-color-swatches" role="group" aria-label="Profile color">
+          {PROFILE_COLORS.map(([color, name]) => (
+            <button type="button" class="profile-color-swatch" data-profile-color={color} aria-label={name} aria-pressed={profileColor === color} title={name} style={`--swatch-color: ${color}`} />
+          ))}
+          <label class="profile-color-custom" data-selected={!PROFILE_COLORS.some(([color]) => color === profileColor)} title="Custom color">
+            <span aria-hidden="true">✎</span>
+            <input id="profile-custom-color" type="color" value={customColor} aria-label="Custom profile color" />
+          </label>
+        </div>
+        <p class="setting-help profile-color-help">Your color appears on your profile for everyone who visits it.</p>
+        <label class="setting-switch-row profile-color-site-wide" for="apply-site-wide">
+          <span><strong>Apply site wide</strong><small>Use this color throughout the site when you are signed in.</small></span>
+          <input id="apply-site-wide" type="checkbox" checked={prefs.apply_site_wide === true} />
+        </label>
       </section>
 
       <!-- Privacy -->
@@ -627,6 +664,47 @@ const COUNTRIES = [
       });
       chains.set(group, pending);
     }
+    const colorButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-profile-color]')];
+    const customColorInput = document.getElementById('profile-custom-color') as HTMLInputElement | null;
+    const customColorLabel = customColorInput?.closest<HTMLElement>('.profile-color-custom');
+    const siteWideToggle = document.getElementById('apply-site-wide') as HTMLInputElement | null;
+    const initialColor = colorButtons.find(button => button.getAttribute('aria-pressed') === 'true')?.dataset.profileColor
+      ?? (customColorLabel?.dataset.selected === 'true' ? customColorInput?.value : undefined)
+      ?? '#3db4f2';
+    let selectedProfileColor = initialColor.toLowerCase();
+    const savedAppearance = { profile_color: selectedProfileColor, apply_site_wide: siteWideToggle?.checked ?? false };
+    committed.set('profile-appearance', savedAppearance);
+    function paintProfileColor() {
+      for (const button of colorButtons) button.setAttribute('aria-pressed', String(button.dataset.profileColor === selectedProfileColor));
+      if (customColorLabel) customColorLabel.dataset.selected = String(!colorButtons.some(button => button.dataset.profileColor === selectedProfileColor));
+    }
+    function publishProfileColor() {
+      document.dispatchEvent(new CustomEvent('anylist:profile-color-changed', {
+        detail: { profileColor: selectedProfileColor, applySiteWide: siteWideToggle?.checked ?? false },
+      }));
+    }
+    function saveAppearance() {
+      const value = { profile_color: selectedProfileColor, apply_site_wide: siteWideToggle?.checked ?? false };
+      publishProfileColor();
+      queueSave('profile-appearance', value, previous => {
+        selectedProfileColor = String(previous.profile_color ?? '#3db4f2');
+        if (siteWideToggle) siteWideToggle.checked = previous.apply_site_wide === true;
+        if (customColorInput && !colorButtons.some(button => button.dataset.profileColor === selectedProfileColor)) customColorInput.value = selectedProfileColor;
+        paintProfileColor();
+        publishProfileColor();
+      });
+    }
+    colorButtons.forEach(button => button.addEventListener('click', () => {
+      selectedProfileColor = button.dataset.profileColor!;
+      paintProfileColor();
+      saveAppearance();
+    }));
+    customColorInput?.addEventListener('change', () => {
+      selectedProfileColor = customColorInput.value.toLowerCase();
+      paintProfileColor();
+      saveAppearance();
+    });
+    siteWideToggle?.addEventListener('change', saveAppearance);
     for (const field of ['country', 'content_language', 'metadata_language']) {
       const select = document.getElementById(field) as HTMLSelectElement | null;
       if (!select) continue;

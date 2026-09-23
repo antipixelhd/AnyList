@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Member profile colors (2026-09-23)
+
+Profile settings now offer the AniList-inspired color presets, an unrestricted RGB picker, and a private “Apply site wide” toggle. Public profile pages use the profile owner's selected color for every viewer; the toggle applies that same color to the account owner's other pages without changing how visitors see their profile. The color is stored as a validated RGB hex value, and the site-wide choice is excluded from public profile responses.
+
+Migration `mt023` was applied to the local development database, preserving the default blue for existing members. Focused backend tests cover validation, public/private response boundaries, and missing profile defaults; the frontend production build passes. Authenticated local browser checks confirmed the settings autosave, owner color on the owner's and another member's views, site-wide color on Home, and owner-color priority on a different profile. Both preview accounts were restored to their original settings. No VPS deployment was performed.
+
 ## Profile-based following (2026-09-23)
 
 Public profile headers now provide the only Follow/Unfollow control. Follow changes immediately to Following; hovering or focusing a settled Following button reveals Unfollow. Rapid clicks reconcile to the final selected state through serial requests, and a failed write restores the confirmed state. A Follows you tag appears beside the profile name when the viewed account follows the signed-in viewer. Overview, lists, Stats, Favorites, and Social receive the same relationship fields.

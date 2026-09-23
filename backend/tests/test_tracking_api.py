@@ -43,6 +43,20 @@ class ProfileBioSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             UserProfileUpdate(bio='x' * 5001)
 
+    def test_profile_color_accepts_rgb_hex_and_canonicalizes_case(self):
+        from schemas import UserProfileUpdate
+
+        self.assertEqual(UserProfileUpdate(profile_color='#C063FF').profile_color, '#c063ff')
+        self.assertEqual(UserProfileUpdate(profile_color='#12aBcD').profile_color, '#12abcd')
+
+    def test_profile_color_rejects_unsafe_or_incomplete_values(self):
+        from pydantic import ValidationError
+        from schemas import UserProfileUpdate
+
+        for value in ('red', '#fff', '#12345678', 'rgb(192, 99, 255)', '#00000g', None):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                UserProfileUpdate(profile_color=value)
+
 
 class InitialImportRatingGraceTests(unittest.TestCase):
     def test_only_completed_initial_imports_within_seven_days_are_quiet(self):
@@ -1133,6 +1147,47 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         removed = await self.client.patch('/profile/me', json={'bio': None})
         self.assertEqual(removed.status_code, 200, removed.text)
         self.assertIsNone(removed.json()['bio'])
+
+    async def test_profile_color_is_public_and_site_preference_is_private(self):
+        default = await self.client.get('/profile/me')
+        self.assertEqual(default.json()['profile_color'], '#3db4f2')
+        self.assertFalse(default.json()['apply_site_wide'])
+
+        changed = await self.client.patch('/profile/me', json={
+            'profile_color': '#C063FF', 'apply_site_wide': True,
+        })
+        self.assertEqual(changed.status_code, 200, changed.text)
+        self.assertEqual(changed.json()['profile_color'], '#c063ff')
+        self.assertTrue(changed.json()['apply_site_wide'])
+        invalid = await self.client.patch('/profile/me', json={'profile_color': 'rgb(192, 99, 255)'})
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+
+        self.viewer = self.friend
+        public = await self.client.get(f'/profile/{self.owner.id}')
+        self.assertEqual(public.status_code, 200, public.text)
+        self.assertEqual(public.json()['profile_color'], '#c063ff')
+        self.assertNotIn('apply_site_wide', public.json())
+        tracking = await self.client.get(f'/tracking/people/{self.owner.username}')
+        self.assertEqual(tracking.json()['profile_color'], '#c063ff')
+        self.assertNotIn('apply_site_wide', tracking.json())
+
+        own = await self.client.get('/profile/me')
+        self.assertEqual(own.json()['profile_color'], '#3db4f2')
+        self.assertFalse(own.json()['apply_site_wide'])
+        saved_owner = await self.db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.owner.id))
+        self.assertEqual(saved_owner.profile_color, '#c063ff')
+
+    async def test_profile_color_defaults_when_profile_row_is_missing(self):
+        profile = await self.db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.owner.id))
+        await self.db.delete(profile)
+        await self.db.commit()
+        own = await self.client.get('/profile/me')
+        self.assertEqual(own.json()['profile_color'], '#3db4f2')
+        self.assertFalse(own.json()['apply_site_wide'])
+        created = await self.client.patch('/profile/me', json={'profile_color': '#4cca51'})
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(created.json()['profile_color'], '#4cca51')
+        self.assertFalse(created.json()['apply_site_wide'])
 
     async def test_resolved_low_priority_notification_disappears_after_seen(self):
         review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,kind='playback_removed',state='confirmed',message='Applied automatically')

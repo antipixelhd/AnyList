@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Integer, String, Enum as SQLEnum
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,5 +23,7 @@ class UserProfileData(Base):
     metadata_language   : Mapped[Optional[str]]        = mapped_column(String(10))
     privacy_level       : Mapped[PrivacyLevel]         = mapped_column(SQLEnum(PrivacyLevel), default=PrivacyLevel.private, nullable=False, server_default=PrivacyLevel.private.value)
     avatar_path         : Mapped[Optional[str]]        = mapped_column(String(255))
+    profile_color       : Mapped[str]                  = mapped_column(String(7), default="#3db4f2", server_default="#3db4f2", nullable=False)
+    apply_site_wide     : Mapped[bool]                 = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="profile")

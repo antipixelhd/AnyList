@@ -929,6 +929,7 @@ async def get_public_profile(
         "display_name": display_name,
         "avatar_url": f"/profile/avatar/{user.id}" if (profile and profile.avatar_path) else None,
         "bio": profile.bio if profile else None,
+        "profile_color": profile.profile_color if profile else "#3db4f2",
         "country": profile.country if profile else None,
         "movie_genres": (profile.movie_genres or []) if profile else [],
         "show_genres": (profile.show_genres or []) if profile else [],

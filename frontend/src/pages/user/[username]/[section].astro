@@ -29,7 +29,7 @@ const canIncrement = (entry: any) => entry.type === 'movie'
 const compactImageSizes='(max-width:650px) 32px, 42px';
 const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:'direct'})?.src || '';
 ---
-<Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data}>
+<Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
   {data ? <>
     <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,follows_you:data.follows_you,combine_lists:data.combine_lists}} active={section}/>
     <div class="list-shell" data-initial-status={initialStatus}>

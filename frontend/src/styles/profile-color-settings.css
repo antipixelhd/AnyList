@@ -1,0 +1,87 @@
+.profile-color-settings .profile-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.profile-color-swatch,
+.profile-color-custom {
+  display: block;
+  position: relative;
+  width: 54px;
+  height: 54px;
+  flex: none;
+  border: 4px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: border-color .15s ease, transform .15s ease;
+}
+
+.profile-color-swatch {
+  background: var(--swatch-color);
+}
+
+.profile-color-swatch:hover,
+.profile-color-custom:hover {
+  transform: translateY(-2px);
+}
+
+.profile-color-swatch[aria-pressed="true"],
+.profile-color-custom[data-selected="true"] {
+  border-color: #c9e8fa;
+}
+
+.profile-color-swatch:focus-visible,
+.profile-color-custom:focus-within {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.profile-color-custom {
+  overflow: hidden;
+  background: linear-gradient(135deg, #439ea3, #ab7933 50%, #963374);
+}
+
+.profile-color-custom span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 24px;
+  pointer-events: none;
+}
+
+.profile-color-settings .profile-color-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.profile-color-help {
+  margin: 11px 0 18px;
+}
+
+.profile-color-site-wide {
+  padding-top: 16px;
+  border-top: 1px solid #2a3a4a;
+}
+
+@media (max-width: 600px) {
+  .profile-color-settings .profile-color-swatches { gap: 9px; }
+  .profile-color-swatch,
+  .profile-color-custom { width: 45px; height: 45px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-color-swatch,
+  .profile-color-custom { transition: none; }
+}

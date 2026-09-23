@@ -1,0 +1,34 @@
+.tracker[data-theme-active] .score-pill,
+.tracker[data-theme-active] .count-pill {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 17%, var(--panel));
+}
+.tracker[data-theme-active] .status-stat-list i {
+  background: linear-gradient(90deg, var(--blue), color-mix(in srgb, var(--blue) 58%, #5d79df));
+}
+.tracker[data-theme-active] .stats-segment button[aria-pressed=true],
+.tracker[data-theme-active] .editor-status-options button[aria-current=true] {
+  background: color-mix(in srgb, var(--blue) 18%, var(--panel));
+}
+.tracker[data-theme-active] .settings-app input:focus,
+.tracker[data-theme-active] .settings-app select:focus,
+.tracker[data-theme-active] .settings-app textarea:focus,
+.tracker.settings-app[data-theme-active] input:focus,
+.tracker.settings-app[data-theme-active] select:focus,
+.tracker.settings-app[data-theme-active] textarea:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 16%, transparent);
+}
+.tracker.settings-app[data-theme-active] .setting-switch-row input:checked {
+  background: color-mix(in srgb, var(--blue) 55%, #0d1926);
+  border-color: var(--blue);
+}
+.tracker[data-theme-active] .editor label input:focus,
+.tracker[data-theme-active] .editor label select:focus,
+.tracker[data-theme-active] .editor label textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 12%, transparent);
+}
+.tracker[data-theme-active] .route-progress { background: var(--blue); }
+.tracker[data-theme-active] .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a.active {
+  color: var(--blue);
+}

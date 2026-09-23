@@ -9,7 +9,7 @@ try { data=await tracker(`profile/${encodeURIComponent(username!)}/stats/summary
 catch(cause){ error=(cause as Error).message; }
 const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).slice(0,4)))].sort().reverse();
 ---
-<Tracker title={`${username}'s Statistics`}>
+<Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
 {data?<>
   <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,follows_you:data.follows_you,combine_lists:data.combine_lists}} active="stats"/>
   <div class="page-width stats-page" id="profile-stats" data-username={username} data-initial={JSON.stringify(data)}>

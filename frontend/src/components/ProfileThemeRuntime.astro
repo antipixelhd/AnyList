@@ -1,0 +1,54 @@
+<script>
+  const DEFAULT_COLOR = '#3db4f2';
+  type ThemeChoice = { profileColor: string; applySiteWide: boolean; user: string };
+  type ColorChange = CustomEvent<{ profileColor: string; applySiteWide: boolean }>;
+  declare global {
+    interface Window { __anyListThemeChoice?: ThemeChoice }
+  }
+
+  const validColor = (value: unknown) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
+    ? value.toLowerCase() : DEFAULT_COLOR;
+
+  function applyTheme(body: HTMLElement) {
+    const user = body.dataset.cacheUser || 'anonymous';
+    const override = window.__anyListThemeChoice?.user === user ? window.__anyListThemeChoice : null;
+    const viewerColor = override?.profileColor ?? validColor(body.dataset.themeViewerColor);
+    const applySiteWide = override?.applySiteWide ?? body.dataset.themeSiteWide === 'true';
+    const ownerColor = body.dataset.themeOwnerColor;
+    const effectiveOwnerColor = ownerColor && body.dataset.themeOwnerSelf === 'true' && override
+      ? override.profileColor : ownerColor;
+    const active = !!ownerColor || applySiteWide;
+    const color = active ? validColor(effectiveOwnerColor || viewerColor) : DEFAULT_COLOR;
+    body.style.setProperty('--blue', color);
+    if (active) body.dataset.themeActive = '';
+    else delete body.dataset.themeActive;
+    const root = body.ownerDocument.documentElement;
+    if (active) {
+      root.style.setProperty('--accent-400', `color-mix(in srgb, ${color} 78%, white)`);
+      root.style.setProperty('--accent-500', color);
+      root.style.setProperty('--accent-600', `color-mix(in srgb, ${color} 82%, black)`);
+      root.style.setProperty('--accent-900', `color-mix(in srgb, ${color} 25%, #0b1622)`);
+    } else {
+      for (const property of ['--accent-400', '--accent-500', '--accent-600', '--accent-900']) root.style.removeProperty(property);
+    }
+  }
+
+  if (!(window as Window & { __anyListThemeRuntime?: boolean }).__anyListThemeRuntime) {
+    (window as Window & { __anyListThemeRuntime?: boolean }).__anyListThemeRuntime = true;
+    document.addEventListener('anylist:profile-color-changed', (event) => {
+      const choice = (event as ColorChange).detail;
+      window.__anyListThemeChoice = {
+        user: document.body.dataset.cacheUser || 'anonymous',
+        profileColor: validColor(choice.profileColor),
+        applySiteWide: choice.applySiteWide === true,
+      };
+      applyTheme(document.body);
+    });
+    document.addEventListener('astro:before-swap', (event) => {
+      const nextBody = (event as Event & { newDocument?: Document }).newDocument?.body;
+      if (nextBody) applyTheme(nextBody);
+    });
+    document.addEventListener('astro:after-swap', () => applyTheme(document.body));
+  }
+  applyTheme(document.body);
+</script>

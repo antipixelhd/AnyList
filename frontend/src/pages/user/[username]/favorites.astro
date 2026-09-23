@@ -17,7 +17,7 @@ try {
 const favorites: any[] = profile?.favorites ?? [];
 const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== false);
 ---
-<Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`}>
+<Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile ? <>
     <ProfileHeader profile={profile} active="favorites" />
     <div class="page-width favorites-page">

@@ -19,7 +19,7 @@ try {
 const following = (profile?.people || []).filter((person: any) => person.following);
 const followers = (profile?.people || []).filter((person: any) => person.follower);
 ---
-<Tracker title={`${profile?.display_name || username} · Social`}>
+<Tracker title={`${profile?.display_name || username} · Social`} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile ? <>
     <ProfileHeader profile={profile} active="social"/>
     <div class="page-width social-page" data-social-page>

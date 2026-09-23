@@ -4,14 +4,19 @@ import '../styles/tracker.css';
 import '../styles/checkbox.css';
 import '../styles/action-controls.css';
 import '../styles/footer.css';
+import '../styles/profile-theme.css';
 import Icon from '../components/Icon.astro';
 import AppBar from '../components/AppBar.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import NavigationRuntime from '../components/NavigationRuntime.astro';
+import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
+import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
+const viewerTheme = await viewerProfileTheme(Astro.locals.token);
+const activeColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined;
 const pathname = Astro.url.pathname;
 const settingsLinks = [
   { href: '/user-settings', label: 'Profile', description: 'Identity and privacy', icon: 'user' },
@@ -23,7 +28,7 @@ if (user?.is_admin) {
 }
 ---
 <!doctype html>
-<html lang="en">
+<html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -34,7 +39,7 @@ if (user?.is_admin) {
     <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
     <ClientRouter fallback="swap" />
   </head>
-  <body class:list={['tracker', 'settings-app', { 'profile-settings-page': pathname === '/user-settings' }]} data-cache-user={user?.id ?? 'anonymous'}>
+  <body class:list={['tracker', 'settings-app', { 'profile-settings-page': pathname === '/user-settings' }]} data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
     <a class="skip-link" href="#settings-content">Skip to settings</a>
     <AppBar />
 
@@ -63,5 +68,6 @@ if (user?.is_admin) {
     <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
     <PwaRuntime />
     <NavigationRuntime />
+    <ProfileThemeRuntime />
   </body>
 </html>

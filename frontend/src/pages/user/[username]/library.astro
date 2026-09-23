@@ -23,7 +23,7 @@ try {
 
 const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
 ---
-<Tracker title="Library">
+<Tracker title="Library" ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile && <ProfileHeader profile={profile} active="library"/>}
   <div class="page-width library-page">
     <header class="library-intro">
