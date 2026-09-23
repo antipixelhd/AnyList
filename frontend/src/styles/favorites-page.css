@@ -9,7 +9,7 @@
 .favorites-groups { display:grid; gap:24px; }
 .favorites-group { min-width:0; }
 .favorites-group-title { margin:0; color:var(--bright); font-size:16px; font-weight:600; }
-.favorites-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
+.favorites-page .favorites-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
 .favorites-grid[hidden],.favorites-group[hidden] { display:none; }
 .favorite-card { position:relative; min-width:0; }
 .favorites-grid .favorite-poster { width:100%; background:#243449; }
@@ -26,5 +26,5 @@
   .favorites-page { padding-inline:16px; }
   .favorites-group-heading { align-items:center; flex-wrap:wrap; }
   .favorites-actions { margin-left:auto; }
-  .favorites-grid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:12px; padding:16px; }
+  .favorites-page .favorites-grid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:12px; padding:16px; }
 }
