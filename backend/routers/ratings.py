@@ -139,16 +139,41 @@ async def submit_rating(
         db.add(rating)
 
     if media_type in (MediaType.movie, MediaType.series) and effective_season is None:
-        from models.tracking import TrackedEntry
+        from models.tracking import TrackedEntry, TrackingDeletion, SyncReview
+        from core.tracking_rules import effective_score
+        from core.status_provenance import mark_status_change
         from core.web_push import resolve_rating_prompts
         entry = (await db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id == current_user.id,
             TrackedEntry.media_id == media.id,
         ))).scalar_one_or_none()
-        if entry is not None:
+        if entry is None:
+            entry = TrackedEntry(
+                user_id=current_user.id, media_id=media.id, status="planning",
+                rating_mode="manual", manual_score=body.rating or None,
+                season_scores={}, progress=0, favorite=False, rewatch_count=0,
+            )
+            db.add(entry)
+            mark_status_change(entry, "history-api")
+            await db.execute(delete(TrackingDeletion).where(
+                TrackingDeletion.user_id == current_user.id,
+                TrackingDeletion.media_id == media.id,
+            ))
+            await db.execute(delete(SyncReview).where(
+                SyncReview.user_id == current_user.id,
+                SyncReview.media_id == media.id,
+                SyncReview.kind == "outbound_pending",
+            ))
+        else:
             entry.rating_mode = "manual"
             entry.manual_score = body.rating or None
         await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id)
+        from core.activity import record_daily_activity
+        await record_daily_activity(
+            db, user_id=current_user.id, media_id=media.id, status=entry.status,
+            score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+            rating_changed=rating_changed,
+        )
 
     await db.commit()
     await db.refresh(rating)

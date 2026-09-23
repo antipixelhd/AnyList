@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Scoped external entry API and delivery receipts (2026-09-23)
+
+External clients can obtain a revocable `tracking:write` device credential and edit an existing tracked title's status, progress, and rating through the narrow entry endpoint documented in [EXTERNAL-API.md](../EXTERNAL-API.md). Each entry write returns a durable delivery job ID. The job distinguishes no provider work, queued or dispatching work, a local dispatcher failure, and an attempted provider delivery whose acceptance cannot yet be verified.
+
+Inherited API-key `POST /history` and rating writes now update AnyList's tracked entry and daily activity projection. Authenticated local integration checks cover movie and series history and ratings read back through tracking views. Scoped credential checks cover authorized edits, scope isolation, and revocation. The local disposable PostgreSQL database was migrated to `mt020`; no production database or VPS was changed.
+
 ## History repair control removed from the interface (2026-09-23)
 
 The manual “Import history” control was removed from Settings → Connections after the owner confirmed it is an internal repair operation rather than a normal import workflow. The AnyList export ZIP import remains available. Automatic provider-to-tracked-list import and the internal history import endpoint remain intact. The frontend production build passed; no VPS work was performed.

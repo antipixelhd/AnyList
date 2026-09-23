@@ -35,6 +35,8 @@ if (!token) {
 const loginHref = `/login?next=${encodeURIComponent(`/link${rawCode ? `?code=${rawCode}` : ""}`)}`;
 const scopeLabel = scope === "write"
   ? "view and change your watch history, ratings and lists"
+  : scope === "tracking:write"
+    ? "change status, episode progress and ratings on your AnyList tracked titles"
   : `use the "${scope}" scope on your account`;
 ---
 

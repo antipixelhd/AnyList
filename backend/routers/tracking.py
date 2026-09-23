@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db import get_db
-from dependencies import get_current_user, get_optional_user
+from dependencies import get_current_user, get_optional_user, get_tracking_write_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingActivity, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, CloudAction
+from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 
 router = APIRouter()
@@ -648,6 +648,36 @@ class EntryPatch(BaseModel):
         return {str(k): normalize_score(v, 0.1) for k, v in value.items()}
 
 
+class ExternalEntryPatch(BaseModel):
+    """Narrow write surface for scoped external API credentials."""
+    model_config = {"extra": "forbid"}
+    status: TrackingStatus | None = None
+    progress: int | None = Field(None, ge=0)
+    manual_score: float | None = None
+    rating_mode: Literal["manual", "average"] | None = None
+    season_scores: dict[int, float | None] | None = None
+
+    @field_validator("manual_score")
+    @classmethod
+    def score(cls, value):
+        return normalize_score(value, 0.5)
+
+    @field_validator("season_scores")
+    @classmethod
+    def seasons(cls, value):
+        if value is None:
+            return value
+        if any(k < 0 or k > 1000 for k in value):
+            raise ValueError("Invalid season")
+        return {str(k): normalize_score(v, 0.5) for k, v in value.items()}
+
+
+@router.patch("/entry/{media_id}/external")
+async def save_external_entry(media_id: int, body: ExternalEntryPatch, background_tasks: BackgroundTasks,
+                              db: AsyncSession = Depends(get_db), viewer: User = Depends(get_tracking_write_user)):
+    return await save_entry(media_id, EntryPatch(**body.model_dump(exclude_unset=True)), background_tasks, db, viewer)
+
+
 async def catalog_access(db, viewer):
     if viewer:
         return
@@ -1188,8 +1218,6 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
             episodes_watched=max(0, entry.progress-old_progress) if media.media_type == MediaType.series else 0, progress=entry.progress if media.media_type == MediaType.series else None,
             position=position, finished_seasons=finished, status_changed=previous != entry.status, rating_changed=old_score != score)
-    await db.commit()
-    await db.refresh(entry)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}
@@ -1202,16 +1230,61 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             removed_ratings.add(key)
         else:
             changed_ratings[key] = after
-    if added_watched_ids or changed_ratings or removed_ratings:
+    await db.flush()
+    pending_stream_actions = (await db.execute(select(StreamAction.id, StreamAction.connection_id, StreamAction.action).where(
+        StreamAction.user_id == viewer.id,
+        StreamAction.media_id == media_id,
+        StreamAction.state == "pending",
+    ))).all()
+    from core.tracking_delivery import create_tracking_delivery_job
+    job = await create_tracking_delivery_job(db, user_id=viewer.id, media_id=media_id, changes={
+        "watched_media_ids": sorted(added_watched_ids),
+        "removed_watched_media_ids": sorted(removed_watched_ids),
+        "status_changed": previous != entry.status,
+        "progress_changed": entry.progress != old_progress,
+        "stream_actions": [{"id": action_id, "connection_id": connection_id, "action": action}
+                           for action_id, connection_id, action in pending_stream_actions],
+        "ratings": [{"media_id": mid, "season_number": season, "score": value}
+                    for (mid, season), value in changed_ratings.items()],
+        "removed_ratings": [{"media_id": mid, "season_number": season}
+                             for mid, season in sorted(removed_ratings, key=lambda item: (item[0], item[1] or -1))],
+    })
+    await db.commit()
+    await db.refresh(entry)
+    if job.state == "queued":
         from core.local_outbound import dispatch_local_tracking_delta
         background_tasks.add_task(
             dispatch_local_tracking_delta, viewer.id,
             added_watched_ids, changed_ratings, removed_ratings,
+            delivery_job_id=job.id,
         )
     if removed_watched_ids:
         from core.local_outbound import dispatch_local_watch_rollback
-        background_tasks.add_task(dispatch_local_watch_rollback, viewer.id, removed_watched_ids)
-    return entry_data(entry, media, True)
+        background_tasks.add_task(dispatch_local_watch_rollback, viewer.id, removed_watched_ids,
+                                  delivery_job_id=job.id)
+    result = entry_data(entry, media, True)
+    result["delivery_job_id"] = job.id
+    return result
+
+
+@router.get("/delivery/{job_id}")
+async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_db),
+                                   viewer: User = Depends(get_tracking_write_user)):
+    job = (await db.execute(select(TrackingDeliveryJob).where(
+        TrackingDeliveryJob.id == job_id,
+        TrackingDeliveryJob.user_id == viewer.id,
+    ))).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(404, "Delivery job not found")
+    return {
+        "id": job.id,
+        "media_id": job.media_id,
+        "state": job.state,
+        "changes": job.changes,
+        "detail": job.detail,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+    }
 
 
 @router.get("/activity")

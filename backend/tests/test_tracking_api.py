@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from db import get_db
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key, get_tracking_write_user
 from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingDeletion, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
@@ -71,6 +71,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         async def session(): yield self.db
         app.dependency_overrides[get_db]=session
         app.dependency_overrides[get_current_user]=lambda:self.viewer
+        app.dependency_overrides[get_tracking_write_user]=lambda:self.viewer
         app.dependency_overrides[get_current_user_or_api_key]=lambda:self.viewer
         app.dependency_overrides[get_optional_user]=lambda:self.viewer
         app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
@@ -1491,9 +1492,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status_code,409,res.text)
         res=await self.client.patch(url+'1',json={'watched':False,'confirm_rollback':True})
         self.assertEqual(res.status_code,200,res.text)
-        self.local_rollback.assert_awaited_once_with(
-            self.owner.id, {e.id for e in episodes[1:4]},
-        )
+        self.local_rollback.assert_awaited_once()
+        self.assertEqual(self.local_rollback.await_args.args,
+            (self.owner.id, {e.id for e in episodes[1:4]}))
+        self.assertEqual(self.local_rollback.await_args.kwargs['delivery_job_id'],
+            res.json()['delivery_job_id'])
         self.assertEqual(res.json()['progress'],0)
         self.assertEqual(res.json()['status'],'completed')
         ids=(await self.db.execute(select(WatchEvent.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()
@@ -1537,10 +1540,16 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_local_tracking_delivery_uses_only_changed_fields_after_save(self):
         response = await self.save(self.movie, progress=1, manual_score=8)
         self.assertEqual(response.status_code, 200, response.text)
+        job_id = response.json()['delivery_job_id']
+        job_response = await self.client.get(f'/tracking/delivery/{job_id}')
+        self.assertEqual(job_response.status_code, 200, job_response.text)
+        self.assertEqual(job_response.json()['state'], 'queued')
+        self.assertEqual(job_response.json()['media_id'], self.movie.id)
         self.local_outbound.assert_awaited_once()
         self.assertEqual(self.local_outbound.await_args.args, (
             self.owner.id, {self.movie.id}, {(self.movie.id, None): 8}, set(),
         ))
+        self.assertEqual(self.local_outbound.await_args.kwargs['delivery_job_id'], job_id)
         rating = (await self.db.execute(select(Rating).where(
             Rating.user_id == self.owner.id, Rating.media_id == self.movie.id,
         ))).scalar_one()
@@ -1548,9 +1557,22 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.local_outbound.reset_mock()
         response = await self.save(self.movie, notes='Updated privately')
         self.assertEqual(response.status_code, 200, response.text)
+        no_op_job = await self.client.get(f"/tracking/delivery/{response.json()['delivery_job_id']}")
+        self.assertEqual(no_op_job.json()['state'], 'no_external_changes')
         self.local_outbound.assert_not_awaited()
         await self.db.refresh(rating)
         self.assertEqual(rating.rated_at, rated_at)
+
+    async def test_external_tracking_write_scope_is_narrow_and_returns_delivery_receipt(self):
+        response = await self.client.patch(f'/tracking/entry/{self.movie.id}/external', json={
+            'status': 'watching', 'manual_score': 8,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsInstance(response.json()['delivery_job_id'], int)
+        rejected = await self.client.patch(f'/tracking/entry/{self.movie.id}/external', json={
+            'notes': 'not permitted by tracking:write',
+        })
+        self.assertEqual(rejected.status_code, 422, rejected.text)
 
     async def test_direct_rating_changes_dispatch_after_local_save(self):
         payload = {'media_id': self.movie.id, 'media_type': 'movie', 'rating': 7, 'review': 'First'}

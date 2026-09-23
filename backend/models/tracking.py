@@ -40,6 +40,21 @@ class TrackingActivity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class TrackingDeliveryJob(Base):
+    """Durable receipt for one AnyList entry change and its provider fan-out."""
+    __tablename__ = "tracking_delivery_jobs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), index=True)
+    # queued, dispatching, attempted_unverified, failed, or no_external_changes. Fan-out
+    # currently swallows some per-provider errors, so never claim delivery.
+    state: Mapped[str] = mapped_column(String(32), nullable=False, server_default="queued")
+    changes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    detail: Mapped[str | None] = mapped_column(String(240))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class TrackingDeletion(Base):
     __tablename__ = "tracking_deletions"
     __table_args__ = (UniqueConstraint("user_id", "media_id", name="uq_tracking_deletion"),)

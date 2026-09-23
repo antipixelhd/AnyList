@@ -1350,8 +1350,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         <div class="space-y-4 max-w-xl">
           <p class="text-sm text-zinc-400">
             Apps and devices you've linked with a one-time code (for example the Umbrella Kodi add-on). Each holds a
-            write-scoped token — it can change your watch history, ratings and lists, but not your password, email or
-            security settings. Revoking takes effect immediately.
+            token limited to its approved scope. Revoking takes effect immediately.
           </p>
           <ul id="device-grants-list" class="space-y-2">
             {deviceGrants.length === 0 && (

@@ -1558,7 +1558,7 @@ DEVICE_CODE_TTL = timedelta(minutes=15)
 DEVICE_ACCESS_TOKEN_TTL = timedelta(hours=24)
 DEVICE_POLL_INTERVAL = 5
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
-SUPPORTED_DEVICE_SCOPES = {"write"}
+SUPPORTED_DEVICE_SCOPES = {"write", "tracking:write"}
 # Crockford-ish alphabet: no 0/O/1/I/L to keep the code unambiguous on a TV.
 _USER_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 

@@ -21,6 +21,7 @@ from models.connections import MediaServerConnection
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
+from models.tracking import TrackedEntry, TrackingDeletion
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations, get_show_translations
@@ -2254,6 +2255,87 @@ async def mark_as_watched(
     if event_in.completed:
         await record_rewatch_progress(db, current_user.id, media.id, event.id)
         await db.commit()
+
+        # Keep legacy history writes visible in AnyList's independent tracking
+        # state without importing unrelated historical titles as a side effect.
+        root_media_id = media.id
+        if media.media_type == MediaType.episode and media.show_id:
+            show_row = await db.get(Show, media.show_id)
+            if show_row:
+                clauses = []
+                if show_row.tmdb_id:
+                    clauses.append(and_(Media.media_type == MediaType.series, Media.tmdb_id == show_row.tmdb_id))
+                if show_row.tvdb_id:
+                    clauses.append(and_(Media.media_type == MediaType.series, Media.tvdb_id == show_row.tvdb_id))
+                if clauses:
+                    root_media_id = (await db.execute(select(Media.id).where(or_(*clauses)).limit(1))).scalar_one_or_none() or media.id
+
+        deleted = (await db.execute(select(TrackingDeletion.id).where(
+            TrackingDeletion.user_id == current_user.id,
+            TrackingDeletion.media_id == root_media_id,
+        ))).scalar_one_or_none()
+        root_media = await db.get(Media, root_media_id)
+        entry = (await db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == current_user.id, TrackedEntry.media_id == root_media_id,
+        ))).scalar_one_or_none()
+        if root_media and root_media.media_type in (MediaType.movie, MediaType.series) and not deleted:
+            previous_status = entry.status if entry else None
+            watched_count = 1
+            progress_value = 1
+            complete = root_media.media_type == MediaType.movie
+            if root_media.media_type == MediaType.series:
+                episodes = (await db.execute(select(Media).where(
+                    Media.show_id == media.show_id, Media.media_type == MediaType.episode,
+                    Media.season_number > 0, Media.release_date.is_not(None),
+                    Media.release_date <= date.today().isoformat(),
+                ).order_by(Media.season_number, Media.episode_number))).scalars().all()
+                watched_ids = set((await db.execute(select(WatchEvent.media_id).where(
+                    WatchEvent.user_id == current_user.id, WatchEvent.completed.is_(True),
+                    WatchEvent.media_id.in_([row.id for row in episodes]),
+                ))).scalars()) if episodes else set()
+                last = max((index for index, row in enumerate(episodes) if row.id in watched_ids), default=-1)
+                watched_count = last + 1 if last >= 0 else len(watched_ids)
+                complete = bool((root_media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')
+                                and episodes and watched_count == len(episodes))
+                progress_value = watched_count if episodes else (entry.progress if entry else 0)
+                if last >= 0:
+                    for episode in episodes[:last + 1]:
+                        if episode.id not in watched_ids:
+                            db.add(WatchEvent(user_id=current_user.id, media_id=episode.id,
+                                              completed=True, watched_at=None, provisional=True))
+
+            from core.tracking_rules import observed_status, default_dates
+            from core.status_provenance import mark_status_change
+            next_status = observed_status(previous_status, complete, True)
+            if entry is None:
+                entry = TrackedEntry(
+                    user_id=current_user.id, media_id=root_media_id, status=next_status,
+                    progress=watched_count, rating_mode='manual', season_scores={},
+                    favorite=False, rewatch_count=0,
+                )
+                db.add(entry)
+            entry.progress = progress_value
+            entry.status = next_status
+            entry.start_date, entry.finish_date = default_dates(
+                previous_status, next_status, entry.start_date, entry.finish_date,
+                datetime.now(timezone.utc).date(),
+            )
+            if next_status != previous_status:
+                mark_status_change(entry, 'history-api')
+            await db.flush()
+            from core.activity import record_daily_activity, series_activity_details
+            from core.tracking_rules import effective_score
+            position, finished_seasons = await series_activity_details(db, root_media, watched_count)
+            await record_daily_activity(
+                db, user_id=current_user.id, media_id=root_media_id,
+                status=entry.status,
+                score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+                episodes_watched=1 if root_media.media_type == MediaType.series else 0,
+                progress=entry.progress, position=position,
+                finished_seasons=finished_seasons,
+                status_changed=next_status != previous_status,
+            )
+            await db.commit()
 
     # 4. Push to media servers if outbound push is enabled
     if event_in.completed:

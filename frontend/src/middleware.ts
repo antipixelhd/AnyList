@@ -73,13 +73,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const hasApiKey =
     pathname.startsWith("/api/proxy/") &&
     (context.request.headers.get("X-Api-Key") !== null || context.url.searchParams.has("api_key"));
+  // External device clients send a scoped Bearer token without a browser
+  // cookie. Let the backend validate its scope for each proxied operation.
+  const hasProxyBearer = pathname.startsWith("/api/proxy/") &&
+    /^Bearer\s+\S+$/i.test(context.request.headers.get("Authorization") || "");
 
   // Skip auth for static assets and public routes
   const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname);
   const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.includes(pathname);
   const isPublicRoute =
     !isAdminOnlyRoute &&
-    (hasApiKey || isStaticAsset || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
+    (hasApiKey || hasProxyBearer || isStaticAsset || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
 
   // Anonymous access to any of these read-only pages is allowed only when the
   // admin has enabled logged-out navigation (Admin Settings) and a global

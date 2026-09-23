@@ -42,6 +42,7 @@ async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[U
         or grant.status != "approved"
         or grant.revoked_at is not None
         or grant.user_id != user_id
+        or grant.scope != payload.get("scope")
     ):
         return None
 
@@ -117,6 +118,11 @@ async def get_optional_user(
         if payload.get("type") == "2fa_pending":
             return None
         if payload.get("type") == DEVICE_TOKEN_TYPE:
+            # The inherited API's data-write token is distinct from the
+            # AnyList-only tracking writer. Do not let a narrow tracking
+            # credential authenticate unrelated legacy endpoints.
+            if payload.get("scope") != "write":
+                return None
             return await _user_from_device_grant(db, payload)
         user_id_val = payload.get("sub")
         if user_id_val is None:
@@ -128,6 +134,47 @@ async def get_optional_user(
     query = select(User).where(User.id == user_id).options(selectinload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
+    return user
+
+
+async def get_tracking_write_user(
+    db: AsyncSession = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+) -> User:
+    """Authenticate the AnyList tracking write API.
+
+    Full browser session tokens are accepted. External clients must use a
+    device grant explicitly approved with the narrow ``tracking:write`` scope;
+    legacy ``write`` grants and API keys are not accepted here.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not token:
+        raise credentials_exception
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        if payload.get("type") == "2fa_pending":
+            raise credentials_exception
+        if payload.get("type") == DEVICE_TOKEN_TYPE:
+            if payload.get("scope") != "tracking:write":
+                raise HTTPException(status_code=403, detail="This access token does not have tracking:write scope")
+            user = await _user_from_device_grant(db, payload)
+            if user is None:
+                raise credentials_exception
+            return user
+        user_id = int(payload.get("sub"))
+    except HTTPException:
+        raise
+    except (JWTError, TypeError, ValueError):
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.profile)))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
     return user
 
 

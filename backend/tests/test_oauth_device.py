@@ -113,6 +113,15 @@ class DeviceCodeIssuanceTests(_DeviceFlowAppMixin):
         r = await self.client.post("/auth/device/code", json={"scope": "admin"})
         self.assertEqual(r.status_code, 400)
 
+    async def test_issues_narrow_tracking_write_scope(self):
+        r = await self.client.post(
+            "/auth/device/code",
+            json={"client_name": "AnyList script", "scope": "tracking:write"},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        grant = await self._grant()
+        self.assertEqual(grant.scope, "tracking:write")
+
 
 class DevicePollingStateTests(_DeviceFlowAppMixin):
     async def _poll(self, device_code):
