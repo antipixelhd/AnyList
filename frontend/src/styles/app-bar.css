@@ -9,10 +9,14 @@
   }
 
   .tracker .appbar-nav {
-    gap: 34px;
-    font-size: 15px;
-    font-weight: 400;
-    letter-spacing: .005em;
+    gap: 0;
+    font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: .01em;
+  }
+
+  .tracker .appbar-nav > a {
+    padding-inline: 16px;
   }
 
   .tracker .account-nav {
@@ -71,7 +75,7 @@
 }
 
 @media (min-width: 651px) and (max-width: 980px) {
-  .tracker .appbar-nav { gap: 15px; font-size: 14px; }
+  .tracker .appbar-nav { gap: 0; }
   .tracker .account-nav { gap: 8px; }
   .tracker .account-nav .appbar-icon-link { width: 37px; height: 37px; font-size: 15px; }
   .tracker .account-nav .profile-action { width: 38px; height: 38px; }
