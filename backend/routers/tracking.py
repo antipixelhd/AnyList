@@ -95,13 +95,15 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
 
     released_by_season, future_by_season = {}, {}
     watched = set(watched_episode_ids or ())
-    for season, released_at, media_id in episodes or ():
+    for episode in episodes or ():
+        season, released_at, media_id = episode[:3]
+        import_confirmed_release = len(episode) > 3 and episode[3]
         if season not in regular:
             continue
         released_day = parse_day(released_at)
-        if released_day is None:
+        if released_day is None and not import_confirmed_release:
             continue
-        if released_day <= today:
+        if import_confirmed_release or released_day <= today:
             released_by_season.setdefault(season, []).append(media_id)
         else:
             future_by_season.setdefault(season, []).append(media_id)
@@ -134,18 +136,30 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
 async def media_availability_dot(db, user_id, media, status, today=None):
     data = media.tmdb_data or {}
     ids = data.get('tracking_episode_ids') or []
+    imported_ids = data.get('tracking_import_episode_media_ids') or []
     provider = data.get('tracking_catalogue_provider', 'tmdb')
     identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
-    if not ids:
+    if not ids and not imported_ids:
         return availability_dot(data, [], set(), status, today)
-    rows = (await db.execute(select(Media.id, Media.season_number, Media.release_date).where(
-        Media.media_type == MediaType.episode, identity.in_(ids), Media.season_number > 0
+    identity_filters = []
+    if ids:
+        identity_filters.append(identity.in_(ids))
+    if imported_ids:
+        identity_filters.append(Media.id.in_(imported_ids))
+    rows = (await db.execute(select(Media.id, Media.season_number, Media.release_date, Media.tmdb_data).where(
+        Media.media_type == MediaType.episode,
+        or_(*identity_filters),
+        Media.season_number > 0
     ))).all()
     watched = set((await db.execute(select(WatchEvent.media_id).where(
         WatchEvent.user_id == user_id, WatchEvent.completed.is_(True),
         WatchEvent.media_id.in_([row.id for row in rows])
     ))).scalars()) if rows else set()
-    return availability_dot(data, [(row.season_number, row.release_date, row.id) for row in rows], watched, status, today)
+    return availability_dot(data, [
+        (row.season_number, row.release_date, row.id,
+         bool((row.tmdb_data or {}).get('tracking_import_released')))
+        for row in rows
+    ], watched, status, today)
 
 
 @router.delete('/entry/{media_id}')
@@ -969,39 +983,55 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                     for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
         tvdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') == 'tvdb'
                     for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
+        imported_media_ids = {episode_id for _, m in rows
+                              for episode_id in (m.tmdb_data or {}).get('tracking_import_episode_media_ids', [])}
         identity_filters = []
         if tmdb_ids:
             identity_filters.append(Media.tmdb_id.in_(tmdb_ids))
         if tvdb_ids:
             identity_filters.append(Media.tvdb_id.in_(tvdb_ids))
+        if imported_media_ids:
+            identity_filters.append(Media.id.in_(imported_media_ids))
+        import_confirmed_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
         catalogue = (
             (await db.execute(select(
                 Media.id, Media.tmdb_id, Media.tvdb_id, Media.season_number,
-                Media.episode_number, Media.release_date,
+                Media.episode_number, Media.release_date, Media.tmdb_data,
             ).where(
-                Media.media_type == MediaType.episode, or_(*identity_filters),
-                Media.season_number > 0, Media.release_date.is_not(None),
+                Media.media_type == MediaType.episode,
+                or_(*identity_filters),
+                Media.season_number > 0,
+                or_(Media.release_date.is_not(None), import_confirmed_release),
             ))).all()
             if identity_filters else []
         )
-        released = [row for row in catalogue if row.release_date[:10] <= date.today().isoformat()]
+        released = [row for row in catalogue if (
+            (row.tmdb_data or {}).get('tracking_import_released')
+            or row.release_date and row.release_date[:10] <= date.today().isoformat()
+        )]
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user.id,
             WatchEvent.media_id.in_([r.id for r in released]), WatchEvent.completed.is_(True)))).scalars()) if released else set()
         for result, (_, media) in zip(entries, rows):
             if media.media_type != MediaType.series:
                 continue
             ids = set((media.tmdb_data or {}).get('tracking_episode_ids', []))
+            imported_ids = set((media.tmdb_data or {}).get('tracking_import_episode_media_ids', []))
             provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
-            title_catalogue = [r for r in catalogue if (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids]
+            title_catalogue = [r for r in catalogue if (
+                (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
+            )]
             dot, reason = availability_dot(
                 media.tmdb_data,
-                [(r.season_number, r.release_date, r.id) for r in title_catalogue],
+                [(r.season_number, r.release_date, r.id,
+                  bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
                 watched,
                 result['status'],
             )
             result['availability_dot'], result['availability_reason'] = dot, reason
             if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
-                title_episodes = [r for r in released if (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids]
+                title_episodes = [r for r in released if (
+                    (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
+                )]
                 result['released_episodes'] = len(title_episodes)
                 unwatched = [r for r in title_episodes if r.id not in watched]
                 result['progress'] = len(title_episodes) - len(unwatched)
@@ -1235,14 +1265,22 @@ async def released_episodes(db, media):
     show = (await db.execute(select(Show).where(or_(*terms)))).scalars().first()
     if not show:
         return []
-    query = select(Media).where(Media.show_id == show.id, Media.media_type == MediaType.episode,
-        Media.season_number > 0, Media.release_date.is_not(None), Media.release_date <= date.today().isoformat()
+    imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
+    query = select(Media).where(
+        Media.show_id == show.id,
+        Media.media_type == MediaType.episode,
+        Media.season_number > 0,
+        or_(
+            (Media.release_date.is_not(None) & (Media.release_date <= date.today().isoformat())),
+            imported_release,
+        ),
     )
     catalogue_ids = (media.tmdb_data or {}).get('tracking_episode_ids')
+    imported_ids = (media.tmdb_data or {}).get('tracking_import_episode_media_ids') or []
     if catalogue_ids is not None:
         provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
         identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
-        query = query.where(identity.in_(catalogue_ids))
+        query = query.where(or_(identity.in_(catalogue_ids), Media.id.in_(imported_ids), imported_release))
     return (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
 
 

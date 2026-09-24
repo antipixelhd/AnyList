@@ -29,6 +29,7 @@ from routers.netflix_import import (
     _normalise_groups,
     _summary,
     _show_import_positions,
+    _get_or_create_episode,
     _public_session,
     _prepare_remapped_item,
     _resolve_draft_items,
@@ -164,6 +165,23 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(events_by_episode[2].provisional)
         self.assertTrue(events_by_episode[3].provisional)
         self.assertEqual((stats["source_episodes"], stats["inferred_episodes"]), (1, 2))
+
+    async def test_imported_episode_without_air_date_keeps_release_confirmation_separate(self):
+        media = SimpleNamespace(id=990101, tmdb_data={"existing": "metadata"})
+        db = _MemoryDb()
+        with patch("routers.netflix_import.create_media_safely", new=AsyncMock(return_value=(media, True))) as create:
+            await _get_or_create_episode(
+                db,
+                SimpleNamespace(id=990001, canonical_source="tmdb"),
+                {"tmdb_id": 990001},
+                {"season_number": 2, "episode_number": 9, "title": "Finale", "tmdb_episode_id": 990109,
+                 "released_for_import": True},
+                {},
+            )
+
+        fields = create.await_args.kwargs
+        self.assertIsNone(fields["release_date"])
+        self.assertTrue(fields["tmdb_data"]["tracking_import_released"])
 
     async def test_completed_import_backfills_numbered_positions_without_episode_metadata(self):
         item = _show_item()

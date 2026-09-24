@@ -35,6 +35,7 @@ const rewatchLabel=(count:number)=>`${count} ${count===1?'rewatch':'rewatches'}`
   {data ? <>
     <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,follows_you:data.follows_you,combine_lists:data.combine_lists}} active={section}/>
     <div class="list-shell" data-initial-status={initialStatus}>
+      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
       <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters"><Icon name="sliders"/> <span>Filters & sorting</span><span id="mobile-filter-count" class="filter-count" hidden>0</span></button>
       <aside class="filters" id="list-filters" aria-label="List filters">
         <div class="mobile-filter-heading"><strong>Filters & sorting</strong><button type="button" class="button-quiet" data-close-filters aria-label="Close filters"><Icon name="close"/></button></div>
@@ -47,7 +48,7 @@ const rewatchLabel=(count:number)=>`${count} ${count===1?'rewatch':'rewatches'}`
         <h2>Sort</h2><label class="filter-control"><span>Order</span><select id="sort-filter"><option value="title" selected={defaultSort==='title'}>Title</option><option value="score" selected={defaultSort==='score'}>Score</option><option value="progress" selected={defaultSort==='progress'}>Progress</option><option value="updated" selected={defaultSort==='updated'}>Recently updated</option></select></label>
         <button class="button-secondary" id="reset-filters" data-default-sort={defaultSort}>Reset filters</button>
       </aside>
-      <div class="list-content"><div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
+      <div class="list-content">
       <div id="entry-groups">
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span>Progress</span>{isCombined&&<span>Type</span>}</div>

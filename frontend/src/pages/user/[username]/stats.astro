@@ -13,7 +13,7 @@ const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).
 {data?<>
   <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,follows_you:data.follows_you,combine_lists:data.combine_lists}} active="stats"/>
   <div class="page-width stats-page" id="profile-stats" data-username={username} data-initial={JSON.stringify(data)}>
-    <header class="stats-heading"><div><span class="eyebrow">Profile insights</span><h1>Statistics</h1><p>Current list totals and documented viewing history.</p></div>
+    <header class="stats-heading"><div><h1>Statistics</h1><p>Current list totals and documented viewing history.</p></div>
       <div class="stats-controls"><div class="stats-segment" aria-label="Media type">{[['all','All'],['movie','Movies'],['series','Series']].map(([value,label])=><button type="button" data-stats-media={value} aria-pressed={value==='all'}>{label}</button>)}</div>
       <label><span>Viewing period</span><select id="stats-year"><option value="">All time</option>{years.map(year=><option value={year}>{year}</option>)}</select></label></div>
     </header>

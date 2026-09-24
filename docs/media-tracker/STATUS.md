@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Settings prompts, Netflix completion, and profile list layout (2026-09-24)
+
+Authenticated settings pages now mount the shared Attention prompt and quick-rating dialog, so pending prompts remain available across tracker/settings navigation and their Rate now action works there. A Netflix import marked Completed now carries release-count-confirmed episodes without air dates into list, detail, activity, and availability progress projections, allowing the displayed position to reach the final imported season/episode without inventing a date. The Stats page no longer shows the “Profile insights” eyebrow.
+
+Movie, series, and combined profile lists place the two-button view switch outside the tables, 20px below the profile tabs and aligned with the tables' right edge. Status headings use 18.72px vertical margins and 30px left padding. The shared 32px desktop/24px phone profile-content gap still applies to other profile pages; AGENT.md records the list exception. Frontend production build and focused importer/projection unit tests pass. A database-backed multi-season importer-progress regression was added but could not run locally because no disposable PostgreSQL test database was available. Desktop and phone browser checks confirmed the view-switch offset, alignment, and no horizontal overflow.
+
 ## Statistics typography correction (2026-09-24)
 
 The highlight labels accidentally picked up the 24px statistic-value category during the site-wide type conversion, and Chart.js labels grew to 15px. Restored dedicated Statistics categories: desktop heading 30px/700, highlight labels 12px/600, values 29px/700 (23px on phones), and chart labels 12px/400. Reduced Stats content top padding by 18px on desktop and 12px on phones. The frontend build passes; browser checks at 1440px and 390px confirm the computed sizes, tighter vertical position, and no horizontal overflow.

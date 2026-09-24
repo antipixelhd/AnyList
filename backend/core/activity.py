@@ -106,18 +106,21 @@ async def _series_activity_catalog(db, media: Media):
     show = (await db.execute(select(Show).where(or_(*identities)))).scalars().first() if identities else None
     if not show:
         return [], {}
+    imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
     query = select(Media).where(
         Media.show_id == show.id,
         Media.media_type == MediaType.episode,
         Media.season_number > 0,
-        Media.release_date.is_not(None),
-        Media.release_date <= date.today().isoformat(),
+        or_(
+            (Media.release_date.is_not(None) & (Media.release_date <= date.today().isoformat())),
+            imported_release,
+        ),
     )
     catalogue_ids = (media.tmdb_data or {}).get("tracking_episode_ids")
     if catalogue_ids is not None:
         provider = (media.tmdb_data or {}).get("tracking_catalogue_provider", "tmdb")
         identity = Media.tvdb_id if provider == "tvdb" else Media.tmdb_id
-        query = query.where(identity.in_(catalogue_ids))
+        query = query.where(or_(identity.in_(catalogue_ids), imported_release))
     episodes = (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
     expected = {
         int(season.get("season_number", 0)): int(season.get("episode_count", 0))

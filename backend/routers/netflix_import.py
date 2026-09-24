@@ -1042,6 +1042,13 @@ async def _get_or_create_episode(
         Media.episode_number == local_number,
     ))).scalar_one_or_none()
     if media:
+        # The season endpoint can prove that a numbered position is released
+        # even when TMDB omitted its air date. Keep that fact separate from the
+        # date field so imported progress can include it without inventing one.
+        metadata = dict(media.tmdb_data or {})
+        if episode.get("released_for_import"):
+            metadata["tracking_import_released"] = True
+            media.tmdb_data = metadata
         return media
     details = episode.get("metadata") or episode
     tmdb_episode_id = episode.get("tmdb_episode_id") or episode.get("tmdb_id")
@@ -1058,6 +1065,8 @@ async def _get_or_create_episode(
         "episode_number": local_number,
         "tmdb_data": {"runtime": details.get("runtime"), "source": "netflix-import"},
     }
+    if episode.get("released_for_import"):
+        fields["tmdb_data"]["tracking_import_released"] = True
     if tmdb_episode_id:
         media, _ = await create_media_safely(db, int(tmdb_episode_id), MediaType.episode, **fields)
     else:
@@ -1289,6 +1298,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         # only from metadata fetched during preparation (no network in txn).
         watched_dates_by_media: dict[int, list[date]] = {}
         watched_media: set[int] = set()
+        imported_release_media_ids: set[int] = set()
         accepted_dates: list[date] = []
         for position in sorted(chosen_positions):
             episode = catalog.get(position)
@@ -1308,6 +1318,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             media = await _get_or_create_episode(db, show, candidate, episode, episode_mappings)
             if media is None:
                 continue
+            if episode.get("released_for_import"):
+                imported_release_media_ids.add(media.id)
             dates_for_position = []
             if position in source_positions:
                 for source_ep in source_positions[position]:
@@ -1344,6 +1356,11 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     if (watched_date := _to_date(value)) is not None
                 )
         progress_count = len(watched_media)
+        root_data = dict(getattr(root, "tmdb_data", None) or {})
+        imported_episode_ids = set(root_data.get("tracking_import_episode_media_ids") or [])
+        imported_episode_ids.update(imported_release_media_ids)
+        root_data["tracking_import_episode_media_ids"] = sorted(imported_episode_ids)
+        root.tmdb_data = root_data
         entry, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
         await _apply_staged_rating(db, user_id, root, entry, outcome)
         stats["shows"] += 1

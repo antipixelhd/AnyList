@@ -36,7 +36,7 @@ This pass intentionally changes typography only. Categories do not impose colors
 
 ## Root units and stylesheet ownership
 
-All profile pages use `--profile-content-gap` between the profile tabs and the first content container: 32px on desktop and 24px on phones. Keep route-specific top padding out of the profile content wrapper so this distance remains consistent.
+Profile content containers use `--profile-content-gap` below the profile tabs: 32px on desktop and 24px on phones. The movie, series, and combined-list view switch is the explicit exception, sitting 20px below the tabs before the list filters and tables. Keep route-specific top padding out of other profile content wrappers so their distance remains consistent.
 
 The root is `62.5%`: at the browser's default 16px setting, 1rem is 10px. Body text defaults to 1.6rem/400. Respect user font-size preferences; do not replace the percentage with a fixed pixel root.
 

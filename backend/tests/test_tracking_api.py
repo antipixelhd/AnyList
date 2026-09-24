@@ -113,6 +113,12 @@ class AvailabilityDotTests(unittest.TestCase):
         ]}
         self.assertEqual(availability_dot(metadata, [(5, '2026-10-01', 1)], set(), 'planning', today), (False, None))
 
+    def test_import_confirmed_release_counts_without_fabricating_an_air_date(self):
+        from routers.tracking import availability_dot
+        metadata = {'seasons': [{'season_number': 2, 'episode_count': 1, 'air_date': '2024-11-09'}]}
+        self.assertEqual(availability_dot(metadata, [(2, None, 55, True)], {55}, 'completed', date(2026, 9, 24)),
+                         (False, None))
+
 
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
 class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
@@ -753,6 +759,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         forward = await self.save(self.show, progress=40)
         self.assertEqual(forward.status_code, 200, forward.text)
+
         self.assertEqual(forward.json()['season_position'], 'S5E8')
         rows = (await self.db.execute(activity_query)).scalars().all()
         self.assertEqual(len(rows), 1)
@@ -780,6 +787,52 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(rows[0].payload['rating_changed'])
         self.assertEqual(rows[0].payload['episodes_watched'], 0)
         self.assertEqual(rows[0].payload['finished_seasons'], [])
+
+    async def test_imported_completed_progress_includes_provisional_episode_without_air_date(self):
+        from core.activity import series_activity_details
+
+        self.show.tmdb_id = 990777
+        canonical = Show(title='Imported Fixture Show', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical)
+        await self.db.flush()
+        episodes = [
+            Media(title='S1E1', media_type=MediaType.episode, tmdb_id=990701,
+                  show_id=canonical.id, season_number=1, episode_number=1, release_date='2024-01-01'),
+            Media(title='S1E2', media_type=MediaType.episode, tmdb_id=990702,
+                  show_id=canonical.id, season_number=1, episode_number=2, release_date='2024-01-02'),
+            Media(title='S2E1', media_type=MediaType.episode, tmdb_id=990703,
+                  show_id=canonical.id, season_number=2, episode_number=1, release_date='2024-11-01'),
+            Media(title='S2E2', media_type=MediaType.episode, show_id=canonical.id,
+                  season_number=2, episode_number=2,
+                  tmdb_data={'source': 'netflix-import', 'tracking_import_released': True}),
+        ]
+        self.db.add_all(episodes)
+        await self.db.flush()
+        self.show.tmdb_data = {
+            'tracking_catalogue_refreshed_at': '2026-01-01T00:00:00',
+            'tracking_episode_ids': [990701, 990702, 990703],
+            'tracking_import_episode_media_ids': [episodes[3].id],
+            'seasons': [{'season_number': 1, 'episode_count': 2}, {'season_number': 2, 'episode_count': 2}],
+        }
+        self.db.add(TrackedEntry(user_id=self.owner.id, media_id=self.show.id,
+                                 status='completed', progress=4, rating_mode='manual', season_scores={}))
+        self.db.add_all(WatchEvent(user_id=self.owner.id, media_id=episode.id, completed=True,
+                                   watched_at=None, provisional=True) for episode in episodes)
+        await self.db.commit()
+
+        profile = await self.client.get(f'/tracking/profile/{self.owner.username}/series')
+        self.assertEqual(profile.status_code, 200, profile.text)
+        profile_entry = next(row for row in profile.json()['entries'] if row['id'] == self.show.id)
+        self.assertEqual(profile_entry['progress'], 4)
+        self.assertEqual(profile_entry['season_position'], 'S2E2')
+
+        position, finished = await series_activity_details(self.db, self.show, 4)
+        self.assertEqual(position, 'S2E2')
+        self.assertEqual(finished, [1, 2])
+
+        detail = await self.save(self.show, progress=4)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()['season_position'], 'S2E2')
 
     async def test_profile_stats_separate_current_totals_from_dated_viewing(self):
         self.movie.runtime = 100
