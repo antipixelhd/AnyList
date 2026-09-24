@@ -510,13 +510,3 @@ main{transition:opacity var(--content-reveal) ease}
 .grid-view .entry-rewatch{position:absolute;right:8px;bottom:8px;margin:0;padding:7px;border-radius:50%;background:#0a131ecc}
 @media(max-width:650px){#entry-groups:not(.grid-view) .entry-cover-column,#entry-groups:not(.grid-view) .entry-thumbnail{min-width:50px;max-width:50px}#entry-groups:not(.grid-view) .entry-thumbnail{height:44px}#entry-groups:not(.grid-view) .entry-thumbnail .entry-cover,#entry-groups:not(.grid-view) .entry-thumbnail .row-menu{width:44px;height:44px}#entry-groups:not(.grid-view) .entry-title{padding:13px 8px;font-size:13px;line-height:18px}#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column){padding:12px 6px;font-size:11px;line-height:16px}#entry-groups:not(.grid-view) .entry-head>span.entry-title-column{padding-left:8px}#entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type{padding:13px 6px;font-size:12px;line-height:18px}#entry-groups:not(.grid-view) .entry-score-button{min-height:18px;line-height:18px}.entry-rewatch{font-size:14px}.entry-rewatch:after{right:0;transform:none}}
 @media(prefers-reduced-motion:reduce){.entry-rewatch:after{transition:none}}
-
-/* Settings and Notifications use the same blue by default. A site-wide profile
-   color sets data-theme-active and takes precedence over these page defaults. */
-body:is(.settings-app,.notifications-page):not([data-theme-active]){--blue:var(--accent-500,#409eff)}
-html:is(:not([data-accent]),[data-accent="blue"]) body:is(.settings-app,.notifications-page):not([data-theme-active]){--accent-100:#d9efff;--accent-300:#8cc5ff;--accent-400:#66b2ff;--accent-500:#409eff;--accent-600:#3583d4;--accent-700:#2e72b8;--accent-900:#193e63;--color-blue-100:var(--accent-100);--color-blue-300:var(--accent-300);--color-blue-400:var(--accent-400);--color-blue-500:var(--accent-500);--color-blue-600:var(--accent-600);--color-blue-700:var(--accent-700);--color-blue-900:var(--accent-900)}
-body.settings-app input:focus,body.settings-app select:focus,body.settings-app textarea:focus{box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 16%,transparent)}
-body.settings-app .settings-content input:focus,body.settings-app .settings-content select:focus,body.settings-app .settings-content textarea:focus{box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 13%,transparent)}
-body.settings-app .setting-switch-row input:checked{background:color-mix(in srgb,var(--blue) 55%,#0d1926);border-color:var(--blue)}
-body.notifications-page .notice-info{--notice-accent:var(--blue)}
-body.notifications-page .count-pill{color:var(--blue);background:color-mix(in srgb,var(--blue) 16%,var(--panel))}

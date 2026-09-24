@@ -20,24 +20,17 @@
       ? override.profileColor : ownerColor;
     const active = !!ownerColor || applySiteWide;
     const color = active ? validColor(effectiveOwnerColor || viewerColor) : DEFAULT_COLOR;
-    if (active) {
-      body.style.setProperty('--blue', color);
-      body.dataset.themeActive = '';
-    } else {
-      body.style.removeProperty('--blue');
-      delete body.dataset.themeActive;
-    }
+    body.style.setProperty('--blue', color);
+    if (active) body.dataset.themeActive = '';
+    else delete body.dataset.themeActive;
     const root = body.ownerDocument.documentElement;
     if (active) {
-      root.style.setProperty('--accent-100', `color-mix(in srgb, ${color} 16%, white)`);
-      root.style.setProperty('--accent-300', `color-mix(in srgb, ${color} 60%, white)`);
       root.style.setProperty('--accent-400', `color-mix(in srgb, ${color} 78%, white)`);
       root.style.setProperty('--accent-500', color);
       root.style.setProperty('--accent-600', `color-mix(in srgb, ${color} 82%, black)`);
-      root.style.setProperty('--accent-700', `color-mix(in srgb, ${color} 72%, black)`);
       root.style.setProperty('--accent-900', `color-mix(in srgb, ${color} 25%, #0b1622)`);
     } else {
-      for (const property of ['--accent-100', '--accent-300', '--accent-400', '--accent-500', '--accent-600', '--accent-700', '--accent-900']) root.style.removeProperty(property);
+      for (const property of ['--accent-400', '--accent-500', '--accent-600', '--accent-900']) root.style.removeProperty(property);
     }
   }
 
