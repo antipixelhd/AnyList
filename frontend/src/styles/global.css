@@ -19,9 +19,12 @@
   --color-brand-secondary: var(--accent-400);
 
   /* Remap the blue scale to accent variables so all blue-X utilities theme automatically */
+  --color-blue-100: var(--accent-100);
+  --color-blue-300: var(--accent-300);
   --color-blue-400: var(--accent-400);
   --color-blue-500: var(--accent-500);
   --color-blue-600: var(--accent-600);
+  --color-blue-700: var(--accent-700);
   --color-blue-900: var(--accent-900);
 }
 
@@ -48,10 +51,19 @@
   --color-brand-plex: #eab308;    /* yellow-500 */
 
   /* Accent color scale — default: blue */
+  --accent-100: #dbeafe;
+  --accent-300: #93c5fd;
   --accent-400: #60a5fa;
   --accent-500: #3b82f6;
   --accent-600: #2563eb;
+  --accent-700: #1d4ed8;
   --accent-900: #1e3a8a;
+}
+
+html[data-accent] {
+  --accent-100: color-mix(in srgb, var(--accent-500) 16%, white);
+  --accent-300: color-mix(in srgb, var(--accent-500) 60%, white);
+  --accent-700: color-mix(in srgb, var(--accent-500) 72%, black);
 }
 
 /* ── Accent themes ─────────────────────────────────────── */
