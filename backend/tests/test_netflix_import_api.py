@@ -10,17 +10,22 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 os.environ.setdefault("SECRET_KEY", "local-tests-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from models import Media, NetflixImportSession, User, WatchEvent
+from models import Media, NetflixImportSession, Rating, User, WatchEvent
 from models.base import MediaType
 from models.tracking import TrackedEntry
 from routers.netflix_import import (
+    _apply_staged_rating,
     _apply_import,
+    _default_show_status,
+    _existing_state,
     _normalise_groups,
     _summary,
     _show_import_positions,
@@ -183,7 +188,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             "id": "known-show", "kind": "show", "source_title": "Fixture Show",
             "match": {"state": "matched", "candidate": candidate},
             "decision": {"action": "confirm"},
-            "outcome": {"status": "partial", "tracking_status": "watching"},
+            "outcome": {"status": "partial", "status_overridden": True, "tracking_status": "watching"},
             "episodes": [{"matched": False, "resolution": "discarded", "decision": {"action": None}}],
             "catalog_episodes": [], "seasons": [],
         }
@@ -280,7 +285,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         item = {
             "id": "ambiguous-title", "kind": "movie", "source_title": "Ambiguous Title",
             "source_dates": ["2024-01-01"], "source_rows": 1,
-            "outcome": {"status": "completed"},
+            "outcome": {"status": "completed", "manual_score": 8.0, "manual_score_staged": True},
         }
         details = {"id": 4321, "name": "Selected Show", "first_air_date": "2020-01-01"}
         prepare = AsyncMock(return_value={"shows": [{
@@ -300,9 +305,36 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(refreshed["id"], item["id"])
         self.assertEqual(refreshed["source_title"], item["source_title"])
         self.assertEqual(refreshed["decision"], {"action": "remap"})
+        self.assertEqual(refreshed["outcome"]["manual_score"], 8.0)
 
 
 class NetflixDecisionTests(unittest.TestCase):
+    def test_sparse_seasons_default_to_skip_and_any_dense_season_defaults_to_partial(self):
+        sparse = [
+            {"season_number": 1, "represented": 2, "total_released": 8},
+            {"season_number": 2, "represented": 1, "total_released": 6},
+        ]
+        self.assertEqual(_default_show_status(sparse), "skip")
+        self.assertEqual(_default_show_status([sparse[0], {**sparse[1], "represented": 3}]), "partial")
+        self.assertEqual(_default_show_status([{"season_number": 1, "represented": 2, "total_released": 2, "catalogue_complete": True}]), "completed")
+
+        item = _show_item()
+        item["seasons"] = sparse
+        item["episodes"] = [{"resolution": "exact"}, {"resolution": "guessed"}]
+        _resolve_draft_items([item])
+        self.assertEqual(item["outcome"]["status"], "skip")
+        item["outcome"].update(status="partial", status_overridden=True)
+        _resolve_draft_items([item])
+        self.assertEqual(item["outcome"]["status"], "partial")
+
+    def test_existing_rating_flag_uses_effective_score(self):
+        tracked = SimpleNamespace(rating_mode="manual", manual_score=7.5, season_scores={}, status="completed", progress=1)
+        self.assertTrue(_existing_state(SimpleNamespace(), tracked)["rated"])
+        tracked.rating_mode, tracked.manual_score, tracked.season_scores = "average", None, {"1": 8.0}
+        self.assertTrue(_existing_state(SimpleNamespace(), tracked)["rated"])
+        tracked.season_scores = {}
+        self.assertFalse(_existing_state(SimpleNamespace(), tracked)["rated"])
+
     def test_anime_items_are_skipped_and_remain_skipped_when_episodes_resolve(self):
         prepared = {"shows": [{
             "kind": "show", "source_title": "Anime Show", "tmdb_id": 501,
@@ -378,7 +410,7 @@ class NetflixDecisionTests(unittest.TestCase):
         self.assertIsNone(item["match"]["candidate"])
         self.assertEqual(item["match"]["state"], "unmatched")
 
-    def test_incomplete_show_defaults_to_partial_even_at_latest_released_episode(self):
+    def test_sparse_show_defaults_to_skip_even_at_latest_released_episode(self):
         raw = {"shows": [{
             "kind": "show", "source_title": "Fixture Show", "tmdb_id": 990001,
             "title": "Fixture Show", "status": "matched", "confidence": "high",
@@ -388,7 +420,7 @@ class NetflixDecisionTests(unittest.TestCase):
                          "total_released": 3, "catalogue_complete": True}],
         }]}
         item = _normalise_groups(raw)[0]
-        self.assertEqual(item["outcome"]["status"], "partial")
+        self.assertEqual(item["outcome"]["status"], "skip")
         self.assertEqual((item["outcome"]["latest_season"], item["outcome"]["latest_episode"]), (1, 3))
 
     def test_normalization_guesses_positions_recalculates_represented_count_endpoint_and_summary(self):
@@ -488,7 +520,9 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_partial_cutoff_creates_only_earlier_history_and_is_idempotent(self):
-        session = SimpleNamespace(id="fixture-session", payload={"items": [_show_item()], "errors": [], "counts": {}})
+        item = _show_item()
+        item["outcome"]["status_overridden"] = True
+        session = SimpleNamespace(id="fixture-session", payload={"items": [item], "errors": [], "counts": {}})
 
         async def progress(*_args):
             return None
@@ -525,3 +559,88 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(updated["items"][0]["outcome"]["latest_episode"], 1)
         self.assertEqual(updated["revision"], 2)
+
+    async def test_manual_rating_is_staged_without_writing_rating_or_tracking(self):
+        item = {"id": "rating-movie", "kind": "movie", "source_title": "Rating Movie",
+                "match": {"state": "matched", "candidate": {"tmdb_id": 880001, "media_type": "movie", "title": "Rating Movie"}},
+                "decision": {"action": "confirm"}, "outcome": {"status": "completed"},
+                "source_dates": ["2020-01-01"]}
+        draft = NetflixImportSession(
+            id=str(uuid4()), user_id=self.user.id, status="review", phase="review",
+            progress={}, revision=1, payload={"items": [item], "counts": {}, "errors": []},
+            expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1),
+        )
+        self.db.add(draft)
+        await self.db.flush()
+        with self.assertRaises(HTTPException) as raised:
+            await update_netflix_import_item(draft.id, item["id"], {"revision": 1, "manual_score": 7.25}, self.db, self.user)
+        self.assertEqual(raised.exception.status_code, 422)
+        updated = await update_netflix_import_item(
+            draft.id, item["id"], {"revision": 1, "manual_score": 8.5}, self.db, self.user,
+        )
+        self.assertEqual(updated["items"][0]["outcome"]["manual_score"], 8.5)
+        self.assertTrue(updated["items"][0]["outcome"]["manual_score_staged"])
+        self.assertEqual(updated["summary"]["movies"], 1)
+        cleared = await update_netflix_import_item(
+            draft.id, item["id"], {"revision": 2, "manual_score": None}, self.db, self.user,
+        )
+        self.assertNotIn("manual_score", cleared["items"][0]["outcome"])
+        self.assertNotIn("manual_score_staged", cleared["items"][0]["outcome"])
+        self.assertEqual((await self.db.execute(select(Rating).where(Rating.user_id == self.user.id))).scalars().all(), [])
+        self.assertEqual((await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id))).scalars().all(), [])
+
+    async def test_commit_applies_staged_rating_and_preserves_existing_rating_without_choice(self):
+        async def progress(*_args):
+            return None
+
+        async def commit_movie(tmdb_id: int, staged_score: float | None):
+            item = {"id": f"movie-{tmdb_id}", "kind": "movie", "source_title": f"Movie {tmdb_id}",
+                    "match": {"state": "matched", "candidate": {"tmdb_id": tmdb_id, "media_type": "movie", "title": f"Movie {tmdb_id}", "details": {}}},
+                    "decision": {"action": "confirm"}, "outcome": {"status": "completed"},
+                    "source_dates": ["2020-01-01"]}
+            if staged_score is not None:
+                item["outcome"].update(manual_score=staged_score, manual_score_staged=True)
+            session = SimpleNamespace(id=f"session-{tmdb_id}", payload={"items": [item], "errors": [], "counts": {}})
+            async def create_media(db, ident, media_type, **kwargs):
+                media = Media(tmdb_id=ident, media_type=media_type,
+                              **{k: v for k, v in kwargs.items() if k in {"title", "tmdb_rating", "tmdb_data", "adult"}})
+                db.add(media)
+                await db.flush()
+                return media, True
+
+            with patch("routers.netflix_import.create_media_safely", new=AsyncMock(side_effect=create_media)):
+                await _apply_import(self.db, self.user.id, session, progress)
+            return (await self.db.execute(select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.movie))).scalar_one()
+
+        staged = await commit_movie(880002, 9.0)
+        staged_entry = (await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id, TrackedEntry.media_id == staged.id))).scalar_one()
+        staged_rating = (await self.db.execute(select(Rating).where(Rating.user_id == self.user.id, Rating.media_id == staged.id))).scalar_one()
+        self.assertEqual((staged_entry.rating_mode, staged_entry.manual_score, staged_rating.rating), ("manual", 9.0, 9.0))
+
+        show_root = Media(tmdb_id=880004, media_type=MediaType.series, title="Rated Show")
+        self.db.add(show_root)
+        await self.db.flush()
+        show_entry = TrackedEntry(user_id=self.user.id, media_id=show_root.id, status="watching", rating_mode="manual", season_scores={}, progress=0)
+        self.db.add(show_entry)
+        await self.db.flush()
+        await _apply_staged_rating(self.db, self.user.id, show_root, show_entry,
+                                   {"manual_score": 7.5, "manual_score_staged": True})
+        show_rating = (await self.db.execute(select(Rating).where(
+            Rating.user_id == self.user.id, Rating.media_id == show_root.id,
+            Rating.season_number.is_(None), Rating.episode_order.is_(None),
+        ))).scalar_one()
+        self.assertEqual((show_entry.manual_score, show_rating.rating), (7.5, 7.5))
+
+        existing = await commit_movie(880003, None)
+        entry = (await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id, TrackedEntry.media_id == existing.id))).scalar_one()
+        entry.manual_score = 6.5
+        self.db.add(Rating(user_id=self.user.id, media_id=existing.id, rating=6.5))
+        await self.db.flush()
+        await _apply_import(self.db, self.user.id, SimpleNamespace(id="preserve", payload={
+            "items": [{"id": "movie-880003", "kind": "movie", "source_title": "Movie 880003",
+                       "match": {"state": "matched", "candidate": {"tmdb_id": 880003, "media_type": "movie", "title": "Movie 880003", "details": {}}},
+                       "decision": {"action": "confirm"}, "outcome": {"status": "completed"}, "source_dates": ["2020-01-01"]}],
+            "errors": [], "counts": {},
+        }), progress)
+        await self.db.flush()
+        self.assertEqual((entry.manual_score, (await self.db.execute(select(Rating).where(Rating.user_id == self.user.id, Rating.media_id == existing.id))).scalar_one().rating), (6.5, 6.5))

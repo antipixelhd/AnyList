@@ -21,9 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core import tmdb
 from core.enrichment import create_media_safely
 from core.status_provenance import mark_status_change
+from core.tracking_rules import effective_score
 from db import engine, get_db
 from dependencies import get_current_user
-from models import Media, NetflixImportSession, Show, User, UserSettings, WatchEvent
+from models import Media, NetflixImportSession, Rating, Show, User, UserSettings, WatchEvent
 from models.events import WatchEvent as WatchEventModel
 from models.base import MediaType
 from models.episode_order import EpisodeOrderMapping
@@ -174,12 +175,6 @@ def _resolve_item_episodes(item: dict) -> None:
             represented.setdefault(int(episode["season_number"]), set()).add(int(episode["episode_number"]))
     for season in item.get("seasons") or []:
         season["represented"] = len(represented.get(season["season_number"], set()))
-    if not item.get("is_anime") and not item.get("outcome", {}).get("status_overridden"):
-        seasons = item.get("seasons") or []
-        item["outcome"]["status"] = "completed" if seasons and all(
-            season.get("catalogue_complete") and season.get("total_released") is not None
-            and season["represented"] >= season["total_released"] for season in seasons
-        ) else "partial"
     latest = max((
         (int(episode["season_number"]), int(episode["episode_number"]))
         for episode in episodes if episode.get("matched") and episode.get("season_number") and episode.get("episode_number")
@@ -191,9 +186,32 @@ def _resolve_item_episodes(item: dict) -> None:
         item["outcome"]["latest_season"], item["outcome"]["latest_episode"] = latest
 
 
+def _default_show_status(seasons: list[dict]) -> str:
+    if seasons and all(
+        season.get("catalogue_complete") and season.get("total_released") is not None
+        and season.get("represented", 0) >= season["total_released"] for season in seasons
+    ):
+        return "completed"
+    if all(int(season.get("represented") or 0) <= 2 for season in seasons):
+        return "skip"
+    return "partial"
+
+
+def _existing_state(media: Media | None, tracked: TrackedEntry | None) -> dict:
+    return {
+        "catalog": media is not None,
+        "tracked": tracked is not None,
+        "rated": tracked is not None and effective_score(tracked.rating_mode, tracked.manual_score, tracked.season_scores or {}) is not None,
+        "status": tracked.status if tracked else None,
+        "progress": tracked.progress if tracked else 0,
+    }
+
+
 def _resolve_draft_items(items: list[dict]) -> None:
     for item in items:
         _resolve_item_episodes(item)
+        if item.get("kind") == "show" and not item.get("is_anime") and not item.get("outcome", {}).get("status_overridden"):
+            item["outcome"]["status"] = _default_show_status(item.get("seasons") or [])
 
 
 def _normalise_groups(prepared: dict) -> list[dict]:
@@ -250,9 +268,7 @@ def _normalise_groups(prepared: dict) -> list[dict]:
             confidence = raw.get("confidence") or ("high" if status == "matched" else "low")
             match_state = "matched" if status == "matched" and candidate else "review" if candidate else "unmatched"
             latest = max((ep for ep in episodes if ep.get("matched") and ep.get("season_number", 0) > 0 and ep.get("episode_number")), key=lambda ep: (ep["season_number"], ep["episode_number"]), default=None)
-            catalogue_complete = bool(seasons) and all(s.get("catalogue_complete") and s.get("total_released") is not None for s in seasons)
-            fully_represented = catalogue_complete and all(s["represented"] >= s["total_released"] for s in seasons)
-            default_progress = "completed" if fully_represented else "partial"
+            default_progress = _default_show_status(seasons)
             is_anime = bool(raw.get("is_anime"))
             item_id = _item_id(item_kind, source_title)
             for episode in episodes:
@@ -288,7 +304,7 @@ def _normalise_groups(prepared: dict) -> list[dict]:
                     "tracking_status": "watching",
                     "status_overridden": False,
                 },
-                "existing": {"catalog": False, "tracked": False, "status": None, "progress": 0},
+                "existing": _existing_state(None, None),
                 "source_evidence": raw.get("source_evidence") or {},
             })
     seen: dict[str, int] = {}
@@ -413,8 +429,13 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     refreshed["match"]["candidate"]["details"] = details
     refreshed["match"]["candidate"]["tvdb_id"] = (details.get("external_ids") or {}).get("tvdb_id")
     refreshed["match"]["reason"] = "Show selected by the user; episode positions were resolved where possible."
+    previous_outcome = item.get("outcome") or {}
+    # A remap rebuilds episode evidence, but the staged title rating belongs
+    # to the draft item, even when a movie-shaped row becomes a show.
+    if previous_outcome.get("manual_score_staged"):
+        refreshed["outcome"]["manual_score"] = previous_outcome.get("manual_score")
+        refreshed["outcome"]["manual_score_staged"] = True
     if item.get("kind") == "show":
-        previous_outcome = item.get("outcome") or {}
         if previous_outcome.get("status_overridden") and previous_outcome.get("status") in ("completed", "partial"):
             refreshed["outcome"].update({
                 "status": previous_outcome["status"],
@@ -614,7 +635,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
                     tracked = (await db.execute(select(TrackedEntry).where(
                         TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id,
                     ))).scalar_one_or_none()
-                    item["existing"] = {"catalog": True, "tracked": tracked is not None, "status": tracked.status if tracked else None, "progress": tracked.progress if tracked else 0}
+                    item["existing"] = _existing_state(media, tracked)
                 if item["kind"] == "show":
                     show = (await db.execute(select(Show).where(Show.tmdb_id == candidate["tmdb_id"]))).scalar_one_or_none()
                     if show and show.canonical_source == "tvdb":
@@ -811,9 +832,20 @@ async def update_netflix_import_item(
             raise HTTPException(status_code=422, detail="Partial progress status must be watching, paused, or dropped.")
         item["outcome"]["tracking_status"] = tracking_status
         item["outcome"]["status_overridden"] = True
+    if "manual_score" in patch:
+        score = patch["manual_score"]
+        if score is None:
+            item["outcome"].pop("manual_score", None)
+            item["outcome"].pop("manual_score_staged", None)
+        elif (isinstance(score, bool) or not isinstance(score, (int, float))
+              or not 0.5 <= score <= 10 or round(float(score) * 2) != float(score) * 2):
+            raise HTTPException(status_code=422, detail="Rating must be a half-step from 0.5 to 10, or null to clear it.")
+        else:
+            item["outcome"]["manual_score"] = float(score)
+            item["outcome"]["manual_score_staged"] = True
     if patch.get("episode_mappings"):
         raise HTTPException(status_code=422, detail="Episode matches are resolved automatically and cannot be edited.")
-    if action is None and outcome_status is None and tracking_status is None and not any(
+    if action is None and outcome_status is None and tracking_status is None and "manual_score" not in patch and not any(
         key in patch for key in ("latest_season", "latest_episode")
     ):
         raise HTTPException(status_code=422, detail="Include a title decision or progress change.")
@@ -829,7 +861,7 @@ async def update_netflix_import_item(
         media_type = MediaType.movie if item["kind"] == "movie" else MediaType.series
         media = (await db.execute(select(Media).where(Media.tmdb_id == candidate["tmdb_id"], Media.media_type == media_type))).scalar_one_or_none()
         tracked = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == current_user.id, TrackedEntry.media_id == media.id))).scalar_one_or_none() if media else None
-        item["existing"] = {"catalog": media is not None, "tracked": tracked is not None, "status": tracked.status if tracked else None, "progress": tracked.progress if tracked else 0}
+        item["existing"] = _existing_state(media, tracked)
     payload["items"] = items
     session.payload = payload
     session.error_message = None
@@ -1136,6 +1168,33 @@ async def _track_imported_root(
     return entry, is_new
 
 
+async def _apply_staged_rating(db: AsyncSession, user_id: int, root: Media, entry: TrackedEntry, outcome: dict) -> None:
+    """Apply an explicitly chosen import rating to the tracked root only."""
+    if not outcome.get("manual_score_staged"):
+        return
+    from core.activity import record_daily_activity
+    from core.tracking_rules import effective_score
+
+    old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+    score = float(outcome["manual_score"])
+    entry.rating_mode = "manual"
+    entry.manual_score = score
+    row = (await db.execute(select(Rating).where(
+        Rating.user_id == user_id, Rating.media_id == root.id,
+        Rating.season_number.is_(None), Rating.episode_order.is_(None),
+    ))).scalar_one_or_none()
+    if row is None:
+        db.add(Rating(user_id=user_id, media_id=root.id, rating=score))
+    elif row.rating != score:
+        row.rating = score
+        row.rated_at = _now()
+    if old_score != score:
+        await record_daily_activity(
+            db, user_id=user_id, media_id=root.id, status=entry.status,
+            score=score, rating_changed=True, previous_score=old_score,
+        )
+
+
 async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSession, progress_callback) -> dict:
     payload = dict(session.payload or {})
     items = deepcopy(payload.get("items", []))
@@ -1186,7 +1245,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     continue
                 db.add(WatchEvent(user_id=user_id, media_id=movie.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
                 stats["source_watches"] += 1
-            _, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, 1, True)
+            entry, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, 1, True)
+            await _apply_staged_rating(db, user_id, movie, entry, outcome)
             stats["movies"] += 1
             stats["new_entries" if is_new else "existing_entries"] += 1
             continue
@@ -1284,7 +1344,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     if (watched_date := _to_date(value)) is not None
                 )
         progress_count = len(watched_media)
-        _, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
+        entry, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
+        await _apply_staged_rating(db, user_id, root, entry, outcome)
         stats["shows"] += 1
         stats["new_entries" if is_new else "existing_entries"] += 1
         if any(s.get("total_released") is None or s.get("represented", 0) < s["total_released"] for s in item.get("seasons", [])):

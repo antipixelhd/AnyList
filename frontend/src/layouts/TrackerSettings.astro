@@ -7,6 +7,7 @@ import '../styles/footer.css';
 import '../styles/profile-theme.css';
 import Icon from '../components/Icon.astro';
 import AppBar from '../components/AppBar.astro';
+import QuickRating from '../components/QuickRating.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import NavigationRuntime from '../components/NavigationRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
@@ -65,6 +66,7 @@ if (user?.is_admin) {
       </nav>
       <main id="settings-content" class="settings-content"><slot /></main>
     </div>
+    {pathname === '/connections' && <QuickRating />}
     <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
     <PwaRuntime />
     <NavigationRuntime />

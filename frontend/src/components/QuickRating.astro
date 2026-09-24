@@ -28,8 +28,11 @@ let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
-  if (!document.querySelector('#quick-rating')) return;
-  type QuickRateDetail = { id: number; title: string; poster?: string; score?: number | null; ratingMode?: 'manual' | 'average' };
+  if (!document.querySelector('#quick-rating')) {
+    delete (window as any).anyListQuickRate;
+    return;
+  }
+  type QuickRateDetail = { id?: number; title: string; poster?: string; score?: number | null; ratingMode?: 'manual' | 'average'; onScore?: (score: number | null) => void | Promise<void> };
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
   const value = document.querySelector<HTMLOutputElement>('#quick-rating-value')!;
@@ -93,6 +96,15 @@ document.addEventListener('astro:page-load', () => {
     error.hidden = true;
     stars.classList.add('saving');
     try {
+      if (active.onScore) {
+        await active.onScore(score);
+        savedScore = score;
+        active.score = score;
+        active.ratingMode = 'manual';
+        setTimeout(() => dialog.close(), 140);
+        return;
+      }
+      if (active.id == null) throw new Error('This title cannot be rated yet.');
       const response = await fetch(`/api/proxy/tracking/entry/${active.id}`, {
         method: 'PATCH', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ ...(changeToManual ? { rating_mode: 'manual' } : {}), manual_score: score ?? 0 }),
@@ -140,6 +152,7 @@ document.addEventListener('astro:page-load', () => {
     else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
     poster.hidden = !detail.poster;
     remove.hidden = savedScore == null || detail.ratingMode === 'average';
+    help.textContent = detail.onScore ? 'Your rating will be saved when you import.' : 'Choose a half point. Your rating saves immediately.';
     confirmation.hidden = true;
     help.hidden = false;
     error.hidden = true;

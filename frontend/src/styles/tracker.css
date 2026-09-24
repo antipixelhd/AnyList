@@ -201,7 +201,7 @@ body.tracker{font-size:14px;line-height:1.55}
 @media(prefers-reduced-motion:reduce){.quick-search-add{transition:none}}
 @media(max-width:650px){.detail-facts{grid-row:3}.external-links{grid-row:4}.ratings-overview{grid-row:5}.synopsis-section{grid-row:6}.following-section{grid-row:7}.seasons-section{grid-row:8}#season-message{grid-row:9}}
 /* Shared half-point quick rating used by lists, title pages, and notifications. */
-.quick-rating-dialog{width:min(94vw,620px);padding:0;border:1px solid var(--border);border-radius:18px;background:var(--panel);color:var(--text);box-shadow:0 30px 90px #000b;overflow:hidden}
+.quick-rating-dialog{position:fixed;inset:0;margin:auto;width:min(94vw,620px);max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--border);border-radius:18px;background:var(--panel);color:var(--text);box-shadow:0 30px 90px #000b;overflow:auto}
 .quick-rating-dialog::backdrop{background:#07111dcc;backdrop-filter:blur(5px)}
 .quick-rating-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 20px;border-bottom:1px solid var(--border)}
 .quick-rating-close{display:grid;place-items:center;width:38px;height:38px;flex:none;padding:0;border:1px solid transparent;border-radius:50%;background:transparent;color:var(--muted);font-size:16px;transition:background-color .15s ease,border-color .15s ease,color .15s ease,transform .15s ease}.quick-rating-close:hover,.quick-rating-close:focus-visible{border-color:var(--border);background:var(--field);color:var(--bright)}.quick-rating-close:active{transform:scale(.94)}
@@ -512,6 +512,7 @@ main{transition:opacity var(--content-reveal) ease}
 @media(prefers-reduced-motion:reduce){.entry-rewatch:after{transition:none}}
 
 .connections-settings-page #netflix-import-app{min-width:0}
+.connections-settings-page #netflix-import-workflow [data-netflix-action="confirm"]:disabled{cursor:default}
 .connections-settings-page .settings-content #netflix-import-workflow:not([hidden]){padding:0;border:0;background:transparent;box-shadow:none}
 .connections-settings-page .netflix-remap-dialog{width:min(590px,calc(100vw - 32px));max-height:min(650px,calc(100dvh - 48px));inset:32px 0 auto}
 .connections-settings-page .netflix-remap-dialog .quick-search-results{max-height:min(510px,calc(100dvh - 145px));margin-top:14px}
