@@ -67,6 +67,114 @@ class NetflixCsvParserTests(unittest.TestCase):
 
 
 class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_episode_without_show_title_is_not_searched_as_a_movie(self) -> None:
+        movie_search = AsyncMock(return_value={"results": []})
+        result = await prepare_netflix_import(
+            'Title,Date\n": Episode 2",3/10/21\n',
+            search_movies_fn=movie_search,
+            search_shows_fn=AsyncMock(return_value={"results": []}),
+        )
+        movie_search.assert_not_awaited()
+        self.assertEqual(result["movies"], [])
+        self.assertEqual(result["unmatched"][0]["kind"], "show")
+        self.assertIn("omitted", result["unmatched"][0]["reason"])
+
+    async def test_dominant_same_title_movie_matches_without_manual_review(self) -> None:
+        async def search_movies(query: str, **_kwargs):
+            return {"results": [
+                {"id": 438631, "title": query, "release_date": "2021-09-15", "vote_count": 15576, "popularity": 42.6},
+                {"id": 841, "title": query, "release_date": "1984-12-14", "vote_count": 3551, "popularity": 16.8},
+            ]}
+
+        result = await prepare_netflix_import(
+            'Title,Date\nDune,2/7/24\n',
+            search_movies_fn=search_movies,
+            search_shows_fn=AsyncMock(return_value={"results": []}),
+        )
+        self.assertEqual(result["movies"][0]["tmdb_id"], 438631)
+        self.assertEqual(result["movies"][0]["status"], "matched")
+
+    async def test_close_same_title_movies_still_need_review(self) -> None:
+        async def search_movies(query: str, **_kwargs):
+            return {"results": [
+                {"id": 1, "title": query, "release_date": "2020-01-01", "vote_count": 5000, "popularity": 25},
+                {"id": 2, "title": query, "release_date": "1980-01-01", "vote_count": 3000, "popularity": 20},
+            ]}
+
+        result = await prepare_netflix_import(
+            'Title,Date\nShared Title,2/7/24\n',
+            search_movies_fn=search_movies,
+            search_shows_fn=AsyncMock(return_value={"results": []}),
+        )
+        self.assertEqual(result["movies"][0]["status"], "review")
+
+    async def test_colon_bearing_show_title_uses_longest_exact_catalog_title(self) -> None:
+        searches = []
+
+        async def search_shows(query: str, **_kwargs):
+            searches.append(query)
+            if query == "Star Wars: The Clone Wars":
+                return {"results": [{"id": 4194, "name": query}]}
+            return {"results": [{"id": 9, "name": "Star Wars"}]}
+
+        async def show_details(tmdb_id: int, **_kwargs):
+            return {"id": tmdb_id, "name": "Star Wars: The Clone Wars", "seasons": [{"season_number": 1, "episode_count": 1}]}
+
+        async def get_season(_tmdb_id: int, _season_number: int, **_kwargs):
+            return {"episode_count": 1, "episodes": [{"id": 71, "episode_number": 1, "name": "Ambush", "air_date": "2008-10-03"}]}
+
+        result = await prepare_netflix_import(
+            'Title,Date\n"Star Wars: The Clone Wars: Season 1: Ambush",1/1/24\n',
+            search_movies_fn=AsyncMock(return_value={"results": []}),
+            search_shows_fn=search_shows,
+            show_details_fn=show_details,
+            season_fn=get_season,
+        )
+        self.assertEqual(set(searches), {"Star Wars", "Star Wars: The Clone Wars"})
+        self.assertEqual(result["shows"][0]["source_title"], "Star Wars: The Clone Wars")
+        self.assertEqual(result["shows"][0]["tmdb_id"], 4194)
+        self.assertTrue(result["shows"][0]["episodes"][0]["matched"])
+
+    async def test_colon_inside_episode_title_is_checked_as_one_title(self) -> None:
+        async def search_shows(_query: str, **_kwargs):
+            return {"results": [{"id": 66732, "name": "Stranger Things"}]}
+
+        async def show_details(tmdb_id: int, **_kwargs):
+            return {"id": tmdb_id, "seasons": [{"season_number": 1, "episode_count": 1}]}
+
+        async def get_season(_tmdb_id: int, _season_number: int, **_kwargs):
+            return {"episode_count": 1, "episodes": [{"id": 72, "episode_number": 1, "name": "Chapter Four: The Body", "air_date": "2016-07-15"}]}
+
+        result = await prepare_netflix_import(
+            'Title,Date\n"Stranger Things: Chapter Four: The Body",1/1/24\n',
+            search_movies_fn=AsyncMock(return_value={"results": []}),
+            search_shows_fn=search_shows,
+            show_details_fn=show_details,
+            season_fn=get_season,
+        )
+        self.assertTrue(result["shows"][0]["episodes"][0]["matched"])
+
+    async def test_exact_show_title_does_not_require_title_review_for_one_unknown_episode(self) -> None:
+        async def search_shows(_query: str, **_kwargs):
+            return {"results": [{"id": 42, "name": "Example Show"}]}
+
+        async def show_details(tmdb_id: int, **_kwargs):
+            return {"id": tmdb_id, "seasons": [{"season_number": 1, "episode_count": 1}]}
+
+        async def get_season(_tmdb_id: int, _season_number: int, **_kwargs):
+            return {"episode_count": 1, "episodes": [{"id": 1, "episode_number": 1, "name": "Pilot", "air_date": "2020-01-01"}]}
+
+        result = await prepare_netflix_import(
+            'Title,Date\n"Example Show: Season 1: Pilot",1/3/20\n"Example Show: Season 1: Unknown",1/4/20\n',
+            search_movies_fn=AsyncMock(return_value={"results": []}),
+            search_shows_fn=search_shows,
+            show_details_fn=show_details,
+            season_fn=get_season,
+        )
+        show = result["shows"][0]
+        self.assertEqual(show["status"], "matched")
+        self.assertEqual([episode["matched"] for episode in show["episodes"]], [True, False])
+
     async def test_missing_tmdb_season_leaves_episode_for_review(self) -> None:
         async def search_shows(_query: str, **_kwargs):
             return {"results": [{"id": 72304, "name": "Example Show"}]}
@@ -100,7 +208,7 @@ class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result["shows"]), 1)
         show = result["shows"][0]
-        self.assertEqual(show["status"], "review")
+        self.assertEqual(show["status"], "matched")
         self.assertEqual([episode["matched"] for episode in show["episodes"]], [True, False])
         self.assertIn("TMDB has no season 2", show["episodes"][1]["reason"])
         self.assertIn({"season_number": 2, "represented": 0, "total_released": 1, "catalogue_complete": False}, show["seasons"])

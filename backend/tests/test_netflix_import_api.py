@@ -111,6 +111,15 @@ class NetflixDecisionTests(unittest.TestCase):
         self.assertEqual(item["episodes"][0]["dates"], ["2020-01-02"])
         self.assertEqual(item["match"]["candidates"][0]["tmdb_id"], 990001)
 
+    def test_unmatched_source_id_is_not_treated_as_tmdb_id(self):
+        item = _normalise_groups({"unmatched": [{
+            "id": "show:source-digest", "kind": "show",
+            "source_title": ": Episode 2", "status": "review",
+            "episodes": [{"source_title": ": Episode 2", "title": "Episode 2", "matched": False}],
+        }]})[0]
+        self.assertIsNone(item["match"]["candidate"])
+        self.assertEqual(item["match"]["state"], "unmatched")
+
     def test_incomplete_show_defaults_to_partial_even_at_latest_released_episode(self):
         raw = {"shows": [{
             "kind": "show", "source_title": "Fixture Show", "tmdb_id": 990001,

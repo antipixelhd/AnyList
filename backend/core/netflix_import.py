@@ -16,7 +16,7 @@ import hashlib
 import io
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime
 from difflib import SequenceMatcher
 from typing import Any, Awaitable, Callable
@@ -313,6 +313,9 @@ def _media_candidate(raw: dict[str, Any], media_type: str, query: str) -> dict[s
         "_exact": exact,
         "_similarity": similarity,
         "_original_title": original_title,
+        "_vote_count": max(0, int(raw.get("vote_count") or 0)),
+        "_popularity": max(0.0, float(raw.get("popularity") or 0)),
+        "_release_date": date_value,
     }
 
 
@@ -328,6 +331,31 @@ def _dedupe_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ):
             by_id[tmdb_id] = row
     return sorted(by_id.values(), key=lambda item: (not item.get("_exact"), -item.get("_similarity", 0), str(item.get("title", ""))))
+
+
+def _dominant_exact_movie(candidates: list[dict[str, Any]], watched_dates: list[str]) -> dict[str, Any] | None:
+    """Choose a same-title film only when audience evidence has one clear leader.
+
+    Netflix does not export a release year. This deliberately leaves close
+    remakes and obscure titles for review instead of trusting search rank.
+    """
+    first_watch = min(watched_dates, default="")
+    eligible = [candidate for candidate in candidates if candidate.get("_exact") and (
+        not candidate.get("_release_date") or not first_watch or candidate["_release_date"][:10] <= first_watch
+    )]
+    if len(eligible) < 2:
+        return None
+    ranked = sorted(eligible, key=lambda candidate: candidate.get("_vote_count", 0), reverse=True)
+    leader, runner_up = ranked[:2]
+    if not leader.get("_release_date"):
+        return None
+    votes = leader.get("_vote_count", 0)
+    other_votes = sum(candidate.get("_vote_count", 0) for candidate in ranked[1:])
+    if votes < 1000 or votes < 4 * max(1, other_votes):
+        return None
+    if leader.get("_popularity", 0) < 1.5 * max(1, runner_up.get("_popularity", 0)):
+        return None
+    return leader
 
 
 def _visible_candidate(candidate: dict[str, Any], confidence: str, evidence: str) -> dict[str, Any]:
@@ -442,6 +470,15 @@ def _candidate_seasons(
         else:
             plan[index] = {number for number in ordered if number > 0}
     return plan
+
+
+def _episode_title_keys(row: NetflixWatch) -> set[str]:
+    keys = {_norm_text(row.episode_title)}
+    if row.show_title and row.source_title.startswith(row.show_title):
+        # An episode itself may contain a colon: "Chapter Four: The Body".
+        # The parser cannot know whether its first part was a season label.
+        keys.add(_norm_text(row.source_title[len(row.show_title):].lstrip(": ")))
+    return keys - {""}
 
 
 async def _await_call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -571,34 +608,52 @@ async def prepare_netflix_import(
             season_cache[key] = raw if isinstance(raw, dict) else {}
         return season_cache[key]
 
-    # Group colon-form rows by the possible TV title, retaining all watch dates
-    # and unique episode observations. Rows with no plausible episode syntax
-    # are also tested as whole movie titles.
+    # Search both the first title segment and a possible colon-bearing show
+    # title. TMDB identity resolves the split: "Star Wars: The Clone Wars"
+    # must not be grouped under an unrelated show named "Star Wars".
+    rows = [replace(row) for row in history.rows]
+    show_queries: dict[str, str] = {}
+    movie_queries: set[str] = set()
+    possible_long_titles: dict[int, str] = {}
+    for index, row in enumerate(rows):
+        if row.show_title:
+            show_queries.setdefault(_norm_text(row.show_title), row.show_title)
+            parts = [part.strip() for part in row.source_title.split(":") if part.strip()]
+            if len(parts) >= 3 and _extract_season_number(parts[1], parts[0]) is None:
+                long_title = ": ".join(parts[:2])
+                possible_long_titles[index] = long_title
+                show_queries.setdefault(_norm_text(long_title), long_title)
+            if row.season_number is None and not row.season_label:
+                movie_queries.add(row.source_title)
+        else:
+            if not row.source_title.lstrip().startswith(":"):
+                movie_queries.add(row.source_title)
+    show_tasks = [asyncio.create_task(search("show", query)) for query in show_queries.values()]
+    movie_tasks = {query: asyncio.create_task(search("movie", query)) for query in movie_queries}
+    search_total = len(show_queries) + len(movie_queries)
+    if show_tasks or movie_tasks:
+        await asyncio.gather(*show_tasks, *movie_tasks.values(), return_exceptions=False)
+
+    for index, long_title in possible_long_titles.items():
+        if not any(candidate.get("_exact") for candidate in search_cache.get(("show", _norm_text(long_title)), [])):
+            continue
+        row = rows[index]
+        parts = [part.strip() for part in row.source_title.split(":") if part.strip()]
+        tail = parts[2:]
+        row.show_title = long_title
+        row.season_label = tail[0] if len(tail) > 1 else None
+        row.season_number = _extract_season_number(row.season_label, long_title)
+        row.episode_title = ": ".join(tail[1:]) if len(tail) > 1 else tail[0]
+
+    # Group by the resolved TV title, retaining viewing dates and unique
+    # episode observations. Plain titles are searched as movies.
     show_rows: dict[str, list[NetflixWatch]] = {}
     movie_rows: dict[str, list[NetflixWatch]] = {}
-    for row in history.rows:
-        if row.show_title and row.episode_title:
-            key = _norm_text(row.show_title)
-            show_rows.setdefault(key, []).append(row)
-        elif row.show_title and row.season_label:
-            # Netflix may export a season-only row; it can suggest a show, but
-            # without episode evidence it must remain a manual review item.
+    for row in rows:
+        if row.show_title and (row.episode_title or row.season_label):
             show_rows.setdefault(_norm_text(row.show_title), []).append(row)
         else:
             movie_rows.setdefault(_norm_text(row.source_title), []).append(row)
-
-    # A title that may be an episode must still be checked against movie search
-    # if its episode shape is weak (two colon parts with no season label).
-    show_tasks = [asyncio.create_task(search("show", rows[0].show_title or rows[0].source_title)) for rows in show_rows.values()]
-    movie_queries = {rows[0].source_title for rows in movie_rows.values()}
-    movie_queries.update(
-        row.source_title for rows in show_rows.values() for row in rows
-        if row.season_number is None and not row.season_label
-    )
-    movie_tasks = {query: asyncio.create_task(search("movie", query)) for query in movie_queries}
-    search_total = len(show_rows) + len(movie_queries)
-    if show_tasks or movie_tasks:
-        await asyncio.gather(*show_tasks, *movie_tasks.values(), return_exceptions=False)
 
     def _planned_candidate_count(candidate_rows: list[dict[str, Any]]) -> int:
         exact = sum(1 for candidate in candidate_rows if candidate.get("_exact"))
@@ -725,11 +780,10 @@ async def prepare_netflix_import(
             if not requested_language.lower().startswith("en"):
                 fallback_seasons: set[int] = set()
                 for index, observation in enumerate(observations):
-                    episode_key = _norm_text(observation.episode_title)
+                    episode_keys = _episode_title_keys(observation)
                     possible = season_plan.get(index, set())
                     has_localized_match = any(
-                        episode_key
-                        and episode_key in {
+                        episode_keys & {
                             _norm_text(episode.get("title")),
                             *(_norm_text(title) for title in episode.get("alternate_titles") or []),
                         }
@@ -766,13 +820,12 @@ async def prepare_netflix_import(
             match_count = 0
             for index, observation in enumerate(observations):
                 possible = season_plan.get(index, set())
-                episode_key = _norm_text(observation.episode_title)
+                episode_keys = _episode_title_keys(observation)
                 matches = [
                     episode
                     for season_number in possible
                     for episode in episodes_by_season.get(season_number, [])
-                    if episode_key
-                    and episode_key in {
+                    if episode_keys & {
                         _norm_text(episode.get("title")),
                         *(_norm_text(title) for title in episode.get("alternate_titles") or []),
                     }
@@ -905,7 +958,7 @@ async def prepare_netflix_import(
             every_observation_matched = bool(observations) and all(
                 any(
                     episode.get("matched") and row.watched_at in episode.get("watched_dates", [])
-                    and row.episode_title and _norm_text(row.episode_title) in {
+                    and _episode_title_keys(row) & {
                         _norm_text(episode.get("title")),
                         *(_norm_text(title) for title in episode.get("alternate_titles") or []),
                     }
@@ -961,6 +1014,11 @@ async def prepare_netflix_import(
         elif len(same_title) > 1 and best["confidence"] == "high" and not best["match_count"]:
             best["confidence"] = "medium"
             best["reason"] = "More than one show has this title; choose the correct show."
+        elif len(same_title) == 1 and best["candidate"].get("_exact") and best["match_count"] and best["confidence"] != "high":
+            # The show identity is established even though individual source
+            # episodes still require their own review decisions.
+            best["confidence"] = "high"
+            best["reason"] = "Exact show title and matching episode evidence; review the remaining episodes."
 
         candidate = best["candidate"]
         output = {
@@ -1000,11 +1058,48 @@ async def prepare_netflix_import(
     # Netflix explicitly supplied a season marker.
     for normalized_title, observations in movie_rows.items():
         source_title = observations[0].source_title
+        if source_title.lstrip().startswith(":"):
+            # Some Netflix exports contain anonymous ": Episode N" rows.
+            # A film search produces unrelated namesakes; keep the rows
+            # available for manual show/episode remapping instead.
+            unmatched.append({
+                "id": _stable_id("show", normalized_title),
+                "kind": "show",
+                "source_title": source_title,
+                "dates": sorted({row.watched_at for row in observations}),
+                "source_rows": sum(len(row.source_rows) for row in observations),
+                "tmdb_id": None,
+                "title": None,
+                "media_type": None,
+                "confidence": "low",
+                "status": "review",
+                "reason": "Netflix omitted this episode's show title. Choose the show and episode manually, or skip it.",
+                "episodes": [{
+                    "season_number": None,
+                    "episode_number": None,
+                    "title": row.source_title.lstrip(": ").strip(),
+                    "source_title": row.source_title,
+                    "source_episode_title": row.source_title.lstrip(": ").strip(),
+                    "watched_dates": [row.watched_at],
+                    "source_rows": list(row.source_rows),
+                    "matched": False,
+                    "confidence": "low",
+                    "reason": "The show title is missing from this Netflix row.",
+                } for row in observations],
+                "seasons": [],
+                "suggestions": [],
+            })
+            continue
         candidates = search_cache.get(("movie", normalized_title), [])
         exact = [candidate for candidate in candidates if candidate.get("_exact")]
-        candidate = exact[0] if len(exact) == 1 else (candidates[0] if candidates else None)
-        confidence = "high" if candidate and len(exact) == 1 else "medium" if candidate and candidate.get("_similarity", 0) >= 0.60 else "low"
-        reason = "Exact movie title match." if confidence == "high" else "Possible movie match; confirm the title." if candidate else "No matching movie was found."
+        dominant = _dominant_exact_movie(exact, [row.watched_at for row in observations])
+        candidate = exact[0] if len(exact) == 1 else dominant or (candidates[0] if candidates else None)
+        confidence = "high" if candidate and (len(exact) == 1 or dominant is not None) else "medium" if candidate and candidate.get("_similarity", 0) >= 0.60 else "low"
+        reason = (
+            "Exact movie title match." if len(exact) == 1 else
+            "Exact title with a clearly dominant TMDB audience match." if dominant else
+            "Possible movie match; confirm the title." if candidate else "No matching movie was found."
+        )
         item = {
             "id": _stable_id("movie", normalized_title),
             "kind": "movie",
@@ -1041,8 +1136,9 @@ async def prepare_netflix_import(
             query_key = _norm_text(observation.source_title)
             candidates = search_cache.get(("movie", query_key), [])
             exact = [candidate for candidate in candidates if candidate.get("_exact")]
-            if len(exact) == 1:
-                candidate = exact[0]
+            dominant = _dominant_exact_movie(exact, [observation.watched_at])
+            if len(exact) == 1 or dominant:
+                candidate = exact[0] if len(exact) == 1 else dominant
                 item = {
                     "id": _stable_id("movie", query_key),
                     "kind": "movie",

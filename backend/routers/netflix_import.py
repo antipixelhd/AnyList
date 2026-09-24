@@ -100,6 +100,13 @@ def _candidate(group: dict, kind: str) -> dict | None:
     tmdb_id = base.get("tmdb_id") or base.get("id")
     if not tmdb_id:
         return None
+    try:
+        tmdb_id = int(tmdb_id)
+    except (TypeError, ValueError):
+        # Unmatched import groups have a stable source ID, not a TMDB ID.
+        return None
+    if tmdb_id <= 0:
+        return None
     candidate_type = base.get("media_type") or base.get("type") or kind
     if candidate_type in ("tv", "series", "show"):
         candidate_type = "show"
@@ -109,7 +116,7 @@ def _candidate(group: dict, kind: str) -> dict | None:
         **(base.get("metadata") or base.get("details") or {}),
         **base,
         "media_type": candidate_type,
-        "tmdb_id": int(tmdb_id),
+        "tmdb_id": tmdb_id,
         "title": base.get("title") or base.get("name") or group.get("candidate_title") or group.get("source_title") or group.get("title"),
         "year": base.get("year"),
         "poster_path": base.get("poster_path") or base.get("poster"),
