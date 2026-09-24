@@ -1,15 +1,10 @@
 import {
-  BlockTypeSelect,
   BoldItalicUnderlineToggles,
   Button,
   CodeToggle,
   codeBlockPlugin,
-  CreateLink,
   DiffSourceToggleWrapper,
   GenericDirectiveEditor,
-  InsertCodeBlock,
-  InsertImage,
-  ListsToggle,
   MDXEditor,
   NestedLexicalEditor,
   StrikeThroughSupSubToggles,
@@ -17,7 +12,6 @@ import {
   directivesPlugin,
   headingsPlugin,
   imagePlugin,
-  linkDialogPlugin,
   linkPlugin,
   listsPlugin,
   markdown$,
@@ -32,6 +26,7 @@ import {
 import { usePublisher } from '@mdxeditor/gurx';
 import '@mdxeditor/editor/style.css';
 import '../styles/bio-editor.css';
+import BioHeadingSelect from './BioHeadingSelect';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 
 type Props = { initialMarkdown: string; token: string };
@@ -105,13 +100,15 @@ function InsertSyntaxButton({
   );
 }
 
-function InsertEmbedButton({
+type UrlKind = 'link' | 'image' | 'youtube' | 'video';
+
+function InsertUrlButton({
   kind,
   symbol,
   editorRef,
   onMarkdownChange,
 }: {
-  kind: 'youtube' | 'video';
+  kind: UrlKind;
   symbol: ReactNode;
   editorRef: RefObject<MDXEditorMethods | null>;
   onMarkdownChange: (markdown: string) => void;
@@ -119,11 +116,14 @@ function InsertEmbedButton({
   const publishMarkdown = usePublisher(markdown$);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
+  const [description, setDescription] = useState('');
   const [error, setError] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const label = kind === 'youtube' ? 'Insert YouTube video' : 'Insert media/video';
+  const label = {
+    link: 'Insert link', image: 'Insert image',
+    youtube: 'Insert YouTube video', video: 'Insert media/video',
+  }[kind];
   const titleId = `bio-${kind}-dialog-title`;
 
   useEffect(() => {
@@ -134,7 +134,7 @@ function InsertEmbedButton({
       inputRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
-      buttonRef.current?.focus();
+      editorRef.current?.focus(undefined, { defaultSelection: 'rootEnd' });
     }
   }, [open]);
 
@@ -151,21 +151,37 @@ function InsertEmbedButton({
       inputRef.current?.focus();
       return;
     }
+    let normalizedUrl: string;
+    try {
+      const parsed = new URL(value);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid protocol');
+      if (kind !== 'link' && parsed.protocol !== 'https:') throw new Error('HTTPS required');
+      normalizedUrl = parsed.href.replace(/\(/g, '%28').replace(/\)/g, '%29');
+    } catch {
+      setError(kind === 'link' ? 'Enter a valid web URL.' : 'Enter a valid HTTPS URL.');
+      inputRef.current?.focus();
+      return;
+    }
+    const escapedDescription = description.trim().replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+    const syntax = kind === 'link' ? `[${escapedDescription || normalizedUrl}](${normalizedUrl})`
+      : kind === 'image' ? `![${escapedDescription}](${normalizedUrl})`
+      : `:${kind}[${normalizedUrl.replace(/\]/g, '%5D')}]`;
     const currentMarkdown = editorRef.current?.getMarkdown() ?? '';
     const separator = currentMarkdown
       ? (currentMarkdown.endsWith('\n\n') ? '' : '\n\n')
       : '';
-    const updatedMarkdown = `${currentMarkdown}${separator}:${kind}[${value.replace(/\]/g, '%5D')}]\n`;
+    const updatedMarkdown = `${currentMarkdown}${separator}${syntax}\n`;
     editorRef.current?.setMarkdown(updatedMarkdown);
     publishMarkdown(updatedMarkdown);
     onMarkdownChange(updatedMarkdown);
     setUrl('');
+    setDescription('');
     closeDialog();
   }
 
   return (
     <>
-      <Button ref={buttonRef} type="button" title={label} aria-label={label} onClick={() => setOpen(true)}>
+      <Button type="button" title={label} aria-label={label} onClick={() => setOpen(true)}>
         <span className="bio-toolbar-glyph" aria-hidden="true">{symbol}</span>
       </Button>
       <dialog
@@ -180,14 +196,24 @@ function InsertEmbedButton({
             <h3 id={titleId}>{label}</h3>
             <button type="button" className="bio-embed-dialog-close" aria-label="Close dialog" onClick={closeDialog}>×</button>
           </div>
-          <label htmlFor={`bio-${kind}-url`}>{kind === 'youtube' ? 'YouTube URL' : 'Video or embed URL'}</label>
+          {(kind === 'link' || kind === 'image') && <>
+            <label htmlFor={`bio-${kind}-description`}>{kind === 'link' ? 'Link text' : 'Image description'}</label>
+            <input
+              id={`bio-${kind}-description`}
+              type="text"
+              value={description}
+              placeholder={kind === 'link' ? 'Text to display' : 'Describe the image'}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </>}
+          <label htmlFor={`bio-${kind}-url`}>{kind === 'link' ? 'Link URL' : kind === 'image' ? 'Image URL' : kind === 'youtube' ? 'YouTube URL' : 'Video or embed URL'}</label>
           <input
             ref={inputRef}
             id={`bio-${kind}-url`}
             type="url"
             required
             value={url}
-            placeholder={kind === 'youtube' ? 'https://www.youtube.com/watch?v=…' : 'https://example.com/video.mp4'}
+            placeholder={kind === 'youtube' ? 'https://www.youtube.com/watch?v=…' : kind === 'video' ? 'https://example.com/video.mp4' : 'https://example.com'}
             aria-invalid={Boolean(error)}
             aria-describedby={error ? `bio-${kind}-error` : undefined}
             onChange={(event) => { setUrl(event.target.value); setError(''); }}
@@ -203,12 +229,16 @@ function InsertEmbedButton({
   );
 }
 
-function CrossedEyeIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A10.8 10.8 0 0 1 12 5c5 0 8.8 4.1 10 7-.4 1-1.3 2.3-2.5 3.5M6.2 6.2C3.8 7.7 2.5 10 2 12c1.2 2.9 5 7 10 7 1.3 0 2.4-.3 3.4-.8" /></svg>;
-}
-
 function CameraIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z" /><circle cx="12" cy="13" r="3.5" /></svg>;
+}
+
+function LinkIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13.5a5 5 0 0 0 7.1 0l2.1-2.1a5 5 0 0 0-7.1-7.1L10.5 6M14 10.5a5 5 0 0 0-7.1 0l-2.1 2.1a5 5 0 0 0 7.1 7.1l1.6-1.6" /></svg>;
+}
+
+function ImageIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 17 5-5 3 3 3-3 5 5" /></svg>;
 }
 
 function CenterAlignButton({ editorRef, onMarkdownChange }: {
@@ -228,6 +258,7 @@ function CenterAlignButton({ editorRef, onMarkdownChange }: {
         editorRef.current?.setMarkdown(updatedMarkdown);
         publishMarkdown(updatedMarkdown);
         onMarkdownChange(updatedMarkdown);
+        editorRef.current?.focus(undefined, { defaultSelection: 'rootEnd' });
       }}
     >
       <span className="bio-toolbar-glyph" aria-hidden="true">☰</span>
@@ -240,24 +271,35 @@ function BioToolbar({ editorRef, onMarkdownChange }: {
   onMarkdownChange: (markdown: string) => void;
 }) {
   return (
-    <DiffSourceToggleWrapper options={['rich-text', 'source']} SourceToolbar={<span className="bio-source-label">Raw Markdown</span>}>
-      <BlockTypeSelect />
-      <span className="bio-toolbar-divider" aria-hidden="true" />
-      <BoldItalicUnderlineToggles />
-      <StrikeThroughSupSubToggles options={['Strikethrough']} />
-      <InsertSyntaxButton title="Spoiler" symbol={<CrossedEyeIcon />} syntax=":spoiler[spoiler text]" />
-      <span className="bio-toolbar-divider" aria-hidden="true" />
-      <CreateLink />
-      <InsertImage />
-      <InsertEmbedButton kind="youtube" symbol="▶" editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
-      <InsertEmbedButton kind="video" symbol={<CameraIcon />} editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
-      <span className="bio-toolbar-divider" aria-hidden="true" />
-      <ListsToggle options={['number', 'bullet']} />
-      <CenterAlignButton editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
-      <InsertSyntaxButton title="Block quote" symbol="❞" syntax={'\n\n> quote\n\n'} />
-      <CodeToggle />
-      <InsertCodeBlock />
-    </DiffSourceToggleWrapper>
+    <div
+      style={{ display: 'contents' }}
+      onMouseDownCapture={(event) => {
+        // Keep the editor's Lexical selection active while toolbar controls run.
+        // Dialog inputs receive focus explicitly when their modal opens.
+        if ((event.target as HTMLElement).closest('button')) {
+          event.preventDefault();
+          if (!document.activeElement?.closest('.bio-editor-content')) {
+            editorRef.current?.focus(undefined, { defaultSelection: 'rootEnd' });
+          }
+        }
+      }}
+    >
+      <DiffSourceToggleWrapper options={['rich-text', 'source']} SourceToolbar={<span className="bio-source-label">Raw Markdown</span>}>
+        <BioHeadingSelect />
+        <span className="bio-toolbar-divider" aria-hidden="true" />
+        <BoldItalicUnderlineToggles />
+        <StrikeThroughSupSubToggles options={['Strikethrough']} />
+        <span className="bio-toolbar-divider" aria-hidden="true" />
+        <InsertUrlButton kind="link" symbol={<LinkIcon />} editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
+        <InsertUrlButton kind="image" symbol={<ImageIcon />} editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
+        <InsertUrlButton kind="youtube" symbol="▶" editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
+        <InsertUrlButton kind="video" symbol={<CameraIcon />} editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
+        <span className="bio-toolbar-divider" aria-hidden="true" />
+        <CenterAlignButton editorRef={editorRef} onMarkdownChange={onMarkdownChange} />
+        <InsertSyntaxButton title="Block quote" symbol="❞" syntax={'\n\n> quote\n\n'} />
+        <CodeToggle />
+      </DiffSourceToggleWrapper>
+    </div>
   );
 }
 
@@ -276,7 +318,6 @@ export default function BioEditor({ initialMarkdown, token }: Props) {
     listsPlugin(),
     quotePlugin(),
     linkPlugin(),
-    linkDialogPlugin(),
     imagePlugin(),
     codeBlockPlugin({ defaultCodeBlockLanguage: 'txt' }),
     directivesPlugin({ directiveDescriptors: bioDirectives }),
@@ -326,7 +367,6 @@ export default function BioEditor({ initialMarkdown, token }: Props) {
   return (
     <div className="bio-editor-island" aria-labelledby="bio-label">
       <div className="bio-editor-meta">
-        <span className="bio-mode-hint">Rich text editor · Raw Markdown source</span>
         <span id="bio-count" aria-live="polite">{draft.length.toLocaleString()} / 5,000</span>
       </div>
       <MDXEditor

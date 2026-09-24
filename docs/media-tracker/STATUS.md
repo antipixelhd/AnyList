@@ -2,7 +2,7 @@
 
 ## Profile bio editor (2026-09-24)
 
-Profile settings now use an MDXEditor React island with AnyList styling, rich text controls, and a Raw Markdown source toggle. The toolbar includes emphasis, underline, strikethrough, spoiler, headings, links, images, YouTube and video embeds, lists, centered text, quotes, and code. The existing 5,000-character limit and explicit bio save remain in place. Public profiles safely render the matching spoiler, underline, alignment, and validated video syntax while leaving arbitrary raw HTML disabled. The synthetic preview bio was restored after browser verification.
+Profile settings now use an MDXEditor React island with AnyList styling, rich text controls, and a Raw Markdown source toggle. The toolbar includes emphasis, underline, strikethrough, headings, links, images, YouTube and video embeds, centered text, quotes, and inline code. Link, image, and video URLs use the same AnyList input dialog. The heading selector overlays the page with correct level labels, and toolbar controls focus the editor. List, code block, and spoiler insertion buttons were removed; existing Markdown content and direct source editing remain supported. The 5,000-character limit and explicit bio save remain in place. Public profiles safely render spoiler, underline, alignment, and validated video syntax while leaving arbitrary raw HTML disabled. The synthetic preview bio was restored after browser verification.
 
 The frontend production build passes. Authenticated local browser checks covered the toolbar, rich/source round trips, saving, public rendering, spoiler reveal, and restoration of the preview account. The local preview remains available at `http://localhost:7340`; no VPS deployment was performed.
 
