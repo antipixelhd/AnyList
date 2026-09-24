@@ -420,6 +420,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
     skipped_episode_count = sum(1 for i in items for e in i.get("episodes", []) if e.get("decision", {}).get("action") == "skip")
     inferred = 0
     source_episodes = 0
+    final_episodes = 0
     cutoff_exclusions = 0
     guessed_episodes = 0
     for item in shows:
@@ -430,6 +431,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
             source_positions, chosen_positions, excluded = {}, set(), 0
         source_watches += sum(len(set(date_value for ep in episodes for date_value in ep.get("dates", []))) for episodes in source_positions.values())
         source_episodes += len(source_positions)
+        final_episodes += len(chosen_positions)
         guessed_episodes += sum(ep.get("resolution") == "guessed" for episodes in source_positions.values() for ep in episodes)
         inferred += len(chosen_positions - set(source_positions))
         cutoff_exclusions += excluded
@@ -440,6 +442,8 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
         "existing_entries": sum(bool(i.get("existing", {}).get("tracked")) for i in included),
         "source_watches": source_watches,
         "source_episodes": source_episodes,
+        "episodes": final_episodes,
+        "partial_shows": sum(item.get("outcome", {}).get("status") == "partial" for item in shows),
         "guessed_episodes": guessed_episodes,
         "discarded_episodes": sum(episode.get("resolution") == "discarded" for item in included for episode in item.get("episodes", [])),
         "covered_episodes": sum(episode.get("resolution") == "covered" for item in included for episode in item.get("episodes", [])),
@@ -921,6 +925,21 @@ def _all_catalog_episodes(item: dict) -> dict[tuple[int, int], dict]:
         key = (int(season), int(number))
         if key not in episodes or ep.get("matched"):
             episodes[key] = ep
+    for season in item.get("seasons") or []:
+        season_number = season.get("season_number")
+        total_released = season.get("total_released")
+        if not season_number or not total_released:
+            continue
+        for number in range(1, int(total_released) + 1):
+            position = (int(season_number), number)
+            existing = episodes.get(position)
+            if existing is None:
+                episodes[position] = {
+                    "season_number": position[0], "episode_number": number,
+                    "title": f"Episode {number}", "released_for_import": True,
+                }
+            elif not existing.get("release_date") and not existing.get("air_date"):
+                episodes[position] = {**existing, "released_for_import": True}
     return episodes
 
 
@@ -986,6 +1005,8 @@ def _position_for_episode(episode: dict) -> tuple[int, int] | None:
 
 
 def _episode_is_released(episode: dict, today: date) -> bool:
+    if episode.get("released_for_import"):
+        return True
     released = _to_date(episode.get("release_date") or episode.get("air_date"))
     return released is not None and released <= today
 
@@ -1014,17 +1035,6 @@ def _show_import_positions(item: dict, outcome: dict, today: date) -> tuple[dict
 
     chosen_positions = set(source_positions)
     if status == "completed":
-        incomplete = [
-            season for season in item.get("seasons", [])
-            if not season.get("catalogue_complete")
-            or season.get("total_released") is None
-            or len([
-                position for position in catalog
-                if position[0] == season.get("season_number") and _episode_is_released(catalog[position], today)
-            ]) < season.get("total_released", 0)
-        ]
-        if incomplete:
-            raise ValueError(f"{item.get('source_title')}: catalogue data is incomplete, so Completed cannot safely fill all released episodes. Choose Partial or skip this show.")
         chosen_positions.update(position for position, episode in catalog.items() if _episode_is_released(episode, today))
     elif status == "partial" and endpoint[0] is not None and endpoint[1] is not None:
         chosen_positions.update(
@@ -1107,6 +1117,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
     stats = {
         "movies": 0, "shows": 0, "new_entries": 0, "existing_entries": 0,
         "source_watches": 0, "source_episodes": 0, "duplicates": 0,
+        "episodes": 0, "partial_shows": 0,
         "inferred_episodes": 0, "skipped": 0, "unmatched": 0,
         "cutoff_exclusions": 0, "partial_progress": 0, "errors": len(errors),
         "excluded_rows": int(counts.get("excluded_rows", 0) or 0),
@@ -1160,6 +1171,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         except ValueError as exc:
             raise ValueError(str(exc))
         stats["cutoff_exclusions"] += excluded_count
+        stats["episodes"] += len(chosen_positions)
+        stats["partial_shows"] += outcome.get("status") == "partial"
         stats["guessed_episodes"] += sum(ep.get("resolution") == "guessed" for episodes in source_positions.values() for ep in episodes)
         stats["discarded_episodes"] += sum(ep.get("resolution") == "discarded" for ep in item.get("episodes", []))
         stats["covered_episodes"] += sum(ep.get("resolution") == "covered" for ep in item.get("episodes", []))
@@ -1269,6 +1282,7 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
                 "movies": stats["movies"], "shows": stats["shows"],
                 "new_entries": stats["new_entries"], "existing_entries": stats["existing_entries"],
                 "source_watches": stats["source_watches"], "source_episodes": stats["source_episodes"],
+                "episodes": stats["episodes"], "partial_shows": stats["partial_shows"],
                 "duplicates": stats["duplicates"], "inferred_episodes": stats["inferred_episodes"],
                 "skipped": stats["skipped"], "unmatched": stats["unmatched"],
                 "cutoff_exclusions": stats["cutoff_exclusions"], "partial_progress": stats["partial_progress"],

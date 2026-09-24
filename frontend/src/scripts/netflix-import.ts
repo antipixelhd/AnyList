@@ -63,6 +63,8 @@ function mountNetflixImport() {
   const languageInput = document.getElementById("netflix-import-language") as HTMLSelectElement;
   const workflow = document.getElementById("netflix-import-workflow") as HTMLElement;
   const errorBox = document.getElementById("netflix-import-error") as HTMLElement;
+  const dialog = document.getElementById("netflix-import-dialog") as HTMLDialogElement;
+  const dialogErrorBox = document.getElementById("netflix-import-dialog-error") as HTMLElement;
   const token = document.getElementById("app-data")?.getAttribute("data-token") ?? "";
   const hasTmdbKey = app.getAttribute("data-has-tmdb-key") === "true";
 
@@ -110,14 +112,27 @@ function mountNetflixImport() {
   }
 
   function showError(message: string) {
-    errorBox.textContent = message;
-    errorBox.classList.remove("hidden");
+    const target = dialog.open ? dialogErrorBox : errorBox;
+    target.textContent = message;
+    target.classList.remove("hidden");
   }
 
   function clearError() {
-    errorBox.textContent = "";
-    errorBox.classList.add("hidden");
+    for (const target of [errorBox, dialogErrorBox]) {
+      target.textContent = "";
+      target.classList.add("hidden");
+    }
   }
+
+  function openDialog() {
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function closeDialog() {
+    if (dialog.open) dialog.close();
+  }
+
+  dialog.addEventListener("cancel", (event) => event.preventDefault());
 
   function summaryNumber(...keys: string[]): number {
     const summary = session?.summary ?? {};
@@ -249,7 +264,7 @@ function mountNetflixImport() {
 
   function outcomeButtons(item: NetflixItem): string {
     return ([
-      ["completed", "Completed"], ["partial", "Partial"], ["skip", "Unwatched"],
+      ["completed", "Completed"], ["partial", "Partial"], ["skip", "Skip"],
     ] as const).map(([value, label]) => `<button type="button" data-netflix-action="outcome" data-item-id="${esc(item.id)}" data-status="${value}" aria-pressed="${item.outcome.status === value}" class="flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition-colors sm:text-sm ${item.outcome.status === value ? "bg-blue-600 text-white" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"}">${label}</button>`).join("");
   }
 
@@ -261,13 +276,13 @@ function mountNetflixImport() {
     const season = currentSeason.season_number;
     const total = currentSeason.total_released;
     const episode = Math.max(1, Math.min(total, item.outcome.latest_episode ?? total));
-    const seasonOptions = seasons.map((meta) => `<option value="${meta.season_number}" ${meta.season_number === season ? "selected" : ""}>Season ${meta.season_number} (${meta.represented}/${meta.total_released} in export)</option>`).join("");
+    const seasonOptions = seasons.map((meta) => `<option value="${meta.season_number}" ${meta.season_number === season ? "selected" : ""}>Season ${meta.season_number}</option>`).join("");
     const episodeOptions = Array.from({ length: Math.min(total, 100) }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === episode ? "selected" : ""}>Episode ${n}</option>`).join("");
     const tracking = item.outcome.tracking_status ?? "watching";
-    return `<div class="mt-3 grid gap-3 sm:grid-cols-3">
-      <label class="text-xs font-medium text-zinc-400">Latest watched season<select data-netflix-change="latest-season" data-item-id="${esc(item.id)}" class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">${seasonOptions}</select></label>
-      <label class="text-xs font-medium text-zinc-400">Latest watched episode<select data-netflix-change="latest-episode" data-item-id="${esc(item.id)}" class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">${episodeOptions}</select></label>
-      <label class="text-xs font-medium text-zinc-400">Tracking status<select data-netflix-change="tracking-status" data-item-id="${esc(item.id)}" class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"><option value="watching" ${tracking === "watching" ? "selected" : ""}>Watching</option><option value="paused" ${tracking === "paused" ? "selected" : ""}>Paused</option><option value="dropped" ${tracking === "dropped" ? "selected" : ""}>Dropped</option></select></label>
+    return `<div class="grid gap-3 sm:grid-cols-3">
+      <label class="min-w-0 text-xs font-medium text-zinc-400"><span class="flex min-h-9 items-end">Latest watched season</span><select data-netflix-change="latest-season" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100">${seasonOptions}</select></label>
+      <label class="min-w-0 text-xs font-medium text-zinc-400"><span class="flex min-h-9 items-end">Latest watched episode</span><select data-netflix-change="latest-episode" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100">${episodeOptions}</select></label>
+      <label class="min-w-0 text-xs font-medium text-zinc-400"><span class="flex min-h-9 items-end">Tracking status</span><select data-netflix-change="tracking-status" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100"><option value="watching" ${tracking === "watching" ? "selected" : ""}>Watching</option><option value="paused" ${tracking === "paused" ? "selected" : ""}>Paused</option><option value="dropped" ${tracking === "dropped" ? "selected" : ""}>Dropped</option></select></label>
     </div>`;
   }
 
@@ -275,20 +290,17 @@ function mountNetflixImport() {
     const candidate = item.match.candidate;
     const poster = posterSrc(candidate?.poster_path);
     const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0);
-    return `<article class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-3 sm:p-4" data-netflix-item="${esc(item.id)}">
+    return `<article class="flex h-full min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 lg:row-span-3 lg:grid lg:[grid-template-rows:subgrid]" data-netflix-item="${esc(item.id)}">
       <div class="flex gap-3">
         ${poster ? `<img loading="lazy" src="${esc(poster)}" alt="Poster for ${esc(candidate?.title ?? item.source_title)}" class="h-24 w-16 shrink-0 rounded-lg bg-zinc-800 object-cover">` : `<div class="h-24 w-16 shrink-0 rounded-lg bg-zinc-800"></div>`}
         <div class="min-w-0 flex-1">
           <h3 class="break-words font-semibold text-zinc-100">${esc(candidate?.title ?? item.source_title)}</h3>
-          <p class="mt-1 text-xs text-zinc-400">${esc(seasonSummary(item))}</p>
           ${seasons.length ? `<div class="mt-2 flex flex-wrap gap-1.5">${seasons.map((season) => `<span class="rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400">S${season.season_number}: ${season.represented}/${season.total_released ?? "?"}</span>`).join("")}</div>` : ""}
           ${episodeResolutionDetails(item)}
         </div>
       </div>
-      <div class="mt-3 flex rounded-xl border border-zinc-800 bg-zinc-950 p-1" role="group" aria-label="Import progress for ${esc(candidate?.title ?? item.source_title)}">${outcomeButtons(item)}</div>
-      ${item.outcome.status === "skip" ? `<p class="mt-2 text-xs text-zinc-500">Unwatched excludes this show from the import. Existing AnyList progress stays as it is.</p>` : ""}
-      ${partialControls(item)}
-      <p class="mt-2 min-h-4 text-xs text-zinc-500" data-netflix-saved="${esc(item.id)}">${saving ? "Saving changes…" : "Changes save automatically"}</p>
+      <div class="flex rounded-xl border border-zinc-800 bg-zinc-950 p-1" role="group" aria-label="Import progress for ${esc(candidate?.title ?? item.source_title)}">${outcomeButtons(item)}</div>
+      <div>${item.outcome.status === "skip" ? `<p class="text-xs text-zinc-500">Skip leaves this show and any existing AnyList progress untouched.</p>` : partialControls(item)}</div>
     </article>`;
   }
 
@@ -303,42 +315,30 @@ function mountNetflixImport() {
     return `<div class="space-y-4">
       <div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 3 of 4 · Review show progress</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Choose how each show should appear in AnyList</h2><p class="mt-1 text-sm text-zinc-400">Episode counts show what the export represents. Partial progress fills episodes through your selected episode.</p></div>
       <div class="rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3"><p class="text-sm font-semibold text-blue-100">Partial progress</p><p class="mt-1 text-sm text-zinc-300">${incomplete.length} show${incomplete.length === 1 ? "" : "s"} have episodes missing from the export. Partial progress gets automatically filled until the latest watched episode for a show.</p></div>
-      <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-300"><input type="checkbox" data-netflix-change="show-completed" ${showingCompleted ? "checked" : ""} class="h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-500"><span>Show completed shows <span class="text-zinc-500">(${completedCount})</span></span></label>
-      ${visible.length ? `<div class="grid gap-3 lg:grid-cols-2">${visible.map(showCard).join("")}</div>` : `<div class="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-8 text-center text-sm text-zinc-400">${showItems.length ? "All shows are represented through their latest released episode. Use the control above to inspect completed shows." : "No matched shows in this export."}</div>`}
+      <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-300"><input type="checkbox" data-netflix-change="show-completed" ${showingCompleted ? "checked" : ""} class="h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-500"><span>Show fully represented shows <span class="text-zinc-500">(${completedCount})</span></span></label>
+      ${visible.length ? `<div class="grid gap-3 lg:grid-cols-2">${visible.map(showCard).join("")}</div>` : `<div class="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-8 text-center text-sm text-zinc-400">${showItems.length ? "All shows are represented through their latest released episode. Use the control above to inspect them." : "No matched shows in this export."}</div>`}
       <p class="text-xs text-zinc-500">${partialCount} show${partialCount === 1 ? "" : "s"} currently set to Partial. You can change any choice before importing.</p>
     </div>`;
   }
 
-  function metric(label: string, value: number, hint?: string): string {
-    return `<div class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3"><p class="text-xs text-zinc-500">${esc(label)}</p><p class="mt-1 text-xl font-bold text-zinc-100">${value.toLocaleString()}</p>${hint ? `<p class="mt-1 text-[11px] text-zinc-500">${esc(hint)}</p>` : ""}</div>`;
-  }
-
   function summaryView(): string {
-    const partial = summaryNumber("partial_progress", "partial_progress_count");
+    const movies = summaryNumber("movies");
+    const shows = summaryNumber("shows");
+    const episodes = summaryNumber("episodes");
+    const rows = [
+      ["Movies", movies],
+      ["Shows", shows],
+      ["Episodes", episodes],
+    ] as const;
     const summaryErrors = session?.summary?.errors;
     const errors = typeof summaryErrors === "number" ? summaryErrors : Array.isArray(summaryErrors) ? summaryErrors.length : session?.errors?.length ?? 0;
     return `<div class="space-y-5">
       <div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 4 of 4 · Final review</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Ready to import</h2><p class="mt-1 text-sm text-zinc-400">Review what will change in your AnyList account. Nothing is applied until you select Import.</p></div>
-      <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        ${metric("Movies", summaryNumber("movies", "movie_count", "movies_total"))}
-        ${metric("Shows", summaryNumber("shows", "show_count", "shows_total"))}
-        ${metric("New entries", summaryNumber("new_entries"))}
-        ${metric("Existing entries", summaryNumber("existing_entries"))}
-        ${metric("Source watches", summaryNumber("source_watches", "source_watch_count", "watch_events"))}
-        ${metric("Source episodes", summaryNumber("source_episodes", "distinct_episodes", "episode_count"))}
-        ${metric("Guessed episodes", summaryNumber("guessed_episodes"), "Episode positions assigned from viewing order")}
-        ${metric("Covered episodes", summaryNumber("covered_episodes"), "Read in the export; already covered by later progress")}
-        ${metric("Discarded episodes", summaryNumber("discarded_episodes"), "Observations without a safe released position")}
-        ${metric("Duplicate rows", summaryNumber("duplicates", "duplicate_rows"))}
-        ${metric("Titleless episode rows", summaryNumber("excluded_rows"), "Excluded entries such as : Episode 2")}
-        ${metric("Inferred episodes", summaryNumber("inferred_episodes"), "Added through selected progress endpoints")}
-        ${metric("Skipped", summaryNumber("skipped", "skipped_items"))}
-        ${metric("Unmatched", summaryNumber("unmatched"))}
-        ${metric("Cutoff exclusions", summaryNumber("cutoff_exclusions", "excluded_after_cutoff"))}
+      <div class="space-y-3">
+        ${rows.map(([label, value]) => `<div class="flex items-center justify-between gap-6 py-3"><span class="text-base text-zinc-300">${label}</span><strong class="text-2xl tabular-nums text-zinc-100">${value.toLocaleString()}</strong></div>`).join("")}
       </div>
-      <div class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4"><div class="flex items-center justify-between gap-3"><span class="font-semibold text-blue-100">Partial Progress</span><span class="rounded-full bg-blue-500/15 px-2.5 py-1 text-sm font-bold text-blue-100">${partial}</span></div><p class="mt-1 text-sm text-zinc-400">Shows with episodes missing from the export, including shows you chose to mark Completed. Partial progress gets automatically filled until the latest watched episode for a show.</p><button type="button" data-netflix-action="customize" class="mt-3 rounded-lg border border-blue-400/40 px-3 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/10">Customize</button></div>
-      ${errors ? `<p class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm text-amber-200">${errors} row${errors === 1 ? "" : "s"} could not be imported and will be skipped.</p>` : ""}
-      <div class="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4"><h3 class="font-semibold text-zinc-200">Your choices</h3><div class="mt-3 space-y-2 text-sm text-zinc-400"><p>${(session?.items ?? []).filter((item) => item.kind === "movie" && item.decision.action !== "skip").length} movies · ${(session?.items ?? []).filter((item) => item.kind === "show" && item.decision.action !== "skip").length} shows</p><p>${(session?.items ?? []).filter((item) => item.kind === "show" && item.outcome.status === "partial").length} partial · ${(session?.items ?? []).filter((item) => item.kind === "show" && item.outcome.status === "completed").length} completed · ${(session?.items ?? []).filter((item) => item.kind === "show" && item.outcome.status === "skip").length} show${(session?.items ?? []).filter((item) => item.kind === "show" && item.outcome.status === "skip").length === 1 ? "" : "s"} skipped</p></div></div>
+      <p class="text-xs text-zinc-500">Episode total includes the positions filled by your final Partial and Completed choices.</p>
+      ${errors ? `<p class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm text-amber-200">${errors} CSV row${errors === 1 ? "" : "s"} could not be read.</p>` : ""}
     </div>`;
   }
 
@@ -349,10 +349,12 @@ function mountNetflixImport() {
 
   function render() {
     if (!session) {
+      closeDialog();
       workflow.classList.add("hidden");
       upload.classList.remove("hidden");
       return;
     }
+    openDialog();
     workflow.classList.remove("hidden");
     upload.classList.add("hidden");
     const isPreparing = session.status === "preparing";
@@ -388,8 +390,8 @@ function mountNetflixImport() {
       ? `<button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
       : isFailed
       ? `<button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
-      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${step > 2 ? `<button type="button" data-netflix-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step === 2 ? `<button type="button" data-netflix-action="next" ${!titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-netflix-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
-    workflow.innerHTML = `${!isCommitted ? stepHeader() : ""}<div class="space-y-5">${content}<div class="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center"><p class="min-h-5 text-xs text-zinc-500">${saving ? "Saving your changes…" : isPreparing ? "Matching in progress" : "Your choices are saved to this import draft."}</p>${!isCommitted ? nav : `<button type="button" data-netflix-action="restart" class="self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 sm:self-auto">Import another file</button>`}</div></div>`;
+      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${step > 2 ? `<button type="button" data-netflix-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step < 4 ? `<button type="button" data-netflix-action="next" ${step === 2 && !titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-netflix-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
+    workflow.innerHTML = `${!isCommitted ? stepHeader() : ""}<div class="space-y-5">${content}<div class="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center">${isPreparing ? `<span class="text-xs text-zinc-500">Matching in progress</span>` : ""}${!isCommitted ? nav : `<button type="button" data-netflix-action="restart" class="self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 sm:self-auto">Import another file</button>`}</div></div>`;
   }
 
   function byId(id: string | number): NetflixItem | undefined {
@@ -455,6 +457,7 @@ function mountNetflixImport() {
     busy = true;
     upload.classList.add("hidden");
     workflow.classList.remove("hidden");
+    openDialog();
     step = 1;
     workflow.innerHTML = `<div class="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5"><div class="flex items-center justify-between gap-3"><p class="text-sm font-semibold text-zinc-200">Uploading ${esc(file.name)}…</p><button type="button" data-netflix-action="cancel-upload" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800"><div class="h-full w-1/3 animate-pulse rounded-full bg-blue-500"></div></div></div>`;
     const form = new FormData();
@@ -471,6 +474,7 @@ function mountNetflixImport() {
     } catch (error) {
       upload.classList.remove("hidden");
       workflow.classList.add("hidden");
+      closeDialog();
       if (!(error instanceof DOMException && error.name === "AbortError")) showError(error instanceof Error ? error.message : "Could not upload the Netflix CSV.");
     } finally {
       uploadController = null;
@@ -486,6 +490,7 @@ function mountNetflixImport() {
     busy = false;
     workflow.classList.add("hidden");
     workflow.innerHTML = "";
+    closeDialog();
     upload.classList.remove("hidden");
     fileInput.value = "";
   }
@@ -580,14 +585,17 @@ function mountNetflixImport() {
     if (action === "cancel-upload") { cancelUpload(); return; }
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") { session = null; step = 1; clearError(); render(); return; }
-    if (action === "back") { step = step === 3 ? 4 : 2; render(); return; }
-    if (action === "customize") { step = 3; render(); return; }
+    if (action === "back") { step = Math.max(2, step - 1); render(); dialog.querySelector(".overflow-y-auto")?.scrollTo(0, 0); return; }
     if (action === "next") {
       if (step === 2) {
         if (!titleReviewComplete()) { showError("Resolve each uncertain show or movie title before continuing."); return; }
+        step = 3;
+      } else if (step === 3) {
+        await saveQueue;
         step = 4;
       }
       render();
+      dialog.querySelector(".overflow-y-auto")?.scrollTo(0, 0);
       return;
     }
     if (action === "commit") { await commit(); return; }

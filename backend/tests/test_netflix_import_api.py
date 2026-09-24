@@ -160,6 +160,22 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(events_by_episode[3].provisional)
         self.assertEqual((stats["source_episodes"], stats["inferred_episodes"]), (1, 2))
 
+    async def test_completed_import_backfills_numbered_positions_without_episode_metadata(self):
+        item = _show_item()
+        item["episodes"] = [_episode(2, watched=True, watched_date="2020-01-02")]
+        item["catalog_episodes"] = [_episode(2)]
+        item["seasons"][0]["catalogue_complete"] = False
+        item["outcome"].update({"status": "completed", "status_overridden": True})
+
+        stats, db = await self._apply_with_memory_db(item)
+
+        events_by_episode = {event.media_id % 100: event for event in db.added}
+        self.assertEqual(set(events_by_episode), {1, 2, 3})
+        self.assertTrue(events_by_episode[1].provisional)
+        self.assertFalse(events_by_episode[2].provisional)
+        self.assertTrue(events_by_episode[3].provisional)
+        self.assertEqual((stats["episodes"], stats["inferred_episodes"]), (3, 2))
+
     async def test_only_unresolved_title_identity_blocks_import(self):
         candidate = {"tmdb_id": 990001, "media_type": "show", "title": "Fixture Show",
                      "details": {"name": "Fixture Show", "first_air_date": "2020-01-01"}}
@@ -241,11 +257,23 @@ class NetflixDecisionTests(unittest.TestCase):
         summary = _summary([_show_item()])
         self.assertEqual((summary["source_watches"], summary["source_episodes"], summary["inferred_episodes"], summary["cutoff_exclusions"]), (1, 1, 1, 1))
 
-    def test_incomplete_catalogue_cannot_complete(self):
+    def test_final_episode_total_follows_progress_and_skip_choices(self):
+        item = _show_item()
+        self.assertEqual((_summary([item])["shows"], _summary([item])["episodes"]), (1, 2))
+        item["outcome"] = {"status": "completed"}
+        self.assertEqual((_summary([item])["shows"], _summary([item])["episodes"]), (1, 3))
+        item["outcome"] = {"status": "skip"}
+        self.assertEqual((_summary([item])["shows"], _summary([item])["episodes"]), (0, 0))
+
+    def test_completed_fills_season_counts_when_catalogue_rows_are_missing(self):
         item = _show_item()
         item["seasons"][0]["catalogue_complete"] = False
-        with self.assertRaisesRegex(ValueError, "catalogue data is incomplete"):
-            _show_import_positions(item, {"status": "completed"}, date(2026, 9, 24))
+        item["catalog_episodes"] = [_episode(2)]
+        sources, chosen, excluded = _show_import_positions(item, {"status": "completed"}, date(2026, 9, 24))
+        self.assertEqual(set(sources), {(1, 2), (1, 3)})
+        self.assertEqual(chosen, {(1, 1), (1, 2), (1, 3)})
+        self.assertEqual(excluded, 0)
+        self.assertEqual(_summary([{**item, "outcome": {"status": "completed"}}])["episodes"], 3)
 
     def test_matcher_shape_normalizes_source_row_lists_and_suggestions(self):
         raw = {"shows": [{
