@@ -37,7 +37,7 @@ const activeCount = sections.reduce((sum, s) => sum + s.selected.length, 0);
     </svg>
     Filters
     {activeCount > 0 && (
-      <span class="flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-blue-600 text-white text-xs font-semibold">{activeCount}</span>
+      <span class="flex items-center justify-center min-w-[2rem] h-5 px-1 rounded-full bg-blue-600 text-white text-xs font-semibold">{activeCount}</span>
     )}
   </button>
   {activeCount > 0 && (

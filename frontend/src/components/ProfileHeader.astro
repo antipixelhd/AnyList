@@ -71,7 +71,7 @@ if (button) {
 <style>
 .profile-heading{display:flex;align-items:center;gap:12px;flex-wrap:wrap;transform:translateY(-15px)}
 .profile-heading h1{margin:0}
-.follows-you-tag{display:inline-flex;align-items:center;padding:3px 8px;border:1px solid #48708c;border-radius:4px;background:#203c52;color:#acd9f3;font-size:11px;font-weight:600;white-space:nowrap}
+.follows-you-tag{display:inline-flex;align-items:center;padding:3px 8px;border:1px solid #48708c;border-radius:4px;background:#203c52;color:#acd9f3;font-size:var(--type-badge-size);font-weight:var(--type-badge-weight);white-space:nowrap}
 .profile-follow-action{position:relative;align-self:end;margin:0 0 19px auto;flex:none}
 .profile-follow-button{min-width:110px}
 .profile-follow-button .following-label,.profile-follow-button .unfollow-label,.profile-follow-button[data-following="yes"] .follow-label{display:none}
@@ -80,6 +80,6 @@ if (button) {
 .profile-follow-button[data-following="yes"]:not([data-recent-follow]):is(:hover,:focus-visible){background:#613341;color:#ffe5eb}
 .profile-follow-button[data-following="yes"]:not([data-recent-follow]):is(:hover,:focus-visible) .following-label{display:none}
 .profile-follow-button[data-following="yes"]:not([data-recent-follow]):is(:hover,:focus-visible) .unfollow-label{display:inline}
-.profile-follow-error{position:absolute;top:100%;left:0;width:220px;margin-top:6px;color:#ffbeca;font-size:11px;line-height:1.3}
-@media(max-width:650px){.profile-heading{gap:6px;align-content:center;min-width:0}.profile-follow-action{margin-bottom:10px}.follows-you-tag{font-size:10px}.profile-follow-button{min-width:92px;padding:8px 12px;font-size:12px}.profile-follow-error{width:160px;right:0;left:auto}}
+.profile-follow-error{position:absolute;top:100%;left:0;width:220px;margin-top:6px;color:#ffbeca;font-size:var(--type-caption-size);line-height:1.3}
+@media(max-width:650px){.profile-heading{gap:6px;align-content:center;min-width:0}.profile-follow-action{margin-bottom:10px}.follows-you-tag{font-size:var(--type-caption-size)}.profile-follow-button{min-width:92px;padding:8px 12px;font-size:var(--type-meta-size)}.profile-follow-error{width:160px;right:0;left:auto}}
 </style>

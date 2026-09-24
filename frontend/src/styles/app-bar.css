@@ -23,13 +23,14 @@ html.appbar-nav-transition-cursor {
   }
 
   .tracker .topbar .brand {
-    font-weight: 600;
+    font-weight: var(--type-nav-weight);
   }
 
   .tracker .appbar-nav {
     gap: 0;
-    font-size: 0.9rem;
-    font-weight: 650;
+    font-family: var(--font-navigation);
+    font-size: var(--type-nav-size);
+    font-weight: var(--type-nav-weight);
     letter-spacing: .01em;
   }
 
@@ -105,5 +106,7 @@ html.appbar-nav-transition-cursor {
 
 .tracker .mobile-appbar-menu summary,
 .tracker .mobile-appbar-menu nav {
-  font-weight: 400;
+  font-family: var(--font-navigation);
+  font-size: var(--type-nav-size);
+  font-weight: var(--type-nav-weight);
 }

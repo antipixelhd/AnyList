@@ -1,0 +1,115 @@
+@theme {
+  --color-zinc-950: var(--color-bg-page);
+  --color-zinc-900: var(--color-bg-card);
+  --color-zinc-800: var(--color-border-base);
+  --color-zinc-700: var(--color-border-muted);
+  --color-zinc-600: var(--color-text-dim);
+  --color-zinc-500: var(--color-text-muted);
+  --color-zinc-400: var(--color-text-description);
+  --color-zinc-300: var(--color-text-secondary);
+  --color-zinc-200: var(--color-text-primary);
+  --color-zinc-100: var(--color-text-base);
+
+  --color-jellyfin: var(--color-brand-jellyfin);
+  --color-plex: var(--color-brand-plex);
+
+  --color-brand-primary: var(--accent-500);
+  --color-brand-secondary: var(--accent-400);
+
+  /* Remap the blue scale to accent variables so all blue-X utilities theme automatically */
+  --color-blue-400: var(--accent-400);
+  --color-blue-500: var(--accent-500);
+  --color-blue-600: var(--accent-600);
+  --color-blue-900: var(--accent-900);
+}
+
+:root {
+  --color-bg-page: #09090b;       /* zinc-950 */
+  --color-bg-card: #18181b;       /* zinc-900 */
+  --color-border-base: #27272a;   /* zinc-800 */
+  --color-border-muted: #3f3f46;  /* zinc-700 */
+  --color-text-base: #f4f4f5;     /* zinc-100 */
+  --color-text-primary: #e4e4e7;  /* zinc-200 */
+  --color-text-secondary: #d4d4d8;/* zinc-300 */
+  /* On this near-black background the three secondary tiers were too dark:
+     zinc-400 (#a1a1aa ~6.8:1), zinc-500 (#71717a ~3.6:1), zinc-600
+     (#52525b ~2.3:1) - only the first cleared WCAG AA, and none read
+     comfortably. They were never far enough apart here to be worth it, so
+     all three now share one readable grey (~8.5:1, between zinc-300 and
+     zinc-400). The bright end (base/primary/secondary) still carries the
+     hierarchy. */
+  --color-text-description: #b4b4bb;
+  --color-text-muted: #b4b4bb;
+  --color-text-dim: #b4b4bb;
+
+  --color-brand-jellyfin: #a855f7; /* purple-500 */
+  --color-brand-plex: #eab308;    /* yellow-500 */
+
+  /* Accent color scale — default: blue */
+  --accent-400: #60a5fa;
+  --accent-500: #3b82f6;
+  --accent-600: #2563eb;
+  --accent-900: #1e3a8a;
+}
+
+/* ── Accent themes ─────────────────────────────────────── */
+html[data-accent="purple"] {
+  --accent-400: #c084fc;
+  --accent-500: #a855f7;
+  --accent-600: #9333ea;
+  --accent-900: #3b0764;
+}
+
+html[data-accent="pink"] {
+  --accent-400: #f472b6;
+  --accent-500: #ec4899;
+  --accent-600: #db2777;
+  --accent-900: #500724;
+}
+
+html[data-accent="red"] {
+  --accent-400: #f87171;
+  --accent-500: #ef4444;
+  --accent-600: #dc2626;
+  --accent-900: #450a0a;
+}
+
+html[data-accent="green"] {
+  --accent-400: #4ade80;
+  --accent-500: #22c55e;
+  --accent-600: #16a34a;
+  --accent-900: #052e16;
+}
+
+html[data-accent="yellow"] {
+  --accent-400: #facc15;
+  --accent-500: #eab308;
+  --accent-600: #ca8a04;
+  --accent-900: #422006;
+}
+
+html[data-accent="orange"] {
+  --accent-400: #fb923c;
+  --accent-500: #f97316;
+  --accent-600: #ea580c;
+  --accent-900: #431407;
+}
+
+html.light {
+  --color-bg-page: #f9fafb;       /* gray-50 */
+  --color-bg-card: #ffffff;
+  --color-border-base: #e5e7eb;   /* gray-200 */
+  --color-border-muted: #f3f4f6;  /* gray-100 */
+  --color-text-base: #111827;     /* gray-900 */
+  --color-text-primary: #1f2937;  /* gray-800 */
+  --color-text-secondary: #374151;/* gray-700 */
+  --color-text-description: #4b5563; /* gray-600 */
+  /* dim was gray-400 (#9ca3af, ~2.6:1 on white) - below WCAG AA. Matched to
+     muted (gray-500), same as the dark theme above. */
+  --color-text-muted: #6b7280;    /* gray-500 */
+  --color-text-dim: #6b7280;      /* gray-500 */
+  
+  --color-brand-jellyfin: #7e22ce; /* purple-700 */
+  --color-brand-plex: #a16207;    /* yellow-700 (darker yellow for contrast) */
+}
+

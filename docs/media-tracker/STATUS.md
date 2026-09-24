@@ -1,5 +1,17 @@
 # AnyList implementation status
 
+## Statistics typography correction (2026-09-24)
+
+The highlight labels accidentally picked up the 24px statistic-value category during the site-wide type conversion, and Chart.js labels grew to 15px. Restored dedicated Statistics categories: desktop heading 30px/700, highlight labels 12px/600, values 29px/700 (23px on phones), and chart labels 12px/400. Reduced Stats content top padding by 18px on desktop and 12px on phones. The frontend build passes; browser checks at 1440px and 390px confirm the computed sizes, tighter vertical position, and no horizontal overflow.
+
+## Shared typography and CSS modules (2026-09-24)
+
+AnyList now self-hosts Overpass for navigation and Roboto for other interface text, preserving the complete requested fallback stacks. A central typography registry defines semantic font sizes and weights; the root is 62.5%, body text 1.6rem/400. Existing colors and profile accents are unchanged. Non-text rem values and Tailwind spacing/container/radius scales compensate for the new root. Tracker and global CSS are ordered entrypoints into focused, readable modules. The project [AGENT.md](../../AGENT.md) documents the categories and ownership rules; AGENTS.md links to it.
+
+The final frontend production build passes. Static audits found no undefined typography tokens or changed color values. Browser checks covered desktop (1440px), tablet (768px), and phone (390px) across browse, profile/list, Home, statistics, details, profile/account settings, connections and the Netflix import tab, login, offline, and quick-editor surfaces. Font downloads and computed family/size/weight were verified; client-side profile-to-statistics navigation retains the shared fonts. The 720px viewport corresponding to 200% browser zoom on a 1440px window had no page overflow; native browser zoom itself was not automated. Mobile form controls retain the existing 16px anti-autozoom rule and 44px minimum height. Phone list headers now hide the combined Type heading to prevent text overlap.
+
+Compared with the pre-change Browse baseline, desktop app-bar height (72px), content width (1320px), grid width (1264px), card width (~189.83px), search-control height (~47.69px), and sampled colors are preserved. Text-dependent heights may change intentionally. Screenshots: [desktop browse](verification/typography-browse-desktop.png), [phone list](verification/typography-list-mobile.png), and [phone login](verification/typography-login-mobile.png). No provider synchronization, import commit, or production deployment was performed. The current checkout uses the plain biography textarea; the former MDXEditor is no longer present, so no rich-editor round-trip test applies to this checkout.
+
 ## Netflix viewing-history import (2026-09-24)
 
 The movie review threshold accepts a same-title TMDB result when its vote count and popularity clearly dominate other exact-title films released before the Netflix watch. This resolves *The Hangover*, *Parasite*, and *Dune* in the reference export; close remakes still require review. The matcher searches colon-bearing show titles such as *Star Wars: The Clone Wars* and checks episode titles containing colons. Its 16 titleless `: Episode N` rows are excluded before matching and counted in the summary. No personal import was committed during this check.

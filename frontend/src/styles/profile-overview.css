@@ -69,11 +69,12 @@
 .overview-bio .profile-bio h3 {
   color: var(--bright);
   line-height: 1.35;
+  font-weight: var(--type-prose-heading-weight);
 }
 
-.overview-bio .profile-bio h1 { font-size: 21px; }
-.overview-bio .profile-bio h2 { font-size: 18px; }
-.overview-bio .profile-bio h3 { font-size: 16px; }
+.overview-bio .profile-bio h1 { font-size: var(--type-prose-h1-size); }
+.overview-bio .profile-bio h2 { font-size: var(--type-prose-h2-size); }
+.overview-bio .profile-bio h3 { font-size: var(--type-prose-h3-size); }
 .overview-bio .profile-bio a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
 .overview-bio .profile-bio blockquote { margin-inline: 0; padding-left: 14px; border-left: 3px solid #41657f; color: var(--muted); }
 .overview-bio .profile-bio pre { max-width: 100%; overflow-x: auto; padding: 12px; border-radius: 4px; background: #101c29; }

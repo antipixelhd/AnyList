@@ -1,0 +1,306 @@
+/* Profile shell and compact lists share a measured desktop alignment. */
+.profile-hero {
+  height:258px;
+  background:linear-gradient(115deg,#26384d 0%,#1d3047 53%,#17283d 100%)
+}
+.profile-identity {
+  max-width:1340px;
+  padding:98px 24px 0;
+  gap:26px
+}
+.profile-avatar {
+  width:160px;
+  height:160px
+}
+.profile-identity h1 {
+  margin-bottom:0
+}
+.profile-bio {
+  max-width:850px;
+  margin:0 0 22px;
+  color:#9db1c9;
+  white-space:pre-wrap
+}
+.profile-bio {
+  white-space:normal;
+  line-height:1.55
+}
+.profile-bio :first-child {
+  margin-top:0
+}
+.profile-bio :last-child {
+  margin-bottom:0
+}
+.profile-bio p {
+  margin:0 0 10px
+}
+.profile-bio h1,.profile-bio h2,.profile-bio h3,.profile-bio h4,.profile-bio h5,.profile-bio h6 {
+  color:var(--bright);
+  line-height:1.3;
+  font-weight:var(--type-action-weight);
+  margin:14px 0 5px
+}
+.profile-bio h1 {
+  font-size:var(--type-section-size)
+}
+.profile-bio h2 {
+  font-size:var(--type-panel-size)
+}
+.profile-bio h3,.profile-bio h4,.profile-bio h5,.profile-bio h6 {
+  font-size:var(--type-control-size)
+}
+.profile-bio a {
+  color:var(--blue);
+  text-decoration:underline
+}
+.profile-bio ul,.profile-bio ol {
+  padding-left:22px;
+  margin:0 0 10px
+}
+.profile-settings .space-y-12 {
+  gap:13px
+}
+.profile-settings section:not([hidden]) {
+  padding:17px 20px
+}
+.profile-settings section>div.border-b {
+  margin-bottom:12px
+}
+.profile-settings .section-headline {
+  font-size:var(--type-control-size)
+}
+.profile-settings input:not([type=checkbox]):not([type=radio]):not([type=file]),.profile-settings select {
+  min-height:36px;
+  padding:7px 10px;
+  font-size:var(--type-label-size)
+}
+.profile-settings #avatar-preview {
+  width:58px;
+  height:58px;
+  border-radius:8px
+}
+.profile-settings #avatar-preview span {
+  font-size:var(--type-section-size)
+}
+.profile-settings #avatar-preview+div {
+  gap:4px
+}
+.profile-settings section .mb-8 {
+  margin-bottom:17px
+}
+.profile-settings section .mb-4 {
+  margin-bottom:10px
+}
+.profile-settings .chip {
+  padding:6px 10px;
+  font-size:var(--type-caption-size)
+}
+.profile-settings .setting-switch-row small,.profile-settings section p.text-xs {
+  font-size:var(--type-caption-size);
+  line-height:1.4
+}
+.profile-settings .setting-switch-row {
+  gap:15px
+}
+.localization-grid {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:16px
+}
+.localization-grid>div {
+  max-width:none
+}
+.setting-label-line {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px
+}
+.setting-save-state {
+  font-size:var(--type-caption-size);
+  color:#83adbd;
+  font-weight:var(--type-body-weight);
+  margin-left:8px
+}
+.setting-save-state[data-state=error] {
+  color:#f2a2a2
+}
+@media(max-width:800px) {
+  .localization-grid {
+    grid-template-columns:1fr
+  }
+  .profile-settings section:not([hidden]) {
+    padding:15px 16px
+  }
+}
+/* Profile settings has its own compact rhythm; the legacy space-y margin must not stack with the grid gap. */
+.profile-settings-page .settings-heading>div {
+  padding-top:26px;
+  padding-bottom:24px
+}
+.profile-settings-page .settings-shell {
+  margin-top:24px
+}
+.profile-settings .profile-settings-cards {
+  display:grid;
+  gap:16px
+}
+.profile-settings .profile-settings-cards>section {
+  margin:0;
+  min-width:0
+}
+.profile-settings .profile-settings-cards>section>div.border-b {
+  margin-bottom:10px
+}
+.profile-settings .profile-settings-cards>section>.text-sm {
+  margin:0 0 10px;
+  line-height:1.45;
+  font-size:var(--type-label-size);
+  color:#b7c8d9
+}
+.profile-settings .profile-settings-cards>section .flex.flex-wrap.gap-2 {
+  gap:7px
+}
+@media(max-width:800px) {
+  .profile-settings-page .settings-shell {
+    margin-top:16px
+  }
+  .profile-settings .profile-settings-cards {
+    gap:12px
+  }
+}
+.profile-tabs {
+  min-height:46px;
+  gap:50px;
+  font-size:var(--type-nav-size)
+}
+.profile-tabs a {
+  padding:11px 0
+}
+.list-shell {
+  max-width:1340px;
+  grid-template-columns:190px minmax(0,1fr);
+  gap:30px;
+  margin-top:30px;
+  padding:0 24px
+}
+.list-toolbar {
+  margin-bottom:16px
+}
+.filters {
+  gap:8px
+}
+.filters h2 {
+  margin:10px 0 0
+}
+.filters .filter-search input,.filters .filter-control select {
+  min-height:40px;
+  padding:8px 12px
+}
+.filters .filter-search input {
+  padding-left:34px
+}
+.status-filters button {
+  padding:5px 10px;
+  line-height:1.35
+}
+.status-section {
+  margin-bottom:30px
+}
+.status-section h2 {
+  font-size:var(--type-section-size);
+  margin:0 0 10px 18px
+}
+.entry-table {
+  padding:8px 0
+}
+.entry-head,.entry-row {
+  padding:6px 18px
+}
+.entry-head {
+  min-height:36px
+}
+.entry-row {
+  min-height:52px
+}
+.entry-thumbnail {
+  width:38px;
+  height:38px
+}
+.entry-title {
+  gap:12px
+}
+@media(max-width:900px) {
+  .profile-hero {
+    height:230px
+  }
+  .profile-identity {
+    padding-top:90px
+  }
+  .profile-avatar {
+    width:140px;
+    height:140px
+  }
+  .list-shell {
+    grid-template-columns:180px minmax(0,1fr);
+    gap:24px
+  }
+  .entry-head,.entry-row {
+    padding-left:14px;
+    padding-right:14px
+  }
+}
+@media(max-width:650px) {
+  .profile-hero {
+    height:180px
+  }
+  .profile-identity {
+    padding:45px 20px 0;
+    gap:18px
+  }
+  .profile-avatar {
+    width:105px;
+    height:105px
+  }
+  .profile-tabs {
+    min-height:50px;
+    gap:24px;
+    padding:0 18px;
+    overflow-x:auto
+  }
+  .profile-tabs a {
+    padding:13px 0
+  }
+  .list-shell {
+    display:block;
+    margin:24px auto;
+    padding:0 16px
+  }
+  .filters {
+    gap:12px
+  }
+  .status-filters button {
+    min-height:44px;
+    padding:9px 12px
+  }
+  .entry-row {
+    min-height:54px;
+    padding:5px 10px
+  }
+  .entry-head {
+    padding:7px 10px
+  }
+  .entry-thumbnail {
+    width:44px;
+    height:44px
+  }
+  .status-section h2 {
+    margin-left:4px
+  }
+}
+@media(max-width:650px) {
+  #entry-groups:not(.grid-view) .entry-title>a {
+    display:flex;
+    align-items:center
+  }
+}

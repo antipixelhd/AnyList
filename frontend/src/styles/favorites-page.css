@@ -5,10 +5,10 @@
 .favorites-actions .button-secondary,.favorites-actions .button-primary { min-width:68px; height:36px; padding:0 12px; }
 .favorites-actions .favorites-cancel { background:#152131; border-color:#152131; color:var(--muted); }
 .favorites-actions .favorites-cancel:hover { background:#1c2b3e; color:var(--bright); }
-.favorites-instructions { margin:0 0 18px; color:var(--muted); font-size:13px; }
+.favorites-instructions { margin:0 0 18px; color:var(--muted); font-size:var(--type-label-size); }
 .favorites-groups { display:grid; gap:24px; }
 .favorites-group { min-width:0; }
-.favorites-group-title { margin:0; color:var(--bright); font-size:16px; font-weight:600; }
+.favorites-group-title { margin:0; color:var(--bright); font-size:var(--type-panel-size); font-weight:var(--type-panel-weight); }
 .favorites-page .favorites-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
 .favorites-grid[hidden],.favorites-group[hidden] { display:none; }
 .favorite-card { position:relative; min-width:0; }

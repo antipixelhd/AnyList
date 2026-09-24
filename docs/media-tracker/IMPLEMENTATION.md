@@ -1,5 +1,9 @@
 # Media Tracker implementation handoff
 
+## Typography maintenance
+
+Use [AGENT.md](../../AGENT.md) and the shared typography registry for new UI work. Font families, sizes, and weights are centralized; colors remain owned by existing themes/components. Tracker/global styles are ordered module entrypoints. Preserve the 62.5% root and compensated layout dimensions. See STATUS.md for validation of the 2026-09-24 migration.
+
 ## Netflix viewing-history import (2026-09-24)
 
 Add the Netflix tab in Settings → Connections → Import and a provider-neutral review flow: upload/prepare, match resolution, progress review, final summary/commit. Keep draft state private and resumable; cancellation discards it. Parse English and German CSV exports, preserve viewing dates, group repeated titles and episodes, and resolve titles against the existing catalog before fetching metadata. Fetch a season once per language, then match its episodes locally; only unambiguous matches advance without review. Metadata provider failures must remain recoverable and must never silently become successful matches.

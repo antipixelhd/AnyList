@@ -1,5 +1,11 @@
 # UI references and interaction contract
 
+## Typography reference — 2026-09-24
+
+The typography pass uses [antipixel’s AniList list](https://anilist.co/user/antipixel/animelist), its loaded main/list/settings stylesheets, and browser-computed text styles. Observed: root 62.5% (10px at the default browser setting), body Roboto 1.6rem/400, primary navigation and profile tabs Overpass 1.4rem/600, standard rows 1.5rem/400, compact rows 1.3rem/400, table headings weight 500, filters 1.4rem/400 (selected 500), and editor labels 1.3rem. AniList uses Overpass for some non-navigation text too; AnyList follows the explicit user instruction to use Roboto everywhere outside navigation.
+
+The user explicitly excluded color matching from this pass. All existing colors and profile accents remain controlled by their current components. The accepted typography categories and implementation rules are in [AGENT.md](../../AGENT.md), backed by [typography.css](../../frontend/src/styles/typography.css). The 62.5% root conversion compensates non-text rem lengths so existing geometry is retained.
+
 ## Netflix importer review
 
 Settings → Connections → Import includes a Netflix tab, a subtle second-line sentence inside the upload dropzone linking “this” to Netflix viewing-history settings. The flow prepares the CSV, resolves uncertain matches, then shows final statistics and Import. Cancel remains available throughout. The matching page gives each uncertain source item a suggested title or episode with Confirm, Remap, and Skip actions. The final page has a Partial Progress summary and Customize button. Customize opens a separate progress view listing incomplete shows alphabetically with posters and represented/total episodes by season; completed shows are available through a reveal control. Each show offers Completed, Partial, or Unwatched; Unwatched excludes that show from this import and preserves any existing AnyList progress. Partial exposes a season/episode endpoint and Watching, Paused, or Dropped. Review choices autosave; Back returns to the summary, and Import and Cancel stay available. The final page discloses inferred gaps and excluded or skipped rows before committing.

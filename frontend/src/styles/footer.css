@@ -14,8 +14,8 @@ body.tracker .page-footer {
   border: 0;
   background: var(--footer-background);
   color: #a5b4c4;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--type-card-size);
+  font-weight: var(--type-card-weight);
 }
 
 .page-footer-inner {

@@ -1,0 +1,202 @@
+/* ── ActionBar buttons — light mode ───────────────────────────────────────────
+   All states use solid named colours — no transparency, no Tailwind opacity classes.
+   Inactive base: gray (zinc variable remap handles this automatically).
+   Inactive hover: color-100 (light preview of the colour).
+   Active base:    color-200 (clearly active).
+   Active hover:   color-100 (lighter = hover feedback on active). */
+
+html.light [data-action]:hover { filter: none; }
+
+/* Watched (green) */
+html.light [data-action="watched"][data-state="inactive"]:hover {
+  background-color: #dcfce7; color: #14532d; /* green-100 / green-900 */
+}
+html.light [data-action="watched"][data-state="active"] {
+  background-color: #bbf7d0; color: #14532d; /* green-200 / green-900 */
+}
+html.light [data-action="watched"][data-state="active"]:hover {
+  background-color: #dcfce7; color: #14532d; /* green-100 / green-900 */
+}
+
+/* Lists (sky) */
+html.light [data-action="list"][data-state="inactive"]:hover {
+  background-color: #e0f2fe; color: #0c4a6e; /* sky-100 / sky-900 */
+}
+html.light [data-action="list"][data-state="active"] {
+  background-color: #bae6fd; color: #0c4a6e; /* sky-200 / sky-900 */
+}
+html.light [data-action="list"][data-state="active"]:hover {
+  background-color: #e0f2fe; color: #0c4a6e; /* sky-100 / sky-900 */
+}
+
+/* Rate (amber) */
+html.light [data-action="rate"][data-state="inactive"]:hover {
+  background-color: #fef3c7; color: #78350f; /* amber-100 / amber-900 */
+}
+html.light [data-action="rate"][data-state="active"] {
+  background-color: #f4e7b2; color: #dc7d47; /* amber-200 / amber-900 */
+}
+html.light [data-action="rate"][data-state="active"]:hover {
+  background-color: #fef3c7; color: #c45f25; /* amber-100 / amber-900 */
+}
+
+/* Collected (purple) */
+html.light [data-action="collected"][data-state="inactive"]:hover {
+  background-color: #f3e8ff; color: #581c87; /* purple-100 / purple-900 */
+}
+html.light [data-action="collected"][data-state="active"] {
+  background-color: #e9d5ff; color: #581c87; /* purple-200 / purple-900 */
+}
+html.light [data-action="collected"][data-state="active"]:hover {
+  background-color: #f3e8ff; color: #581c87; /* purple-100 / purple-900 */
+}
+
+/* Request (orange) */
+html.light [data-action="request"][data-state="inactive"]:hover {
+  background-color: #ffedd5; color: #7c2d12; /* orange-100 / orange-900 */
+}
+html.light [data-action="request"][data-state="active"] {
+  background-color: #fed7aa; color: #7c2d12; /* orange-200 / orange-900 */
+}
+html.light [data-action="request"][data-state="active"]:hover {
+  background-color: #ffedd5; color: #7c2d12; /* orange-100 / orange-900 */
+}
+
+/* Network/studio logo swatch (show/movie badges, /network & /studio pages,
+   discover row, search results) - always a light backing so dark-colored
+   logos stay legible regardless of theme. Less translucent in dark mode,
+   where the near-black page behind it would otherwise wash the white toward
+   gray and undo the contrast it's there for. */
+.logo-swatch { background-color: rgba(255, 255, 255, 0.85); }
+html.light .logo-swatch { background-color: rgba(255, 255, 255, 0.6); }
+
+html.light .item-rating { color: #fbbf24; /* amber-400 */ }
+
+/* Post/mid-credits scene badge - amber-400 text is illegible on a white
+   surface, same issue as the Now Playing status labels above. */
+html.light .credits-scene-badge {
+  background-color: #fef3c7; /* amber-100 */
+  border-color: #fde68a;     /* amber-200 */
+  color: #78350f;            /* amber-900 */
+}
+html.light .credits-scene-icon { color: #b45309; /* amber-700 */ }
+
+/* Transitions for theme switching */
+body {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+nav, div, a, button, input, span {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* ── Scrollbar utilities ────────────────────────────────────────────────── */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  cursor: grab;
+  /* Prevent browser's native drag-to-scroll/select on images/links during our manual drag */
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none.is-dragging {
+  cursor: grabbing;
+  scroll-behavior: auto; /* Instant scroll while dragging */
+}
+.scrollbar-none.is-dragging * {
+  cursor: grabbing;
+  pointer-events: none; /* Prevent link clicks while dragging */
+}
+
+/* Plain scrollbar hiding for an ordinary vertical list (search results
+   dropdowns, etc.) - unlike .scrollbar-none above, this carries none of the
+   grab-cursor/drag-to-scroll behavior meant for horizontal media rows. */
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Explicit content blur ──────────────────────────────────────────────── */
+html.blur-explicit [data-adult="true"] img {
+  filter: blur(24px);
+  transition: filter 0.2s ease;
+}
+html.blur-explicit [data-adult="true"]:hover img {
+  filter: blur(18px);
+}
+/* Overlay hint — shown only when blurred */
+html.blur-explicit [data-adult="true"]:not([data-no-label])::after {
+  content: 'Tap to reveal';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.04rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.7);
+  pointer-events: none;
+  z-index: 10;
+}
+html.blur-explicit [data-adult-backdrop="true"] img {
+  filter: blur(24px);
+  pointer-events: none;
+}
+
+/* ── TMDB image fallback ────────────────────────────────────────────────── */
+.tmdb-img-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-card);
+  color: var(--color-text-dim);
+}
+
+/* ── Subtitle Cues ───────────────────────────────────────────────────────── */
+video::cue,
+::cue {
+  background: transparent !important;
+  color: #ffffff !important;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.9) !important;
+}
+
+video::-webkit-media-text-track-display,
+video::-webkit-media-text-track-display-backdrop,
+video::-webkit-media-text-track-container {
+  font-size: clamp(1.76rem, 2vw, 3.52rem) !important;
+}
+
+/* Shared legacy typography helpers preserve their existing theme colors. */
+.page-title {
+  @apply text-zinc-100 tracking-tight;
+  font-size: var(--type-page-size);
+  font-weight: var(--type-page-weight);
+}
+.section-headline {
+  @apply text-zinc-100 tracking-tight flex items-center gap-3;
+  font-size: var(--type-section-size);
+  font-weight: var(--type-section-weight);
+}
+.section-headline::before {
+  content: '';
+  @apply block w-1 h-6 bg-blue-600 rounded-full shrink-0;
+}
+.group-label {
+  @apply text-zinc-500 uppercase tracking-[0.2em] flex items-center gap-2;
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+}
+.group-label::before {
+  content: '';
+  @apply block w-1 h-3.5 bg-blue-600 rounded-full shrink-0;
+}

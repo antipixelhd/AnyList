@@ -76,6 +76,7 @@ backend/data/*.pem
 GEMINI.md
 CLAUDE.md
 AGENTS.md
+!/AGENTS.md
 copilot-instructions.md
 .claude/
 

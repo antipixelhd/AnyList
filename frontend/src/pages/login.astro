@@ -317,22 +317,22 @@ if (token) {
 </div>
 
 <style>
-  .anylist-login{min-height:100dvh;background:radial-gradient(ellipse 75% 70% at 16% 23%,#294561 0%,transparent 65%),linear-gradient(125deg,#15283c 0%,#101f30 55%,#0d1a29 100%);color:#d7e4ee;font-family:Inter,"Segoe UI",sans-serif}
+  .anylist-login{min-height:100dvh;background:radial-gradient(ellipse 75% 70% at 16% 23%,#294561 0%,transparent 65%),linear-gradient(125deg,#15283c 0%,#101f30 55%,#0d1a29 100%);color:#d7e4ee;font-family:var(--font-body)}
   .login-topbar{height:calc(72px + env(safe-area-inset-top));display:flex;align-items:center;justify-content:space-between;gap:28px;padding:env(safe-area-inset-top) max(24px,calc((100vw - 1340px)/2 + 24px)) 0;border-bottom:1px solid #ffffff12;background:#142131dd}
-  .login-brand{display:inline-flex;align-items:center;gap:11px;color:#f1f8fd;font-size:17px;font-weight:700;letter-spacing:-.02em}
-  .login-topbar nav{display:flex;gap:28px;color:#a9bfd0;font-size:13px;font-weight:600}
+  .login-brand{display:inline-flex;align-items:center;gap:11px;color:#f1f8fd;font-size:var(--type-brand-size);font-weight:var(--type-brand-weight);letter-spacing:-.02em}
+  .login-topbar nav{display:flex;gap:28px;color:#a9bfd0;font-family:var(--font-navigation);font-size:var(--type-nav-size);font-weight:var(--type-nav-weight)}
   .login-topbar nav a:hover,.login-topbar nav a:focus-visible{color:#56c0f6}
   .login-main{min-height:calc(100dvh - 72px - env(safe-area-inset-top));display:grid;align-items:center;padding:56px 24px 74px}
   .login-layout{width:100%;max-width:1292px;margin:auto;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(360px,440px);align-items:center;gap:clamp(40px,6vw,100px)}
   .login-form-column{width:100%}
   .anylist-login .auth-panel{padding:34px 36px;background:#192b3ded;border:1px solid #355069;border-radius:8px;box-shadow:0 20px 55px #06121e70}
-  .auth-panel h2{margin:0 0 26px;color:#f2f8fc;text-align:left;font-size:24px;font-weight:700}
+  .auth-panel h2{margin:0 0 26px;color:#f2f8fc;text-align:left;font-size:var(--type-panel-size);font-weight:var(--type-panel-weight)}
   .anylist-login .auth-panel label{color:#adc2d1}
   .anylist-login .auth-input{min-height:46px;background:#122235;border:1px solid #355069;border-radius:5px;color:#f1f8fd}
   .anylist-login .auth-input:focus{border-color:#56bdf1;outline:2px solid #3db4f280;outline-offset:2px;box-shadow:none}
-  .anylist-login .auth-oidc{min-height:46px;background:#213b51;border:1px solid #40627e;border-radius:5px;color:#edf7fc;font-size:13px}
+  .anylist-login .auth-oidc{min-height:46px;background:#213b51;border:1px solid #40627e;border-radius:5px;color:#edf7fc;font-size:var(--type-label-size);font-weight:var(--type-label-weight)}
   .anylist-login .auth-oidc:hover,.anylist-login .auth-oidc:focus-visible{background:#2a4b64;border-color:#66c8f6;color:#fff}
-  .anylist-login .auth-submit{min-height:46px;background:#3db4f2;border-radius:5px;color:#07131d;font-size:14px}
+  .anylist-login .auth-submit{min-height:46px;background:#3db4f2;border-radius:5px;color:#07131d;font-size:var(--type-control-size);font-weight:var(--type-control-weight)}
   .anylist-login .auth-submit:hover,.anylist-login .auth-submit:focus-visible{background:#66c7f6;color:#07131d}
   .anylist-login .auth-error{border-color:#9c5365;color:#ffd1db;background:#4d263744}
   .anylist-login .auth-success{border-color:#397d68;color:#c2efd9;background:#1c493f55}
@@ -341,8 +341,8 @@ if (token) {
   .anylist-login .bootstrap-restore-panel{background:#192b3d;border-color:#355069;border-radius:8px}
   .bootstrap-restore-dialog{background:#192b3d;border-color:#355069;border-radius:8px}
   .anylist-login a:focus-visible,.anylist-login button:focus-visible{outline:2px solid #66c8f6;outline-offset:3px}
-  @media(max-width:767px){.login-topbar{height:calc(64px + env(safe-area-inset-top));padding:env(safe-area-inset-top) max(20px,env(safe-area-inset-right)) 0 max(20px,env(safe-area-inset-left))}.login-topbar nav{gap:14px;font-size:12px}.login-main{min-height:calc(100dvh - 64px - env(safe-area-inset-top));padding:40px 16px 56px}.login-layout{grid-template-columns:1fr;gap:30px;max-width:480px}.anylist-login .auth-panel{padding:27px 24px}.auth-panel h2{font-size:21px}}
-  @media(max-width:380px){.login-topbar nav{gap:10px}.login-topbar nav a{font-size:11px}.login-brand{font-size:15px}}
+  @media(max-width:767px){.login-topbar{height:calc(64px + env(safe-area-inset-top));padding:env(safe-area-inset-top) max(20px,env(safe-area-inset-right)) 0 max(20px,env(safe-area-inset-left))}.login-topbar nav{gap:14px}.login-main{min-height:calc(100dvh - 64px - env(safe-area-inset-top));padding:40px 16px 56px}.login-layout{grid-template-columns:1fr;gap:30px;max-width:480px}.anylist-login .auth-panel{padding:27px 24px}}
+  @media(max-width:380px){.login-topbar nav{gap:10px}.login-brand{font-size:var(--type-brand-size)}}
 </style>
 
 <script>

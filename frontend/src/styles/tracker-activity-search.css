@@ -1,0 +1,128 @@
+/* The title carries the activity link color; its action stays visually quiet. */
+.activity-stream .event-action>span {
+  color:var(--bright)
+}
+.activity-stream .event-action>a,.activity-stream .event-action>a:hover {
+  color:var(--blue)
+}
+.activity-stream .event-body {
+  display:flex;
+  flex-direction:column;
+  justify-content:center
+}
+.activity-stream .event-meta {
+  position:absolute;
+  top:11px;
+  left:14px;
+  right:14px
+}
+.activity-stream .event-action {
+  margin:28px 72px 28px 0;
+  text-align:left
+}
+.activity-stream .event-action>span {
+  font-weight:var(--type-body-weight)
+}
+@media(max-width:700px) {
+  .activity-stream .event-meta {
+    top:9px;
+    left:11px;
+    right:11px
+  }
+  .activity-stream .event-action {
+    margin:25px 62px 25px 0
+  }
+}
+/* Fast search starts as a compact input; result cards appear together after a response. */
+.quick-search-dialog {
+  position:fixed;
+  inset:52px 0 auto;
+  width:min(860px,calc(100vw - 64px));
+  max-height:calc(100vh - 76px);
+  margin:0 auto;
+  overflow:auto;
+  background:transparent;
+  border:0;
+  box-shadow:none;
+  animation:quick-search-enter .18s ease-out
+}
+.quick-search-dialog[data-combined=yes] {
+  width:min(640px,calc(100vw - 64px))
+}
+.quick-search-bar {
+  border:1px solid #30495e;
+  border-radius:7px;
+  box-shadow:0 16px 45px #02070d80;
+  padding:11px 15px
+}
+.quick-search-results {
+  min-height:0;
+  max-height:calc(100vh - 178px);
+  overflow-y:auto;
+  padding:0;
+  margin-top:22px;
+  gap:20px;
+  align-items:start
+}
+.quick-search-results.combined {
+  grid-template-columns:minmax(0,1fr)
+}
+.quick-search-card {
+  min-width:0;
+  padding:15px 16px 8px;
+  background:#192737;
+  border:1px solid #2a3e52;
+  border-radius:6px;
+  box-shadow:0 15px 36px #02070d70;
+  animation:quick-search-results-enter .18s ease-out
+}
+.quick-search-results section h2 {
+  margin:0 0 8px;
+  color:var(--bright);
+  font-size:var(--type-label-size);
+  font-weight:var(--type-profile-weight);
+  letter-spacing:0;
+  text-transform:none
+}
+.quick-search-state {
+  position:static;
+  transform:none;
+  margin:14px 0 0;
+  padding:12px 16px;
+  border:1px solid #2a3e52;
+  border-radius:5px;
+  background:#192737;
+  color:var(--muted);
+  font-size:var(--type-label-size);
+  white-space:normal
+}
+@keyframes quick-search-enter {
+  from {
+    opacity:0;
+    transform:translateY(-12px)
+  }
+  to {
+    opacity:1;
+    transform:translateY(0)
+  }
+}
+@keyframes quick-search-results-enter {
+  from {
+    opacity:0;
+    transform:translateY(-6px)
+  }
+  to {
+    opacity:1;
+    transform:translateY(0)
+  }
+}
+@media(max-width:650px) {
+  .quick-search-dialog {
+    display:none
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  .quick-search-dialog,.quick-search-card {
+    animation:none
+  }
+}

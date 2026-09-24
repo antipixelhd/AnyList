@@ -48,7 +48,11 @@ if(root && root.dataset.statsInitialized !== 'true'){
   const text=(name:string,value:string)=>{const node=root.querySelector<HTMLElement>(`[data-stat="${name}"]`);if(node)node.textContent=value;};
   const duration=(minutes:number)=>minutes?minutes>=60?`${Math.floor(minutes/60).toLocaleString()}h ${minutes%60}m`:`${minutes}m`:'0m';
   const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  Chart.defaults.color='#8fa5bb'; Chart.defaults.font.family='Inter, Segoe UI, sans-serif';
+  const typography=getComputedStyle(document.documentElement);
+  Chart.defaults.color='#8fa5bb';
+  Chart.defaults.font.family=typography.getPropertyValue('--font-body').trim();
+  Chart.defaults.font.size=parseFloat(typography.fontSize)*parseFloat(typography.getPropertyValue('--type-meta-size'));
+  Chart.defaults.font.weight=Number.parseInt(typography.getPropertyValue('--type-row-weight'),10);
   function render(next:any){
     data=next; charts.splice(0).forEach(chart=>chart.destroy());
     text('current',String(data.current.total)); text('titles',String(data.viewing.unique_titles));

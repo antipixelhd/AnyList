@@ -3,7 +3,7 @@
 .library-intro h1 { margin:0 0 5px; }
 .library-intro p { margin:0; color:var(--muted); }
 .library-sections { display:grid; gap:26px; }
-.library-section h2 { margin:0 0 10px; color:var(--bright); font-size:16px; font-weight:600; }
+.library-section h2 { margin:0 0 10px; color:var(--bright); font-size:var(--type-panel-size); font-weight:var(--type-panel-weight); }
 .library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:16px; padding:24px 30px; border-radius:5px; background:var(--panel); }
 .library-card { position:relative; min-width:0; }
 .library-poster { display:block; width:100%; aspect-ratio:2/3; overflow:hidden; border-radius:4px; background:#243449; }

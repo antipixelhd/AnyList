@@ -32,8 +32,8 @@
   display: grid;
   place-items: center;
   color: #badcf5;
-  font-size: 40px;
-  font-weight: 700;
+  font-size: var(--type-avatar-size);
+  font-weight: var(--type-avatar-weight);
 }
 .social-person-name {
   position: absolute;
@@ -42,8 +42,8 @@
   padding: 20px 5px 5px;
   background: linear-gradient(transparent, #06101cdb);
   color: #fff;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-card-weight);
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
