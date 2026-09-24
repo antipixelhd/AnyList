@@ -10,6 +10,7 @@ import logging
 import re
 import unicodedata
 import uuid
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -148,8 +149,51 @@ def _normalise_episode(ep: dict) -> dict:
         "matched": matched,
         "confidence": ep.get("confidence") or ("high" if matched else "low"),
         "reason": ep.get("reason") or ep.get("evidence"),
-        "decision": {"action": "confirm" if matched else None},
+        "decision": ep.get("decision") or {"action": None},
     }
+
+
+def _resolve_item_episodes(item: dict) -> None:
+    if item.get("kind") != "show" or not item.get("match", {}).get("candidate"):
+        return
+    episodes = item.get("episodes") or []
+    if not episodes or all(episode.get("resolution") for episode in episodes):
+        return
+    original_latest = max((
+        (int(episode["season_number"]), int(episode["episode_number"]))
+        for episode in episodes if episode.get("matched") and episode.get("season_number") and episode.get("episode_number")
+    ), default=None)
+    from core.netflix_import import resolve_netflix_episodes
+    resolve_netflix_episodes(episodes, item.get("catalog_episodes") or [])
+    for episode in episodes:
+        if (episode.get("decision") or {}).get("action") != "remap":
+            episode["decision"] = {"action": None}
+    represented: dict[int, set[int]] = {}
+    for episode in episodes:
+        if episode.get("matched") and episode.get("season_number") and episode.get("episode_number"):
+            represented.setdefault(int(episode["season_number"]), set()).add(int(episode["episode_number"]))
+    for season in item.get("seasons") or []:
+        season["represented"] = len(represented.get(season["season_number"], set()))
+    if not item.get("outcome", {}).get("status_overridden"):
+        seasons = item.get("seasons") or []
+        item["outcome"]["status"] = "completed" if seasons and all(
+            season.get("catalogue_complete") and season.get("total_released") is not None
+            and season["represented"] >= season["total_released"] for season in seasons
+        ) else "partial"
+    latest = max((
+        (int(episode["season_number"]), int(episode["episode_number"]))
+        for episode in episodes if episode.get("matched") and episode.get("season_number") and episode.get("episode_number")
+    ), default=None)
+    current_endpoint = (item.get("outcome", {}).get("latest_season"), item.get("outcome", {}).get("latest_episode"))
+    if latest and not item.get("outcome", {}).get("endpoint_overridden") and (
+        current_endpoint == (None, None) or current_endpoint == original_latest
+    ):
+        item["outcome"]["latest_season"], item["outcome"]["latest_episode"] = latest
+
+
+def _resolve_draft_items(items: list[dict]) -> None:
+    for item in items:
+        _resolve_item_episodes(item)
 
 
 def _normalise_groups(prepared: dict) -> list[dict]:
@@ -251,6 +295,7 @@ def _normalise_groups(prepared: dict) -> list[dict]:
         seen[identity] = seen.get(identity, 0) + 1
         if seen[identity] > 1:
             item["id"] = f"{identity}_{seen[identity]}"
+    _resolve_draft_items(result)
     return result
 
 
@@ -301,6 +346,7 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     csv_buffer = io.StringIO(newline="")
     writer = csv.writer(csv_buffer)
     writer.writerow(["Title", "Date"])
+    remapped_rows: list[tuple[str, int, str]] = []
     for episode in source_episodes:
         original = episode.get("source_title") or ""
         if ":" in original:
@@ -311,8 +357,15 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
             remapped_title = f"{title}: {season_label}: {episode['source_episode_title']}".strip(": ")
         else:
             continue
-        for watched_date in episode.get("dates") or []:
-            writer.writerow([remapped_title, watched_date])
+        dates = sorted(episode.get("dates") or [])
+        row_numbers = sorted((int(row) for row in episode.get("source_row_numbers") or []), reverse=True)
+        for index, watched_date in enumerate(dates):
+            original_row = row_numbers[min(index, len(row_numbers) - 1)] if row_numbers else 0
+            remapped_rows.append((watched_date, original_row, remapped_title))
+    for watched_date, _original_row, remapped_title in sorted(
+        remapped_rows, key=lambda row: (row[0], -row[1]), reverse=True,
+    ):
+        writer.writerow([remapped_title, watched_date])
     history = parse_netflix_csv(csv_buffer.getvalue(), language=language)
 
     async def forced_search(query: str, **kwargs):
@@ -362,12 +415,13 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
     source_watches = sum(len(set(i.get("source_dates", []))) for i in movies)
     unmatched = [i for i in items if (
         i.get("match", {}).get("state") in ("review", "unmatched") and not i.get("decision", {}).get("action")
-    ) or any(e.get("matched") is False and not e.get("decision", {}).get("action") for e in i.get("episodes", []))]
+    )]
     skipped = [i for i in items if i.get("decision", {}).get("action") == "skip" or i.get("outcome", {}).get("status") == "skip"]
     skipped_episode_count = sum(1 for i in items for e in i.get("episodes", []) if e.get("decision", {}).get("action") == "skip")
     inferred = 0
     source_episodes = 0
     cutoff_exclusions = 0
+    guessed_episodes = 0
     for item in shows:
         outcome = item.get("outcome", {})
         try:
@@ -376,6 +430,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
             source_positions, chosen_positions, excluded = {}, set(), 0
         source_watches += sum(len(set(date_value for ep in episodes for date_value in ep.get("dates", []))) for episodes in source_positions.values())
         source_episodes += len(source_positions)
+        guessed_episodes += sum(ep.get("resolution") == "guessed" for episodes in source_positions.values() for ep in episodes)
         inferred += len(chosen_positions - set(source_positions))
         cutoff_exclusions += excluded
     return {
@@ -385,6 +440,9 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
         "existing_entries": sum(bool(i.get("existing", {}).get("tracked")) for i in included),
         "source_watches": source_watches,
         "source_episodes": source_episodes,
+        "guessed_episodes": guessed_episodes,
+        "discarded_episodes": sum(episode.get("resolution") == "discarded" for item in included for episode in item.get("episodes", [])),
+        "covered_episodes": sum(episode.get("resolution") == "covered" for item in included for episode in item.get("episodes", [])),
         "duplicates": int(parsed_counts.get("duplicate_rows", parsed_counts.get("duplicates", 0)) or 0),
         "excluded_rows": int(parsed_counts.get("excluded_rows", 0) or 0),
         "inferred_episodes": inferred,
@@ -416,7 +474,8 @@ async def _load_owned(db: AsyncSession, session_id: str, user_id: int, *, lock: 
 def _public_session(session: NetflixImportSession) -> dict:
     payload = session.payload or {}
     result = session.result or {}
-    items = payload.get("items", []) if session.status not in ("committed", "cancelled", "failed") else []
+    items = deepcopy(payload.get("items", [])) if session.status not in ("committed", "cancelled", "failed") else []
+    _resolve_draft_items(items)
     errors = payload.get("errors", []) if session.status != "committed" else []
     summary = result.get("summary") if session.status == "committed" else _summary(items, payload.get("counts"), errors)
     if session.error_message and not errors:
@@ -666,7 +725,8 @@ async def update_netflix_import_item(
     if patch.get("revision") != session.revision:
         raise HTTPException(status_code=409, detail="This import changed in another request. Reload it and try again.")
     payload = dict(session.payload or {})
-    items = [dict(item) for item in payload.get("items", [])]
+    items = deepcopy(payload.get("items", []))
+    _resolve_draft_items(items)
     if remapped_item is not None:
         items = [remapped_item if value.get("id") == item_id else value for value in items]
     item = next((value for value in items if value.get("id") == item_id), None)
@@ -698,43 +758,19 @@ async def update_netflix_import_item(
             if value is not None and (not isinstance(value, int) or value < 1):
                 raise HTTPException(status_code=422, detail=f"{key} must be a positive integer.")
             item["outcome"][key] = value
+            item["outcome"]["endpoint_overridden"] = True
     tracking_status = patch.get("tracking_status")
     if tracking_status is not None:
         if tracking_status not in ("watching", "paused", "dropped"):
             raise HTTPException(status_code=422, detail="Partial progress status must be watching, paused, or dropped.")
         item["outcome"]["tracking_status"] = tracking_status
         item["outcome"]["status_overridden"] = True
-    episode_mappings = patch.get("episode_mappings") or []
-    if not isinstance(episode_mappings, list):
-        raise HTTPException(status_code=422, detail="episode_mappings must be a list.")
-    for mapping in episode_mappings:
-        if not isinstance(mapping, dict):
-            raise HTTPException(status_code=422, detail="Each episode mapping must be an object.")
-        source_id = mapping.get("source_id")
-        episode = next((e for e in item.get("episodes", []) if e.get("source_id") == source_id), None)
-        if episode is None:
-            raise HTTPException(status_code=404, detail="Source episode not found.")
-        episode_action = mapping.get("action")
-        if episode_action not in ("confirm", "remap", "skip"):
-            raise HTTPException(status_code=422, detail="Episode action must be confirm, remap, or skip.")
-        if episode_action == "confirm":
-            if not episode.get("matched") or episode.get("season_number") is None or episode.get("episode_number") is None:
-                raise HTTPException(status_code=422, detail="This episode has no suggested catalogue position to confirm.")
-            episode["decision"] = {"action": "confirm"}
-        elif episode_action == "remap":
-            target_season, target_episode = mapping.get("target_season"), mapping.get("target_episode")
-            if not isinstance(target_season, int) or target_season < 1 or not isinstance(target_episode, int) or target_episode < 1:
-                raise HTTPException(status_code=422, detail="Episode remapping requires a positive target season and episode.")
-            try:
-                _remap_episode_to_catalog(item, episode, target_season, target_episode)
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc))
-        else:
-            episode["decision"] = {"action": "skip"}
-    if action is None and outcome_status is None and tracking_status is None and not episode_mappings and not any(
+    if patch.get("episode_mappings"):
+        raise HTTPException(status_code=422, detail="Episode matches are resolved automatically and cannot be edited.")
+    if action is None and outcome_status is None and tracking_status is None and not any(
         key in patch for key in ("latest_season", "latest_episode")
     ):
-        raise HTTPException(status_code=422, detail="Include a title decision, progress change, or episode mapping.")
+        raise HTTPException(status_code=422, detail="Include a title decision or progress change.")
     if item["kind"] == "show" and item["outcome"]["status"] != "skip" and (
         outcome_status is not None or "latest_season" in patch or "latest_episode" in patch
     ):
@@ -954,34 +990,6 @@ def _episode_is_released(episode: dict, today: date) -> bool:
     return released is not None and released <= today
 
 
-def _remap_episode_to_catalog(item: dict, episode: dict, season: int, number: int) -> dict:
-    target = next((
-        value for value in item.get("catalog_episodes", [])
-        if value.get("season_number") == season and value.get("episode_number") == number
-    ), None)
-    if target is None:
-        raise ValueError("Choose an episode from the prepared released catalogue.")
-    source_fields = {
-        key: episode.get(key) for key in (
-            "source_id", "source_title", "source_episode_title", "season_label",
-            "dates", "source_rows", "source_row_numbers",
-        )
-    }
-    # Copy the selected catalogue identity (including TMDB ID, title and
-    # release date) while retaining the source row identity/date evidence.
-    episode.update(target)
-    episode.update(source_fields)
-    episode.update({
-        "season_number": season,
-        "episode_number": number,
-        "matched": True,
-        "confidence": "manual",
-        "reason": "Episode position selected by the user.",
-        "decision": {"action": "remap"},
-    })
-    return episode
-
-
 def _show_import_positions(item: dict, outcome: dict, today: date) -> tuple[dict, set[tuple[int, int]], int]:
     catalog = _all_catalog_episodes(item)
     source_positions: dict[tuple[int, int], list[dict]] = {}
@@ -1078,7 +1086,8 @@ async def _track_imported_root(
 
 async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSession, progress_callback) -> dict:
     payload = dict(session.payload or {})
-    items = payload.get("items", [])
+    items = deepcopy(payload.get("items", []))
+    _resolve_draft_items(items)
     errors = payload.get("errors", [])
     counts = payload.get("counts") or {}
     unresolved = []
@@ -1087,11 +1096,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             continue
         if item.get("match", {}).get("state") in ("review", "unmatched") and not item.get("decision", {}).get("action"):
             unresolved.append(item.get("source_title", "Unknown title"))
-        for episode in item.get("episodes", []):
-            if episode.get("matched") is False and not episode.get("decision", {}).get("action"):
-                unresolved.append(episode.get("source_title") or episode.get("title") or item.get("source_title", "Unknown episode"))
     if unresolved:
-        raise ValueError(f"Review or skip every uncertain match before importing ({len(unresolved)} remaining).")
+        raise ValueError(f"Review or skip every uncertain title before importing ({len(unresolved)} remaining).")
 
     # Lock the account so two imports cannot concurrently overwrite dates or
     # progress. All catalog and personal writes below share this transaction.
@@ -1104,6 +1110,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         "inferred_episodes": 0, "skipped": 0, "unmatched": 0,
         "cutoff_exclusions": 0, "partial_progress": 0, "errors": len(errors),
         "excluded_rows": int(counts.get("excluded_rows", 0) or 0),
+        "guessed_episodes": 0, "discarded_episodes": 0, "covered_episodes": 0,
     }
     today = date.today()
     usable_items = [i for i in items if i.get("decision", {}).get("action") != "skip" and i.get("outcome", {}).get("status") != "skip"]
@@ -1153,6 +1160,9 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         except ValueError as exc:
             raise ValueError(str(exc))
         stats["cutoff_exclusions"] += excluded_count
+        stats["guessed_episodes"] += sum(ep.get("resolution") == "guessed" for episodes in source_positions.values() for ep in episodes)
+        stats["discarded_episodes"] += sum(ep.get("resolution") == "discarded" for ep in item.get("episodes", []))
+        stats["covered_episodes"] += sum(ep.get("resolution") == "covered" for ep in item.get("episodes", []))
         # A TVDB-canonical existing catalogue must have a proven mapping for
         # every source or inferred TMDB position. Never write TMDB numbers into
         # TVDB-native Media rows.
@@ -1210,6 +1220,14 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                 watched_media.add(media.id)
             if position in source_positions:
                 stats["source_episodes"] += 1
+        for episode in item.get("episodes", []):
+            if episode.get("resolution") != "covered" or not episode.get("covered_by"):
+                continue
+            if tuple(episode["covered_by"]) in chosen_positions:
+                accepted_dates.extend(
+                    watched_date for value in episode.get("dates", [])
+                    if (watched_date := _to_date(value)) is not None
+                )
         progress_count = len(watched_media)
         _, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
         stats["shows"] += 1
@@ -1255,6 +1273,8 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
                 "skipped": stats["skipped"], "unmatched": stats["unmatched"],
                 "cutoff_exclusions": stats["cutoff_exclusions"], "partial_progress": stats["partial_progress"],
                 "excluded_rows": stats["excluded_rows"],
+                "guessed_episodes": stats["guessed_episodes"], "discarded_episodes": stats["discarded_episodes"],
+                "covered_episodes": stats["covered_episodes"],
                 "errors": stats["errors"],
             }
             session.status = "committed"

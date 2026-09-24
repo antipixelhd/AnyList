@@ -56,6 +56,18 @@ _Avoid_: Whole-show episode number, most recently replayed episode
 A season that is fully released and whose episodes have all been watched; an airing season with every currently released episode watched does not meet this definition.
 _Avoid_: Caught up
 
+**Guessed episode position**:
+A released catalogue episode assigned to a Netflix viewing observation from its order among known episodes, with the observation's watch date retained.
+_Avoid_: Exact title match
+
+**Covered episode observation**:
+A Netflix viewing observation that could not receive a distinct episode position inside a bounded gap but is included in the show's cumulative progress.
+_Avoid_: Discarded episode
+
+**Discarded episode observation**:
+A Netflix viewing observation that cannot be assigned a released catalogue position and is excluded from watch history and progress.
+_Avoid_: User-skipped title
+
 **Hidden attention prompt**:
 A temporarily suppressed on-screen prompt whose underlying notification may still require action.
 _Avoid_: Resolved notification

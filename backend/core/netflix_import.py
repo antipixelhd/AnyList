@@ -414,7 +414,7 @@ def _episodes_from_season(data: dict[str, Any], season_number: int) -> list[dict
 
 
 def _episode_released_by(episode: dict[str, Any], watched_at: str) -> bool:
-    raw_date = episode.get("air_date")
+    raw_date = episode.get("air_date") or episode.get("release_date")
     if not raw_date:
         return True
     try:
@@ -425,6 +425,141 @@ def _episode_released_by(episode: dict[str, Any], watched_at: str) -> bool:
         # impossible to review; the caller still receives the candidate.
         return True
     return air_date <= date.today() and air_date <= watched_date
+
+
+def resolve_netflix_episodes(
+    episodes: list[dict[str, Any]], catalog_episodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Resolve unknown episode positions from exact anchors and CSV watch order.
+
+    The input may contain one record per viewing or already-merged records from
+    an older draft. Repeated source titles share a position but keep their dates.
+    """
+    catalog = {
+        (int(ep["season_number"]), int(ep["episode_number"])): ep
+        for ep in catalog_episodes
+        if ep.get("season_number") and ep.get("episode_number")
+    }
+    positions = sorted(catalog)
+    events: list[tuple[str, int, int]] = []
+    for index, episode in enumerate(episodes):
+        dates = sorted(set(episode.get("watched_dates") or episode.get("dates") or []))
+        source_rows = episode.get("source_rows")
+        row_numbers = source_rows if isinstance(source_rows, list) else episode.get("source_row_numbers") or []
+        ordered_rows = sorted((int(row) for row in row_numbers), reverse=True)
+        for date_index, watched_at in enumerate(dates or [""]):
+            # Netflix's export is newest first. A larger CSV line is older
+            # when several viewings share a calendar date.
+            row_number = ordered_rows[min(date_index, len(ordered_rows) - 1)] if ordered_rows else 0
+            events.append((watched_at, -row_number, index))
+    events.sort()
+
+    def position_of(index: int) -> tuple[int, int] | None:
+        episode = episodes[index]
+        if episode.get("matched") and episode.get("season_number") and episode.get("episode_number"):
+            return int(episode["season_number"]), int(episode["episode_number"])
+        return None
+
+    # A season label that was resolved by an exact title is stronger than its
+    # Netflix number (Netflix can split one aired season into several parts).
+    label_seasons: dict[str, set[int]] = {}
+    for episode in episodes:
+        if episode.get("matched") and episode.get("season_number") and episode.get("season_label"):
+            label_seasons.setdefault(_norm_text(episode["season_label"]), set()).add(int(episode["season_number"]))
+
+    assignments: dict[tuple[str, str], tuple[int, int] | None] = {}
+    unresolved_states: dict[tuple[str, str], str] = {}
+    covered_by: dict[tuple[str, str], tuple[int, int]] = {}
+    groups: list[list[int]] = []
+    group: list[int] = []
+    for event_index, (_date, _row, episode_index) in enumerate(events):
+        if position_of(episode_index) is not None:
+            groups.append(group)
+            group = []
+        else:
+            group.append(event_index)
+    groups.append(group)
+    anchors = [position_of(index) for _date, _row, index in events if position_of(index) is not None]
+    reserved_positions = {position for position in anchors if position is not None}
+
+    for group_index, run in enumerate(groups):
+        if not run:
+            continue
+        left = anchors[group_index - 1] if group_index else None
+        right = anchors[group_index] if group_index < len(anchors) else None
+        unique: list[tuple[tuple[str, str], int, str]] = []
+        seen_in_run: set[tuple[str, str]] = set()
+        for event_index in run:
+            watched_at, _row, index = events[event_index]
+            episode = episodes[index]
+            key = (_norm_text(episode.get("season_label")), _norm_text(episode.get("source_episode_title") or episode.get("source_title") or episode.get("title")))
+            if key not in seen_in_run and key not in assignments:
+                unique.append((key, index, watched_at))
+                seen_in_run.add(key)
+        available = [
+            position for position in positions
+            if position not in reserved_positions and (left is None or position > left) and (right is None or position < right)
+        ]
+        if left is None and right is None and unique:
+            first = episodes[unique[0][1]]
+            label = _norm_text(first.get("season_label"))
+            mapped = label_seasons.get(label, set())
+            start_season = next(iter(mapped)) if len(mapped) == 1 else first.get("season_number") or 1
+            available = [position for position in available if position[0] >= int(start_season)]
+        if right is not None and left is None and unique:
+            # Initial unknowns sit immediately before the first known anchor.
+            available = available[-len(unique):]
+        used: set[tuple[int, int]] = set()
+        last_assigned = left
+        for key, index, watched_at in unique:
+            episode = episodes[index]
+            label = _norm_text(episode.get("season_label"))
+            mapped = label_seasons.get(label, set())
+            hinted_season = next(iter(mapped)) if len(mapped) == 1 else episode.get("season_number")
+            choices = [
+                position for position in available
+                if position not in used and (last_assigned is None or position > last_assigned)
+                and (hinted_season is None or position[0] >= int(hinted_season))
+                and _episode_released_by(catalog[position], watched_at)
+            ]
+            chosen = choices[0] if choices else None
+            assignments[key] = chosen
+            unresolved_states[key] = "guessed" if chosen is not None else "covered" if right is not None else "discarded"
+            if chosen is None and right is not None:
+                covered_by[key] = right
+            if chosen is not None:
+                used.add(chosen)
+                reserved_positions.add(chosen)
+                last_assigned = chosen
+
+    for episode in episodes:
+        if episode.get("matched"):
+            episode.setdefault("resolution", "exact")
+            continue
+        key = (_norm_text(episode.get("season_label")), _norm_text(episode.get("source_episode_title") or episode.get("source_title") or episode.get("title")))
+        position = assignments.get(key)
+        if position is not None:
+            catalog_episode = catalog[position]
+            episode.update({
+                "season_number": position[0], "episode_number": position[1],
+                "title": catalog_episode.get("title"),
+                "tmdb_episode_id": catalog_episode.get("tmdb_episode_id"),
+                "air_date": catalog_episode.get("air_date") or catalog_episode.get("release_date"),
+                "matched": True, "confidence": "medium", "resolution": "guessed",
+                "reason": "Position inferred from CSV viewing order and nearby exact episode matches.",
+            })
+        else:
+            # Bounded runs are already covered by a later exact episode for
+            # cumulative progress. Unbounded rows without catalogue space are
+            # discarded rather than assigned to a nonexistent episode.
+            covered = unresolved_states.get(key) == "covered"
+            episode["resolution"] = "covered" if covered else "discarded"
+            if covered:
+                episode["covered_by"] = list(covered_by[key])
+            episode["matched"] = False
+            if not episode.get("reason") or episode["reason"] == "No unique exact episode title match was found.":
+                episode["reason"] = "Covered by confirmed progress." if covered else "No released catalogue position could be assigned."
+    return episodes
 
 
 def _candidate_seasons(
@@ -959,7 +1094,18 @@ async def prepare_netflix_import(
                         "tmdb_episode_id": episode.get("tmdb_episode_id"),
                     })
             catalog_episodes.sort(key=lambda episode: (episode["season_number"], episode["episode_number"]))
-            unique_matched = sum(1 for episode in final_episodes if episode.get("matched"))
+            resolve_netflix_episodes(final_episodes, catalog_episodes)
+            represented = {}
+            for episode in final_episodes:
+                if episode.get("matched") and episode.get("season_number") and episode.get("episode_number"):
+                    season_number = int(episode["season_number"])
+                    represented.setdefault(season_number, set()).add(int(episode["episode_number"]))
+            for season in seasons:
+                season["represented"] = len(represented.get(season["season_number"], set()))
+            # Guesses advance progress but cannot establish which TMDB show a
+            # source title names. Rank competing show identities on exact
+            # episode evidence only.
+            unique_matched = sum(1 for episode in final_episodes if episode.get("resolution") == "exact")
             full_exact = candidate.get("_exact")
             every_observation_matched = bool(observations) and all(
                 any(
@@ -976,7 +1122,7 @@ async def prepare_netflix_import(
             reason = (
                 "Exact show title and every episode matched uniquely."
                 if confidence == "high" else
-                "Show candidate matched, but one or more episodes need review."
+                "Show candidate matched; remaining episode positions are inferred where possible."
                 if match_count else
                 "Suggested show title; episode evidence did not produce an exact unique match."
             )
@@ -1021,10 +1167,10 @@ async def prepare_netflix_import(
             best["confidence"] = "medium"
             best["reason"] = "More than one show has this title; choose the correct show."
         elif len(same_title) == 1 and best["candidate"].get("_exact") and best["match_count"] and best["confidence"] != "high":
-            # The show identity is established even though individual source
-            # episodes still require their own review decisions.
+            # The show identity is established even if some episode positions
+            # had to be inferred or discarded.
             best["confidence"] = "high"
-            best["reason"] = "Exact show title and matching episode evidence; review the remaining episodes."
+            best["reason"] = "Exact show title and matching episode evidence; other positions were resolved automatically."
 
         candidate = best["candidate"]
         output = {

@@ -7,7 +7,7 @@ import httpx
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from core.netflix_import import parse_netflix_csv, prepare_netflix_import
+from core.netflix_import import parse_netflix_csv, prepare_netflix_import, resolve_netflix_episodes
 
 
 class NetflixCsvParserTests(unittest.TestCase):
@@ -74,6 +74,196 @@ class NetflixCsvParserTests(unittest.TestCase):
             parse_netflix_csv(b"Title,Date\n\xff,1/1/26\n")
         with self.assertRaisesRegex(ValueError, "malformed"):
             parse_netflix_csv('Title,Date\n"unfinished,1/1/26\n')
+
+
+def _catalogue(*season_sizes: int, released: str = "2020-01-01") -> list[dict]:
+    return [
+        {
+            "season_number": season_number,
+            "episode_number": episode_number,
+            "title": f"S{season_number}E{episode_number}",
+            "release_date": released,
+            "tmdb_episode_id": season_number * 1000 + episode_number,
+        }
+        for season_number, count in enumerate(season_sizes, start=1)
+        for episode_number in range(1, count + 1)
+    ]
+
+
+def _episode(
+    title: str,
+    watched_at: str,
+    row: int,
+    *,
+    season: int = 1,
+    matched_position: tuple[int, int] | None = None,
+    season_label: str | None = None,
+) -> dict:
+    season_number, episode_number = matched_position or (season, None)
+    return {
+        "season_number": season_number,
+        "episode_number": episode_number,
+        "season_label": season_label or f"Season {season}",
+        "source_episode_title": title,
+        "title": title if matched_position else title,
+        "watched_dates": [watched_at],
+        "source_rows": [row],
+        "matched": matched_position is not None,
+    }
+
+
+class NetflixEpisodeResolutionTests(unittest.TestCase):
+    def test_guesses_before_between_and_after_exact_anchors_in_viewing_order(self) -> None:
+        # The input follows Netflix's newest-first CSV order. Resolution must
+        # sort by date first, while keeping each uncertain run inside anchors.
+        episodes = [
+            _episode("After", "2020-01-06", 2),
+            _episode("Anchor 7", "2020-01-05", 3, matched_position=(1, 7)),
+            _episode("Between later", "2020-01-04", 4),
+            _episode("Between earlier", "2020-01-03", 5),
+            _episode("Anchor 3", "2020-01-02", 6, matched_position=(1, 3)),
+            _episode("Before", "2020-01-01", 7),
+        ]
+
+        resolve_netflix_episodes(episodes, _catalogue(8))
+
+        positions = {episode["source_episode_title"]: (episode["season_number"], episode["episode_number"])
+                     for episode in episodes if episode.get("matched")}
+        self.assertEqual(positions, {
+            "After": (1, 8),
+            "Anchor 7": (1, 7),
+            "Between later": (1, 5),
+            "Between earlier": (1, 4),
+            "Anchor 3": (1, 3),
+            "Before": (1, 2),
+        })
+        self.assertTrue(all(episode["resolution"] == "guessed" for episode in episodes if episode["source_episode_title"] in {"Before", "Between later", "Between earlier", "After"}))
+
+    def test_four_observations_after_s3e4_advance_to_s3e8_in_eight_and_twelve_episode_seasons(self) -> None:
+        for season_size in (8, 12):
+            with self.subTest(season_size=season_size):
+                episodes = [
+                    _episode(f"Unknown {number}", f"2020-01-0{number + 1}", 10 - number)
+                    for number in range(4, 0, -1)
+                ]
+                episodes.append(_episode("Confirmed four", "2020-01-01", 11, matched_position=(3, 4), season=3))
+                catalogue = [
+                    {**ep, "release_date": "2020-01-01"}
+                    for ep in _catalogue(1, 1, season_size)
+                ]
+
+                resolve_netflix_episodes(episodes, catalogue)
+
+                guessed = sorted(
+                    (episode["episode_number"] for episode in episodes if episode.get("resolution") == "guessed"),
+                )
+                self.assertEqual(guessed, [5, 6, 7, 8])
+
+    def test_trailing_observations_roll_over_into_the_next_released_season(self) -> None:
+        episodes = [
+            _episode("Later observation", "2020-02-02", 2),
+            _episode("First after anchor", "2020-02-01", 3),
+            _episode("Season one finale", "2020-01-31", 4, matched_position=(1, 2)),
+        ]
+
+        resolve_netflix_episodes(episodes, _catalogue(2, 2))
+
+        positions = {
+            episode["source_episode_title"]: (episode["season_number"], episode["episode_number"])
+            for episode in episodes if episode.get("resolution") == "guessed"
+        }
+        self.assertEqual(positions, {"First after anchor": (2, 1), "Later observation": (2, 2)})
+
+    def test_without_an_anchor_starts_in_the_labelled_catalogue_season(self) -> None:
+        episodes = [
+            _episode("Second watched", "2020-01-02", 2, season=2),
+            _episode("First watched", "2020-01-01", 3, season=2),
+        ]
+
+        resolve_netflix_episodes(episodes, _catalogue(2, 2))
+
+        positions = {
+            episode["source_episode_title"]: (episode.get("season_number"), episode.get("episode_number"))
+            for episode in episodes
+        }
+        self.assertEqual(positions, {"Second watched": (2, 2), "First watched": (2, 1)})
+
+    def test_exact_anchor_maps_a_split_netflix_season_label_to_the_catalogue_season(self) -> None:
+        episodes = [
+            _episode("Part two unknown", "2020-01-02", 2, season=2, season_label="Season 2 Part 2"),
+            _episode("Part two exact", "2020-01-01", 3, season=2,
+                     matched_position=(1, 2), season_label="Season 2 Part 2"),
+        ]
+
+        resolve_netflix_episodes(episodes, _catalogue(3, 2))
+
+        guessed = next(episode for episode in episodes if episode["source_episode_title"] == "Part two unknown")
+        self.assertEqual((guessed["season_number"], guessed["episode_number"]), (1, 3))
+        self.assertEqual(guessed["resolution"], "guessed")
+
+    def test_newest_first_rows_same_day_order_repeats_and_watch_dates_are_preserved(self) -> None:
+        episodes = [
+            # Row 2 is later in the viewing order than row 3 on the same day.
+            _episode("Same day later", "2020-01-01", 2),
+            {
+                **_episode("Repeated episode", "2020-01-01", 3),
+                "watched_dates": ["2020-01-01", "2020-01-02"],
+                "dates": ["2020-01-01", "2020-01-02"],
+                "source_rows": [3, 4],
+            },
+        ]
+
+        resolve_netflix_episodes(episodes, _catalogue(3))
+
+        repeated = next(episode for episode in episodes if episode["source_episode_title"] == "Repeated episode")
+        later = next(episode for episode in episodes if episode["source_episode_title"] == "Same day later")
+        self.assertEqual((repeated["season_number"], repeated["episode_number"]), (1, 1))
+        self.assertEqual((later["season_number"], later["episode_number"]), (1, 2))
+        self.assertEqual(repeated["watched_dates"], ["2020-01-01", "2020-01-02"])
+        self.assertEqual(repeated["source_rows"], [3, 4])
+
+    def test_missing_or_unreleased_catalogue_positions_are_discarded_and_excess_inside_anchors_is_covered(self) -> None:
+        missing_season = [_episode("No season two catalogue", "2020-01-01", 2, season=2)]
+        resolve_netflix_episodes(missing_season, _catalogue(2))
+        self.assertEqual(missing_season[0]["resolution"], "discarded")
+        self.assertFalse(missing_season[0]["matched"])
+
+        unreleased = [
+            _episode("Anchor one", "2020-01-01", 2, matched_position=(1, 1)),
+            _episode("Aired tomorrow", "2020-01-02", 3),
+        ]
+        resolve_netflix_episodes(unreleased, [
+            *_catalogue(1),
+            {"season_number": 1, "episode_number": 2, "title": "S1E2", "release_date": "2020-01-03"},
+        ])
+        guessed = next(episode for episode in unreleased if episode["source_episode_title"] == "Aired tomorrow")
+        self.assertEqual(guessed["resolution"], "discarded")
+        self.assertFalse(guessed["matched"])
+
+        bounded = [
+            _episode("Only free position", "2020-01-02", 4),
+            _episode("Excess observation", "2020-01-03", 3),
+            _episode("Anchor three", "2020-01-04", 2, matched_position=(1, 3)),
+            _episode("Anchor one", "2020-01-01", 5, matched_position=(1, 1)),
+        ]
+        resolve_netflix_episodes(bounded, _catalogue(3))
+        statuses = {episode["source_episode_title"]: episode["resolution"] for episode in bounded}
+        self.assertEqual(statuses["Only free position"], "guessed")
+        self.assertEqual(statuses["Excess observation"], "covered")
+
+    def test_no_anchor_excess_observations_do_not_duplicate_or_exceed_catalogue(self) -> None:
+        episodes = [
+            _episode("Third", "2020-01-03", 2),
+            _episode("Second", "2020-01-02", 3),
+            _episode("First", "2020-01-01", 4),
+        ]
+
+        resolve_netflix_episodes(episodes, _catalogue(2))
+
+        self.assertEqual(sum(episode["resolution"] == "guessed" for episode in episodes), 2)
+        self.assertEqual(sum(episode["resolution"] in {"discarded", "covered"} for episode in episodes), 1)
+        self.assertEqual(len({(episode.get("season_number"), episode.get("episode_number"))
+                              for episode in episodes if episode.get("matched")}), 2)
 
 
 class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
@@ -326,7 +516,7 @@ class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(progress)
         self.assertTrue(all(current <= total for current, total, _message in progress))
 
-    async def test_fuzzy_show_and_nonmatching_episode_stays_in_review(self) -> None:
+    async def test_guessed_episode_does_not_resolve_a_fuzzy_show_identity(self) -> None:
         async def search_shows(_query: str, **_kwargs):
             return {"results": [{"id": 8, "name": "Dark Matter", "first_air_date": "2024-01-01"}]}
 
@@ -337,7 +527,7 @@ class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
             return {"id": tmdb_id, "seasons": [{"season_number": 1, "name": "Season 1"}]}
 
         async def get_season(_tmdb_id: int, _season_number: int, **_kwargs):
-            return {"episode_count": 1, "episodes": [{"episode_number": 1, "name": "Pilot"}]}
+            return {"episode_count": 1, "episodes": [{"episode_number": 1, "name": "Pilot", "air_date": "2024-01-01"}]}
 
         result = await prepare_netflix_import(
             'Title,Date\n"Dark: Season 1: Secrets",8/29/26\n',
@@ -349,8 +539,9 @@ class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["shows"][0]["status"], "review")
         self.assertNotEqual(result["shows"][0]["confidence"], "high")
-        self.assertFalse(result["shows"][0]["episodes"][0]["matched"])
-        self.assertEqual(result["shows"][0]["episodes"][0]["title"], "Secrets")
+        self.assertTrue(result["shows"][0]["episodes"][0]["matched"])
+        self.assertEqual(result["shows"][0]["episodes"][0]["resolution"], "guessed")
+        self.assertEqual(result["shows"][0]["episodes"][0]["episode_number"], 1)
 
     async def test_season_summary_includes_unwatched_released_seasons_and_caps_current_count(self) -> None:
         async def search_shows(_query: str, **_kwargs):

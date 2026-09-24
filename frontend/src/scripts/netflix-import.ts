@@ -6,23 +6,16 @@ type MatchCandidate = {
   poster_path?: string | null;
 };
 
+type EpisodeResolution = "exact" | "guessed" | "covered" | "discarded";
 type NetflixEpisode = {
-  source_id: string;
-  source_title?: string;
+  source_title?: string | null;
   source_episode_title?: string | null;
-  season_label?: string | null;
-  season_number?: number | null;
-  episode_number?: number | null;
   title?: string | null;
   dates?: string[];
-  source_rows?: number;
-  source_row_numbers?: number[];
-  matched: boolean;
-  confidence?: "high" | "medium" | "low";
-  reason?: string | null;
-  decision?: { action?: "confirm" | "remap" | "skip" | null };
+  season_number?: number | null;
+  episode_number?: number | null;
+  resolution?: EpisodeResolution;
 };
-
 type NetflixSeason = { season_number: number; represented: number; total_released: number | null };
 type NetflixItem = {
   id: string | number;
@@ -85,11 +78,6 @@ function mountNetflixImport() {
   let idempotencyKey = "";
   let busy = false;
   let uploadController: AbortController | null = null;
-  let remappingEpisodeId: string | null = null;
-  let episodeTargetSeason = 1;
-  let episodeTargetNumber = 1;
-  const episodeSeasonCache = new Map<number, { season_number: number; episode_count: number }[]>();
-
   const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[char]!);
@@ -142,11 +130,48 @@ function mountNetflixImport() {
 
   function seasonSummary(item: NetflixItem): string {
     const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0);
-    if (!seasons.length) {
-      const matched = (item.episodes ?? []).filter((episode) => episode.matched).length;
-      return matched ? `${matched} matched episode${matched === 1 ? "" : "s"}` : "No episodes matched yet";
-    }
+    if (!seasons.length) return "Episode positions unavailable";
     return seasons.map((season) => `S${season.season_number} ${season.represented}/${season.total_released ?? "?"}`).join(" · ");
+  }
+
+  function episodeResolutionDetails(item: NetflixItem): string {
+    if (item.kind !== "show") return "";
+    const episodes = (item.episodes ?? []).filter((episode) =>
+      episode.resolution === "exact" || episode.resolution === "guessed" || episode.resolution === "covered" || episode.resolution === "discarded",
+    );
+    if (!episodes.length) return "";
+
+    const labels: Record<EpisodeResolution, string> = {
+      exact: "Exact", guessed: "Guessed", covered: "Covered", discarded: "Discarded",
+    };
+    const styles: Record<EpisodeResolution, string> = {
+      exact: "bg-emerald-500/10 text-emerald-300",
+      guessed: "bg-blue-500/10 text-blue-300",
+      covered: "bg-zinc-800 text-zinc-400",
+      discarded: "bg-amber-500/10 text-amber-200",
+    };
+    const counts = (Object.keys(labels) as EpisodeResolution[])
+      .map((resolution) => ({ resolution, count: episodes.filter((episode) => episode.resolution === resolution).length }))
+      .filter(({ count }) => count > 0)
+      .map(({ resolution, count }) => `${labels[resolution]} ${count}`)
+      .join(" · ");
+    const rows = episodes.map((episode) => {
+      const resolution = episode.resolution!;
+      const title = episode.source_episode_title || episode.source_title || episode.title || "Netflix episode";
+      const dates = [...new Set(episode.dates ?? [])].sort();
+      const dateLabel = dates.length ? dates.join(", ") : "Date unavailable";
+      const hasPosition = episode.season_number != null && episode.episode_number != null;
+      const assignment = (resolution === "exact" || resolution === "guessed") && hasPosition
+        ? `<span class="text-zinc-300">→ S${episode.season_number}E${episode.episode_number}</span>`
+        : resolution === "covered"
+        ? `<span class="text-zinc-400">Covered by confirmed progress</span>`
+        : resolution === "discarded"
+        ? `<span class="text-amber-200">No released catalogue position</span>`
+        : "";
+      return `<li class="flex flex-col gap-1 rounded-lg bg-zinc-900/60 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between"><div class="min-w-0"><p class="break-words text-xs font-medium text-zinc-200">${esc(title)}</p><p class="text-[11px] text-zinc-500">${esc(dateLabel)}</p></div><div class="flex shrink-0 items-center gap-2 text-[11px]"><span class="rounded-full px-2 py-0.5 font-semibold ${styles[resolution]}">${labels[resolution]}</span>${assignment}</div></li>`;
+    }).join("");
+
+    return `<details class="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40"><summary class="cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-300">Episode resolution · ${esc(counts)}</summary><ul class="max-h-64 space-y-1.5 overflow-auto border-t border-zinc-800 p-2">${rows}</ul></details>`;
   }
 
   function isIncomplete(item: NetflixItem): boolean {
@@ -164,77 +189,14 @@ function mountNetflixImport() {
     });
   }
 
-  function reviewComplete(): boolean {
-    return reviewItems().length === 0 && reviewEpisodes().length === 0;
-  }
-
-  function reviewEpisodes(): { item: NetflixItem; episode: NetflixEpisode }[] {
-    return (session?.items ?? []).filter((item) => item.kind === "show" && item.decision?.action !== "skip")
-      .flatMap((item) => (item.episodes ?? [])
-        .filter((episode) => !episode.decision?.action && (!episode.matched || episode.confidence !== "high"))
-        .map((episode) => ({ item, episode })));
-  }
-
-  function episodeSeasonChoices(item: NetflixItem): { season_number: number; episode_count: number }[] {
-    const id = item.match.candidate?.tmdb_id;
-    if (!id) return [];
-    return episodeSeasonCache.get(id) ?? (item.seasons ?? [])
-      .filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0)
-      .map((season) => ({ season_number: season.season_number, episode_count: season.total_released ?? 0 }));
-  }
-
-  async function loadEpisodeSeasonChoices(item: NetflixItem): Promise<void> {
-    const id = item.match.candidate?.tmdb_id;
-    if (!id || episodeSeasonCache.has(id)) return;
-    try {
-      const detail = await request<any>(`/shows/${id}`);
-      const seasons = (detail.seasons_meta ?? detail.show?.seasons_meta ?? [])
-        .filter((season: any) => Number(season.season_number) > 0 && Number(season.episode_count) > 0)
-        .map((season: any) => ({ season_number: Number(season.season_number), episode_count: Number(season.episode_count) }));
-      if (seasons.length) episodeSeasonCache.set(id, seasons);
-    } catch {
-      // The represented seasons from the import draft remain a usable fallback.
-    }
+  function titleReviewComplete(): boolean {
+    return reviewItems().length === 0;
   }
 
   function autoMatchedItems(): NetflixItem[] {
     return (session?.items ?? []).filter((item) =>
       item.match?.state === "matched" && item.match?.confidence === "high" && !!item.match?.candidate && item.decision?.action === "confirm",
     );
-  }
-
-  function episodeMatchRow(item: NetflixItem, episode: NetflixEpisode): string {
-    const needsReview = !episode.decision?.action && (!episode.matched || episode.confidence !== "high");
-    const action = episode.decision?.action;
-    const sourceTitle = episode.source_episode_title || episode.source_title || episode.title || "Netflix episode";
-    const suggestion = episode.title && episode.season_number != null && episode.episode_number != null
-      ? `S${episode.season_number}E${episode.episode_number} · ${episode.title}`
-      : "No episode match suggested";
-    const seasonChoices = episodeSeasonChoices(item);
-    const selectedSeason = seasonChoices.some((season) => season.season_number === episodeTargetSeason)
-      ? episodeTargetSeason
-      : seasonChoices.find((season) => season.season_number === episode.season_number)?.season_number ?? seasonChoices[0]?.season_number ?? episode.season_number ?? 1;
-    const season = seasonChoices.find((entry) => entry.season_number === selectedSeason);
-    const targetCount = season?.episode_count ?? 100;
-    const episodeChoices = Array.from({ length: Math.min(targetCount, 100) }, (_, i) => i + 1)
-      .map((number) => `<option value="${number}" ${number === episodeTargetNumber ? "selected" : ""}>Episode ${number}</option>`).join("");
-    const seasonOptions = seasonChoices.length
-      ? seasonChoices.map((entry) => `<option value="${entry.season_number}" ${entry.season_number === selectedSeason ? "selected" : ""}>Season ${entry.season_number}</option>`).join("")
-      : `<option value="${selectedSeason}" selected>Season ${selectedSeason}</option>`;
-    const status = action === "skip" ? "Skipped" : action === "remap" ? "Remapped" : episode.matched ? "Matched" : "Needs review";
-    const rowClass = needsReview ? "border-amber-500/20 bg-amber-500/[0.025]" : "border-zinc-800 bg-zinc-950/30";
-    return `<li class="rounded-lg border ${rowClass} p-3" data-netflix-episode-row="${esc(episode.source_id)}">
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div class="min-w-0"><p class="break-words text-xs font-semibold text-zinc-200">${esc(sourceTitle)}</p><p class="mt-1 text-[11px] text-zinc-500">${esc(episode.season_label || "Season not specified")}${episode.dates?.length ? ` · Watched ${esc(episode.dates[episode.dates.length - 1])}` : ""}</p><p class="mt-1 text-xs ${episode.matched ? "text-emerald-300" : "text-amber-200"}">Suggested: ${esc(suggestion)}${episode.reason ? ` · ${esc(episode.reason)}` : ""}</p></div>
-        <div class="flex shrink-0 flex-wrap items-center gap-1.5">
-          <span class="mr-1 text-[11px] font-semibold ${needsReview ? "text-amber-200" : "text-emerald-300"}">${esc(status)}</span>
-          ${episode.season_number != null && episode.episode_number != null && action !== "confirm" ? `<button type="button" data-netflix-episode-action="confirm" data-item-id="${esc(item.id)}" data-episode-id="${esc(episode.source_id)}" ${!item.match.candidate ? "disabled" : ""} class="rounded-md bg-emerald-700/70 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-40">Confirm</button>` : ""}
-          <button type="button" data-netflix-episode-action="open-remap" data-item-id="${esc(item.id)}" data-episode-id="${esc(episode.source_id)}" ${!item.match.candidate ? "disabled" : ""} class="rounded-md border border-zinc-700 px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-zinc-800 disabled:opacity-40">Remap</button>
-          <button type="button" data-netflix-episode-action="skip" data-item-id="${esc(item.id)}" data-episode-id="${esc(episode.source_id)}" class="rounded-md px-2 py-1 text-[11px] font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">Skip</button>
-        </div>
-      </div>
-      ${remappingEpisodeId === episode.source_id ? `<div class="mt-3 grid gap-2 border-t border-zinc-800 pt-3 sm:grid-cols-[1fr_1fr_auto]"><label class="text-[11px] font-medium text-zinc-400">Season<select data-netflix-episode-season="${esc(episode.source_id)}" class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100">${seasonOptions}</select></label><label class="text-[11px] font-medium text-zinc-400">Episode<select data-netflix-episode-number="${esc(episode.source_id)}" class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100">${episodeChoices}</select></label><button type="button" data-netflix-episode-action="save-remap" data-item-id="${esc(item.id)}" data-episode-id="${esc(episode.source_id)}" class="self-end rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-500">Save remap</button></div>` : ""}
-    </li>`;
   }
 
   function itemCard(item: NetflixItem, needsReview: boolean): string {
@@ -245,10 +207,6 @@ function mountNetflixImport() {
     const badge = item.decision?.action === "skip" ? "Skipped" : item.decision?.action === "remap" ? "Remapped" : needsReview ? "Review needed" : "High confidence";
     const badgeStyle = item.decision?.action === "skip" ? "border-zinc-700 bg-zinc-800 text-zinc-300" : needsReview ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-emerald-400/20 bg-emerald-400/5 text-emerald-300";
     const candidateOptions = (item.match?.candidates ?? []).filter((option) => option.tmdb_id && option.tmdb_id !== candidate?.tmdb_id).slice(0, 3);
-    const episodes = item.episodes ?? [];
-    const matchedEpisodes = episodes.filter((episode) => episode.matched).length;
-    const pendingEpisodes = episodes.filter((episode) => !episode.decision?.action && (!episode.matched || episode.confidence !== "high")).length;
-    const episodeDetails = episodes.length ? `<details class="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40" ${pendingEpisodes || episodes.some((episode) => remappingEpisodeId === episode.source_id) ? "open" : ""}><summary class="cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-300">Review episode matches · ${matchedEpisodes}/${episodes.length} matched${pendingEpisodes ? ` · ${pendingEpisodes} need review` : ""}</summary><ul class="max-h-[28rem] space-y-2 overflow-auto p-2">${episodes.map((episode) => episodeMatchRow(item, episode)).join("")}</ul></details>` : "";
     const candidatesHtml = candidateOptions.map((option) => `
       <button type="button" data-netflix-action="candidate" data-item-id="${esc(item.id)}" data-tmdb-id="${esc(option.tmdb_id)}" data-media-type="${esc(option.media_type)}" class="flex w-full items-center gap-3 rounded-xl border border-zinc-800 p-2 text-left transition-colors hover:border-zinc-600 hover:bg-zinc-800/50">
         ${option.poster_path ? `<img loading="lazy" src="${esc(posterSrc(option.poster_path))}" alt="" class="h-12 w-9 shrink-0 rounded object-cover">` : `<span class="h-12 w-9 shrink-0 rounded bg-zinc-800"></span>`}
@@ -266,7 +224,7 @@ function mountNetflixImport() {
               <span class="rounded-full border px-2 py-0.5 text-xs ${badgeStyle}">${badge}</span>
               <span class="text-xs text-zinc-500">${esc(reasons)}</span>
             </div>
-            ${item.kind === "show" ? `<p class="mt-2 text-xs text-zinc-400">${esc(seasonSummary(item))}</p>${episodeDetails}` : ""}
+            ${item.kind === "show" ? `<p class="mt-2 text-xs text-zinc-400">${esc(seasonSummary(item))}</p>${episodeResolutionDetails(item)}` : ""}
           </div>
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
@@ -322,6 +280,7 @@ function mountNetflixImport() {
           <h3 class="break-words font-semibold text-zinc-100">${esc(candidate?.title ?? item.source_title)}</h3>
           <p class="mt-1 text-xs text-zinc-400">${esc(seasonSummary(item))}</p>
           ${seasons.length ? `<div class="mt-2 flex flex-wrap gap-1.5">${seasons.map((season) => `<span class="rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400">S${season.season_number}: ${season.represented}/${season.total_released ?? "?"}</span>`).join("")}</div>` : ""}
+          ${episodeResolutionDetails(item)}
         </div>
       </div>
       <div class="mt-3 flex rounded-xl border border-zinc-800 bg-zinc-950 p-1" role="group" aria-label="Import progress for ${esc(candidate?.title ?? item.source_title)}">${outcomeButtons(item)}</div>
@@ -365,6 +324,9 @@ function mountNetflixImport() {
         ${metric("Existing entries", summaryNumber("existing_entries"))}
         ${metric("Source watches", summaryNumber("source_watches", "source_watch_count", "watch_events"))}
         ${metric("Source episodes", summaryNumber("source_episodes", "distinct_episodes", "episode_count"))}
+        ${metric("Guessed episodes", summaryNumber("guessed_episodes"), "Episode positions assigned from viewing order")}
+        ${metric("Covered episodes", summaryNumber("covered_episodes"), "Read in the export; already covered by later progress")}
+        ${metric("Discarded episodes", summaryNumber("discarded_episodes"), "Observations without a safe released position")}
         ${metric("Duplicate rows", summaryNumber("duplicates", "duplicate_rows"))}
         ${metric("Titleless episode rows", summaryNumber("excluded_rows"), "Excluded entries such as : Episode 2")}
         ${metric("Inferred episodes", summaryNumber("inferred_episodes"), "Added through selected progress endpoints")}
@@ -404,20 +366,13 @@ function mountNetflixImport() {
       const total = Math.max(0, session.progress?.total ?? 0);
       const current = Math.max(0, session.progress?.current ?? 0);
       const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(current * 100 / total))) : 0;
-      content = `<div class="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-6"><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 1 of 4 · Preparing import</p><h2 class="mt-1 text-lg font-bold text-zinc-100">${esc(session.progress?.message || (session.phase === "parse" ? "Reading your CSV…" : "Matching movies and episodes…"))}</h2><div class="mt-4 h-2 overflow-hidden rounded-full bg-zinc-800"><div class="h-full rounded-full bg-blue-500 transition-all" style="width:${pct}%"></div></div><div class="mt-2 flex justify-between gap-3 text-xs text-zinc-500"><span>${total ? `${current.toLocaleString()} of ${total.toLocaleString()} items` : "Getting started"}</span><span>${total ? `${pct}%` : esc(session.phase)}</span></div><p class="mt-3 text-xs text-zinc-500">Duplicate rows are grouped before matching so the same title is only looked up once.</p></div>`;
+      content = `<div class="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-6"><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 1 of 4 · Preparing import</p><h2 class="mt-1 text-lg font-bold text-zinc-100">${esc(session.progress?.message || (session.phase === "parse" ? "Reading your CSV…" : "Matching titles and resolving episode positions…"))}</h2><div class="mt-4 h-2 overflow-hidden rounded-full bg-zinc-800"><div class="h-full rounded-full bg-blue-500 transition-all" style="width:${pct}%"></div></div><div class="mt-2 flex justify-between gap-3 text-xs text-zinc-500"><span>${total ? `${current.toLocaleString()} of ${total.toLocaleString()} items` : "Getting started"}</span><span>${total ? `${pct}%` : esc(session.phase)}</span></div><p class="mt-3 text-xs text-zinc-500">Duplicate rows are grouped before matching so the same title is only looked up once.</p></div>`;
     } else if (step === 2) {
       const needing = reviewItems();
-      const needingIds = new Set(needing.map((item) => String(item.id)));
-      const episodeOnly = (session?.items ?? []).filter((item) =>
-        item.kind === "show" && item.decision?.action !== "skip" && !needingIds.has(String(item.id)) &&
-        (item.episodes ?? []).some((episode) => !episode.decision?.action && (!episode.matched || episode.confidence !== "high")),
-      );
-      const episodeOnlyIds = new Set(episodeOnly.map((item) => String(item.id)));
-      const auto = autoMatchedItems().filter((item) => !episodeOnlyIds.has(String(item.id)));
+      const auto = autoMatchedItems();
       const skipped = (session?.items ?? []).filter((item) => item.decision?.action === "skip");
-      content = `<div class="space-y-4"><div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 2 of 4 · Review matches</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Confirm anything uncertain</h2><p class="mt-1 text-sm text-zinc-400">High confidence matches are preconfirmed. Check the suggestions below and remap or skip any title that does not look right.</p></div>
-        ${needing.length ? `<div class="space-y-3">${needing.map((item) => itemCard(item, true)).join("")}</div>` : `<div class="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">All show and movie titles are matched. Review any episode suggestions that need attention.</div>`}
-        ${episodeOnly.length ? `<div class="space-y-3"><h3 class="text-sm font-semibold text-zinc-200">Episode matches to review</h3>${episodeOnly.map((item) => itemCard(item, false)).join("")}</div>` : ""}
+      content = `<div class="space-y-4"><div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 2 of 4 · Review title matches</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Confirm anything uncertain</h2><p class="mt-1 text-sm text-zinc-400">High confidence show and movie matches are preconfirmed. Check any title that does not look right and remap or skip it.</p></div>
+        ${needing.length ? `<div class="space-y-3">${needing.map((item) => itemCard(item, true)).join("")}</div>` : `<div class="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">All show and movie titles are resolved. Episode positions will be assigned automatically where the catalogue permits.</div>`}
         ${auto.length ? `<details class="rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-300">${auto.length} high confidence match${auto.length === 1 ? "" : "es"} accepted automatically</summary><div class="space-y-3 border-t border-zinc-800 p-3">${auto.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
         ${skipped.length ? `<details class="rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-400">${skipped.length} title${skipped.length === 1 ? "" : "s"} skipped · reopen to change</summary><div class="space-y-3 border-t border-zinc-800 p-3">${skipped.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
       </div>`;
@@ -431,7 +386,7 @@ function mountNetflixImport() {
       ? `<button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
       : isFailed
       ? `<button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
-      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${step > 2 ? `<button type="button" data-netflix-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step === 2 ? `<button type="button" data-netflix-action="next" ${!reviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-netflix-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
+      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-netflix-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${step > 2 ? `<button type="button" data-netflix-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step === 2 ? `<button type="button" data-netflix-action="next" ${!titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-netflix-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
     workflow.innerHTML = `${!isCommitted ? stepHeader() : ""}<div class="space-y-5">${content}<div class="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center"><p class="min-h-5 text-xs text-zinc-500">${saving ? "Saving your changes…" : isPreparing ? "Matching in progress" : "Your choices are saved to this import draft."}</p>${!isCommitted ? nav : `<button type="button" data-netflix-action="restart" class="self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 sm:self-auto">Import another file</button>`}</div></div>`;
   }
 
@@ -458,44 +413,6 @@ function mountNetflixImport() {
         catch { /* Keep the current draft visible if refresh also fails. */ }
       }
       showError(error instanceof Error ? error.message : "Could not save this choice. Please try again.");
-    }).finally(() => {
-      saving = false;
-      render();
-    });
-    return saveQueue;
-  }
-
-  function saveEpisodeMapping(
-    item: NetflixItem,
-    episode: NetflixEpisode,
-    action: "confirm" | "remap" | "skip",
-    target?: { season_number: number; episode_number: number },
-  ): Promise<void> {
-    if (!session) return Promise.resolve();
-    episode.decision = { action };
-    if (action === "skip") episode.matched = false;
-    if (action === "confirm" || action === "remap") episode.matched = true;
-    remappingEpisodeId = null;
-    render();
-    saving = true;
-    render();
-    const mapping = {
-      source_id: episode.source_id,
-      action,
-      ...(target ? { target_season: target.season_number, target_episode: target.episode_number } : {}),
-    };
-    saveQueue = saveQueue.then(async () => {
-      if (!session) return;
-      const updated = await request<NetflixSession>(`/imports/${encodeURIComponent(session.id)}/items/${encodeURIComponent(String(item.id))}`, {
-        method: "PATCH", body: JSON.stringify({ revision: session.revision, episode_mappings: [mapping] }),
-      });
-      if (updated?.id) session = updated;
-    }).catch(async (error) => {
-      if (session) {
-        try { session = await request<NetflixSession>(`/imports/${encodeURIComponent(session.id)}`); }
-        catch { /* Keep the current draft visible if refresh also fails. */ }
-      }
-      showError(error instanceof Error ? error.message : "Could not save this episode match.");
     }).finally(() => {
       saving = false;
       render();
@@ -652,38 +569,12 @@ function mountNetflixImport() {
   }
 
   workflow.addEventListener("click", async (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-netflix-action], [data-netflix-episode-action]");
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-netflix-action]");
     if (!button) return;
     const action = button.dataset.netflixAction;
     const id = button.dataset.itemId;
     const item = id ? byId(id) : undefined;
     clearError();
-    const episodeAction = button.dataset.netflixEpisodeAction;
-    if (episodeAction && item) {
-      const episode = (item.episodes ?? []).find((entry) => entry.source_id === button.dataset.episodeId);
-      if (!episode) return;
-      if (episodeAction === "confirm" || episodeAction === "skip") {
-        await saveEpisodeMapping(item, episode, episodeAction);
-        return;
-      }
-      if (episodeAction === "open-remap") {
-        remappingEpisodeId = episode.source_id;
-        episodeTargetSeason = episode.season_number ?? episodeSeasonChoices(item)[0]?.season_number ?? 1;
-        episodeTargetNumber = episode.episode_number ?? 1;
-        render();
-        await loadEpisodeSeasonChoices(item);
-        render();
-        return;
-      }
-      if (episodeAction === "save-remap") {
-        const seasonInput = document.querySelector<HTMLSelectElement>(`[data-netflix-episode-season="${CSS.escape(episode.source_id)}"]`);
-        const episodeInput = document.querySelector<HTMLSelectElement>(`[data-netflix-episode-number="${CSS.escape(episode.source_id)}"]`);
-        const targetSeason = Number(seasonInput?.value ?? episodeTargetSeason);
-        const targetEpisode = Number(episodeInput?.value ?? episodeTargetNumber);
-        await saveEpisodeMapping(item, episode, "remap", { season_number: targetSeason, episode_number: targetEpisode });
-        return;
-      }
-    }
     if (action === "cancel-upload") { cancelUpload(); return; }
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") { session = null; step = 1; clearError(); render(); return; }
@@ -691,7 +582,7 @@ function mountNetflixImport() {
     if (action === "customize") { step = 3; render(); return; }
     if (action === "next") {
       if (step === 2) {
-        if (!reviewComplete()) { showError("Confirm, remap, or skip every match that needs review before continuing."); return; }
+        if (!titleReviewComplete()) { showError("Resolve each uncertain show or movie title before continuing."); return; }
         step = 4;
       }
       render();
@@ -728,17 +619,6 @@ function mountNetflixImport() {
 
   workflow.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement | HTMLSelectElement;
-    const episodeSeasonId = input.dataset.netflixEpisodeSeason;
-    if (episodeSeasonId) {
-      episodeTargetSeason = Number(input.value);
-      episodeTargetNumber = 1;
-      render();
-      return;
-    }
-    if (input.dataset.netflixEpisodeNumber) {
-      episodeTargetNumber = Number(input.value);
-      return;
-    }
     const action = input.dataset.netflixChange;
     const id = input.dataset.itemId;
     if (action === "show-completed") { showingCompleted = (input as HTMLInputElement).checked; render(); return; }

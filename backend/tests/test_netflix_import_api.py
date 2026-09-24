@@ -1,4 +1,4 @@
-"""Focused regression checks for reviewed Netflix import decisions.
+"""Focused regression checks for Netflix import decisions and episode resolution.
 
 The database case uses the disposable local PostgreSQL instance only when
 TRACKING_TEST_DATABASE_URL is explicitly configured.
@@ -7,6 +7,7 @@ import os
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 os.environ.setdefault("SECRET_KEY", "local-tests-only")
@@ -21,9 +22,11 @@ from models.tracking import TrackedEntry
 from routers.netflix_import import (
     _apply_import,
     _normalise_groups,
-    _remap_episode_to_catalog,
     _summary,
     _show_import_positions,
+    _public_session,
+    _prepare_remapped_item,
+    _resolve_draft_items,
     update_netflix_import_item,
 )
 
@@ -68,6 +71,165 @@ def _show_item():
     }
 
 
+class _MemoryResult:
+    def scalar_one_or_none(self):
+        return None
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _MemoryDb:
+    def __init__(self):
+        self.added = []
+        self.executed = 0
+
+    async def execute(self, *_args, **_kwargs):
+        self.executed += 1
+        return _MemoryResult()
+
+    def add(self, value):
+        self.added.append(value)
+
+
+class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
+    async def _apply_with_memory_db(self, item):
+        db = _MemoryDb()
+        show = SimpleNamespace(canonical_source="tmdb")
+        root = SimpleNamespace(id=990001)
+
+        async def get_episode(_db, _show, _candidate, episode, _mappings):
+            return SimpleNamespace(id=episode["season_number"] * 100 + episode["episode_number"])
+
+        async def no_progress(*_args):
+            return None
+
+        session = SimpleNamespace(
+            id="in-memory-session",
+            payload={"items": [item], "errors": [], "counts": {}},
+        )
+        with (
+            patch("routers.netflix_import._get_or_create_show_root", new=AsyncMock(return_value=(show, root))),
+            patch("routers.netflix_import._get_or_create_episode", new=AsyncMock(side_effect=get_episode)),
+            patch("routers.netflix_import._has_completed_event", new=AsyncMock(return_value=False)),
+            patch("routers.netflix_import._track_imported_root", new=AsyncMock(return_value=(SimpleNamespace(), True))),
+        ):
+            stats = await _apply_import(db, 7, session, no_progress)
+        return stats, db
+
+    async def test_partial_import_writes_guessed_watch_dates_and_provisional_backfill(self):
+        item = _show_item()
+        guessed = item["episodes"][1]
+        guessed.update({
+            "resolution": "guessed", "matched": True,
+            "season_number": 1, "episode_number": 3,
+            "title": "Episode 3", "tmdb_episode_id": 990003,
+            "dates": ["2020-01-03"],
+        })
+        item["outcome"].update({"status": "partial", "latest_season": 1, "latest_episode": 3,
+                                "endpoint_overridden": True, "status_overridden": True})
+
+        stats, db = await self._apply_with_memory_db(item)
+
+        events_by_episode = {event.media_id % 100: event for event in db.added}
+        self.assertEqual(set(events_by_episode), {1, 2, 3})
+        self.assertTrue(events_by_episode[1].provisional)
+        self.assertIsNone(events_by_episode[1].watched_at)
+        self.assertFalse(events_by_episode[2].provisional)
+        self.assertEqual(events_by_episode[2].watched_at.date(), date(2020, 1, 2))
+        self.assertFalse(events_by_episode[3].provisional)
+        self.assertEqual(events_by_episode[3].watched_at.date(), date(2020, 1, 3))
+        self.assertEqual((stats["source_watches"], stats["source_episodes"], stats["inferred_episodes"], stats["guessed_episodes"]),
+                         (2, 2, 1, 1))
+
+    async def test_completed_import_fills_every_released_catalogue_position(self):
+        item = _show_item()
+        item["episodes"] = [_episode(1, watched=True, watched_date="2020-01-01")]
+        item["outcome"].update({"status": "completed", "status_overridden": True})
+
+        stats, db = await self._apply_with_memory_db(item)
+
+        events_by_episode = {event.media_id % 100: event for event in db.added}
+        self.assertEqual(set(events_by_episode), {1, 2, 3})
+        self.assertFalse(events_by_episode[1].provisional)
+        self.assertEqual(events_by_episode[1].watched_at.date(), date(2020, 1, 1))
+        self.assertTrue(events_by_episode[2].provisional)
+        self.assertTrue(events_by_episode[3].provisional)
+        self.assertEqual((stats["source_episodes"], stats["inferred_episodes"]), (1, 2))
+
+    async def test_only_unresolved_title_identity_blocks_import(self):
+        candidate = {"tmdb_id": 990001, "media_type": "show", "title": "Fixture Show",
+                     "details": {"name": "Fixture Show", "first_air_date": "2020-01-01"}}
+        known_title_discarded_episode = {
+            "id": "known-show", "kind": "show", "source_title": "Fixture Show",
+            "match": {"state": "matched", "candidate": candidate},
+            "decision": {"action": "confirm"},
+            "outcome": {"status": "partial", "tracking_status": "watching"},
+            "episodes": [{"matched": False, "resolution": "discarded", "decision": {"action": None}}],
+            "catalog_episodes": [], "seasons": [],
+        }
+        stats, db = await self._apply_with_memory_db(known_title_discarded_episode)
+        self.assertEqual(stats["shows"], 1)
+        self.assertEqual(stats["discarded_episodes"], 1)
+        self.assertGreater(db.executed, 0)
+
+        unresolved_title = {
+            **known_title_discarded_episode,
+            "id": "review-show",
+            "match": {"state": "review", "candidate": candidate},
+            "decision": {"action": None},
+        }
+        db = _MemoryDb()
+        session = SimpleNamespace(payload={"items": [unresolved_title], "errors": [], "counts": {}})
+        with self.assertRaisesRegex(ValueError, "uncertain title"):
+            await _apply_import(db, 7, session, AsyncMock())
+        self.assertEqual(db.executed, 0)
+
+    async def test_show_remap_rebuilds_newest_first_csv_with_same_day_row_ties(self):
+        item = {
+            "id": "remapped-item", "kind": "show", "source_title": "Old Show",
+            "source_dates": ["2020-01-01", "2020-01-02"], "source_rows": 3,
+            "episodes": [
+                {
+                    "source_title": "Old Show: Season 1: Beta", "season_label": "Season 1",
+                    "source_episode_title": "Beta", "dates": ["2020-01-01"],
+                    "source_row_numbers": [4],
+                },
+                {
+                    "source_title": "Old Show: Season 1: Alpha", "season_label": "Season 1",
+                    "source_episode_title": "Alpha", "dates": ["2020-01-01", "2020-01-02"],
+                    "source_row_numbers": [3, 2],
+                },
+            ],
+        }
+        details = {"id": 4321, "name": "Selected Show", "first_air_date": "2020-01-01"}
+        prepare = AsyncMock(return_value={"shows": [{
+            "kind": "show", "source_title": "Selected Show", "tmdb_id": 4321,
+            "title": "Selected Show", "status": "matched", "confidence": "high",
+            "episodes": [], "catalog_episodes": [], "seasons": [],
+        }]})
+
+        with (
+            patch("routers.netflix_import.tmdb.get_show_light", new=AsyncMock(return_value=details)),
+            patch("core.netflix_import.prepare_netflix_import", new=prepare),
+        ):
+            refreshed = await _prepare_remapped_item(item, "show", 4321, "test-key", "en-US")
+
+        history = prepare.await_args.args[0]
+        self.assertEqual(
+            [(row.episode_title, row.watched_at, row.source_rows) for row in history.rows],
+            [
+                ("Alpha", "2020-01-02", [2]),
+                ("Alpha", "2020-01-01", [3]),
+                ("Beta", "2020-01-01", [4]),
+            ],
+        )
+        self.assertEqual(refreshed["decision"]["action"], "remap")
+
+
 class NetflixDecisionTests(unittest.TestCase):
     def test_lower_partial_endpoint_excludes_later_source_episode(self):
         sources, chosen, excluded = _show_import_positions(_show_item(), {"status": "partial", "latest_season": 1, "latest_episode": 2}, date(2026, 9, 24))
@@ -78,15 +240,6 @@ class NetflixDecisionTests(unittest.TestCase):
     def test_review_summary_respects_partial_endpoint(self):
         summary = _summary([_show_item()])
         self.assertEqual((summary["source_watches"], summary["source_episodes"], summary["inferred_episodes"], summary["cutoff_exclusions"]), (1, 1, 1, 1))
-
-    def test_episode_remap_uses_target_catalog_identity(self):
-        item = _show_item()
-        source = item["episodes"][0]
-        original_id = source["tmdb_episode_id"]
-        _remap_episode_to_catalog(item, source, 1, 1)
-        self.assertNotEqual(source["tmdb_episode_id"], original_id)
-        self.assertEqual(source["tmdb_episode_id"], item["catalog_episodes"][0]["tmdb_episode_id"])
-        self.assertEqual(source["dates"], ["2020-01-02"])
 
     def test_incomplete_catalogue_cannot_complete(self):
         item = _show_item()
@@ -132,6 +285,84 @@ class NetflixDecisionTests(unittest.TestCase):
         item = _normalise_groups(raw)[0]
         self.assertEqual(item["outcome"]["status"], "partial")
         self.assertEqual((item["outcome"]["latest_season"], item["outcome"]["latest_episode"]), (1, 3))
+
+    def test_normalization_guesses_positions_recalculates_represented_count_endpoint_and_summary(self):
+        catalog = [
+            {"season_number": 3, "episode_number": number, "title": f"S3E{number}",
+             "release_date": "2020-01-01", "tmdb_episode_id": 3000 + number}
+            for number in range(1, 9)
+        ]
+        episodes = [{
+            "season_number": 3, "episode_number": 4, "title": "S3E4",
+            "source_episode_title": "S3E4", "source_title": "Fixture Show: Season 3: S3E4",
+            "dates": ["2020-01-01"], "source_rows": [10], "matched": True,
+            "tmdb_episode_id": 3004,
+        }]
+        episodes.extend({
+            "season_number": 3, "episode_number": None, "season_label": "Season 3",
+            "title": f"Unknown {number}", "source_episode_title": f"Unknown {number}",
+            "source_title": f"Fixture Show: Season 3: Unknown {number}",
+            "dates": [f"2020-01-0{number + 1}"], "source_rows": [10 - number],
+            "matched": False,
+        } for number in range(1, 6))
+        item = _normalise_groups({"shows": [{
+            "kind": "show", "source_title": "Fixture Show", "tmdb_id": 990001,
+            "title": "Fixture Show", "status": "matched", "confidence": "high",
+            "episodes": episodes, "catalog_episodes": catalog,
+            "seasons": [{"season_number": 3, "represented": 1, "total_released": 8, "catalogue_complete": True}],
+        }]})[0]
+
+        summary = _summary([item])
+        guesses = [episode for episode in item["episodes"] if episode.get("resolution") == "guessed"]
+        discarded = [episode for episode in item["episodes"] if episode.get("resolution") == "discarded"]
+        self.assertEqual([(episode["season_number"], episode["episode_number"]) for episode in guesses],
+                         [(3, 5), (3, 6), (3, 7), (3, 8)])
+        self.assertEqual(len(discarded), 1)
+        self.assertEqual(item["seasons"][0]["represented"], 5)
+        self.assertEqual((item["outcome"]["latest_season"], item["outcome"]["latest_episode"]), (3, 8))
+        self.assertEqual((summary["source_episodes"], summary["guessed_episodes"], summary["discarded_episodes"]), (5, 4, 1))
+        self.assertEqual(summary["inferred_episodes"], 3)
+
+    def test_existing_review_draft_resolves_episodes_and_preserves_title_decision_and_manual_endpoint(self):
+        item = _show_item()
+        unknown = item["episodes"][1]
+        unknown.update({
+            "matched": False, "episode_number": None, "tmdb_episode_id": None,
+            "resolution": None, "title": "Previously uncertain episode",
+            "source_episode_title": "Previously uncertain episode",
+            "source_title": "Fixture Show: Season 1: Previously uncertain episode",
+        })
+        item["decision"] = {"action": "confirm"}
+        item["outcome"]["latest_episode"] = 2
+        item["outcome"]["endpoint_overridden"] = True
+        session = SimpleNamespace(
+            id="legacy-draft", status="review", phase="review", progress={}, revision=4,
+            payload={"items": [item], "counts": {}, "errors": []}, result={}, error_message=None,
+        )
+
+        public = _public_session(session)
+        upgraded = public["items"][0]
+        guessed = next(episode for episode in upgraded["episodes"] if episode.get("source_episode_title") == "Previously uncertain episode")
+
+        self.assertEqual(upgraded["decision"]["action"], "confirm")
+        self.assertEqual((guessed["season_number"], guessed["episode_number"], guessed["resolution"]), (1, 3, "guessed"))
+        self.assertEqual(upgraded["outcome"]["latest_episode"], 2)
+
+    def test_default_partial_endpoint_advances_to_newly_guessed_position(self):
+        item = _show_item()
+        unknown = item["episodes"][1]
+        unknown.update({
+            "matched": False, "episode_number": None, "tmdb_episode_id": None,
+            "resolution": None, "title": "Previously uncertain episode",
+            "source_episode_title": "Previously uncertain episode",
+            "source_title": "Fixture Show: Season 1: Previously uncertain episode",
+        })
+        item["outcome"].pop("endpoint_overridden", None)
+        items = [item]
+
+        _resolve_draft_items(items)
+
+        self.assertEqual((items[0]["outcome"]["latest_season"], items[0]["outcome"]["latest_episode"]), (1, 3))
 
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database")
