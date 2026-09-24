@@ -38,6 +38,10 @@ self.addEventListener('fetch', (event) => {
   // Only handle GET — leave POST/PATCH/DELETE to the network
   if (request.method !== 'GET') return;
 
+  // Vite development modules carry optimizer version hashes. Never cache
+  // them across a rebuild or serve a stale module as an offline fallback.
+  if (url.pathname.startsWith('/node_modules/.vite/') || url.pathname.startsWith('/@vite/') || url.pathname.startsWith('/@id/') || url.pathname.startsWith('/src/')) return;
+
   // Poster/backdrop images (incl. the RPDB rating-poster proxy) use native
   // HTTP caching, not the app-shell cache.
   if (url.hostname === 'image.tmdb.org' || url.pathname.startsWith('/api/proxy/media/image/') || url.pathname.startsWith('/api/proxy/media/rating-poster/')) {

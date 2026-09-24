@@ -22,6 +22,12 @@ export default defineConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    // Astro routes and islands are loaded on demand. Bundle their client
+    // dependencies at startup so visiting a new page does not invalidate
+    // optimized URLs already referenced by an open page.
+    optimizeDeps: {
+      include: ['@mdxeditor/editor', '@mdxeditor/gurx', 'qrcode', 'chart.js/auto', 'hls.js'],
+    },
     server: {
       allowedHosts: ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com'],
     }
