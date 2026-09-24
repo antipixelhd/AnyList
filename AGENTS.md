@@ -14,6 +14,12 @@ These canonical documents live in this repository under docs/media-tracker/. Kee
 
 The repository was cloned from local reference commit 3d75f172fc054ed90c39af9d336d5f5feda40d54. Its origin points to the reference repository: do not push to it. The user confirmed the specification and authorized implementation on 2026-09-18. Continue implementation without requesting that approval again. Read docs/media-tracker/STATUS.md for progress.
 
-## Visual changes
+## Frontend shared styles
 
-Follow [AGENT.md](AGENT.md) for the shared typography categories, exact fallback font stacks, root-unit conventions, and stylesheet ownership.
+For frontend work, check these shared CSS sources before adding or changing variables:
+
+- [typography.css](frontend/src/styles/typography.css) defines the font families, semantic font-size and font-weight tokens, and the 62.5% root size.
+- [global-theme.css](frontend/src/styles/global-theme.css) defines shared palette, surface, border, and text color variables.
+- [tracker-profile-list.css](frontend/src/styles/tracker-profile-list.css) defines the shared profile content gap and profile-list spacing.
+
+Use these shared variables in feature styles where they apply; keep component-specific rules in the focused stylesheet for that feature.
