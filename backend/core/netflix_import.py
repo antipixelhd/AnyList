@@ -315,6 +315,9 @@ def _media_candidate(raw: dict[str, Any], media_type: str, query: str) -> dict[s
         "year": year,
         "poster_path": raw.get("poster_path"),
         "media_type": media_type,
+        "genre_ids": raw.get("genre_ids") or [],
+        "original_language": raw.get("original_language"),
+        "origin_country": raw.get("origin_country") or [],
         "_exact": exact,
         "_similarity": similarity,
         "_original_title": original_title,
@@ -322,6 +325,23 @@ def _media_candidate(raw: dict[str, Any], media_type: str, query: str) -> dict[s
         "_popularity": max(0.0, float(raw.get("popularity") or 0)),
         "_release_date": date_value,
     }
+
+
+def is_anime_candidate(*records: dict[str, Any] | None) -> bool:
+    """Recognize Japanese animation from TMDB search or detail metadata."""
+    animated = False
+    japanese = False
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        genre_ids = record.get("genre_ids") or []
+        genres = record.get("genres") or []
+        animated |= 16 in genre_ids or any(
+            isinstance(genre, dict) and (genre.get("id") == 16 or str(genre.get("name", "")).casefold() == "animation")
+            for genre in genres
+        )
+        japanese |= record.get("original_language") == "ja" or "JP" in (record.get("origin_country") or [])
+    return animated and japanese
 
 
 def _dedupe_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1184,6 +1204,7 @@ async def prepare_netflix_import(
             "year": candidate.get("year"),
             "poster_path": candidate.get("poster_path"),
             "media_type": "show",
+            "is_anime": is_anime_candidate(candidate, best.get("details")),
             "confidence": best["confidence"],
             "reason": best["reason"],
             "status": "matched" if best["confidence"] == "high" else "review",
@@ -1263,6 +1284,7 @@ async def prepare_netflix_import(
             "year": candidate.get("year") if candidate else None,
             "poster_path": candidate.get("poster_path") if candidate else None,
             "media_type": "movie" if candidate else None,
+            "is_anime": is_anime_candidate(candidate),
             "confidence": confidence,
             "reason": reason,
             "status": "matched" if confidence == "high" else "review",
@@ -1282,7 +1304,7 @@ async def prepare_netflix_import(
         if any(row.season_label for row in observations):
             continue
         show_item = next((item for item in shows if item["id"] == _stable_id("show", normalized_show)), None)
-        if show_item and any(ep.get("matched") for ep in show_item.get("episodes", [])):
+        if show_item and any(ep.get("resolution") == "exact" for ep in show_item.get("episodes", [])):
             continue
         for observation in observations:
             query_key = _norm_text(observation.source_title)
@@ -1302,6 +1324,7 @@ async def prepare_netflix_import(
                     "year": candidate.get("year"),
                     "poster_path": candidate.get("poster_path"),
                     "media_type": "movie",
+                    "is_anime": is_anime_candidate(candidate),
                     "confidence": "high",
                     "reason": "Exact movie title match; the possible episode candidate did not match.",
                     "status": "matched",

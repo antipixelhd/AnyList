@@ -607,6 +607,41 @@ class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["movies"][0]["status"], "matched")
         self.assertFalse(result["shows"])
 
+    async def test_single_guessed_episode_does_not_override_exact_colon_movie(self) -> None:
+        for title, show_name, movie_id, is_anime in (
+            ("El Camino: A Breaking Bad Movie", "El Camino", 559969, False),
+            ("EVANGELION: DEATH (TRUE)²", "EVANGELION", 18624, True),
+        ):
+            with self.subTest(title=title):
+                async def search_shows(query: str, **_kwargs):
+                    return {"results": [{"id": 91, "name": show_name}] if query == show_name else []}
+
+                async def search_movies(query: str, **_kwargs):
+                    return {"results": [{
+                        "id": movie_id, "title": title, "release_date": "2019-01-01",
+                        "genre_ids": [16] if is_anime else [18],
+                        "original_language": "ja" if is_anime else "en",
+                    }]} if query == title else {"results": []}
+
+                result = await prepare_netflix_import(
+                    f'Title,Date\n"{title}",1/1/24\n',
+                    search_movies_fn=search_movies,
+                    search_shows_fn=search_shows,
+                    show_details_fn=AsyncMock(return_value={
+                        "id": 91, "name": show_name,
+                        "seasons": [{"season_number": 1, "episode_count": 1}],
+                    }),
+                    season_fn=AsyncMock(return_value={
+                        "episode_count": 1,
+                        "episodes": [{"id": 9101, "episode_number": 1, "name": "Pilot", "air_date": "2019-01-01"}],
+                    }),
+                )
+
+                self.assertEqual(len(result["movies"]), 1)
+                self.assertEqual(result["movies"][0]["tmdb_id"], movie_id)
+                self.assertEqual(result["movies"][0]["is_anime"], is_anime)
+                self.assertFalse(result["shows"])
+
 
 if __name__ == "__main__":
     unittest.main()

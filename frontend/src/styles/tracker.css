@@ -510,3 +510,15 @@ main{transition:opacity var(--content-reveal) ease}
 .grid-view .entry-rewatch{position:absolute;right:8px;bottom:8px;margin:0;padding:7px;border-radius:50%;background:#0a131ecc}
 @media(max-width:650px){#entry-groups:not(.grid-view) .entry-cover-column,#entry-groups:not(.grid-view) .entry-thumbnail{min-width:50px;max-width:50px}#entry-groups:not(.grid-view) .entry-thumbnail{height:44px}#entry-groups:not(.grid-view) .entry-thumbnail .entry-cover,#entry-groups:not(.grid-view) .entry-thumbnail .row-menu{width:44px;height:44px}#entry-groups:not(.grid-view) .entry-title{padding:13px 8px;font-size:13px;line-height:18px}#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column){padding:12px 6px;font-size:11px;line-height:16px}#entry-groups:not(.grid-view) .entry-head>span.entry-title-column{padding-left:8px}#entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type{padding:13px 6px;font-size:12px;line-height:18px}#entry-groups:not(.grid-view) .entry-score-button{min-height:18px;line-height:18px}.entry-rewatch{font-size:14px}.entry-rewatch:after{right:0;transform:none}}
 @media(prefers-reduced-motion:reduce){.entry-rewatch:after{transition:none}}
+
+.connections-settings-page #netflix-import-app{min-width:0}
+.connections-settings-page .settings-content #netflix-import-workflow:not([hidden]){padding:0;border:0;background:transparent;box-shadow:none}
+.connections-settings-page .netflix-remap-dialog{width:min(590px,calc(100vw - 32px));max-height:min(650px,calc(100dvh - 48px));inset:32px 0 auto}
+.connections-settings-page .netflix-remap-dialog .quick-search-results{max-height:min(510px,calc(100dvh - 145px));margin-top:14px}
+.connections-settings-page .netflix-remap-dialog .quick-search-results.combined{display:block}
+.connections-settings-page .netflix-remap-dialog .quick-search-results[hidden]{display:none}
+.connections-settings-page .netflix-remap-dialog .quick-search-result{display:grid;grid-template-columns:48px minmax(0,1fr);width:100%;border:0;background:transparent;color:var(--text);text-align:left}
+.connections-settings-page .netflix-remap-dialog .quick-search-result:hover,.connections-settings-page .netflix-remap-dialog .quick-search-result:focus-visible{background:#1b3043;color:var(--bright)}
+.connections-settings-page .settings-content .netflix-remap-dialog .quick-search-card:not([hidden]){padding:15px 16px 8px;border:1px solid #2a3e52;background:#192737;box-shadow:0 15px 36px #02070d70}
+.connections-settings-page .settings-content .netflix-remap-dialog .quick-search-bar input{min-height:0;padding:9px 0;border:0;background:transparent;box-shadow:none}
+@media(max-width:650px){.connections-settings-page .netflix-remap-dialog[open]{display:block;inset:0;width:100vw;height:100dvh;max-height:none;border-radius:0}.connections-settings-page .netflix-remap-dialog .quick-search-results{max-height:calc(100dvh - 105px)}}

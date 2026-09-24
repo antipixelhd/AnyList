@@ -174,7 +174,7 @@ def _resolve_item_episodes(item: dict) -> None:
             represented.setdefault(int(episode["season_number"]), set()).add(int(episode["episode_number"]))
     for season in item.get("seasons") or []:
         season["represented"] = len(represented.get(season["season_number"], set()))
-    if not item.get("outcome", {}).get("status_overridden"):
+    if not item.get("is_anime") and not item.get("outcome", {}).get("status_overridden"):
         seasons = item.get("seasons") or []
         item["outcome"]["status"] = "completed" if seasons and all(
             season.get("catalogue_complete") and season.get("total_released") is not None
@@ -253,6 +253,7 @@ def _normalise_groups(prepared: dict) -> list[dict]:
             catalogue_complete = bool(seasons) and all(s.get("catalogue_complete") and s.get("total_released") is not None for s in seasons)
             fully_represented = catalogue_complete and all(s["represented"] >= s["total_released"] for s in seasons)
             default_progress = "completed" if fully_represented else "partial"
+            is_anime = bool(raw.get("is_anime"))
             item_id = _item_id(item_kind, source_title)
             for episode in episodes:
                 source_title_for_ep = episode.get("source_title") or f"{source_title}: {episode.get('season_label') or ''}: {episode.get('source_episode_title') or episode.get('title') or ''}"
@@ -265,6 +266,7 @@ def _normalise_groups(prepared: dict) -> list[dict]:
             result.append({
                 "id": item_id,
                 "kind": item_kind,
+                "is_anime": is_anime,
                 "source_title": source_title,
                 "source_dates": source_dates,
                 "source_rows": int(source_rows or 0),
@@ -278,9 +280,9 @@ def _normalise_groups(prepared: dict) -> list[dict]:
                 "episodes": episodes,
                 "catalog_episodes": [_normalise_episode(ep) for ep in (raw.get("catalog_episodes") or raw.get("released_episodes") or []) if isinstance(ep, dict)],
                 "seasons": seasons,
-                "decision": {"action": "confirm" if match_state == "matched" else None},
+                "decision": {"action": "skip" if is_anime else "confirm" if match_state == "matched" else None},
                 "outcome": {
-                    "status": "completed" if item_kind == "movie" else default_progress,
+                    "status": "skip" if is_anime else "completed" if item_kind == "movie" else default_progress,
                     "latest_season": latest.get("season_number") if latest else None,
                     "latest_episode": latest.get("episode_number") if latest else None,
                     "tracking_status": "watching",
@@ -306,11 +308,14 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     episode positions are reloaded from TMDB so a stale candidate cannot carry
     another show's episode IDs into the final transaction.
     """
-    from core.netflix_import import parse_netflix_csv, prepare_netflix_import
+    from core.netflix_import import is_anime_candidate, parse_netflix_csv, prepare_netflix_import
 
     if media_type == "movie":
-        if item.get("kind") == "show" and item.get("episodes"):
-            raise ValueError("This Netflix entry contains episode watch dates, so it cannot be remapped to a movie safely. Skip it or remap it to a show.")
+        source_episodes = item.get("episodes") or []
+        if item.get("kind") == "show" and (
+            len(source_episodes) != 1 or source_episodes[0].get("resolution") == "exact"
+        ):
+            raise ValueError("Only a single unconfirmed episode observation can be remapped to a movie safely.")
         details = await tmdb.get_movie_light(tmdb_id, api_key=api_key, language=language)
         if int(details.get("id") or 0) != tmdb_id:
             raise ValueError("TMDB returned a different movie than the selected result.")
@@ -326,19 +331,28 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
         }
         refreshed = dict(item)
         refreshed["kind"] = "movie"
+        if item.get("kind") == "show" and source_episodes:
+            refreshed["source_title"] = source_episodes[0].get("source_title") or item.get("source_title")
+        refreshed["is_anime"] = is_anime_candidate(details)
         refreshed["match"] = {"state": "matched", "confidence": "manual", "reason": "Title selected by the user.", "candidate": candidate, "candidates": [candidate]}
         refreshed["episodes"] = []
         refreshed["catalog_episodes"] = []
         refreshed["seasons"] = []
-        refreshed["decision"] = {"action": "remap"}
-        refreshed["outcome"] = {**item.get("outcome", {}), "status": "completed"}
+        refreshed["decision"] = {"action": "skip" if refreshed["is_anime"] else "remap"}
+        refreshed["outcome"] = {**item.get("outcome", {}), "status": "skip" if refreshed["is_anime"] else "completed"}
         return refreshed
 
-    # Netflix rows interpreted as a movie contain no safe episode source
-    # coordinates and cannot be converted into show progress by guessing.
     source_episodes = item.get("episodes") or []
     if not source_episodes:
-        raise ValueError("This CSV entry has no episode information to remap to a show.")
+        # A manually chosen show can reinterpret a movie-shaped Netflix row.
+        # Keep the original viewing dates and let the episode resolver bound
+        # any positional guess to released catalogue episodes.
+        source_episodes = [{
+            "source_title": item.get("source_title") or "",
+            "source_episode_title": item.get("source_title") or "",
+            "dates": item.get("source_dates") or [],
+            "source_row_numbers": [],
+        }]
     details = await tmdb.get_show_light(tmdb_id, api_key=api_key, language=language)
     if int(details.get("id") or 0) != tmdb_id:
         raise ValueError("TMDB returned a different show than the selected result.")
@@ -354,7 +368,7 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
             remapped_title = f"{title}: {suffix}"
         elif episode.get("source_episode_title"):
             season_label = episode.get("season_label") or (f"Season {episode['season_number']}" if episode.get("season_number") else "")
-            remapped_title = f"{title}: {season_label}: {episode['source_episode_title']}".strip(": ")
+            remapped_title = ": ".join(part for part in (title, season_label, episode["source_episode_title"]) if part)
         else:
             continue
         dates = sorted(episode.get("dates") or [])
@@ -398,7 +412,31 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     refreshed["source_rows"] = item.get("source_rows", 0)
     refreshed["match"]["candidate"]["details"] = details
     refreshed["match"]["candidate"]["tvdb_id"] = (details.get("external_ids") or {}).get("tvdb_id")
-    refreshed["decision"] = {"action": "remap"}
+    refreshed["match"]["reason"] = "Show selected by the user; episode positions were resolved where possible."
+    if item.get("kind") == "show":
+        previous_outcome = item.get("outcome") or {}
+        if previous_outcome.get("status_overridden") and previous_outcome.get("status") in ("completed", "partial"):
+            refreshed["outcome"].update({
+                "status": previous_outcome["status"],
+                "status_overridden": True,
+                "tracking_status": previous_outcome.get("tracking_status", "watching"),
+            })
+        if previous_outcome.get("endpoint_overridden"):
+            available = {int(season["season_number"]): int(season.get("total_released") or 0)
+                         for season in refreshed.get("seasons") or [] if season.get("season_number")}
+            prior_season = previous_outcome.get("latest_season")
+            prior_episode = previous_outcome.get("latest_episode")
+            if prior_season in available and available[prior_season] > 0 and isinstance(prior_episode, int):
+                refreshed["outcome"].update({
+                    "latest_season": prior_season,
+                    "latest_episode": min(max(1, prior_episode), available[prior_season]),
+                    "endpoint_overridden": True,
+                })
+    refreshed["is_anime"] = is_anime_candidate(refreshed["match"]["candidate"], details)
+    if refreshed["is_anime"]:
+        refreshed["decision"] = {"action": "skip"}
+        refreshed["outcome"]["status"] = "skip"
+    refreshed["decision"] = {"action": "skip" if refreshed["is_anime"] else "remap"}
     refreshed["existing"] = {"catalog": False, "tracked": False, "status": None, "progress": 0}
     return refreshed
 
@@ -743,13 +781,17 @@ async def update_netflix_import_item(
     elif action == "remap":
         if remapped_item is None:
             raise HTTPException(status_code=422, detail="The selected title remap could not be prepared.")
-        item["decision"] = {"action": "remap"}
+        item["decision"] = {"action": "skip" if item.get("is_anime") else "remap"}
     elif action == "confirm":
+        if item.get("is_anime"):
+            raise HTTPException(status_code=422, detail="Anime imports are currently unavailable.")
         if not item.get("match", {}).get("candidate"):
             raise HTTPException(status_code=422, detail="Choose a suggested title or use Remap before confirming.")
         item["decision"] = {"action": "confirm"}
     outcome_status = patch.get("status")
     if outcome_status is not None:
+        if item.get("is_anime") and outcome_status != "skip":
+            raise HTTPException(status_code=422, detail="Anime imports are currently unavailable.")
         if outcome_status not in ("completed", "partial", "skip"):
             raise HTTPException(status_code=422, detail="Progress must be completed, partial, or skip.")
         if item["kind"] == "movie" and outcome_status == "partial":

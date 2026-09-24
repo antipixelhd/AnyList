@@ -208,6 +208,9 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         item = {
             "id": "remapped-item", "kind": "show", "source_title": "Old Show",
             "source_dates": ["2020-01-01", "2020-01-02"], "source_rows": 3,
+            "outcome": {"status": "partial", "status_overridden": True,
+                        "latest_season": 1, "latest_episode": 2,
+                        "endpoint_overridden": True, "tracking_status": "paused"},
             "episodes": [
                 {
                     "source_title": "Old Show: Season 1: Beta", "season_label": "Season 1",
@@ -225,7 +228,9 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         prepare = AsyncMock(return_value={"shows": [{
             "kind": "show", "source_title": "Selected Show", "tmdb_id": 4321,
             "title": "Selected Show", "status": "matched", "confidence": "high",
-            "episodes": [], "catalog_episodes": [], "seasons": [],
+            "episodes": [], "catalog_episodes": [], "seasons": [
+                {"season_number": 1, "represented": 0, "total_released": 1, "catalogue_complete": True},
+            ],
         }]})
 
         with (
@@ -244,9 +249,81 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(refreshed["decision"]["action"], "remap")
+        self.assertEqual(refreshed["outcome"]["status"], "partial")
+        self.assertEqual(refreshed["outcome"]["tracking_status"], "paused")
+        self.assertEqual((refreshed["outcome"]["latest_season"], refreshed["outcome"]["latest_episode"]), (1, 1))
+
+    async def test_single_unconfirmed_show_observation_can_remap_to_movie(self):
+        item = {
+            "id": "film-as-show", "kind": "show", "source_title": "El Camino",
+            "source_dates": ["2024-01-01"], "source_rows": 1,
+            "episodes": [{
+                "source_title": "El Camino: A Breaking Bad Movie", "resolution": "guessed",
+                "dates": ["2024-01-01"], "source_row_numbers": [2],
+            }],
+            "outcome": {"status": "partial", "latest_season": 1, "latest_episode": 1},
+        }
+        details = {"id": 559969, "title": "El Camino: A Breaking Bad Movie", "release_date": "2019-10-11", "genres": [{"id": 18}], "original_language": "en"}
+        with patch("routers.netflix_import.tmdb.get_movie_light", new=AsyncMock(return_value=details)):
+            refreshed = await _prepare_remapped_item(item, "movie", 559969, "test-key", "en-US")
+        self.assertEqual(refreshed["kind"], "movie")
+        self.assertEqual(refreshed["source_title"], "El Camino: A Breaking Bad Movie")
+        self.assertEqual(refreshed["source_dates"], ["2024-01-01"])
+        self.assertEqual(refreshed["decision"], {"action": "remap"})
+        self.assertEqual(refreshed["outcome"]["status"], "completed")
+
+        item["episodes"][0]["resolution"] = "exact"
+        with self.assertRaisesRegex(ValueError, "unconfirmed episode"):
+            await _prepare_remapped_item(item, "movie", 559969, "test-key", "en-US")
+
+    async def test_movie_shaped_entry_can_be_manually_remapped_to_show(self):
+        item = {
+            "id": "ambiguous-title", "kind": "movie", "source_title": "Ambiguous Title",
+            "source_dates": ["2024-01-01"], "source_rows": 1,
+            "outcome": {"status": "completed"},
+        }
+        details = {"id": 4321, "name": "Selected Show", "first_air_date": "2020-01-01"}
+        prepare = AsyncMock(return_value={"shows": [{
+            "kind": "show", "source_title": "Selected Show", "tmdb_id": 4321,
+            "title": "Selected Show", "status": "review", "confidence": "medium",
+            "episodes": [{"source_title": "Selected Show: Ambiguous Title", "dates": ["2024-01-01"]}],
+            "catalog_episodes": [], "seasons": [],
+        }]})
+        with (
+            patch("routers.netflix_import.tmdb.get_show_light", new=AsyncMock(return_value=details)),
+            patch("core.netflix_import.prepare_netflix_import", new=prepare),
+        ):
+            refreshed = await _prepare_remapped_item(item, "show", 4321, "test-key", "en-US")
+
+        self.assertEqual([(row.source_title, row.watched_at) for row in prepare.await_args.args[0].rows],
+                         [("Selected Show: Ambiguous Title", "2024-01-01")])
+        self.assertEqual(refreshed["id"], item["id"])
+        self.assertEqual(refreshed["source_title"], item["source_title"])
+        self.assertEqual(refreshed["decision"], {"action": "remap"})
 
 
 class NetflixDecisionTests(unittest.TestCase):
+    def test_anime_items_are_skipped_and_remain_skipped_when_episodes_resolve(self):
+        prepared = {"shows": [{
+            "kind": "show", "source_title": "Anime Show", "tmdb_id": 501,
+            "title": "Anime Show", "status": "matched", "confidence": "high",
+            "is_anime": True, "episodes": [{
+                "source_title": "Anime Show: Episode 1", "source_episode_title": "Episode 1",
+                "dates": ["2020-01-03"], "source_rows": [2],
+            }],
+            "catalog_episodes": [{
+                "season_number": 1, "episode_number": 1, "title": "Pilot",
+                "release_date": "2020-01-01", "tmdb_episode_id": 50101,
+            }],
+            "seasons": [{"season_number": 1, "represented": 0, "total_released": 1, "catalogue_complete": True}],
+        }]}
+        item = _normalise_groups(prepared)[0]
+        self.assertEqual(item["decision"], {"action": "skip"})
+        self.assertEqual(item["outcome"]["status"], "skip")
+        _resolve_draft_items([item])
+        self.assertEqual(item["decision"], {"action": "skip"})
+        self.assertEqual(item["outcome"]["status"], "skip")
+
     def test_lower_partial_endpoint_excludes_later_source_episode(self):
         sources, chosen, excluded = _show_import_positions(_show_item(), {"status": "partial", "latest_season": 1, "latest_episode": 2}, date(2026, 9, 24))
         self.assertEqual(set(sources), {(1, 2)})
