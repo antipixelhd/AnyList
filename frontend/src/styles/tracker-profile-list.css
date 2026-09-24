@@ -193,22 +193,24 @@
   padding:11px 0
 }
 .list-shell {
+  position:relative;
   max-width:1340px;
   grid-template-columns:190px minmax(0,1fr);
   gap:30px;
-  row-gap:0;
   padding:0 24px
 }
-.list-toolbar {
-  grid-column:1 / -1;
-  justify-content:flex-end;
-  margin:20px 0 0
+.list-content > .list-toolbar {
+  position:absolute;
+  z-index:1;
+  top:calc(20px - var(--profile-content-gap));
+  right:24px;
+  margin:0
 }
-.list-shell > .list-toolbar .view-switch {
+.list-content > .list-toolbar .view-switch {
   gap:2px;
   padding:10px 0
 }
-.list-shell > .list-toolbar .view-switch button {
+.list-content > .list-toolbar .view-switch button {
   padding:0 4.5px
 }
 .filters {
@@ -301,6 +303,16 @@
     margin:24px auto;
     padding:0 16px
   }
+  .mobile-filter-toggle {
+    width:calc(100% - 106px);
+    min-height:44px
+  }
+  .list-content > .list-toolbar {
+    right:16px
+  }
+  .list-content > .list-toolbar .view-switch {
+    padding:0
+  }
   .filters {
     gap:12px
   }
@@ -324,11 +336,7 @@
   }
 }
 
-/* The view selector sits directly below the profile navigation and spans the list shell. */
-.profile-tabs + .list-shell {
-  margin-top:0;
-  row-gap:0
-}
+/* The view selector floats above the first section; filters retain the shared profile gap. */
 
 @media(max-width:650px) {
   #entry-groups:not(.grid-view) .entry-title>a {
