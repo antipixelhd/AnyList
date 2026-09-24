@@ -1,6 +1,5 @@
 ---
 import TrackerSettings from "../layouts/TrackerSettings.astro";
-import BioEditor from "../components/BioEditor";
 import { api } from "../lib/api";
 import { tracker } from "../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../lib/api";
@@ -204,8 +203,9 @@ const COUNTRIES = [
             <p class="text-xs text-zinc-500">Shown instead of your username where your name appears.</p>
           </div>
           <div class="space-y-2">
-            <div class="setting-label-line"><label id="bio-label" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
-            <BioEditor client:load initialMarkdown={prefs.bio ?? ''} token={token!} />
+            <div class="setting-label-line"><label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
+            <textarea id="bio" name="bio" rows="5" maxlength="5000" aria-describedby="bio-count" placeholder="Write a short bio…" class="w-full resize-y border border-zinc-800 bg-zinc-900 px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500">{prefs.bio ?? ''}</textarea>
+            <div class="flex items-center justify-between gap-3"><span id="bio-count" class="text-xs text-zinc-500" aria-live="polite">{(prefs.bio ?? '').length.toLocaleString()} / 5,000</span><button id="save-bio" type="button" class="button-primary px-4 py-2 text-sm" disabled>Save bio</button></div>
           </div>
         </div>
       </section>
@@ -638,6 +638,35 @@ const COUNTRIES = [
         const data = await response.json().catch(() => ({})) as { detail?: string | unknown[] };
         throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save this setting.');
       }
+    }
+    const bio = document.getElementById('bio') as HTMLTextAreaElement | null;
+    const bioCount = document.getElementById('bio-count');
+    const saveBio = document.getElementById('save-bio') as HTMLButtonElement | null;
+    if (bio && saveBio) {
+      let savedBio = bio.value;
+      let bioSaving = false;
+      const updateBio = () => {
+        if (bioCount) bioCount.textContent = `${bio.value.length.toLocaleString()} / 5,000`;
+        saveBio.disabled = bioSaving || bio.value === savedBio;
+      };
+      bio.addEventListener('input', updateBio);
+      saveBio.addEventListener('click', async () => {
+        if (bioSaving || bio.value === savedBio) return;
+        const requested = bio.value;
+        bioSaving = true;
+        updateBio();
+        setStatus('bio', 'Saving…', 'saving');
+        try {
+          await patchProfile({ bio: requested || null });
+          savedBio = requested;
+          setStatus('bio', 'Saved');
+        } catch (error) {
+          setStatus('bio', error instanceof Error ? error.message : 'Could not save bio.', 'error');
+        } finally {
+          bioSaving = false;
+          updateBio();
+        }
+      });
     }
     function queueSave(group: string, value: Record<string, unknown>, rollback?: (previous: Record<string, unknown>) => void, afterSave?: () => void) {
       const revision = (revisions.get(group) || 0) + 1;

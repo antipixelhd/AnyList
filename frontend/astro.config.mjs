@@ -4,11 +4,9 @@ import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 
 import node from '@astrojs/node';
-import react from '@astrojs/react';
 
 // https://astro.build/config
 export default defineConfig({
-  integrations: [react()],
   output: 'server',
   devToolbar: {enabled: false},
 
@@ -26,7 +24,7 @@ export default defineConfig({
     // dependencies at startup so visiting a new page does not invalidate
     // optimized URLs already referenced by an open page.
     optimizeDeps: {
-      include: ['@mdxeditor/editor', '@mdxeditor/gurx', 'qrcode', 'chart.js/auto', 'hls.js'],
+      include: ['qrcode', 'chart.js/auto', 'hls.js'],
     },
     server: {
       allowedHosts: ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com'],
