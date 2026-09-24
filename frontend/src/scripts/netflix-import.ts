@@ -218,8 +218,10 @@ function mountNetflixImport() {
         <div class="flex min-w-0 flex-1 gap-3">
           ${poster ? `<img loading="lazy" src="${esc(poster)}" alt="Poster for ${esc(candidateTitle)}" class="h-20 w-14 shrink-0 rounded-lg bg-zinc-800 object-cover">` : `<div class="flex h-20 w-14 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-lg font-bold text-zinc-500">${esc((candidate?.title || item.source_title).slice(0, 1).toUpperCase())}</div>`}
           <div class="min-w-0">
+            <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Netflix title</p>
             <p class="break-words font-semibold text-zinc-100">${esc(item.source_title)}</p>
-            <p class="mt-1 text-xs text-zinc-500">Netflix source · ${item.kind === "show" ? "Series" : "Movie"}${item.source_dates?.length ? ` · ${esc(item.source_dates[0])}` : ""}</p>
+            <p class="mt-1 text-xs text-zinc-500">${item.kind === "show" ? "Series" : "Movie"}${item.source_dates?.length ? ` · ${esc(item.source_dates[0])}` : ""}</p>
+            <p class="mt-2 text-xs text-zinc-400">Suggested catalogue match: <span class="font-semibold text-zinc-200">${esc(candidateTitle)}</span></p>
             <div class="mt-2 flex flex-wrap items-center gap-2">
               <span class="rounded-full border px-2 py-0.5 text-xs ${badgeStyle}">${badge}</span>
               <span class="text-xs text-zinc-500">${esc(reasons)}</span>
