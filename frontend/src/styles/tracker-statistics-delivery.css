@@ -1,6 +1,6 @@
 /* Statistics use type, icons, and measured whitespace instead of a card wall. */
 .stats-page {
-  padding-top:20px
+  padding-top:0
 }
 .stats-heading {
   margin-bottom:28px
@@ -100,7 +100,7 @@
 }
 @media(max-width:650px) {
   .stats-page {
-    padding-top:16px
+    padding-top:0
   }
   .stats-heading {
     gap:20px;

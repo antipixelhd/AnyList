@@ -36,6 +36,8 @@ This pass intentionally changes typography only. Categories do not impose colors
 
 ## Root units and stylesheet ownership
 
+All profile pages use `--profile-content-gap` between the profile tabs and the first content container: 32px on desktop and 24px on phones. Keep route-specific top padding out of the profile content wrapper so this distance remains consistent.
+
 The root is `62.5%`: at the browser's default 16px setting, 1rem is 10px. Body text defaults to 1.6rem/400. Respect user font-size preferences; do not replace the percentage with a fixed pixel root.
 
 For a pre-migration non-text length expressed in rem against a 16px root, multiply its rem value by 1.6 to retain the same geometry. Do not rescale pixels, unitless line heights, percentages, viewport units, or media-query breakpoints. Utility theme dimensions need the same compensation. New text sizes use semantic tokens.

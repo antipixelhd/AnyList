@@ -1,4 +1,19 @@
 /* Profile shell and compact lists share a measured desktop alignment. */
+:root {
+  --profile-content-gap: 32px;
+}
+
+/* Every profile tab begins its content at the same distance below the tabs. */
+.profile-tabs + :is(.page-width, .list-shell) {
+  margin-top: var(--profile-content-gap);
+}
+
+@media (max-width: 650px) {
+  :root {
+    --profile-content-gap: 24px;
+  }
+}
+
 .profile-hero {
   height:258px;
   background:linear-gradient(115deg,#26384d 0%,#1d3047 53%,#17283d 100%)
@@ -181,7 +196,6 @@
   max-width:1340px;
   grid-template-columns:190px minmax(0,1fr);
   gap:30px;
-  margin-top:30px;
   padding:0 24px
 }
 .list-toolbar {

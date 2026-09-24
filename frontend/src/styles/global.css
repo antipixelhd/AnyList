@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "./global-theme.css";
 @import "./tailwind-rem-scale.css";
-@import "./typography.css";
 @import "./global-utilities.css";
 @import "./global-components.css";
