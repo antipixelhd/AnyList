@@ -133,6 +133,75 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
     return False, None
 
 
+def current_airing_details(tmdb_data, episodes, today=None):
+    """Return active-release state and its next known date for a series.
+
+    TMDB's broad status can stay at ``Returning Series`` between seasons, so
+    require both that active status and the episode-level signal used by the
+    availability indicator: a started season with a future scheduled episode.
+    """
+    today = today or date.today()
+    data = tmdb_data if isinstance(tmdb_data, dict) else {}
+    status = str(data.get('status') or '').strip().casefold()
+    if status != 'returning series':
+        return False, None
+    episode_rows = list(episodes or ())
+    next_episode = data.get('next_episode_to_air')
+    last_episode = data.get('last_episode_to_air')
+    if isinstance(next_episode, dict) and isinstance(last_episode, dict):
+        next_position = (next_episode.get('season_number'), next_episode.get('episode_number'))
+        last_position = (last_episode.get('season_number'), last_episode.get('episode_number'))
+        if all(isinstance(part, int) for part in next_position + last_position) and next_position <= last_position:
+            # TMDB occasionally retains a stale next pointer after a batch
+            # drop. Episode release dates can still prove active releases.
+            data = {**data}
+            data.pop('next_episode_to_air', None)
+            next_episode = None
+    _, reason = availability_dot(data, episode_rows, set(), 'watching', today)
+    if reason != 'airing':
+        return False, None
+
+    def parse_day(value):
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+
+    seasons = data.get('seasons')
+    regular = {
+        season['season_number']: season for season in seasons if isinstance(season, dict)
+        and isinstance(season.get('season_number'), int) and season['season_number'] > 0
+        and isinstance(season.get('episode_count'), int) and season['episode_count'] > 0
+        and parse_day(season.get('air_date')) and parse_day(season.get('air_date')) <= today
+    } if isinstance(seasons, list) else {}
+    next_episode = data.get('next_episode_to_air')
+    next_day = parse_day(next_episode.get('air_date')) if isinstance(next_episode, dict) else None
+    next_season = next_episode.get('season_number') if isinstance(next_episode, dict) else None
+    if next_day and next_day >= today and next_season in regular:
+        return True, next_day.isoformat()
+
+    last_episode = data.get('last_episode_to_air')
+    active_season = last_episode.get('season_number') if isinstance(last_episode, dict) else None
+    if active_season not in regular:
+        candidates = [number for number in regular if any(
+            len(row) > 1 and row[0] == number and parse_day(row[1]) and parse_day(row[1]) > today
+            for row in episode_rows
+        )]
+        active_season = max(candidates, default=None)
+    if active_season not in regular:
+        return True, None
+    future_days = [parse_day(row[1]) for row in episode_rows
+                   if len(row) > 1 and row[0] == active_season
+                   and parse_day(row[1]) and parse_day(row[1]) > today]
+    return True, min(future_days).isoformat() if future_days else None
+
+
+def is_currently_airing(tmdb_data, episodes, today=None):
+    return current_airing_details(tmdb_data, episodes, today)[0]
+
+
 async def media_availability_dot(db, user_id, media, status, today=None):
     data = media.tmdb_data or {}
     ids = data.get('tracking_episode_ids') or []
@@ -1014,12 +1083,30 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
         for result, (_, media) in zip(entries, rows):
             if media.media_type != MediaType.series:
                 continue
+            show_metadata = media.tmdb_data or {}
+            latest_pointer = show_metadata.get('last_episode_to_air') or {}
+            result['latest_released_position'] = (
+                f"S{latest_pointer['season_number']}E{latest_pointer['episode_number']}"
+                if latest_pointer.get('season_number') is not None and latest_pointer.get('episode_number') is not None
+                else None
+            )
+            next_episode = show_metadata.get('next_episode_to_air') or {}
+            result['next_episode_to_air'] = {
+                'season_number': next_episode.get('season_number'),
+                'episode_number': next_episode.get('episode_number'),
+                'air_date': next_episode.get('air_date'),
+            } if next_episode else None
             ids = set((media.tmdb_data or {}).get('tracking_episode_ids', []))
             imported_ids = set((media.tmdb_data or {}).get('tracking_import_episode_media_ids', []))
             provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
             title_catalogue = [r for r in catalogue if (
                 (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
             )]
+            result['currently_airing'], result['next_release_date'] = current_airing_details(
+                {**show_metadata, 'status': show_metadata.get('status') or media.status},
+                [(r.season_number, r.release_date, r.id,
+                  bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
+            )
             dot, reason = availability_dot(
                 media.tmdb_data,
                 [(r.season_number, r.release_date, r.id,
@@ -1033,6 +1120,15 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                     (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
                 )]
                 result['released_episodes'] = len(title_episodes)
+                latest_released = max(
+                    title_episodes,
+                    key=lambda episode: (episode.season_number or 0, episode.episode_number or 0),
+                    default=None,
+                )
+                result['latest_released_position'] = (
+                    f'S{latest_released.season_number}E{latest_released.episode_number}'
+                    if latest_released else result['latest_released_position']
+                )
                 unwatched = [r for r in title_episodes if r.id not in watched]
                 result['progress'] = len(title_episodes) - len(unwatched)
                 watched_episodes = [r for r in title_episodes if r.id in watched]

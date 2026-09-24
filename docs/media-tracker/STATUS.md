@@ -1,5 +1,11 @@
 # AnyList implementation status
 
+## Home series-in-progress split view (2026-09-24)
+
+The Home page now keeps the following Activity feed on the left and replaces the Notifications and list shortcuts with a Series in Progress panel on the right. Watching series use poster cards; actively returning shows show the latest released season/episode, a next-release countdown, and a red/green caught-up marker. Hover and keyboard focus reveal the behind count, title, and progress. The poster's bottom action increments one released episode through the existing tracking endpoint and updates its state in place. Profile list data now includes latest released episode position and next-air metadata. The frontend production build, seven focused airing/availability tests, and the database-backed profile endpoint regression passed.
+
+The two Home columns use the shared profile content width at a 735:545 ratio with a 40px gap; the activity stays left on desktop, while Series in Progress appears first on narrow screens. Posters are 85×115px. Airing presentation now requires an actively releasing season rather than only the broad Returning Series label. The countdown uses calendar days because provider episode metadata supplies a date without an airtime. The visible Home page refreshes release progress so the caught-up marker can change when an episode becomes available. Find people opens the Social search tab, and the Browse shortcut appears only when neither a movie nor a series has Watching status.
+
 ## AniList-style profile list cards (2026-09-24)
 
 The list card view now uses compact poster-led cards with the status marker, a gradient title overlay, and progress at the bottom. The title no longer appears below the poster; hovering or keyboard-focusing it changes the text to the profile accent color. Owners retain the existing edit target: desktop shows the menu button on hover/focus, while touch keeps the full poster as the edit target. Grid view hides the score column to match the reference card composition; rating remains available through the existing edit flow. Frontend production build passes.

@@ -3,32 +3,206 @@ import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
 import {tracker} from '../lib/tracker';
-import {hasStreamingLibraryConnection} from '../lib/streaming-library-availability';
-let activities:any[]=[],error='',pending:number|null=null,combineLists=true;
+import {responsiveArtwork} from '../lib/responsive-artwork';
+let activities:any[]=[],error='',seriesInProgress:any[]=[],watchingCount:number|null=null;
 if(!Astro.locals.user)return Astro.redirect('/browse');
-const [activityResult,eventResult,preferenceResult]=await Promise.allSettled([tracker('activity',Astro.locals.token),tracker('recent-events',Astro.locals.token),tracker('preferences',Astro.locals.token)]);
+const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
+const [activityResult,listResult]=await Promise.allSettled([
+  tracker('activity',Astro.locals.token),
+  tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token),
+]);
 if(activityResult.status==='fulfilled')activities=activityResult.value.results;
 else error=activityResult.reason.message;
-if(eventResult.status==='fulfilled')pending=eventResult.value.pending;
-if(preferenceResult.status==='fulfilled')combineLists=preferenceResult.value.combine_lists!==false;
-const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
-const showLibrary=await hasStreamingLibraryConnection(Astro.locals.token);
+if(listResult.status==='fulfilled'){
+  const watching=listResult.value.entries.filter((entry:any)=>entry.status==='watching');
+  seriesInProgress=watching.filter((entry:any)=>entry.type==='series');
+  watchingCount=watching.length;
+}
+const seriesCards=seriesInProgress.map((entry:any)=>({
+  ...entry,
+  airing:entry.currently_airing===true,
+  canIncrement:entry.released_episodes!==undefined&&entry.progress<entry.released_episodes,
+  caughtUp:entry.released_episodes!==undefined&&entry.progress>=entry.released_episodes,
+  latest:entry.latest_released_position?.replace(/(S\d+)(E\d+)/,'$1 $2')||'',
+  artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
+}));
 ---
-<Tracker title="Home"><div class="page-width dashboard">
-  <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse">Find your next title</a></header>
-  <div class="dashboard-columns"><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
-  {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div>}
-  </section><aside class="dashboard-aside" aria-label="Your shortcuts"><a class="review-summary" href="/recent-events" data-notification-summary><span class="eyebrow">Notifications</span><strong data-notification-summary-title>{pending===null?'Check your connections':pending?`${pending} ${pending===1?'change':'changes'} to review`:'You’re all caught up'}</strong><p data-notification-summary-message>{pending===null?'Open notifications to check for updates.':pending?'Confirm updates, adjust a status or add your rating.':'Connection updates will appear here.'}</p><span class="event-link">View notifications <Icon name="arrow-right" /></span></a>
-  <div class="shortcut-panel"><h2>Your lists</h2>{combineLists?<a href={`${profile}/list`}>Movie/Series List <Icon name="arrow-right" /></a>:<><a href={`${profile}/movies`}>Movies <Icon name="arrow-right" /></a><a href={`${profile}/series`}>Series <Icon name="arrow-right" /></a></>}{showLibrary&&<a href={`${profile}/library`}>Streaming library <Icon name="arrow-right" /></a>}</div></aside></div>
+<Tracker title="Home"><div class="page-width dashboard home-dashboard" data-username={Astro.locals.user.username} data-watching-count={watchingCount??''}>
+  <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse" data-find-title hidden={watchingCount!==0}>Find your next title</a></header>
+  <div class="home-columns"><aside class="series-progress" aria-labelledby="series-progress-heading"><div class="section-heading"><h2 id="series-progress-heading">Series in Progress</h2></div>
+    {seriesCards.length ? <div class="series-progress-grid">{seriesCards.map((entry:any)=><article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
+        <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}`}>
+          {entry.artwork?.src&&<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>}
+          {entry.airing&&<span class="progress-card-airing-label"><strong data-latest-episode>{entry.latest||'Latest episode'}</strong><span data-countdown>Release date unavailable</span></span>}
+          {entry.airing&&<span class="progress-card-catchup" data-catchup-bar data-caught-up={String(entry.caughtUp)} data-known={String(entry.released_episodes!==undefined)} aria-hidden="true"></span>}
+        </a>
+        <button class="progress-card-quick-action" type="button" data-progress-action={entry.id} data-next-progress={entry.progress+1} disabled={!entry.canIncrement} aria-label={entry.canIncrement?`Mark next episode of ${entry.title} watched`:entry.caughtUp?`${entry.title} is caught up`:`Progress unavailable for ${entry.title}`}>
+          <span data-current-position>{entry.season_position||'0'}</span>{entry.canIncrement&&<span class="progress-card-plus" aria-hidden="true">+</span>}
+        </button>
+        <div class="progress-card-details" aria-label={`${entry.title} progress`}>
+          <strong class="progress-card-behind" data-episodes-behind>{entry.canIncrement?`${entry.released_episodes-entry.progress} ${entry.released_episodes-entry.progress===1?'episode':'episodes'} behind`:entry.caughtUp?'Caught up':'Progress unavailable'}</strong>
+          <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}</a>
+          <span class="progress-card-progress-label">Progress: <span data-progress-count>{entry.progress}</span>/<span data-released-count>{entry.released_episodes??'?'}</span></span>
+        </div>
+      </article>)}</div> : <p class="series-progress-empty">Series you mark as Watching will appear here.</p>}
+  </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
+  {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
+  </section></div>
 </div>
 <template id="activity-card-template"><article class="visual-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
   <div class="event-body"><div class="event-meta"><div class="event-actor"><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a><a class="event-user"></a></div><time data-relative-time></time></div>
   <p class="event-action"><span></span> <a></a></p><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
 </article></template>
-<template id="activity-empty-template"><div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social`}>Find people</a></div></template>
+<template id="activity-empty-template"><div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div></template>
 </Tracker>
 
+<script>
+import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
+
+let homeProgressListeners: AbortController | undefined;
+let homeSeriesRefresh: VisibleRefreshHandle | undefined;
+document.addEventListener('astro:page-load', () => {
+  homeSeriesRefresh?.stop();
+  homeSeriesRefresh = undefined;
+  homeProgressListeners?.abort();
+  homeProgressListeners = new AbortController();
+  const {signal} = homeProgressListeners;
+  const grid = document.querySelector<HTMLElement>('.series-progress-grid');
+  if (!grid) return;
+
+  const positionDetails = () => grid.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
+    const right = card.getBoundingClientRect().right;
+    const detailsWidth = card.querySelector<HTMLElement>('.progress-card-details')?.getBoundingClientRect().width || 290;
+    card.classList.toggle('details-flipped', right + 16 + detailsWidth > window.innerWidth - 20);
+  });
+  positionDetails();
+  window.addEventListener('resize', positionDetails, {signal});
+
+  const updateCountdowns = () => grid.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
+    const output = card.querySelector<HTMLElement>('[data-countdown]');
+    const date = card.dataset.nextAir;
+    if (!output || !date) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (date === today) { output.textContent = 'Next episode today'; return; }
+    if (date < today) { output.textContent = 'Schedule updating'; return; }
+    const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+    output.textContent = `Next episode in ${days}d`;
+  });
+  updateCountdowns();
+  const countdownTimer = window.setInterval(updateCountdowns, 60_000);
+  signal.addEventListener('abort', () => window.clearInterval(countdownTimer), {once:true});
+
+  const syncCardProgress = (card:HTMLElement, updated:any) => {
+    const progress = Number(updated.progress ?? card.dataset.progress ?? 0);
+    const hasReleased = updated.released_episodes != null || card.dataset.released !== '';
+    const released = Number(updated.released_episodes ?? card.dataset.released ?? 0);
+    const canIncrement = hasReleased && released > progress;
+    const caughtUp = hasReleased && !canIncrement;
+    card.dataset.progress = String(progress);
+    if (hasReleased && Number.isFinite(released)) card.dataset.released = String(released);
+    card.dataset.seasonPosition = updated.season_position || '';
+    card.querySelector<HTMLElement>('[data-current-position]')!.textContent = updated.season_position || '0';
+    card.querySelector<HTMLElement>('[data-progress-count]')!.textContent = String(progress);
+    card.querySelector<HTMLElement>('[data-released-count]')!.textContent = hasReleased ? String(released) : '?';
+    card.querySelector<HTMLElement>('[data-episodes-behind]')!.textContent = canIncrement
+      ? `${released-progress} ${released-progress===1?'episode':'episodes'} behind` : caughtUp ? 'Caught up' : 'Progress unavailable';
+    card.querySelector<HTMLElement>('[data-catchup-bar]')?.setAttribute('data-caught-up', String(caughtUp));
+    card.querySelector<HTMLElement>('[data-catchup-bar]')?.setAttribute('data-known', String(hasReleased));
+    const button = card.querySelector<HTMLButtonElement>('[data-progress-action]')!;
+    button.dataset.nextProgress = String(progress + 1);
+    button.disabled = !canIncrement;
+    button.title = canIncrement ? 'Mark next episode watched' : caughtUp ? 'Caught up' : 'Progress unavailable';
+    const title = card.querySelector<HTMLElement>('.progress-card-title')?.textContent || 'this series';
+    button.setAttribute('aria-label', canIncrement ? `Mark next episode of ${title} watched` : caughtUp ? `${title} is caught up` : `Progress unavailable for ${title}`);
+    let plus = button.querySelector<HTMLElement>('.progress-card-plus');
+    if (canIncrement && !plus) {
+      plus = document.createElement('span'); plus.className = 'progress-card-plus'; plus.setAttribute('aria-hidden','true'); plus.textContent = '+'; button.append(plus);
+    } else if (!canIncrement) plus?.remove();
+    if ('latest_released_position' in updated) {
+      const latest = String(updated.latest_released_position || '').replace(/(S\d+)(E\d+)/,'$1 $2');
+      card.dataset.latestPosition = latest;
+      const label = card.querySelector<HTMLElement>('[data-latest-episode]');
+      if (label) label.textContent = latest || 'Latest episode';
+    }
+    if ('next_release_date' in updated) card.dataset.nextAir = updated.next_release_date || '';
+  };
+
+  grid.querySelectorAll<HTMLButtonElement>('[data-progress-action]').forEach(button => button.addEventListener('click', async () => {
+    const card = button.closest<HTMLElement>('[data-progress-card]');
+    if (!card || button.disabled) return;
+    button.dataset.updating = 'true';
+    button.disabled = true;
+    button.title = 'Updating episode progress…';
+    try {
+      const response = await fetch(`/api/proxy/tracking/entry/${button.dataset.progressAction}`, {
+        method:'PATCH', headers:{'content-type':'application/json'},
+        body:JSON.stringify({progress:Number(button.dataset.nextProgress)}), signal,
+      });
+      if (!response.ok) throw new Error((await response.json().catch(()=>null))?.detail || 'Could not update episode progress.');
+      const updated = await response.json();
+      if (updated.status !== 'watching') {
+        card.remove();
+        if (!grid.querySelector('[data-progress-card]')) {
+          const empty = document.createElement('p');
+          empty.className = 'series-progress-empty';
+          empty.textContent = 'Series you mark as Watching will appear here.';
+          grid.replaceWith(empty);
+        }
+        const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
+        if (dashboard?.dataset.watchingCount) {
+          const count = Math.max(0, Number(dashboard.dataset.watchingCount) - 1);
+          dashboard.dataset.watchingCount = String(count);
+          const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
+          if (browse) browse.hidden = count !== 0;
+        }
+        document.dispatchEvent(new CustomEvent('anylist:data-changed'));
+        return;
+      }
+      syncCardProgress(card,updated);
+      document.dispatchEvent(new CustomEvent('anylist:data-changed'));
+    } catch (error) {
+      button.disabled = false;
+      button.title = error instanceof Error ? error.message : 'Could not update episode progress.';
+      button.setAttribute('aria-label', `${button.title} Try again`);
+    } finally {
+      delete button.dataset.updating;
+    }
+  }, {signal}));
+
+  const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
+  const username = dashboard?.dataset.username;
+  if (!dashboard || !username) return;
+  homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
+    if (grid.querySelector('[data-updating="true"]')) return;
+    const response = await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(username)}/all`, {cache:'no-store',signal:refreshSignal});
+    if (!response.ok) return;
+    const entries = (await response.json()).entries;
+    if (!Array.isArray(entries)) return;
+    const watching = entries.filter((entry:any) => entry.status === 'watching');
+    dashboard.dataset.watchingCount = String(watching.length);
+    const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
+    if (browse) browse.hidden = watching.length !== 0;
+    const series = watching.filter((entry:any) => entry.type === 'series');
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>('[data-progress-card]'));
+    const byId = new Map(series.map((entry:any) => [String(entry.id), entry]));
+    if (cards.length !== series.length || cards.some(card => !byId.has(card.dataset.mediaId || ''))) {
+      window.location.reload();
+      return;
+    }
+    for (const card of cards) {
+      const entry = byId.get(card.dataset.mediaId || '') as any;
+      if (card.classList.contains('airing') !== (entry.currently_airing === true)) {
+        window.location.reload();
+        return;
+      }
+      syncCardProgress(card,entry);
+    }
+    updateCountdowns();
+  }});
+  document.addEventListener('anylist:data-changed', () => void homeSeriesRefresh?.refresh(), {signal});
+});
+</script>
 <script>
 import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
@@ -108,24 +282,5 @@ document.addEventListener('astro:page-load',()=>{
 
   activityFeedRefresh=startVisibleRefresh({refresh,intervalMs:60_000});
   updateTimes();
-});
-</script>
-
-<script>
-import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
-
-let homeNotificationListeners: AbortController | undefined;
-document.addEventListener('astro:page-load', () => {
-  homeNotificationListeners?.abort();
-  homeNotificationListeners = new AbortController();
-  const title = document.querySelector<HTMLElement>('[data-notification-summary-title]');
-  const message = document.querySelector<HTMLElement>('[data-notification-summary-message]');
-  if (!title || !message) return;
-  const renderSummary = (snapshot: NotificationSnapshot) => {
-    const pending = snapshot.pending;
-    title.textContent = pending ? `${pending} ${pending === 1 ? 'change' : 'changes'} to review` : 'You’re all caught up';
-    message.textContent = pending ? 'Confirm updates, adjust a status or add your rating.' : 'Connection updates will appear here.';
-  };
-  subscribeNotifications(renderSummary, {signal: homeNotificationListeners.signal});
 });
 </script>

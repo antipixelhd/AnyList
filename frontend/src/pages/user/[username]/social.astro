@@ -9,7 +9,7 @@ import '../../../styles/social.css';
 
 const username = Astro.params.username!;
 const query = Astro.url.searchParams.get('q')?.trim() || '';
-const initialSection = query ? 'search' : 'following';
+const initialSection = query || Astro.url.searchParams.get('section') === 'search' ? 'search' : 'following';
 let profile: any = null, error = '';
 try {
   profile = await tracker(`people/${encodeURIComponent(username)}`, Astro.locals.token);

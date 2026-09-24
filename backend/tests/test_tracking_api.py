@@ -120,6 +120,71 @@ class AvailabilityDotTests(unittest.TestCase):
                          (False, None))
 
 
+class CurrentlyAiringTests(unittest.TestCase):
+    def test_requires_returning_status_and_future_episode_in_a_started_season(self):
+        from routers.tracking import current_airing_details, is_currently_airing
+
+        today = date(2026, 9, 23)
+        metadata = {
+            'status': 'Returning Series',
+            'seasons': [{'season_number': 3, 'episode_count': 8, 'air_date': '2026-09-01'}],
+            'last_episode_to_air': {'season_number': 3, 'episode_number': 2, 'air_date': '2026-09-15'},
+            'next_episode_to_air': {'season_number': 3, 'episode_number': 3, 'air_date': '2026-10-01'},
+        }
+        episodes = [(3, '2026-09-01', 1), (3, '2026-09-15', 2), (3, '2026-10-01', 3)]
+        self.assertTrue(is_currently_airing(metadata, episodes, today))
+        self.assertEqual(current_airing_details(metadata, episodes, today), (True, '2026-10-01'))
+
+        no_pointer = {key: value for key, value in metadata.items() if key != 'next_episode_to_air'}
+        self.assertEqual(current_airing_details(no_pointer, episodes, today), (True, '2026-10-01'))
+
+        # A stale Returning Series label alone must not keep a show in the
+        # airing state after a batch has fully released.
+        batch_release = {
+            'status': 'Returning Series',
+            'seasons': [{'season_number': 1, 'episode_count': 2, 'air_date': '2026-09-01'}],
+        }
+        self.assertFalse(is_currently_airing(
+            batch_release, [(1, '2026-09-01', 1), (1, '2026-09-01', 2)], today,
+        ))
+        stale_pointer = {
+            **batch_release,
+            'last_episode_to_air': {'season_number': 1, 'episode_number': 2},
+            'next_episode_to_air': {'season_number': 1, 'episode_number': 2, 'air_date': '2026-10-01'},
+        }
+        self.assertFalse(is_currently_airing(
+            stale_pointer, [(1, '2026-09-01', 1), (1, '2026-09-01', 2)], today,
+        ))
+
+    def test_ended_or_not_yet_started_series_are_not_currently_airing(self):
+        from routers.tracking import is_currently_airing
+
+        today = date(2026, 9, 23)
+        future_episode = [(1, '2026-10-01', 1)]
+        scheduled = {
+            'seasons': [{'season_number': 1, 'episode_count': 8, 'air_date': '2026-09-01'}],
+            'next_episode_to_air': {'season_number': 1, 'episode_number': 2, 'air_date': '2026-10-01'},
+        }
+        self.assertFalse(is_currently_airing({'status': 'Ended', **scheduled}, future_episode, today))
+        unstarted = {
+            'status': 'Returning Series',
+            'seasons': [{'season_number': 2, 'episode_count': 8, 'air_date': '2026-10-01'}],
+            'next_episode_to_air': {'season_number': 2, 'episode_number': 1, 'air_date': '2026-10-01'},
+        }
+        self.assertFalse(is_currently_airing(unstarted, future_episode, today))
+
+        between_seasons = {
+            'status': 'Returning Series',
+            'seasons': [
+                {'season_number': 1, 'episode_count': 2, 'air_date': '2026-01-01'},
+                {'season_number': 2, 'episode_count': 8, 'air_date': '2026-10-01'},
+            ],
+            'last_episode_to_air': {'season_number': 1, 'episode_number': 2, 'air_date': '2026-02-01'},
+            'next_episode_to_air': {'season_number': 2, 'episode_number': 1, 'air_date': '2026-10-01'},
+        }
+        finished_first_season = [(1, '2026-01-01', 1), (1, '2026-02-01', 2)]
+        self.assertFalse(is_currently_airing(between_seasons, finished_first_season, today))
+
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
 class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -2181,7 +2246,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_metadata_refresh_enables_released_progress_without_future_history(self):
         self.show.tmdb_id=987654319
         await self.db.commit()
-        details={'seasons':[{'season_number':1,'episode_count':2,'name':'Season 1'}]}
+        details={'status':'Returning Series','next_episode_to_air':{'season_number':1,'episode_number':2,'air_date':'2999-01-01'},
+                 'seasons':[{'season_number':1,'episode_count':2,'name':'Season 1','air_date':'2020-01-01'}]}
         season={'episodes':[{'id':987654310,'episode_number':1,'name':'First','air_date':'2020-01-01'},
                             {'id':987654311,'episode_number':2,'name':'Future','air_date':'2999-01-01'}]}
         with patch('routers.media.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
@@ -2195,6 +2261,10 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.json()['progress'],1)
         result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
         self.assertEqual(result['season_position'],'S1E1')
+        self.assertEqual(result['latest_released_position'],'S1E1')
+        self.assertEqual(result['next_episode_to_air'],{'season_number':1,'episode_number':2,'air_date':'2999-01-01'})
+        self.assertTrue(result['currently_airing'])
+        self.assertEqual(result['next_release_date'], '2999-01-01')
         rows=(await self.db.execute(select(Media).join(WatchEvent,WatchEvent.media_id==Media.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()
         self.assertEqual([row.tmdb_id for row in rows],[987654310])
         # A newly released episode appears as unwatched without moving the
