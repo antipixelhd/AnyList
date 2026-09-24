@@ -77,7 +77,29 @@ class TrackingPreferences(Base):
     low_priority_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     low_priority_retention_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
     show_new_ratings_popup: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    new_season_release_dates: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    new_season_releases: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     favorite_order: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+
+
+class TrackingSeasonReleaseObservation(Base):
+    """Per-user memory that a season's confirmed date was seen while tracked.
+
+    This distinguishes a season that was observed upcoming and has now reached
+    its premiere from an old season first discovered after it had already aired.
+    """
+    __tablename__ = "tracking_season_release_observations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_id", "season_number", name="uq_tracking_season_release_observation"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), index=True)
+    season_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    release_date: Mapped[str | None] = mapped_column(String(20))
+    seen_upcoming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    release_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class SyncReview(Base):
@@ -94,6 +116,9 @@ class SyncReview(Base):
     previous_score: Mapped[float | None] = mapped_column(Float)
     proposed_score: Mapped[float | None] = mapped_column(Float)
     season_number: Mapped[int | None] = mapped_column(Integer)
+    # Idempotency identity for season notifications. It remains populated when
+    # a card is dismissed, so later metadata sweeps cannot resurrect it.
+    season_event_key: Mapped[str | None] = mapped_column(String(255))
     message: Mapped[str] = mapped_column(Text)
     priority: Mapped[str] = mapped_column(String(16), default="low", server_default="low")
     payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")

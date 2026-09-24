@@ -564,7 +564,8 @@ async def _show_metadata_refresher():
         from models.global_settings import GlobalSettings
         from models.users import User, UserSettings
         from core import tmdb as tmdb_client
-        from core.tracking_metadata import refresh_tracked_catalogues
+        from core.tracking_metadata import refresh_tracked_catalogues, refresh_tracked_tvdb_show_summaries
+        from core.season_releases import refresh_season_release_notifications
         from routers.media import check_tmdb_key
         from routers.shows import apply_show_metadata
     except Exception as e:
@@ -648,6 +649,9 @@ async def _show_metadata_refresher():
                     tvdb_client.set_subscriber_pin(tvdb_key, tvdb_pin)
                 if not check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
+                    # Cached confirmed dates can still reach their premiere
+                    # while the metadata provider is temporarily unavailable.
+                    await refresh_season_release_notifications(db)
                     continue
 
                 all_shows = (
@@ -689,6 +693,17 @@ async def _show_metadata_refresher():
                     "Tracking catalogue refresher: refreshed "
                     f"{catalogue['refreshed']} series / {catalogue['episodes']} episodes, "
                     f"{catalogue['skipped']} skipped, {catalogue['failed']} failed"
+                )
+                tvdb_summaries = await refresh_tracked_tvdb_show_summaries(db, tvdb_key)
+                log.info(
+                    "TVDB season summary refresher: refreshed "
+                    f"{tvdb_summaries['refreshed']}, {tvdb_summaries['skipped']} skipped, "
+                    f"{tvdb_summaries['failed']} failed"
+                )
+                season_events = await refresh_season_release_notifications(db)
+                log.info(
+                    "Season release notifications: "
+                    f"{season_events['date_notices']} new dates, {season_events['release_notices']} releases"
                 )
         except Exception as e:
             log.error(f"Show metadata refresher: {e}")

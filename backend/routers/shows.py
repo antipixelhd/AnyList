@@ -2245,6 +2245,8 @@ async def refresh_show_metadata(
     await refresh_technical_data(db, all_media_ids, current_user.id)
 
     await db.commit()
+    from core.season_releases import refresh_season_release_notifications
+    await refresh_season_release_notifications(db)
     return {"message": "Metadata refreshed successfully"}
 
 
@@ -3308,6 +3310,9 @@ async def refresh_tvdb_show_metadata(
         "seasons": show_fmt.get("seasons", []),
         "genres": show_fmt.get("genres", []),
         "source": "tvdb",
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.commit()
+    from core.season_releases import refresh_season_release_notifications
+    await refresh_season_release_notifications(db)
     return {"message": "Metadata refreshed successfully"}

@@ -1,4 +1,5 @@
 """Load and refresh complete regular-episode catalogues for tracked series."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from core import tmdb, tvdb
@@ -173,5 +174,66 @@ async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, t
             # A provider/season failure rolls back this title only; the existing
             # complete catalogue and watch history remain intact.
             stats["failed"] += 1
+    await db.commit()
+    return stats
+
+
+async def refresh_tracked_tvdb_show_summaries(db, api_key, now: datetime | None = None):
+    """Refresh TVDB-native season dates and artwork daily without episode fetches.
+
+    The main show sweep is TMDB-backed. TVDB-only tracked shows need the same
+    daily season-date/artwork refresh cadence so renewals and newly supplied
+    season posters do not wait for the monthly final-show episode catalogue.
+    """
+    from core.season_releases import _metadata_timestamp
+
+    now = now or datetime.now(timezone.utc)
+    if not api_key:
+        return {"refreshed": 0, "skipped": 0, "failed": 0}
+    rows = (await db.execute(
+        select(Show)
+        .join(Media, or_(
+            and_(Media.tmdb_id.is_not(None), Show.tmdb_id == Media.tmdb_id),
+            and_(Media.tvdb_id.is_not(None), Show.tvdb_id == Media.tvdb_id),
+        ))
+        .join(TrackedEntry, TrackedEntry.media_id == Media.id)
+        .where(Show.canonical_source == "tvdb", Show.tvdb_id.is_not(None))
+    )).scalars().all()
+    shows = {show.id: show for show in rows}.values()
+    stats = {"refreshed": 0, "skipped": 0, "failed": 0}
+    stale_after = timedelta(hours=20)
+    semaphore = asyncio.Semaphore(10)
+
+    async def refresh(show):
+        metadata = show.tmdb_data if isinstance(show.tmdb_data, dict) else {}
+        refreshed_at = _metadata_timestamp(metadata)
+        if refreshed_at and now.replace(tzinfo=None) - refreshed_at < stale_after:
+            stats["skipped"] += 1
+            return
+        async with semaphore:
+            try:
+                raw = await tvdb.get_series(show.tvdb_id, api_key, cache_ttl=None)
+                details = tvdb.format_series(raw)
+            except Exception:
+                stats["failed"] += 1
+                return
+        show.title = details.get("title") or show.title
+        show.original_title = details.get("original_title")
+        show.overview = details.get("overview")
+        show.poster_path = details.get("poster_path")
+        show.backdrop_path = details.get("backdrop_path")
+        show.status = details.get("status") or show.status
+        show.first_air_date = details.get("first_air_date")
+        show.last_air_date = details.get("last_air_date")
+        show.tmdb_data = {
+            **metadata,
+            "seasons": details.get("seasons", []),
+            "genres": details.get("genres", []),
+            "source": "tvdb",
+            "refreshed_at": now.isoformat(),
+        }
+        stats["refreshed"] += 1
+
+    await asyncio.gather(*(refresh(show) for show in shows))
     await db.commit()
     return stats

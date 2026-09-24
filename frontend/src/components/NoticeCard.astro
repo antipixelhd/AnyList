@@ -18,6 +18,8 @@ interface Props {
   kind?: string;
   priority?: string;
   state?: string;
+  artworkFallback?: boolean;
+  artworkRetry?: boolean;
 }
 
 const {
@@ -36,10 +38,12 @@ const {
   kind,
   priority,
   state,
+  artworkFallback = false,
+  artworkRetry = false,
 } = Astro.props;
 const imageSource = responsiveArtwork(image,{size:'w342',sizes:imageSizes,route:'direct'});
 ---
-<article class:list={['notice-card', `notice-${variant}`]} data-auto-seen={dismissibleId} data-notification-key={cardKey} data-notification-version={version} data-notification-kind={kind} data-notification-priority={priority} data-notification-state={state}>
+<article class:list={['notice-card', `notice-${variant}`]} data-auto-seen={dismissibleId} data-notification-key={cardKey} data-notification-version={version} data-notification-kind={kind} data-notification-priority={priority} data-notification-state={state} data-season-artwork-fallback={artworkFallback} data-season-artwork-retry={artworkRetry}>
   <div class:list={['notice-visual', { 'has-image': !!imageSource?.src }]}>
     {imageSource?.src ? <img src={imageSource.src} srcset={imageSource.srcset} sizes={imageSource.sizes} alt="" loading="lazy" /> : <Icon name={icon} />}
   </div>

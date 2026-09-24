@@ -301,6 +301,8 @@ class PreferencePatch(BaseModel):
     low_priority_notifications: bool | None = None
     low_priority_retention_days: int | None = Field(None, ge=1, le=90)
     show_new_ratings_popup: bool | None = None
+    new_season_release_dates: bool | None = None
+    new_season_releases: bool | None = None
 
 
 @router.get('/preferences')
@@ -313,6 +315,8 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
         'low_priority_notifications': True if row is None else row.low_priority_notifications,
         'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
         'show_new_ratings_popup': True if row is None else row.show_new_ratings_popup,
+        'new_season_release_dates': True if row is None else row.new_season_release_dates,
+        'new_season_releases': True if row is None else row.new_season_releases,
     }
 
 
@@ -326,6 +330,16 @@ async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_
         setattr(row,name,value)
     await db.commit()
     return await preferences(db,viewer)
+
+
+@router.get('/upcoming-seasons')
+async def upcoming_seasons(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    from core.season_releases import upcoming_seasons_for_user
+
+    results = await upcoming_seasons_for_user(db, viewer.id)
+    if not await anime_is_visible(db):
+        results = [item for item in results if not item.get('is_anime')]
+    return {'results': results}
 
 
 def review_priority(review: SyncReview) -> str:
@@ -489,7 +503,7 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     return {'pending':pending,'outbound':outbound,
         'results':failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
-                    'priority':review_priority(r),'dismissible':r.state!='pending','payload':r.payload or {},
+                    'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
                     'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
 
 
@@ -512,8 +526,11 @@ async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db),vie
 async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
     row=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id))).scalar_one_or_none()
     if not row:raise HTTPException(404,'Event not found')
-    if row.state=='pending':raise HTTPException(409,'Resolve this event before dismissing it')
-    row.dismissed_at=datetime.utcnow();await db.commit()
+    season_notice = row.kind in {'new_season_release_date','new_season_release'}
+    if row.state=='pending' and not season_notice:raise HTTPException(409,'Resolve this event before dismissing it')
+    row.dismissed_at=datetime.utcnow()
+    if season_notice and row.state=='pending':row.state='corrected'
+    await db.commit()
     return {'dismissed':True}
 
 
@@ -531,16 +548,26 @@ async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db),v
 
 
 class ReviewResolution(BaseModel):
-    action: Literal['confirm','keep','change','match','ignore']
+    action: Literal['confirm','keep','change','match','ignore','add_watching','add_planning']
     status: TrackingStatus | None = None
     media_id: int | None = None
 
 
 @router.post('/recent-events/{event_id}')
-async def resolve_event(event_id:int,body:ReviewResolution,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:BackgroundTasks,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
     event=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id).with_for_update())).scalar_one_or_none()
     if not event:raise HTTPException(404,'Event not found')
     if event.state!='pending':raise HTTPException(409,'This event has already been resolved')
+    if event.kind in {'new_season_release_date','new_season_release'}:
+        if event.kind != 'new_season_release' or body.action not in {'add_watching','add_planning'}:
+            raise HTTPException(422,'Dismiss this season notice or choose a release action')
+        target_status = TrackingStatus.watching if body.action == 'add_watching' else TrackingStatus.planning
+        event.state='confirmed'
+        event.dismissed_at=datetime.utcnow()
+        await save_entry(event.media_id, EntryPatch(status=target_status), background_tasks, db, viewer)
+        return {'state':event.state}
+    if body.action in {'add_watching','add_planning'}:
+        raise HTTPException(422,'Release actions are only available on a new season notice')
     if event.kind=='initial_import':
         if body.action!='confirm':raise HTTPException(422,'Confirm this summary before allowing outbound sync')
         baseline=await db.get(StreamBaseline,event.connection_id)

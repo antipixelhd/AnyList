@@ -4,12 +4,13 @@ import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
 import {tracker} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
-let activities:any[]=[],error='',seriesInProgress:any[]=[],watchingCount:number|null=null;
+let activities:any[]=[],error='',seriesInProgress:any[]=[],upcomingSeasons:any[]=[],watchingCount:number|null=null;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
-const [activityResult,listResult]=await Promise.allSettled([
+const [activityResult,listResult,upcomingResult]=await Promise.allSettled([
   tracker('activity',Astro.locals.token),
   tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token),
+  tracker('upcoming-seasons',Astro.locals.token),
 ]);
 if(activityResult.status==='fulfilled')activities=activityResult.value.results;
 else error=activityResult.reason.message;
@@ -18,6 +19,7 @@ if(listResult.status==='fulfilled'){
   seriesInProgress=watching.filter((entry:any)=>entry.type==='series');
   watchingCount=watching.length;
 }
+if(upcomingResult.status==='fulfilled')upcomingSeasons=upcomingResult.value.results||[];
 const seriesCards=seriesInProgress.map((entry:any)=>({
   ...entry,
   airing:entry.currently_airing===true,
@@ -26,11 +28,23 @@ const seriesCards=seriesInProgress.map((entry:any)=>({
   latest:entry.latest_released_position?.replace(/(S\d+)(E\d+)/,'$1 $2')||'',
   artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
 }));
+const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
+  ...entry,
+  seasonNumber:Number(entry.season_number),
+  releaseDate:String(entry.release_date||''),
+  artworkFallback:entry.season_artwork_fallback===true,
+  artwork:responsiveArtwork(entry.season_poster_path||entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
+}));
+const formatReleaseDate=(value:string)=>{
+  const [year,month,day]=value.split('-').map(Number);
+  if(!year||!month||!day)return value;
+  return new Date(Date.UTC(year,month-1,day)).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'});
+};
 ---
 <Tracker title="Home"><div class="page-width dashboard home-dashboard" data-username={Astro.locals.user.username} data-watching-count={watchingCount??''}>
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse" data-find-title hidden={watchingCount!==0}>Find your next title</a></header>
   <div class="home-columns"><aside class="series-progress" aria-labelledby="series-progress-heading"><div class="section-heading"><h2 id="series-progress-heading">Series in Progress</h2></div>
-    {seriesCards.length ? <div class="series-progress-grid">{seriesCards.map((entry:any)=><article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
+    {seriesCards.length ? <div class="series-progress-grid" data-progress-grid>{seriesCards.map((entry:any)=><article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
         <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}`}>
           {entry.artwork?.src&&<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>}
           {entry.airing&&<span class="progress-card-airing-label"><strong data-latest-episode>{entry.latest||'Latest episode'}</strong><span data-countdown>Release date unavailable</span></span>}
@@ -44,7 +58,20 @@ const seriesCards=seriesInProgress.map((entry:any)=>({
           <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}</a>
           <span class="progress-card-progress-label">Progress: <span data-progress-count>{entry.progress}</span>/<span data-released-count>{entry.released_episodes??'?'}</span></span>
         </div>
-      </article>)}</div> : <p class="series-progress-empty">Series you mark as Watching will appear here.</p>}
+      </article>)}</div> : <p class="series-progress-empty" data-progress-empty>Series you mark as Watching will appear here.</p>}
+    <section class="upcoming-releases" aria-labelledby="upcoming-releases-heading" data-upcoming-releases>
+      <div class="section-heading"><h2 id="upcoming-releases-heading">Upcoming releases</h2></div>
+      {upcomingSeasonCards.length ? <div class="series-progress-grid upcoming-releases-grid" data-upcoming-grid>{upcomingSeasonCards.map((entry:any)=><article class="progress-card upcoming-season-card" data-upcoming-card data-media-id={entry.id} data-season-number={entry.seasonNumber} data-release-date={entry.releaseDate} data-season-poster={entry.season_poster_path||''} data-artwork-fallback={String(entry.artworkFallback)} data-artwork-retry={String(entry.artwork_retry===true)}>
+        <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}, Season ${entry.seasonNumber}`}>
+          {entry.artwork?.src?<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>:<span class="upcoming-poster-placeholder" aria-hidden="true">Season {entry.seasonNumber}</span>}
+        </a>
+        <div class="progress-card-details" aria-label={`${entry.title}: Season ${entry.seasonNumber}`}>
+          <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}: Season {entry.seasonNumber}</a>
+          <span class="upcoming-release-date">Release date: <time datetime={entry.releaseDate}>{formatReleaseDate(entry.releaseDate)}</time></span>
+          <strong class="upcoming-release-countdown" data-upcoming-countdown>Countdown unavailable</strong>
+        </div>
+      </article>)}</div> : <p class="series-progress-empty" data-upcoming-empty>Tracked series with confirmed upcoming season dates will appear here.</p>}
+    </section>
   </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
   </section></div>
@@ -62,20 +89,23 @@ import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-ref
 
 let homeProgressListeners: AbortController | undefined;
 let homeSeriesRefresh: VisibleRefreshHandle | undefined;
+let homeUpcomingRefresh: VisibleRefreshHandle | undefined;
 document.addEventListener('astro:page-load', () => {
   homeSeriesRefresh?.stop();
   homeSeriesRefresh = undefined;
+  homeUpcomingRefresh?.stop();
+  homeUpcomingRefresh = undefined;
   homeProgressListeners?.abort();
   homeProgressListeners = new AbortController();
   const {signal} = homeProgressListeners;
-  const grid = document.querySelector<HTMLElement>('.series-progress-grid');
-  if (!grid) return;
+  const grid = document.querySelector<HTMLElement>('[data-progress-grid]') || document.createElement('div');
+  const upcomingGrid = document.querySelector<HTMLElement>('[data-upcoming-grid]');
 
-  const positionDetails = () => grid.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
+  const positionDetails = () => document.querySelectorAll<HTMLElement>('.series-progress-grid').forEach(cardGrid => cardGrid.querySelectorAll<HTMLElement>('.progress-card').forEach(card => {
     const right = card.getBoundingClientRect().right;
     const detailsWidth = card.querySelector<HTMLElement>('.progress-card-details')?.getBoundingClientRect().width || 290;
     card.classList.toggle('details-flipped', right + 16 + detailsWidth > window.innerWidth - 20);
-  });
+  }));
   positionDetails();
   window.addEventListener('resize', positionDetails, {signal});
 
@@ -89,9 +119,24 @@ document.addEventListener('astro:page-load', () => {
     const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
     output.textContent = `Next episode in ${days}d`;
   });
+  const updateUpcomingCountdowns = () => document.querySelectorAll<HTMLElement>('[data-upcoming-card]').forEach(card => {
+    const output = card.querySelector<HTMLElement>('[data-upcoming-countdown]');
+    const date = card.dataset.releaseDate;
+    if (!output || !date) return;
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const releaseDay = Date.parse(`${date}T00:00:00Z`);
+    const todayDay = Date.parse(`${today}T00:00:00Z`);
+    if (!Number.isFinite(releaseDay)) { output.textContent = 'Countdown unavailable'; return; }
+    const days = Math.ceil((releaseDay - todayDay) / 86_400_000);
+    output.textContent = days === 0 ? 'Releases today' : days > 0 ? `Releases in ${days} ${days === 1 ? 'day' : 'days'}` : 'Release date passed';
+  });
   updateCountdowns();
+  updateUpcomingCountdowns();
   const countdownTimer = window.setInterval(updateCountdowns, 60_000);
+  const upcomingCountdownTimer = window.setInterval(updateUpcomingCountdowns, 60_000);
   signal.addEventListener('abort', () => window.clearInterval(countdownTimer), {once:true});
+  signal.addEventListener('abort', () => window.clearInterval(upcomingCountdownTimer), {once:true});
 
   const syncCardProgress = (card:HTMLElement, updated:any) => {
     const progress = Number(updated.progress ?? card.dataset.progress ?? 0);
@@ -200,7 +245,25 @@ document.addEventListener('astro:page-load', () => {
     }
     updateCountdowns();
   }});
-  document.addEventListener('anylist:data-changed', () => void homeSeriesRefresh?.refresh(), {signal});
+  homeUpcomingRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
+    const response = await fetch('/api/proxy/tracking/upcoming-seasons', {cache:'no-store',signal:refreshSignal});
+    if (!response.ok) return;
+    const results = (await response.json()).results;
+    if (!Array.isArray(results)) return;
+    const actual = Array.from(upcomingGrid?.querySelectorAll<HTMLElement>('[data-upcoming-card]') || []).map(card => [
+      card.dataset.mediaId, card.dataset.seasonNumber, card.dataset.releaseDate, card.dataset.seasonPoster,
+      card.dataset.artworkFallback, card.dataset.artworkRetry,
+    ].join('|')).sort();
+    const expected = results.map((entry:any) => [
+      String(entry.id), String(entry.season_number), String(entry.release_date || ''), String(entry.season_poster_path || ''),
+      String(entry.season_artwork_fallback === true), String(entry.artwork_retry === true),
+    ].join('|')).sort();
+    if (actual.length !== expected.length || actual.some((signature,index) => signature !== expected[index])) window.location.reload();
+  }});
+  document.addEventListener('anylist:data-changed', () => {
+    void homeSeriesRefresh?.refresh();
+    void homeUpcomingRefresh?.refresh();
+  }, {signal});
 });
 </script>
 <script>

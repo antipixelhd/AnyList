@@ -172,7 +172,7 @@
   opacity:0;
   pointer-events:none;
   visibility:hidden;
-  transition:opacity .12s ease,visibility .12s ease
+  transition:opacity .12s ease
 }
 .progress-card:is(:hover,:focus-within) .progress-card-details {
   opacity:1;
@@ -214,6 +214,37 @@
   background:var(--panel);
   color:var(--muted);
   font-size:var(--type-label-size)
+}
+.upcoming-releases {
+  margin-top:30px
+}
+.upcoming-releases>.section-heading {
+  min-height:24px
+}
+.upcoming-poster-placeholder {
+  display:flex;
+  width:100%;
+  height:100%;
+  align-items:center;
+  justify-content:center;
+  padding:8px;
+  color:var(--muted);
+  font-size:var(--type-meta-size);
+  text-align:center
+}
+.upcoming-release-date {
+  margin-top:8px;
+  color:var(--muted);
+  font-size:var(--type-meta-size)
+}
+.upcoming-release-date time {
+  color:var(--bright)
+}
+.upcoming-release-countdown {
+  margin-top:auto;
+  padding-top:7px;
+  color:var(--blue);
+  font-size:var(--type-meta-size)
 }
 .section-heading {
   display:flex;
