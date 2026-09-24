@@ -1,5 +1,8 @@
 /* Statistics use type, icons, and measured whitespace instead of a card wall. */
 .stats-page {
+  max-width:1340px;
+  padding-right:24px;
+  padding-left:24px;
   padding-top:0
 }
 .stats-heading {
@@ -100,6 +103,8 @@
 }
 @media(max-width:650px) {
   .stats-page {
+    padding-right:16px;
+    padding-left:16px;
     padding-top:0
   }
   .stats-heading {
