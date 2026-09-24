@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from db import engine, Base
 import models # noqa: F401
-from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar, push
+from routers import webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar, push, netflix_import
 
 from core.access_log import install as install_access_log_redaction
 install_access_log_redaction()
@@ -174,6 +174,8 @@ async def _auto_sync_scheduler():
     while True:
         await asyncio.sleep(check_interval)
         try:
+            from routers.netflix_import import cleanup_expired_netflix_imports
+            await cleanup_expired_netflix_imports()
             async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
             async with async_session() as db:
                 result = await db.execute(
@@ -836,6 +838,10 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    from routers.netflix_import import cleanup_expired_netflix_imports, resume_incomplete_netflix_imports
+    await cleanup_expired_netflix_imports()
+    await resume_incomplete_netflix_imports()
+
     # Clean up stuck sync jobs and orphaned playback sessions on startup
     from db import async_sessionmaker
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -952,6 +958,7 @@ app.include_router(comments.router, prefix="/comments", tags=["comments"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(export.router, prefix="/export", tags=["export"])
 app.include_router(yamtrack.router, prefix="/yamtrack", tags=["yamtrack"])
+app.include_router(netflix_import.router, prefix="/imports", tags=["imports"])
 app.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 app.include_router(compat.router, tags=["compat"])
 

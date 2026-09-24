@@ -117,3 +117,13 @@ Independent provider pulls retain their configured intervals, but overlapping pu
 ## ADR-022 — Read-only offline navigation within an open session (accepted 2026-09-21)
 
 Cache safely displayable content for read-only navigation while an AnyList tab is already open, not as a promise that an offline first load or refresh works. This gives previously loaded pages and list editors continuity without making offline writes, stale connection state, or a service-worker app shell appear authoritative. Partition private data by AnyList user, clear it on explicit logout/account switch, never cache credentials, and localize missing-data/offline feedback rather than replacing the entire live page.
+
+## ADR-023 — Reviewed Netflix viewing-history import (accepted 2026-09-24)
+
+Netflix CSV import uses four steps: prepare, resolve uncertain matches, review show progress, and finalize. Cancel is available throughout. The import changes personal state only after the final Import action. Uncertain matches require an explicit confirm, remap, or skip; season episode counts alone cannot identify watched episodes.
+
+Netflix season labels can split a TMDB aired season into multiple parts. When the labelled TMDB season is absent, search the show's available seasons by exact episode title and accept only a unique match. A 404 for one season leaves unresolved episodes for review instead of aborting the CSV; other provider failures remain visible.
+
+Progress review shows incompletely represented shows first, sorted by title with posters. Any show with missing or uncertain episodes defaults to Partial at the highest matched episode; only fully represented released seasons default to Completed. Partial offers Watching, Paused, or Dropped, defaulting to Watching. Selected progress is cumulative; lowering its endpoint excludes later CSV rows. Existing progress never decreases. Automatic suggestions preserve existing manual statuses, while an explicit review status change overrides them. Skip leaves the title untouched.
+
+Accepted viewing dates set the earliest show start date and, for Completed shows, the latest show finish date. A movie watch sets its finish date. Existing nonempty dates remain authoritative. Inferred episodes have unknown watch dates. Reimports deduplicate historical watches. English and German exports are in scope; the import harness should allow later providers such as Disney+ and Prime without committing to their formats now.

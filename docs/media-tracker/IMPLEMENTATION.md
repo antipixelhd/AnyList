@@ -1,5 +1,11 @@
 # Media Tracker implementation handoff
 
+## Netflix viewing-history import (2026-09-24)
+
+Add the Netflix tab in Settings → Connections → Import and a provider-neutral review flow: upload/prepare, match resolution, progress review, final summary/commit. Keep draft state private and resumable; cancellation discards it. Parse English and German CSV exports, preserve viewing dates, group repeated titles and episodes, and resolve titles against the existing catalog before fetching metadata. Fetch a season once per language, then match its episodes locally; only unambiguous matches advance without review. Metadata provider failures must remain recoverable and must never silently become successful matches.
+
+Commit accepted watches and inferred cumulative episodes atomically with existing-entry preservation, source deduplication, date handling, and an idempotent result. Validate malformed files, ambiguous movie/show names, colon-heavy and arc-style episode labels, sparse histories, specials, progress cutoffs, repeated imports, concurrent edits, cancellation, and desktop/phone review navigation. Use `reference/NetflixViewingHistory.csv` for local smoke checks without copying that personal export into versioned fixtures. Implementation status and validation evidence belong in STATUS.md.
+
 Status: release-one implementation completed and validated locally as of 2026-09-19. See STATUS.md for current test and isolated-deployment evidence.
 
 ## Reading order and source of truth

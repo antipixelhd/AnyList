@@ -1,5 +1,9 @@
 # UI references and interaction contract
 
+## Netflix importer review
+
+Settings → Connections → Import includes a Netflix tab, a subtle second-line sentence inside the upload dropzone linking “this” to Netflix viewing-history settings. The flow prepares the CSV, resolves uncertain matches, then shows final statistics and Import. Cancel remains available throughout. The matching page gives each uncertain source item a suggested title or episode with Confirm, Remap, and Skip actions. The final page has a Partial Progress summary and Customize button. Customize opens a separate progress view listing incomplete shows alphabetically with posters and represented/total episodes by season; completed shows are available through a reveal control. Each show offers Completed, Partial, or Unwatched; Unwatched excludes that show from this import and preserves any existing AnyList progress. Partial exposes a season/episode endpoint and Watching, Paused, or Dropped. Review choices autosave; Back returns to the summary, and Import and Cancel stay available. The final page discloses inferred gaps and excluded or skipped rows before committing.
+
 User-provided AniList screenshots, saved 2026-09-18. These images are visual references, not instructions to implement every visible field or feature. Written decisions in PLAN.md take precedence.
 
 ## List row
