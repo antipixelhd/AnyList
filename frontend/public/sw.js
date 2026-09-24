@@ -30,6 +30,11 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // Content scripts can cause extension-origin requests to appear in the
+  // controlled page's fetch stream. Service worker Cache APIs only accept
+  // HTTP(S) requests, so leave other schemes entirely to the browser.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
   // Only handle GET — leave POST/PATCH/DELETE to the network
   if (request.method !== 'GET') return;
 
@@ -98,11 +103,20 @@ self.addEventListener('notificationclick', (event) => {
 // ── Strategies ────────────────────────────────────────────────────────────────
 
 async function networkFirstWithCache(request, cacheName) {
+  const protocol = new URL(request.url).protocol;
+  if (protocol !== 'http:' && protocol !== 'https:') return fetch(request);
+
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const cache = await caches.open(cacheName);
-      cache.put(request, response.clone());
+      // Keep cache storage best-effort. A quota or cache failure must not
+      // reject the successful network response as an unhandled promise.
+      try {
+        const cache = await caches.open(cacheName);
+        await cache.put(request, response.clone());
+      } catch {
+        // The response can still be used even when it cannot be cached.
+      }
     }
     return response;
   } catch {
