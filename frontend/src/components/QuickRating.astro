@@ -92,18 +92,44 @@ document.addEventListener('astro:page-load', () => {
   }
   async function save(score: number | null, changeToManual = false) {
     if (!active) return;
+    if (active.onScore) {
+      const current = active;
+      const previousScore = savedScore;
+      error.hidden = true;
+      savedScore = score;
+      current.score = score;
+      current.ratingMode = 'manual';
+      paint(score);
+      remove.hidden = score == null;
+      // The importer updates its card synchronously; the draft request can finish
+      // after the picker closes. A failed request reopens the picker for retry.
+      try {
+        const pending = current.onScore(score);
+        dialog.close();
+        void Promise.resolve(pending).catch(cause => {
+          if (active !== current) return;
+          savedScore = previousScore;
+          current.score = previousScore;
+          remove.hidden = previousScore == null;
+          paint(previousScore);
+          error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
+          error.hidden = false;
+          if (!dialog.open) dialog.showModal();
+        });
+      } catch (cause) {
+        savedScore = previousScore;
+        current.score = previousScore;
+        remove.hidden = previousScore == null;
+        paint(previousScore);
+        error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
+        error.hidden = false;
+      }
+      return;
+    }
     const mediaTitle = active.title;
     error.hidden = true;
     stars.classList.add('saving');
     try {
-      if (active.onScore) {
-        await active.onScore(score);
-        savedScore = score;
-        active.score = score;
-        active.ratingMode = 'manual';
-        setTimeout(() => dialog.close(), 140);
-        return;
-      }
       if (active.id == null) throw new Error('This title cannot be rated yet.');
       const response = await fetch(`/api/proxy/tracking/entry/${active.id}`, {
         method: 'PATCH', headers: {'Content-Type': 'application/json'},
