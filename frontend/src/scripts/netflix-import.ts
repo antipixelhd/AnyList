@@ -366,6 +366,7 @@ function mountNetflixImport() {
         ${metric("Source watches", summaryNumber("source_watches", "source_watch_count", "watch_events"))}
         ${metric("Source episodes", summaryNumber("source_episodes", "distinct_episodes", "episode_count"))}
         ${metric("Duplicate rows", summaryNumber("duplicates", "duplicate_rows"))}
+        ${metric("Titleless episode rows", summaryNumber("excluded_rows"), "Excluded entries such as : Episode 2")}
         ${metric("Inferred episodes", summaryNumber("inferred_episodes"), "Added through selected progress endpoints")}
         ${metric("Skipped", summaryNumber("skipped", "skipped_items"))}
         ${metric("Unmatched", summaryNumber("unmatched"))}

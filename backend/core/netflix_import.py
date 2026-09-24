@@ -60,6 +60,7 @@ class ParsedNetflixHistory:
     errors: list[dict[str, Any]] = field(default_factory=list)
     total_rows: int = 0
     duplicate_rows: int = 0
+    excluded_rows: int = 0
     language: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,6 +69,7 @@ class ParsedNetflixHistory:
             "errors": [dict(error) for error in self.errors],
             "total_rows": self.total_rows,
             "duplicate_rows": self.duplicate_rows,
+            "excluded_rows": self.excluded_rows,
             "language": self.language,
         }
 
@@ -252,6 +254,9 @@ def parse_netflix_csv(content: bytes | str, language: str | None = None) -> Pars
                 continue
             if not raw_title:
                 parsed.errors.append({"row": row_number, "message": "Missing title"})
+                continue
+            if re.fullmatch(r":\s*Episode\s+\d+", raw_title, re.IGNORECASE):
+                parsed.excluded_rows += 1
                 continue
             try:
                 watched_at = _parse_date(raw_date, inferred_language).isoformat()
@@ -523,6 +528,7 @@ async def prepare_netflix_import(
             errors=list(history.get("errors") or []),
             total_rows=int(history.get("total_rows") or len(rows)),
             duplicate_rows=int(history.get("duplicate_rows") or 0),
+            excluded_rows=int(history.get("excluded_rows") or 0),
             language=history.get("language"),
         )
 
@@ -1259,6 +1265,7 @@ async def prepare_netflix_import(
             "source_rows": history.total_rows,
             "unique_rows": len(history.rows),
             "duplicate_rows": history.duplicate_rows,
+            "excluded_rows": history.excluded_rows,
             "movies": len(movies),
             "shows": len(shows),
             "unmatched": len(unmatched),

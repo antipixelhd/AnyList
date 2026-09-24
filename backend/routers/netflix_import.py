@@ -386,6 +386,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
         "source_watches": source_watches,
         "source_episodes": source_episodes,
         "duplicates": int(parsed_counts.get("duplicate_rows", parsed_counts.get("duplicates", 0)) or 0),
+        "excluded_rows": int(parsed_counts.get("excluded_rows", 0) or 0),
         "inferred_episodes": inferred,
         "skipped": len(skipped) + skipped_episode_count,
         "unmatched": len(unmatched),
@@ -1102,6 +1103,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         "source_watches": 0, "source_episodes": 0, "duplicates": 0,
         "inferred_episodes": 0, "skipped": 0, "unmatched": 0,
         "cutoff_exclusions": 0, "partial_progress": 0, "errors": len(errors),
+        "excluded_rows": int(counts.get("excluded_rows", 0) or 0),
     }
     today = date.today()
     usable_items = [i for i in items if i.get("decision", {}).get("action") != "skip" and i.get("outcome", {}).get("status") != "skip"]
@@ -1252,6 +1254,7 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
                 "duplicates": stats["duplicates"], "inferred_episodes": stats["inferred_episodes"],
                 "skipped": stats["skipped"], "unmatched": stats["unmatched"],
                 "cutoff_exclusions": stats["cutoff_exclusions"], "partial_progress": stats["partial_progress"],
+                "excluded_rows": stats["excluded_rows"],
                 "errors": stats["errors"],
             }
             session.status = "committed"

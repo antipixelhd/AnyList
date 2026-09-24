@@ -57,6 +57,16 @@ class NetflixCsvParserTests(unittest.TestCase):
         self.assertEqual(history.rows[0].watched_at, "2026-02-28")
         self.assertEqual(history.errors, [{"row": 3, "message": "Invalid viewing date: 19/99/2026"}])
 
+    def test_only_titleless_episode_rows_are_excluded(self) -> None:
+        history = parse_netflix_csv(
+            'Title,Date\n": Episode 2",3/10/21\n": episode 12",3/11/21\n'
+            '"Show: Episode 2",3/12/21\n": Episode 2: Extra",3/13/21\n'
+        )
+        self.assertEqual(history.total_rows, 4)
+        self.assertEqual(history.excluded_rows, 2)
+        self.assertEqual([row.source_title for row in history.rows], ["Show: Episode 2", ": Episode 2: Extra"])
+        self.assertEqual(history.errors, [])
+
     def test_rejects_wrong_headers_bad_encoding_and_malformed_csv(self) -> None:
         with self.assertRaisesRegex(ValueError, "Title and Date"):
             parse_netflix_csv("Name,Watched\nExample,1/1/26\n")
@@ -67,7 +77,7 @@ class NetflixCsvParserTests(unittest.TestCase):
 
 
 class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_episode_without_show_title_is_not_searched_as_a_movie(self) -> None:
+    async def test_episode_without_show_title_is_excluded_before_matching(self) -> None:
         movie_search = AsyncMock(return_value={"results": []})
         result = await prepare_netflix_import(
             'Title,Date\n": Episode 2",3/10/21\n',
@@ -76,8 +86,8 @@ class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
         )
         movie_search.assert_not_awaited()
         self.assertEqual(result["movies"], [])
-        self.assertEqual(result["unmatched"][0]["kind"], "show")
-        self.assertIn("omitted", result["unmatched"][0]["reason"])
+        self.assertEqual(result["unmatched"], [])
+        self.assertEqual(result["counts"]["excluded_rows"], 1)
 
     async def test_dominant_same_title_movie_matches_without_manual_review(self) -> None:
         async def search_movies(query: str, **_kwargs):
