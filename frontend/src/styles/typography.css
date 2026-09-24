@@ -16,6 +16,7 @@
   --font-navigation: Overpass, -apple-system, BlinkMacSystemFont, "Segoe UI", Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
   --font-body: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
   --type-nav-size: 1.4rem; --type-nav-weight: 600;
+  --line-height-base: 1.15;
   --type-sidebar-size: 1.4rem; --type-sidebar-weight: 400; --type-sidebar-selected-weight: 500;
   --type-page-size: 2.4rem; --type-page-weight: 400;
   --type-profile-size: 1.9rem; --type-profile-weight: 700;
@@ -47,7 +48,7 @@
   --type-prose-h3-size: 1.6rem; --type-prose-heading-weight: 700;
 }
 html { font-size: 62.5%; }
-body { font-family: var(--font-body); font-size: var(--type-body-size); font-weight: var(--type-body-weight); }
+body { font-family: var(--font-body); font-size: var(--type-body-size); font-weight: var(--type-body-weight); line-height: var(--line-height-base); }
 button, input, select, textarea, code, kbd, pre, samp { font-family: var(--font-body); }
 nav, [role="navigation"] { font-family: var(--font-navigation); font-size: var(--type-nav-size); font-weight: var(--type-nav-weight); }
 aside nav, aside [role="navigation"] { font-size: var(--type-sidebar-size); font-weight: var(--type-sidebar-weight); }

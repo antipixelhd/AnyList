@@ -18,7 +18,7 @@ The repository was cloned from local reference commit 3d75f172fc054ed90c39af9d33
 
 For frontend work, check these shared CSS sources before adding or changing variables:
 
-- [typography.css](frontend/src/styles/typography.css) defines the font families, semantic font-size and font-weight tokens, and the 62.5% root size.
+- [typography.css](frontend/src/styles/typography.css) defines the font families, semantic font-size and font-weight tokens, the base line height, and the 62.5% root size.
 - [global-theme.css](frontend/src/styles/global-theme.css) defines shared palette, surface, border, and text color variables.
 - [tracker-profile-list.css](frontend/src/styles/tracker-profile-list.css) defines the shared profile content gap and profile-list spacing.
 
