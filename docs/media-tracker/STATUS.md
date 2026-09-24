@@ -1,5 +1,9 @@
 # AnyList implementation status
 
+## AniList-style profile list cards (2026-09-24)
+
+The list card view now uses compact poster-led cards with the status marker, a gradient title overlay, and progress at the bottom. The title no longer appears below the poster; hovering or keyboard-focusing it changes the text to the profile accent color. Owners retain the existing edit target: desktop shows the menu button on hover/focus, while touch keeps the full poster as the edit target. Grid view hides the score column to match the reference card composition; rating remains available through the existing edit flow. Frontend production build passes.
+
 ## Profile list release-year slider (2026-09-24)
 
 Replaced the release-year dropdown in movie, series, and combined lists with an AnyList-styled range slider. It steps from Any year at the left through the distinct years present in that list in ascending order. The selected year updates the existing row filter and reset control. The slider uses the list feature stylesheet and keeps an accessible year value and keyboard operation.

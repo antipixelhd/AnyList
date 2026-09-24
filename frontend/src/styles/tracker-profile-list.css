@@ -403,3 +403,164 @@
     align-items:center
   }
 }
+
+/* AniList-style poster cards: title and progress sit over the artwork. */
+.grid-view .entry-table {
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:30px;
+  box-shadow:none
+}
+.grid-view .entry-row {
+  position:relative;
+  display:block;
+  min-height:0;
+  aspect-ratio:.71;
+  padding:0;
+  overflow:hidden;
+  border:0;
+  border-radius:4px;
+  background:var(--panel)
+}
+.grid-view .entry-thumbnail {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  margin:0;
+  overflow:hidden;
+  border-radius:4px
+}
+.grid-view .entry-thumbnail .entry-cover {
+  display:block;
+  width:100%;
+  height:100%;
+  margin:0;
+  object-fit:cover
+}
+.grid-view .entry-thumbnail::after {
+  position:absolute;
+  z-index:1;
+  inset:38% 0 0;
+  background:linear-gradient(180deg,transparent 0%,rgba(10,19,30,.82) 40%,rgba(10,19,30,.96) 100%);
+  content:"";
+  pointer-events:none
+}
+.grid-view .entry-availability {
+  z-index:2;
+  top:8px;
+  left:8px;
+  width:16px;
+  height:16px;
+  transform:none
+}
+.grid-view .entry-thumbnail .row-menu {
+  z-index:3;
+  inset:16px 16px auto auto;
+  display:grid;
+  width:44px;
+  height:44px;
+  padding:0;
+  place-items:center;
+  border:0;
+  border-radius:6px;
+  background:var(--blue);
+  color:var(--bright);
+  opacity:0;
+  transition:opacity .12s ease
+}
+.grid-view .entry-row:not([data-editor-deselected]):is(:hover,:focus-within) .entry-thumbnail .row-menu,
+.grid-view .entry-thumbnail .row-menu:focus-visible {
+  opacity:1
+}
+.grid-view .entry-thumbnail .row-menu .ui-icon {
+  color:inherit;
+  font-size:var(--type-control-size)
+}
+.grid-view .entry-title {
+  position:absolute;
+  z-index:2;
+  right:0;
+  bottom:40px;
+  left:0;
+  display:block;
+  width:auto;
+  margin:0;
+  padding:0 14px;
+  color:var(--bright)
+}
+.grid-view .entry-title .entry-title-link {
+  display:-webkit-box;
+  overflow:hidden;
+  color:var(--bright);
+  font-size:var(--type-panel-size);
+  font-weight:var(--type-body-weight);
+  line-height:1.15;
+  text-overflow:ellipsis;
+  transition:color .12s ease;
+  white-space:normal;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:4
+}
+.grid-view .entry-title .entry-title-link:is(:hover,:focus-visible) {
+  color:var(--blue)
+}
+.grid-view .entry-progress {
+  position:absolute;
+  z-index:2;
+  right:14px;
+  bottom:10px;
+  left:14px;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  gap:3px;
+  margin:0;
+  color:var(--blue);
+  font-size:var(--type-body-size);
+  font-weight:var(--type-body-weight);
+  line-height:1.15
+}
+.grid-view .entry-progress .progress-increment {
+  position:static;
+  min-height:24px;
+  color:inherit;
+  font-size:inherit
+}
+.grid-view .entry-score,
+.grid-view .entry-type {
+  display:none
+}
+@media(hover:none),(max-width:650px) {
+  .grid-view .entry-thumbnail .row-menu {
+    inset:0;
+    width:100%;
+    height:100%;
+    background:transparent;
+    color:transparent;
+    opacity:1
+  }
+  .grid-view .entry-thumbnail .row-menu .ui-icon {
+    opacity:0
+  }
+  .grid-view .entry-thumbnail .row-menu:focus,
+  .grid-view .entry-thumbnail .row-menu:active {
+    background:#228fcbdc;
+    color:var(--bright)
+  }
+  .grid-view .entry-thumbnail .row-menu:focus .ui-icon,
+  .grid-view .entry-thumbnail .row-menu:active .ui-icon {
+    opacity:1
+  }
+}
+@media(max-width:650px) {
+  .grid-view .entry-table {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:12px
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  .grid-view .entry-thumbnail .row-menu,
+  .grid-view .entry-title .entry-title-link {
+    transition:none
+  }
+}
