@@ -1,5 +1,9 @@
 # AnyList implementation status
 
+## Profile list release-year slider (2026-09-24)
+
+Replaced the release-year dropdown in movie, series, and combined lists with an AnyList-styled range slider. It steps from Any year at the left through the distinct years present in that list in ascending order. The selected year updates the existing row filter and reset control. The slider uses the list feature stylesheet and keeps an accessible year value and keyboard operation.
+
 ## Settings prompts, Netflix completion, and profile list layout (2026-09-24)
 
 Authenticated settings pages now mount the shared Attention prompt and quick-rating dialog, so pending prompts remain available across tracker/settings navigation and their Rate now action works there. A Netflix import marked Completed now carries release-count-confirmed episodes without air dates into list, detail, activity, and availability progress projections, allowing the displayed position to reach the final imported season/episode without inventing a date. The Stats page no longer shows the “Profile insights” eyebrow.

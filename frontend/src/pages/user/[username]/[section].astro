@@ -19,7 +19,7 @@ const entries = [...(data?.entries || [])].sort((a:any,b:any) => defaultSort ===
     ? String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
     : Number(b[defaultSort] ?? -1) - Number(a[defaultSort] ?? -1));
 const genres = [...new Set(entries.flatMap((e: any) => e.genres))].sort();
-const years = [...new Set(entries.map((e:any)=>e.year).filter(Boolean))].sort().reverse();
+const years = [...new Set(entries.map((e:any)=>e.year).filter(Boolean).map(String))].sort();
 const requestedStatus=Astro.url.searchParams.get('status')||'all';
 const initialStatus=['all',...statuses.map(([value])=>value)].includes(requestedStatus)?requestedStatus:'all';
 const today = new Date().toISOString().slice(0, 10);
@@ -42,7 +42,7 @@ const rewatchLabel=(count:number)=>`${count} ${count===1?'rewatch':'rewatches'}`
         <h2>Lists</h2><div class="status-filters"><button data-status="all" class:list={{selected:initialStatus==='all'}}>All <span>{entries.length}</span></button>{statuses.map(([s,label])=><button data-status={s} class:list={{selected:initialStatus===s}}>{label}<span>{entries.filter((e:any)=>e.status===s).length}</span></button>)}</div>
         <h2>Filters</h2>
         <label class="filter-control"><span>Genre</span><select id="genre-filter"><option value="">All genres</option>{genres.map(g=><option>{g}</option>)}</select></label>
-        <label class="filter-control"><span>Release year</span><select id="year-filter"><option value="">All years</option>{years.map(y=><option>{y}</option>)}</select></label>
+        <label class="filter-year filter-control"><span class="filter-year-heading"><span>Year</span><output id="year-value" for="year-filter">Any year</output></span><input id="year-filter" type="range" min="0" max={years.length} step="1" value="0" data-years={JSON.stringify(years)} aria-label="Release year" aria-valuetext="Any year" disabled={years.length===0}/></label>
         <label class="filter-control"><span>Favorites</span><select id="favorite-filter"><option value="">All entries</option><option value="yes">Favorites only</option></select></label>
         <h2>Sort</h2><label class="filter-control"><span>Order</span><select id="sort-filter"><option value="title" selected={defaultSort==='title'}>Title</option><option value="score" selected={defaultSort==='score'}>Score</option><option value="progress" selected={defaultSort==='progress'}>Progress</option><option value="updated" selected={defaultSort==='updated'}>Recently updated</option></select></label>
         <button class="button-secondary" id="reset-filters" data-default-sort={defaultSort}>Reset filters</button>
@@ -172,8 +172,17 @@ document.addEventListener('astro:page-load', () => {
     const resetButton=document.querySelector<HTMLButtonElement>('#reset-filters')!;
     const defaultSort=resetButton.dataset.defaultSort||'title';
     const mobileCount=document.querySelector<HTMLElement>('#mobile-filter-count')!;
+    const yearSlider=input('year-filter');
+    const yearOutput=document.querySelector<HTMLOutputElement>('#year-value')!;
+    const availableYears=JSON.parse(yearSlider.dataset.years||'[]') as string[];
+    function selectedYear(){const position=Number(yearSlider.value);return position>0?availableYears[position-1]:'';}
     function updateFilterControls() {
-      const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',input('year-filter').value!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
+      const position=Number(yearSlider.value);
+      const yearLabel=position>0?availableYears[position-1]:'Any year';
+      yearOutput.value=yearLabel;
+      yearOutput.textContent=yearLabel;
+      yearSlider.setAttribute('aria-valuetext',yearLabel);
+      const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
       mobileCount.textContent=String(active);
       mobileCount.hidden=active===0;
       resetButton.disabled=active===0;
@@ -191,7 +200,7 @@ document.addEventListener('astro:page-load', () => {
         let visible = 0;
         rows.forEach(row=> {
           table.append(row);
-          row.hidden = (status !== 'all' && status!==group.dataset.group) || !row.dataset.title!.includes(query) || !!(input('genre-filter').value && !JSON.parse(row.dataset.genres!).includes(input('genre-filter').value)) || !!(input('year-filter').value && row.dataset.year!==input('year-filter').value) || !!(input('favorite-filter').value && row.dataset.favorite!=='yes');
+          row.hidden = (status !== 'all' && status!==group.dataset.group) || !row.dataset.title!.includes(query) || !!(input('genre-filter').value && !JSON.parse(row.dataset.genres!).includes(input('genre-filter').value)) || !!(selectedYear() && row.dataset.year!==selectedYear()) || !!(input('favorite-filter').value && row.dataset.favorite!=='yes');
           if (!row.hidden) visible++;
         });
         group.hidden = visible===0;
@@ -208,7 +217,7 @@ document.addEventListener('astro:page-load', () => {
     refreshList=filter;
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));
-    resetButton.addEventListener('click',()=>{['list-search','genre-filter','year-filter','favorite-filter'].forEach(id=>input(id).value='');input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
+    resetButton.addEventListener('click',()=>{['list-search','genre-filter','favorite-filter'].forEach(id=>input(id).value='');yearSlider.value='0';input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();const grid=button.dataset.view==='grid';groups.classList.toggle('grid-view',grid);updateEntryImages(grid);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
     const mobileToggle=document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
     const filters=document.querySelector<HTMLElement>('#list-filters')!;
