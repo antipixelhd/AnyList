@@ -177,6 +177,95 @@
 .filters .filter-search input {
   padding-left:34px
 }
+.list-shell .filters {
+  z-index:3
+}
+.filter-select-native {
+  display:none!important
+}
+.filter-dropdown {
+  position:relative
+}
+.filter-dropdown-trigger {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  width:100%;
+  min-height:40px;
+  padding:8px 12px;
+  border:1px solid transparent;
+  border-radius:4px;
+  background:#151f2e;
+  color:var(--text);
+  text-align:left;
+  font:inherit;
+  font-size:var(--type-control-size);
+  cursor:pointer
+}
+.filter-dropdown-trigger:focus-visible {
+  border-color:var(--blue);
+  outline:2px solid color-mix(in srgb,var(--blue) 20%,transparent)
+}
+.filter-dropdown-trigger .ui-icon {
+  color:var(--muted);
+  font-size:var(--type-meta-size)
+}
+.filter-dropdown-options {
+  position:absolute;
+  z-index:10;
+  top:calc(100% + 5px);
+  left:0;
+  right:0;
+  max-height:min(290px,50vh);
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:#59687a #151f2e;
+  padding:5px;
+  border:1px solid #36516a;
+  border-radius:4px;
+  background:#151f2e;
+  box-shadow:0 12px 30px #020711b3
+}
+.filter-dropdown-options::-webkit-scrollbar {
+  width:8px
+}
+.filter-dropdown-options::-webkit-scrollbar-track {
+  background:#151f2e
+}
+.filter-dropdown-options::-webkit-scrollbar-thumb {
+  border:2px solid #151f2e;
+  border-radius:8px;
+  background:#59687a
+}
+.filter-dropdown-options::-webkit-scrollbar-button {
+  display:none;
+  width:0;
+  height:0
+}
+.filter-dropdown-options[hidden] {
+  display:none
+}
+.filter-dropdown-options button {
+  display:block;
+  width:100%;
+  padding:10px 12px;
+  border:0;
+  border-radius:3px;
+  background:transparent;
+  color:#b8c9d9;
+  text-align:left;
+  font-size:var(--type-control-size);
+  cursor:pointer
+}
+.filter-dropdown-options button:hover,.filter-dropdown-options button:focus-visible {
+  background:#20364b;
+  color:var(--bright)
+}
+.filter-dropdown-options button[aria-selected="true"] {
+  background:#1b344a;
+  color:var(--blue)
+}
 .filter-year {
   gap:4px
 }
@@ -285,6 +374,11 @@
   }
 }
 @media(max-width:650px) {
+  .filter-dropdown-options {
+    position:static;
+    max-height:220px;
+    margin-top:5px
+  }
   .profile-hero {
     height:180px
   }

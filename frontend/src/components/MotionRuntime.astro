@@ -4,13 +4,13 @@
 
   const active = new Map<HTMLElement, ReturnType<typeof animate>>();
   const hovered = new Set<HTMLElement>();
-  const selector = 'button, [role="button"], select:not([multiple]), input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, a.appbar-icon-link, a.personal-score-button, [data-motion-press]';
+  const selector = 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, a.appbar-icon-link, a.personal-score-button, [data-motion-press]';
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const canHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches && !reduced();
 
   function targetFor(event: Event) {
     const element = (event.target as Element | null)?.closest<HTMLElement>(selector);
-    return element && !element.matches(':disabled, [aria-disabled="true"]') && element.getClientRects().length ? element : null;
+    return element && !element.matches(':disabled, [aria-disabled="true"], [aria-expanded]') && !element.closest('[data-motion-static]') && element.getClientRects().length ? element : null;
   }
 
   function animateScale(element: HTMLElement, scale: number, duration: number) {
@@ -43,7 +43,7 @@
     const related = event.relatedTarget as Node | null;
     const element = target?.closest<HTMLElement>(selector);
     if (!element || element.contains(related) || !element.getClientRects().length || element.matches(':disabled, [aria-disabled="true"]')) return;
-    if (element.matches('select, [aria-expanded], [aria-haspopup="menu"], [aria-haspopup="listbox"]')) return;
+    if (element.matches('[aria-expanded], [aria-haspopup="menu"], [aria-haspopup="listbox"]') || element.closest('[data-motion-static]')) return;
     if (element.closest('.list-shell .filters') || element.matches('.list-shell .mobile-filter-toggle')) return;
     hovered.add(element);
     if (element !== pressed) animateScale(element, 1.012, .17);
