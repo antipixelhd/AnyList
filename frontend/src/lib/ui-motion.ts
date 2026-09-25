@@ -102,6 +102,26 @@ export async function hideMenu(menu: HTMLElement) {
   menu.style.removeProperty('pointer-events');
 }
 
+export function showCollapsible(section: HTMLElement) {
+  closing.set(section, ++sequence);
+  section.classList.remove('hidden');
+  section.inert = false;
+  play(section, true, 4);
+}
+
+export async function hideCollapsible(section: HTMLElement) {
+  if (section.classList.contains('hidden')) return;
+  const token = ++sequence;
+  closing.set(section, token);
+  section.inert = true;
+  const control = play(section, false, 4);
+  if (control) await control.finished.catch(() => {});
+  if (closing.get(section) !== token) return;
+  stop(section);
+  section.classList.add('hidden');
+  section.inert = false;
+}
+
 export function showOverlay(overlay: HTMLElement) {
   const panel = overlay.lastElementChild as HTMLElement | null;
   closing.set(overlay, ++sequence);

@@ -114,10 +114,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       )}
                       {conn.type === "stremio" && (
                         <div class="stremio-reauth hidden space-y-2" data-conn-id={conn.id}>
-                          <button type="button" class="stremio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
+                          <button type="button" class="stremio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors" aria-expanded="false" aria-controls={`stremio-reauth-panel-${conn.id}`}>
                             Disconnected? Reconnect Stremio
                           </button>
-                          <div class="stremio-reauth-panel hidden space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                          <div id={`stremio-reauth-panel-${conn.id}`} class="stremio-reauth-panel hidden space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
                             <p class="text-xs text-zinc-500">Reconnecting replaces the stored account key and keeps your existing sync settings.</p>
                             <button type="button" class="stremio-reauth-start text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Reconnect Stremio</button>
                             <div class="stremio-reauth-details hidden space-y-3">
@@ -131,10 +131,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       )}
                       {(conn.type === "nuvio" || conn.type === "arvio") && (
                         <div class="nuvio-reauth hidden space-y-2" data-conn-id={conn.id} data-conn-type={conn.type}>
-                          <button type="button" class="nuvio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors">
+                          <button type="button" class="nuvio-reauth-toggle text-sm text-blue-400 hover:text-blue-300 cursor-pointer transition-colors" aria-expanded="false" aria-controls={`nuvio-reauth-form-${conn.id}`}>
                             Refresh token stopped working? Sign in again
                           </button>
-                          <div class="nuvio-reauth-form hidden space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                          <div id={`nuvio-reauth-form-${conn.id}`} class="nuvio-reauth-form hidden space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
                             <p class="text-xs text-zinc-500">Signing in replaces the refresh token above with a fresh one and reconnects immediately.</p>
                             <input type="email" class="nuvio-reauth-email w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO email" : "Nuvio email"} autocomplete="username" />
                             <input type="password" class="nuvio-reauth-password w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO password" : "Nuvio password"} autocomplete="current-password" />
@@ -277,12 +277,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                               />
                               <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Also monitor users</span>
                             </label>
-                            <button type="button" class="plex-user-picker-toggle text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1" data-conn-id={conn.id}>
+                            <button type="button" class="plex-user-picker-toggle text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1" data-conn-id={conn.id} aria-expanded="false" aria-controls={`plex-user-picker-${conn.id}`}>
                               <span class="plex-user-picker-toggle-label">Select users</span>
                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="plex-user-picker-chevron w-3 h-3 transition-transform"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                             </button>
                           </div>
-                          <div class="plex-user-picker space-y-2 hidden" data-conn-id={conn.id} data-monitored={JSON.stringify(conn.watchlist_monitored_users || [])}>
+                          <div id={`plex-user-picker-${conn.id}`} class="plex-user-picker space-y-2 hidden" data-conn-id={conn.id} data-monitored={JSON.stringify(conn.watchlist_monitored_users || [])}>
                             <div class="plex-user-list pl-1 space-y-2">
                               <p class="text-xs text-zinc-500 italic">Loading users…</p>
                             </div>
@@ -303,7 +303,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
             <!-- Add Connection button + form -->
             <div class="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl overflow-hidden">
-              <button type="button" id="add-connection-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors text-zinc-400 hover:text-zinc-200">
+              <button type="button" id="add-connection-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors text-zinc-400 hover:text-zinc-200" aria-expanded="false" aria-controls="add-connection-form">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                 <span class="font-medium">Add Connection</span>
               </button>
@@ -443,7 +443,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           </div>
 
           {seasonOverrides.length > 0 && (
-            <details id="season-remaps-panel" class="group mt-4 border border-zinc-800 rounded-2xl bg-zinc-900/20 overflow-hidden">
+            <details id="season-remaps-panel" data-motion-details class="group mt-4 border border-zinc-800 rounded-2xl bg-zinc-900/20 overflow-hidden">
               <summary class="flex items-center justify-between px-5 py-3.5 cursor-pointer list-none select-none hover:bg-zinc-900/40 transition-colors">
                 <div>
                   <span class="text-sm font-semibold text-zinc-300">Active Season Remaps</span>
@@ -1773,7 +1773,19 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
 <script>
   import { applyResponsiveArtwork } from "../lib/responsive-artwork";
-  import { showOverlay, hideOverlay } from '../lib/ui-motion';
+  import { showOverlay, hideOverlay, showCollapsible, hideCollapsible } from '../lib/ui-motion';
+
+  document.addEventListener('click', event => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>('[data-warning-toggle]');
+    const id = button?.dataset.warningToggle;
+    const pane = id ? document.getElementById(id) : null;
+    if (!button || !pane) return;
+    const open = !pane.classList.contains('hidden') && !pane.inert;
+    if (open) void hideCollapsible(pane);
+    else showCollapsible(pane);
+    button.querySelector('.warn-chevron')?.classList.toggle('rotate-180', !open);
+    button.setAttribute('aria-expanded', String(!open));
+  });
 
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
@@ -4240,7 +4252,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const isArvio = connType === 'arvio';
       const card = block.closest('[data-connection-id]');
       const toggleBtn = block.querySelector('.nuvio-reauth-toggle');
-      const form = block.querySelector('.nuvio-reauth-form');
+      const form = block.querySelector<HTMLElement>('.nuvio-reauth-form');
       const emailInput = block.querySelector('.nuvio-reauth-email') as HTMLInputElement | null;
       const passwordInput = block.querySelector('.nuvio-reauth-password') as HTMLInputElement | null;
       const submitBtn = block.querySelector('.nuvio-reauth-submit') as HTMLButtonElement | null;
@@ -4249,7 +4261,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const profileSelect = card?.querySelector('.conn-user-id-input') as HTMLSelectElement | null;
 
       toggleBtn?.addEventListener('click', () => {
-        form?.classList.toggle('hidden');
+        if (!form) return;
+        const open = !form.classList.contains('hidden') && !form.inert;
+        if (open) void hideCollapsible(form);
+        else showCollapsible(form);
+        toggleBtn.setAttribute('aria-expanded', String(!open));
       });
 
       submitBtn?.addEventListener('click', async () => {
@@ -4302,7 +4318,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           if (tokenInput) tokenInput.value = saved.token;
           if (connId) setConnStatus(`conn-status-${connId}`, 'connected');
           if (passwordInput) passwordInput.value = '';
-          form?.classList.add('hidden');
+          if (form) void hideCollapsible(form);
+          toggleBtn?.setAttribute('aria-expanded', 'false');
           block.classList.add('hidden');
           showMessage(`${isArvio ? 'ARVIO' : 'Nuvio'} reconnected.`);
         } catch (err: any) {
@@ -4321,7 +4338,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     document.querySelectorAll('.stremio-reauth').forEach(block => {
       const connId = block.getAttribute('data-conn-id');
       const toggleBtn = block.querySelector('.stremio-reauth-toggle');
-      const panel = block.querySelector('.stremio-reauth-panel');
+      const panel = block.querySelector<HTMLElement>('.stremio-reauth-panel');
       const startBtn = block.querySelector('.stremio-reauth-start') as HTMLButtonElement | null;
       const details = block.querySelector('.stremio-reauth-details');
       const urlLink = block.querySelector('.stremio-reauth-url') as HTMLAnchorElement | null;
@@ -4331,7 +4348,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       let pollTimer: number | null = null;
 
       toggleBtn?.addEventListener('click', () => {
-        panel?.classList.toggle('hidden');
+        if (!panel) return;
+        const open = !panel.classList.contains('hidden') && !panel.inert;
+        if (open) void hideCollapsible(panel);
+        else showCollapsible(panel);
+        toggleBtn.setAttribute('aria-expanded', String(!open));
       });
 
       startBtn?.addEventListener('click', async () => {
@@ -4462,12 +4483,16 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     if (addBtn && addForm) {
       addBtn.addEventListener('click', () => {
-        addForm.classList.toggle('hidden');
+        const open = !addForm.classList.contains('hidden') && !addForm.inert;
+        if (open) void hideCollapsible(addForm);
+        else showCollapsible(addForm);
+        addBtn.setAttribute('aria-expanded', String(!open));
       });
     }
     if (cancelBtn && addForm) {
       cancelBtn.addEventListener('click', () => {
-        addForm.classList.add('hidden');
+        void hideCollapsible(addForm);
+        addBtn?.setAttribute('aria-expanded', 'false');
         if (stremioPollTimer !== null) {
           window.clearTimeout(stremioPollTimer);
           stremioPollTimer = null;
@@ -5009,10 +5034,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (!picker) return;
 
       btn.addEventListener('click', () => {
-        const open = !picker.classList.contains('hidden');
-        picker.classList.toggle('hidden', open);
+        const open = !picker.classList.contains('hidden') && !picker.inert;
+        if (open) void hideCollapsible(picker);
+        else { showCollapsible(picker); loadPlexFriends(picker, token); }
+        btn.setAttribute('aria-expanded', String(!open));
         if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
-        if (!open) loadPlexFriends(picker, token);
       });
     });
 
@@ -5132,18 +5158,30 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
   function setupCollapsibleRows() {
     document.querySelectorAll('.collapsible-header').forEach(header => {
+      const targetId = header.getAttribute('data-target');
+      const initialBody = targetId ? document.getElementById(targetId) : null;
+      header.setAttribute('role', 'button');
+      header.setAttribute('tabindex', '0');
+      if (targetId) header.setAttribute('aria-controls', targetId);
+      header.setAttribute('aria-expanded', String(!!initialBody && !initialBody.classList.contains('hidden')));
+      header.addEventListener('keydown', event => {
+        const key = (event as KeyboardEvent).key;
+        if (key !== 'Enter' && key !== ' ') return;
+        event.preventDefault();
+        (header as HTMLElement).click();
+      });
       header.addEventListener('click', () => {
-        const targetId = header.getAttribute('data-target');
         const body = targetId ? document.getElementById(targetId) : null;
         if (!body) return;
-        const isOpen = !body.classList.contains('hidden');
+        const isOpen = !body.classList.contains('hidden') && !body.inert;
         if (isOpen) {
-          body.classList.add('hidden');
+          void hideCollapsible(body);
           header.querySelector('.collapsible-chevron')?.classList.remove('rotate-180');
         } else {
-          body.classList.remove('hidden');
+          showCollapsible(body);
           header.querySelector('.collapsible-chevron')?.classList.add('rotate-180');
         }
+        header.setAttribute('aria-expanded', String(!isOpen));
       });
     });
   }
@@ -5154,7 +5192,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const body = document.getElementById(targetId);
     const header = document.querySelector<HTMLElement>(`.collapsible-header[data-target="${CSS.escape(targetId)}"]`);
     if (!body || !header) return;
-    body.classList.remove('hidden');
+    showCollapsible(body);
+    header.setAttribute('aria-expanded', 'true');
     header.querySelector('.collapsible-chevron')?.classList.add('rotate-180');
     header.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
@@ -5428,7 +5467,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <button
               type="button"
               class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-amber-500/10 transition-colors cursor-pointer"
-              onclick="const d=document.getElementById('${detailsId}');const c=this.querySelector('.warn-chevron');d.classList.toggle('hidden');c.classList.toggle('rotate-180');"
+              data-warning-toggle="${detailsId}" aria-controls="${detailsId}" aria-expanded="false"
             >
               <div class="flex items-center gap-2">
                 ${warnIcon}
@@ -5489,7 +5528,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             <button
               type="button"
               class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-amber-500/10 transition-colors cursor-pointer"
-              onclick="const d=document.getElementById('${lookupDetailsId}');const c=this.querySelector('.warn-chevron');d.classList.toggle('hidden');c.classList.toggle('rotate-180');"
+              data-warning-toggle="${lookupDetailsId}" aria-controls="${lookupDetailsId}" aria-expanded="false"
             >
               <div class="flex items-center gap-2">
                 ${warnIcon}
@@ -5513,6 +5552,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const pane = document.getElementById(id);
           pane?.classList.remove('hidden');
           pane?.previousElementSibling?.querySelector('.warn-chevron')?.classList.add('rotate-180');
+          pane?.previousElementSibling?.setAttribute('aria-expanded', 'true');
         }
 
         container.querySelectorAll('.remap-season-btn').forEach((btn) => {

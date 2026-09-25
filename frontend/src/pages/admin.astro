@@ -725,7 +725,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 </div>
 
 <script>
-  import { showOverlay, hideOverlay } from '../lib/ui-motion';
+  import { showOverlay, hideOverlay, showCollapsible, hideCollapsible } from '../lib/ui-motion';
   const appData = document.getElementById('app-data') as HTMLElement;
   const token = appData.dataset.token!;
   const currentUserId = parseInt(appData.dataset.currentUserId!);
@@ -805,13 +805,26 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
   // ── Collapsibles ──
   document.querySelectorAll('.collapsible-header').forEach(header => {
+    const targetId = header.getAttribute('data-target');
+    const initialBody = targetId ? document.getElementById(targetId) : null;
+    header.setAttribute('role', 'button');
+    header.setAttribute('tabindex', '0');
+    if (targetId) header.setAttribute('aria-controls', targetId);
+    header.setAttribute('aria-expanded', String(!!initialBody && !initialBody.classList.contains('hidden')));
+    header.addEventListener('keydown', event => {
+      const key = (event as KeyboardEvent).key;
+      if (key !== 'Enter' && key !== ' ') return;
+      event.preventDefault();
+      (header as HTMLElement).click();
+    });
     header.addEventListener('click', () => {
-      const targetId = header.getAttribute('data-target');
       const body = targetId ? document.getElementById(targetId) : null;
       if (!body) return;
-      const isOpen = !body.classList.contains('hidden');
-      body.classList.toggle('hidden', isOpen);
+      const isOpen = !body.classList.contains('hidden') && !body.inert;
+      if (isOpen) void hideCollapsible(body);
+      else showCollapsible(body);
       header.querySelector('.collapsible-chevron')?.classList.toggle('rotate-180', !isOpen);
+      header.setAttribute('aria-expanded', String(!isOpen));
     });
   });
 

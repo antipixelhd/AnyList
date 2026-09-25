@@ -24,11 +24,7 @@
 }
 .button-primary:hover,.button-primary:focus-visible {
   background:#55baf0;
-  color:white;
-  transform:translateY(-1px)
-}
-.button-primary:active {
-  transform:none
+  color:white
 }
 .button-quiet {
   border:0;
