@@ -1,24 +1,27 @@
 .tracker {
   --dropdown-bg:#151f2e;
-  --dropdown-hover:#2a3440;
+  --dropdown-hover:hsl(213, 44%, 11%);
   --dropdown-scrollbar:#59687a
 }
-.tracker .tracker-dropdown-trigger,
 .tracker .tracker-dropdown-menu {
   background:var(--dropdown-bg)
 }
 .tracker .tracker-dropdown-menu {
+  border:0;
+  box-shadow:0 1px 3px 0 rgb(0, 0, 0);
+  padding-left:0;
+  padding-right:0;
   scrollbar-width:thin;
-  scrollbar-color:var(--dropdown-scrollbar) var(--dropdown-bg)
+  scrollbar-color:var(--dropdown-scrollbar) transparent
 }
 .tracker .tracker-dropdown-menu::-webkit-scrollbar {
   width:8px
 }
 .tracker .tracker-dropdown-menu::-webkit-scrollbar-track {
-  background:var(--dropdown-bg)
+  background:transparent
 }
 .tracker .tracker-dropdown-menu::-webkit-scrollbar-thumb {
-  border:2px solid var(--dropdown-bg);
+  border:2px solid transparent;
   border-radius:8px;
   background:var(--dropdown-scrollbar)
 }
@@ -40,6 +43,9 @@
 .tracker .tracker-dropdown-menu button[aria-selected="true"]:is(:hover,:focus-visible),
 .tracker .tracker-dropdown-menu button[aria-current="true"]:is(:hover,:focus-visible) {
   color:var(--blue)
+}
+.tracker .tracker-dropdown-menu > button {
+  border-radius:0
 }
 .tracker-select {
   position:relative;
@@ -65,8 +71,6 @@
   gap:8px;
   min-width:0;
   margin:0;
-  border:1px solid #36516a;
-  color:var(--text);
   text-align:left;
   cursor:pointer
 }
@@ -96,11 +100,10 @@
   position:fixed;
   z-index:1000;
   min-width:0;
-  padding:5px;
+  padding:5px 0;
   overflow-y:auto;
-  border:1px solid #36516a;
   border-radius:4px;
-  box-shadow:0 12px 30px #020711b3
+  box-shadow:0 1px 3px 0 rgb(0, 0, 0)
 }
 .tracker-select-options[hidden] {
   display:none!important

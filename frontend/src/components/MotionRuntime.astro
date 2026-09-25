@@ -33,7 +33,7 @@
   let pressed: HTMLElement | null = null;
   function release() {
     if (!pressed) return;
-    animateScale(pressed, hovered.has(pressed) && !pressed.matches(':disabled, [aria-disabled="true"]') ? 1.012 : 1, .14);
+    animateScale(pressed, hovered.has(pressed) && !pressed.matches(':disabled, [aria-disabled="true"]') ? 1.005 : 1, .14);
     pressed = null;
   }
 
@@ -46,7 +46,7 @@
     if (element.matches('.quick-search-trigger, [aria-expanded], [aria-haspopup="menu"], [aria-haspopup="listbox"]') || element.closest('[data-motion-static]')) return;
     if (element.closest('.list-shell .filters') || element.matches('.list-shell .mobile-filter-toggle')) return;
     hovered.add(element);
-    if (element !== pressed) animateScale(element, 1.012, .17);
+    if (element !== pressed) animateScale(element, 1.005, .17);
   });
   document.addEventListener('pointerout', event => {
     const target = event.target as Element | null;

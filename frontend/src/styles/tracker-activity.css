@@ -161,6 +161,14 @@
   font-size:var(--type-meta-size);
   max-width:110px
 }
+.review-dashboard .notice-card[data-notification-state="pending"] .status-select .tracker-select {
+  width:110px;
+  max-width:110px;
+  font-size:var(--type-meta-size)
+}
+.review-dashboard .notice-card[data-notification-state="pending"] .status-select .tracker-select-trigger {
+  font-size:inherit
+}
 @media(max-width:460px) {
   .review-dashboard .notice-card[data-notification-state="pending"] .notice-actions {
     gap:4px
@@ -173,6 +181,11 @@
     gap:3px
   }
   .review-dashboard .notice-card[data-notification-state="pending"] .status-select select {
+    max-width:96px;
+    font-size:var(--type-caption-size)
+  }
+  .review-dashboard .notice-card[data-notification-state="pending"] .status-select .tracker-select {
+    width:96px;
     max-width:96px;
     font-size:var(--type-caption-size)
   }
