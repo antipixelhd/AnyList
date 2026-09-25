@@ -38,7 +38,7 @@ jobs:
           build-args: |
             APP_VERSION=${{ github.sha }}
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+            ghcr.io/antipixelhd/anylist:latest
+            ghcr.io/antipixelhd/anylist:sha-${{ github.sha }}
           cache-from: type=gha,scope=anylist-container
           cache-to: type=gha,mode=max,scope=anylist-container
