@@ -2,7 +2,7 @@
 <div class="offline-toast" data-offline-toast role="status" aria-live="polite" hidden></div>
 
 <script>
-  import { isTransitionBeforePreparationEvent, swapFunctions, type TransitionBeforeSwapEvent } from 'astro:transitions/client';
+  import { isTransitionBeforePreparationEvent } from 'astro:transitions/client';
 
   type CachedPage = { html: string; bytes: number; storedAt: number };
   type NavigationState = {
@@ -240,30 +240,6 @@
       };
     });
     document.addEventListener('astro:after-preparation', finishProgress);
-    document.addEventListener('astro:before-swap', (rawEvent) => {
-      const event = rawEvent as TransitionBeforeSwapEvent;
-      if (!document.body.classList.contains('tracker') || !event.newDocument.body.classList.contains('tracker')) return;
-      const currentBody = document.body;
-      const currentBar = currentBody.querySelector<HTMLElement>(':scope > [data-appbar]');
-      const nextBar = event.newDocument.body.querySelector<HTMLElement>(':scope > [data-appbar]');
-      if (!currentBar || !nextBar) return;
-      event.swap = () => {
-        const nextBody = event.newDocument.body;
-        swapFunctions.deselectScripts(event.newDocument);
-        swapFunctions.swapRootAttributes(event.newDocument);
-        swapFunctions.swapHeadElements(event.newDocument);
-        const restoreFocus = swapFunctions.saveFocus();
-        for (const attribute of [...currentBody.attributes]) currentBody.removeAttribute(attribute.name);
-        for (const attribute of [...nextBody.attributes]) currentBody.setAttribute(attribute.name, attribute.value);
-        const oldChildren = [...currentBody.childNodes].filter(node => node !== currentBar);
-        const nextChildren = [...nextBody.childNodes];
-        const barIndex = nextChildren.indexOf(nextBar);
-        currentBar.before(...nextChildren.slice(0, barIndex));
-        currentBar.after(...nextChildren.slice(barIndex + 1));
-        oldChildren.forEach(node => node.parentNode === currentBody && node.remove());
-        restoreFocus();
-      };
-    });
     document.addEventListener('astro:after-swap', () => {
       if (!document.body.hasAttribute('data-list-landing')) return;
       const tabs = document.querySelector<HTMLElement>('.profile-tabs');

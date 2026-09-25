@@ -54,12 +54,12 @@ const settingsRoute = ['/settings', '/user-settings', '/connections', '/admin'].
 const mobileSection = primaryItems.find(item => item.active)?.label
   || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : settingsRoute ? 'Settings' : 'Browse');
 ---
-<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:persist="tracker-appbar" transition:animate="none">
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar data-motion-static transition:animate="none">
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
     </a>
-    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile}>
+    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} transition:persist="desktop-main-nav">
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
     <details class="mobile-appbar-menu" data-mobile-appbar-menu>
@@ -119,7 +119,6 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
-  let suppressScrollHideUntil = 0;
   document.addEventListener('astro:page-load', () => {
   appbarListeners?.abort();
   appbarListeners = new AbortController();
@@ -147,33 +146,12 @@ const mobileSection = primaryItems.find(item => item.active)?.label
         link.classList.toggle('appbar-pointer-hover', link === hoveredLink);
       }
     };
-    const syncCurrentPage = () => {
+    const syncDesktopCurrentPage = () => {
       for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
         const current = location.pathname === link.pathname || location.pathname.startsWith(`${link.pathname}/`);
         if (current) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       }
-      for (const link of appbar.querySelectorAll<HTMLAnchorElement>('[data-mobile-main-nav] a')) {
-        const current = location.pathname === link.pathname || location.pathname.startsWith(`${link.pathname}/`);
-        link.classList.toggle('active', current);
-        if (current) link.setAttribute('aria-current', 'page');
-        else link.removeAttribute('aria-current');
-      }
-      const settings = ['/settings', '/user-settings', '/connections', '/admin'].includes(location.pathname);
-      const profile = location.pathname.startsWith('/user/');
-      const notifications = location.pathname === '/recent-events';
-      for (const [selector, current] of [['[aria-label="Settings"]', settings], ['[data-appbar-avatar]', profile], ['[data-notification-link]', notifications]] as const) {
-        const link = appbar.querySelector<HTMLAnchorElement>(selector);
-        link?.classList.toggle('active', current);
-        if (current) link?.setAttribute('aria-current', 'page');
-        else link?.removeAttribute('aria-current');
-      }
-      const section = appbar.querySelector<HTMLElement>('[data-mobile-appbar-menu] summary');
-      const label = appbar.querySelector<HTMLElement>('[data-mobile-main-nav] a.active')?.textContent?.trim()
-        || (profile ? 'Profile' : notifications ? 'Notifications' : settings ? 'Settings' : 'Browse');
-      const sectionText = section?.querySelector('span');
-      if (sectionText) sectionText.textContent = label;
-      section?.setAttribute('aria-label', `${label}. Open main navigation`);
     };
     const releaseTransitionCursor = (id: number) => {
       if (id !== cursorTransitionId) return;
@@ -199,18 +177,13 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       }
       const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
       if (!incomingAppbar) return;
-      // List landings hide the bar for a full document load while content is prepared.
-      // During client navigation the existing bar is already rendered and must stay visible.
-      suppressScrollHideUntil = performance.now() + 500;
-      appbar.classList.toggle('appbar-fade-capable', incomingAppbar.classList.contains('appbar-fade-capable'));
       const pointerActive = appbar.classList.contains('appbar-pointer-active') || appbar.matches(':hover');
       incomingAppbar.classList.toggle('appbar-pointer-active', pointerActive);
       const listLanding = event.newDocument?.body.hasAttribute('data-list-landing') ?? false;
       const startsTransparent = !listLanding && !mobile() && incomingAppbar.classList.contains('appbar-fade-capable');
       incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
-      incomingAppbar.classList.remove('appbar-hidden');
-      appbar.classList.toggle('appbar-at-top', incomingAppbar.classList.contains('appbar-at-top'));
-      appbar.classList.toggle('appbar-hidden', incomingAppbar.classList.contains('appbar-hidden'));
+      if (listLanding) incomingAppbar.classList.add('appbar-hidden');
+      else if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
     };
     document.addEventListener('astro:before-swap', prepareIncomingAppbar, { signal: appbarListeners.signal });
     document.addEventListener('astro:after-swap', () => {
@@ -237,8 +210,8 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       clearPointerState();
       clearHoveredLink();
     }, { signal: appbarListeners.signal });
-    // The shared header survives swaps; refresh route semantics after navigation.
-    syncCurrentPage();
+    // The desktop nav survives swaps. Refresh only route semantics after navigation.
+    syncDesktopCurrentPage();
     if (appbar.classList.contains('appbar-hidden')) {
       clearPointerState();
       clearHoveredLink();
@@ -261,7 +234,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       appbar.classList.remove('appbar-hidden');
     };
     syncTopFade(previousY);
-    if (previousY <= topThreshold() || performance.now() < suppressScrollHideUntil) reveal();
+    if (previousY <= topThreshold()) reveal();
     const update = () => {
       const currentY = Math.max(0, window.scrollY);
       const delta = currentY - previousY;
@@ -269,7 +242,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       const isMobile = mobile();
       const hideAfter = isMobile ? appbar.offsetHeight : 0;
       syncTopFade(currentY);
-      if (performance.now() < suppressScrollHideUntil || currentY <= topThreshold() || delta < -4 || ownsFocus) reveal();
+      if (currentY <= topThreshold() || delta < -4 || ownsFocus) reveal();
       else if ((delta > 6 || (!isMobile && wheelDown && delta > 0)) && currentY > hideAfter) {
         appbar.classList.add('appbar-hidden');
         clearPointerState();
