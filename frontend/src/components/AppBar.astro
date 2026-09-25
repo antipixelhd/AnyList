@@ -54,12 +54,12 @@ const settingsRoute = ['/settings', '/user-settings', '/connections', '/admin'].
 const mobileSection = primaryItems.find(item => item.active)?.label
   || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : settingsRoute ? 'Settings' : 'Browse');
 ---
-<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:persist="tracker-appbar" transition:animate="none">
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
     </a>
-    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} transition:persist="desktop-main-nav">
+    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile}>
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
     <details class="mobile-appbar-menu" data-mobile-appbar-menu>
@@ -146,12 +146,33 @@ const mobileSection = primaryItems.find(item => item.active)?.label
         link.classList.toggle('appbar-pointer-hover', link === hoveredLink);
       }
     };
-    const syncDesktopCurrentPage = () => {
+    const syncCurrentPage = () => {
       for (const link of appbar.querySelectorAll<HTMLAnchorElement>('.appbar-nav a')) {
         const current = location.pathname === link.pathname || location.pathname.startsWith(`${link.pathname}/`);
         if (current) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       }
+      for (const link of appbar.querySelectorAll<HTMLAnchorElement>('[data-mobile-main-nav] a')) {
+        const current = location.pathname === link.pathname || location.pathname.startsWith(`${link.pathname}/`);
+        link.classList.toggle('active', current);
+        if (current) link.setAttribute('aria-current', 'page');
+        else link.removeAttribute('aria-current');
+      }
+      const settings = ['/settings', '/user-settings', '/connections', '/admin'].includes(location.pathname);
+      const profile = location.pathname.startsWith('/user/');
+      const notifications = location.pathname === '/recent-events';
+      for (const [selector, current] of [['[aria-label="Settings"]', settings], ['[data-appbar-avatar]', profile], ['[data-notification-link]', notifications]] as const) {
+        const link = appbar.querySelector<HTMLAnchorElement>(selector);
+        link?.classList.toggle('active', current);
+        if (current) link?.setAttribute('aria-current', 'page');
+        else link?.removeAttribute('aria-current');
+      }
+      const section = appbar.querySelector<HTMLElement>('[data-mobile-appbar-menu] summary');
+      const label = appbar.querySelector<HTMLElement>('[data-mobile-main-nav] a.active')?.textContent?.trim()
+        || (profile ? 'Profile' : notifications ? 'Notifications' : settings ? 'Settings' : 'Browse');
+      const sectionText = section?.querySelector('span');
+      if (sectionText) sectionText.textContent = label;
+      section?.setAttribute('aria-label', `${label}. Open main navigation`);
     };
     const releaseTransitionCursor = (id: number) => {
       if (id !== cursorTransitionId) return;
@@ -177,6 +198,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       }
       const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
       if (!incomingAppbar) return;
+      appbar.classList.toggle('appbar-fade-capable', incomingAppbar.classList.contains('appbar-fade-capable'));
       const pointerActive = appbar.classList.contains('appbar-pointer-active') || appbar.matches(':hover');
       incomingAppbar.classList.toggle('appbar-pointer-active', pointerActive);
       const listLanding = event.newDocument?.body.hasAttribute('data-list-landing') ?? false;
@@ -184,6 +206,8 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
       if (listLanding) incomingAppbar.classList.add('appbar-hidden');
       else if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
+      appbar.classList.toggle('appbar-at-top', incomingAppbar.classList.contains('appbar-at-top'));
+      appbar.classList.toggle('appbar-hidden', incomingAppbar.classList.contains('appbar-hidden'));
     };
     document.addEventListener('astro:before-swap', prepareIncomingAppbar, { signal: appbarListeners.signal });
     document.addEventListener('astro:after-swap', () => {
@@ -210,8 +234,8 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       clearPointerState();
       clearHoveredLink();
     }, { signal: appbarListeners.signal });
-    // The desktop nav survives swaps. Refresh only route semantics after navigation.
-    syncDesktopCurrentPage();
+    // The shared header survives swaps; refresh route semantics after navigation.
+    syncCurrentPage();
     if (appbar.classList.contains('appbar-hidden')) {
       clearPointerState();
       clearHoveredLink();
