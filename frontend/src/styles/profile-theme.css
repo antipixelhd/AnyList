@@ -9,6 +9,15 @@
 .tracker[data-theme-active] .entry-thumbnail .row-menu:is(:hover, :focus-visible, :focus, :active) {
   background: color-mix(in srgb, var(--blue) 85%, transparent);
 }
+@media (hover: none), (max-width: 650px) {
+  .tracker[data-theme-active] .entry-thumbnail .row-menu,
+  .tracker[data-theme-active] .entry-thumbnail .row-menu:hover {
+    background: transparent;
+  }
+  .tracker[data-theme-active] .entry-thumbnail .row-menu:is(:focus-visible, :focus, :active) {
+    background: color-mix(in srgb, var(--blue) 85%, transparent);
+  }
+}
 .tracker[data-theme-active] .status-stat-list i {
   background: linear-gradient(90deg, var(--blue), color-mix(in srgb, var(--blue) 58%, #5d79df));
 }
