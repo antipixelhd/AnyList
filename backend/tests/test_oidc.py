@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
+from models.base import UserRole
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -69,22 +70,20 @@ class _FakeSession:
         self.add = MagicMock()
         self.commit = AsyncMock()
         self.refresh = AsyncMock()
+        self.rollback = AsyncMock()
 
 
 class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
-    """Regression tests for #159: the first user auto-created via OIDC must be
-    granted admin, mirroring the is_first_user rule routers/auth.py's local
-    registration endpoint already applies. Before the fix, User(...) was
-    constructed with no is_admin argument at all, so it silently defaulted to
-    False regardless of how many users existed."""
+    """The first Google OIDC-created account must receive both admin fields;
+    later OIDC-created accounts must receive neither."""
 
     def _patched_settings(self):
         return patch.multiple(
             oidc.app_settings,
             oidc_enabled=True,
             oidc_auto_create_users=True,
-            oidc_require_verified_email=False,
-            oidc_identifier_field="sub",
+            oidc_require_verified_email=True,
+            oidc_identifier_field="email",
             oidc_token_url="https://provider.example/token",
             oidc_userinfo_url="https://provider.example/userinfo",
             oidc_redirect_url="https://scrob.example/oidc-callback",
@@ -94,12 +93,16 @@ class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_first_oidc_user_becomes_admin(self) -> None:
         token_response = _FakeResponse(200, {"access_token": "provider-token"})
-        userinfo_response = _FakeResponse(200, {"sub": "user-1", "email": "new@example.com"})
+        userinfo_response = _FakeResponse(200, {
+            "email": "new@example.com",
+            "email_verified": True,
+            "preferred_username": "new-user",
+        })
         fake_client = _FakeHttpClient(token_response, userinfo_response)
 
-        # Query order: 1) existing-user-by-email lookup (none), 2) username
-        # uniqueness check (available), 3) count(*) for is_first_user.
-        db = _FakeSession([_UserResult(None), _UserResult(None), _CountResult(0)])
+        # Query order: initial identity lookup, under-lock identity recheck,
+        # username uniqueness check, and user count.
+        db = _FakeSession([_UserResult(None), _UserResult(None), _UserResult(None), _CountResult(0)])
 
         with self._patched_settings(), \
              patch("routers.oidc.httpx.AsyncClient", return_value=fake_client), \
@@ -108,13 +111,18 @@ class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
 
         created_user = db.add.call_args[0][0]
         self.assertTrue(created_user.is_admin)
+        self.assertEqual(created_user.role, UserRole.admin)
 
     async def test_subsequent_oidc_user_is_not_admin(self) -> None:
         token_response = _FakeResponse(200, {"access_token": "provider-token"})
-        userinfo_response = _FakeResponse(200, {"sub": "user-2", "email": "second@example.com"})
+        userinfo_response = _FakeResponse(200, {
+            "email": "second@example.com",
+            "email_verified": True,
+            "preferred_username": "second-user",
+        })
         fake_client = _FakeHttpClient(token_response, userinfo_response)
 
-        db = _FakeSession([_UserResult(None), _UserResult(None), _CountResult(1)])
+        db = _FakeSession([_UserResult(None), _UserResult(None), _UserResult(None), _CountResult(1)])
 
         with self._patched_settings(), \
              patch("routers.oidc.httpx.AsyncClient", return_value=fake_client), \
@@ -123,6 +131,30 @@ class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
 
         created_user = db.add.call_args[0][0]
         self.assertFalse(created_user.is_admin)
+        self.assertEqual(created_user.role, UserRole.user)
+
+    async def test_parallel_oidc_callback_reuses_account_found_by_under_lock_recheck(self) -> None:
+        existing = SimpleNamespace(id=42)
+        db = _FakeSession([_UserResult(None), _UserResult(existing)])
+        client = _FakeHttpClient(
+            _FakeResponse(200, {"access_token": "provider-token"}),
+            _FakeResponse(200, {
+                "email": "new@example.com",
+                "email_verified": True,
+                "preferred_username": "new-user",
+            }),
+        )
+
+        with self._patched_settings(), \
+             patch("routers.oidc.httpx.AsyncClient", return_value=client), \
+             patch("routers.oidc.create_access_token", return_value="jwt-token") as create_token:
+            result = await oidc.oidc_exchange(oidc.OidcExchangeRequest(code="auth-code"), db)
+
+        self.assertEqual(result, {"access_token": "jwt-token"})
+        create_token.assert_called_once_with(subject=42)
+        db.add.assert_not_called()
+        db.commit.assert_not_awaited()
+        db.rollback.assert_awaited_once()
 
 
 class OidcInviteOnlyGoogleTests(unittest.IsolatedAsyncioTestCase):

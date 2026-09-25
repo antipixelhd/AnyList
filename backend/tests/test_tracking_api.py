@@ -677,7 +677,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(activity['payload'].get('rating_changed', False))
 
     async def test_home_activity_contains_followed_public_profiles_only(self):
-        now=datetime.now(timezone.utc).replace(tzinfo=None)
+        # Keep both legacy rows on the same UTC day even when the test suite
+        # runs near midnight; activity cards are grouped by UTC date.
+        now=datetime.now(timezone.utc).replace(tzinfo=None, hour=12, minute=0, second=0, microsecond=0)
         owner_activity=TrackingActivity(user_id=self.owner.id,media_id=self.movie.id,status='watching',score=None)
         friend_activity=TrackingActivity(user_id=self.friend.id,media_id=self.movie.id,status='watching',score=None,
             payload={'episodes_watched':1},created_at=now-timedelta(hours=1))
@@ -1414,16 +1416,20 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'default_sort':'title',
             'low_priority_notifications':True,'low_priority_retention_days':7,
             'show_new_ratings_popup':True,
+            'new_season_release_dates':True,'new_season_releases':True,
         })
         changed=await self.client.patch('/tracking/preferences',json={
             'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,
             'low_priority_retention_days':14,'show_new_ratings_popup':False,
+            'new_season_release_dates':False,'new_season_releases':False,
         })
         self.assertEqual(changed.status_code,200,changed.text)
         self.assertFalse(changed.json()['combine_lists'])
         self.assertEqual(changed.json()['default_sort'],'updated')
         self.assertEqual(changed.json()['low_priority_retention_days'],14)
         self.assertFalse(changed.json()['show_new_ratings_popup'])
+        self.assertFalse(changed.json()['new_season_release_dates'])
+        self.assertFalse(changed.json()['new_season_releases'])
         invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
         self.assertEqual(invalid.status_code,422,invalid.text)
 

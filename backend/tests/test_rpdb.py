@@ -16,6 +16,20 @@ from models.users import UserSettings
 from routers import auth
 
 
+class _SettingsFakeResult:
+    def __init__(self, item):
+        self.item = item
+
+    def scalar_one_or_none(self):
+        return self.item
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
 class RpdbProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_requires_explicit_valid_boolean(self):
         for payload, expected in [({"valid": True}, True), ({"valid": False}, False),
@@ -64,7 +78,7 @@ class RpdbSettingsTests(unittest.IsolatedAsyncioTestCase):
                 value = self.rows.get(user_id)
             else:
                 value = None
-            return SimpleNamespace(scalar_one_or_none=lambda: value)
+            return _SettingsFakeResult(value)
         self.db = SimpleNamespace(execute=execute, commit=AsyncMock(), refresh=AsyncMock())
         app = FastAPI()
         app.include_router(auth.router, prefix="/auth")

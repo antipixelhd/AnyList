@@ -37,6 +37,12 @@ class _Result:
     def scalar_one_or_none(self):
         return self.item
 
+    def unique(self):
+        return self
+
+    def all(self):
+        return self.item if isinstance(self.item, list) else ([] if self.item is None else [self.item])
+
 
 class _FakeSession:
     """Queues results for db.execute() in call order - mirrors the pattern
@@ -141,8 +147,9 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
             title="Correct Existing Title", overview="Correct overview",
             tmdb_id=555555, tmdb_data={"runtime": 42, "cast": []},  # NOT tvdb-sourced
         )
-        # Query order: 1) show, 2) linked episodes, 3) orphans.
-        db = _FakeSessionWithNesting([show, [good_ep], []])
+        # Query order: show, linked episodes, orphans, then the season-release
+        # notification scan (empty because this fixture has no tracked entries).
+        db = _FakeSessionWithNesting([show, [good_ep], [], []])
 
         wrong_tvdb_ep = {"id": 999999, "seasonNumber": 1, "number": 1, "name": "WRONG Episode"}
 
@@ -166,7 +173,9 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
             title="Stale Title", overview="stale", tmdb_id=None, tvdb_id=888888,
             tmdb_data={"runtime": 20, "tvdb_episode_id": 888888, "source": "tvdb"},
         )
-        db = _FakeSessionWithNesting([show, [tvdb_ep], []])
+        # The final empty result is the season-release notification scan after
+        # metadata refresh; no tracked entries exist in this fake session.
+        db = _FakeSessionWithNesting([show, [tvdb_ep], [], []])
 
         raw_tvdb_ep = {
             "id": 888888, "seasonNumber": 1, "number": 2, "name": "Refreshed Title",

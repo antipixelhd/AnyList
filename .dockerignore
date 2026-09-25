@@ -12,6 +12,17 @@ CLAUDE.md
 .testdb/
 .env
 *.env
+**/.env*
+**/.venv/
+**/node_modules/
+**/dist/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.npm-cache/
+**/*.log
+backend/data/
+backend/tests/
 
 # Test files
 test.http

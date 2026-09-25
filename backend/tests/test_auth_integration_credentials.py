@@ -11,7 +11,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 
 import schemas
 from dependencies import get_current_user
-from routers import auth
+from routers import auth, oidc
 
 
 def _test_app() -> FastAPI:
@@ -344,9 +344,25 @@ class IntegrationCredentialRequestTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class _SettingsFakeResult:
+    """Minimal SQLAlchemy result surface used by settings update cleanup."""
+
+    def __init__(self, item):
+        self.item = item
+
+    def scalar_one_or_none(self):
+        return self.item
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
 class _SettingsFakeDB:
-    """Queues results for db.execute() in call order: the UserSettings lookup,
-    then _settings_response's GlobalSettings lookup."""
+    """Queues the user settings and global settings rows; cloud-action and
+    deletion-marker scans return empty scalar collections."""
 
     def __init__(self, settings):
         self._results = [settings, None]
@@ -355,7 +371,7 @@ class _SettingsFakeDB:
 
     async def execute(self, stmt):
         item = self._results.pop(0) if self._results else None
-        return SimpleNamespace(scalar_one_or_none=lambda: item)
+        return _SettingsFakeResult(item)
 
     def add(self, obj):
         pass
@@ -599,11 +615,38 @@ class RegisterRoleEscalationTests(unittest.IsolatedAsyncioTestCase):
             password="password123",
             role=UserRole.user,
         )
-        with patch.object(auth.app_settings, "require_email_validation", False):
+        with patch.object(auth.app_settings, "enable_registrations", False), \
+             patch.object(auth.app_settings, "require_email_validation", False):
             new_user = await auth.register.__wrapped__(SimpleNamespace(), user_in, db)
 
         self.assertEqual(new_user.role, UserRole.admin)
         self.assertTrue(new_user.is_admin)
+
+
+class AccountBootstrapLockTests(unittest.IsolatedAsyncioTestCase):
+    async def test_password_and_oidc_signup_use_the_same_postgres_transaction_lock(self) -> None:
+        class _PostgresSession:
+            def __init__(self):
+                self.execute = AsyncMock()
+
+            def get_bind(self):
+                return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        auth_db = _PostgresSession()
+        oidc_db = _PostgresSession()
+
+        await auth._lock_account_bootstrap(auth_db)
+        await oidc._lock_account_bootstrap(oidc_db)
+
+        auth_stmt = auth_db.execute.await_args.args[0]
+        oidc_stmt = oidc_db.execute.await_args.args[0]
+        from sqlalchemy.dialects import postgresql
+
+        auth_compiled = auth_stmt.compile(dialect=postgresql.dialect())
+        oidc_compiled = oidc_stmt.compile(dialect=postgresql.dialect())
+        self.assertIn("pg_advisory_xact_lock", str(auth_compiled))
+        self.assertEqual(str(auth_compiled), str(oidc_compiled))
+        self.assertEqual(auth_compiled.params, oidc_compiled.params)
 
 
 if __name__ == "__main__":

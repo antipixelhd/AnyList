@@ -1,18 +1,20 @@
-name: Branch build
+name: Publish AnyList container
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build branch image
+    name: Build and publish
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -27,10 +29,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sanitize branch name
-        id: branch
-        run: echo "tag=$(echo '${{ github.ref_name }}' | sed 's|/|-|g')" >> $GITHUB_OUTPUT
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -38,22 +36,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            APP_VERSION=${{ steps.branch.outputs.tag }}-dev
+            APP_VERSION=${{ github.sha }}
           tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.branch.outputs.tag }}
-          cache-from: type=gha,scope=anylist-${{ steps.branch.outputs.tag }}
-          cache-to: type=gha,mode=max,scope=anylist-${{ steps.branch.outputs.tag }}
-
-      - name: Build and push omnibus
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.omnibus
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            APP_VERSION=${{ steps.branch.outputs.tag }}-dev
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.branch.outputs.tag }}-omnibus
-          cache-from: type=gha,scope=anylist-omnibus-${{ steps.branch.outputs.tag }}
-          cache-to: type=gha,mode=max,scope=anylist-omnibus-${{ steps.branch.outputs.tag }}
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=anylist-container
+          cache-to: type=gha,mode=max,scope=anylist-container

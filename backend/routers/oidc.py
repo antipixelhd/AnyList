@@ -11,9 +11,22 @@ from sqlalchemy.future import select
 from core.config import settings as app_settings
 from core.security import create_access_token, get_password_hash
 from db import get_db
+from models.base import UserRole
 from models.users import User
 
 router = APIRouter()
+
+
+async def _lock_account_bootstrap(db: AsyncSession) -> None:
+    """Serialize OIDC provisioning with password registration bootstrap."""
+    get_bind = getattr(db, "get_bind", None)
+    if get_bind is None:
+        return
+    bind = get_bind()
+    if getattr(getattr(bind, "dialect", None), "name", None) == "postgresql":
+        # Keep in sync with routers/auth.py. The xact lock is held through the
+        # account insert and commit, covering all self-service signup paths.
+        await db.execute(select(func.pg_advisory_xact_lock(1297371723, 1)))
 
 
 class OidcExchangeRequest(BaseModel):
@@ -149,6 +162,19 @@ async def oidc_exchange(
         if not app_settings.oidc_auto_create_users:
             raise HTTPException(status_code=403, detail="No account found for this identity")
 
+        # The original lookup happened before taking the lock. Recheck under
+        # the lock so parallel callbacks for the same identity reuse the first
+        # committed account instead of racing a duplicate insert. End the
+        # read-only lookup transaction first so even repeatable-read sessions
+        # take a fresh snapshot after acquiring the lock.
+        await db.rollback()
+        await _lock_account_bootstrap(db)
+        result = await db.execute(
+            select(User).where(func.lower(User.email) == normalized_identifier)
+        )
+        user = result.scalar_one_or_none()
+
+    if not user:
         raw_email = userinfo.get("email", str(identifier))
         raw_username = (
             userinfo.get("preferred_username")
@@ -166,9 +192,9 @@ async def oidc_exchange(
             username = f"{base}{counter}"
             counter += 1
 
-        # First user (local or OIDC) becomes admin - same rule as local
-        # registration in routers/auth.py, which this path had never mirrored
-        # (see #159).
+        # The first account, regardless of signup method, is the bootstrap
+        # admin. Both fields are required because some authorization paths
+        # check the role while others check is_admin.
         count_result = await db.execute(select(func.count()).select_from(User))
         is_first_user = count_result.scalar_one() == 0
 
@@ -177,6 +203,7 @@ async def oidc_exchange(
             username=username,
             password_hash=None,
             api_key=secrets.token_urlsafe(32),
+            role=UserRole.admin if is_first_user else UserRole.user,
             is_admin=is_first_user,
         )
         db.add(user)

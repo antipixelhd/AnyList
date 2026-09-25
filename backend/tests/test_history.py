@@ -70,6 +70,9 @@ class _FakeSession:
         self.added = []
         self.info = {}
         self.execute = AsyncMock(side_effect=[_Result(item) for item in results])
+        # Completed history writes also resolve the root media with
+        # AsyncSession.get() before projecting into the tracked-entry model.
+        self.get = AsyncMock(return_value=None)
         self.flush = AsyncMock()
         self.commit = AsyncMock()
 
@@ -121,7 +124,9 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         # Two extra Nones before the PlaybackProgress delete: the new
         # duplicate-watch check (get_dedup_window_minutes + find_duplicate_
         # watch_event, #390) - no configured window, no existing duplicate.
-        db = _FakeSession([None, None, None, None, None, None])
+        # The final two Nones are the TrackingDeletion and TrackedEntry reads
+        # used by the legacy-history projection after the watch is committed.
+        db = _FakeSession([None, None, None, None, None, None, None, None])
         patches, get_key, find_show, get_episode, enrich, push_state = self._patch_dependencies()
 
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
@@ -155,9 +160,10 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
             show_id=None,
             poster_path=None,
         )
-        # Trailing two Nones: the new duplicate-watch check (#390), then
-        # record_rewatch_progress's own Media lookup.
-        db = _FakeSession([None, orphan, None, None, None, None])
+        # Trailing two Nones: the duplicate-watch check (#390), then
+        # record_rewatch_progress's own Media lookup; the final two are the
+        # TrackingDeletion and TrackedEntry reads after the watch is committed.
+        db = _FakeSession([None, orphan, None, None, None, None, None, None])
         patches, _, _, get_episode, enrich, _ = self._patch_dependencies()
 
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
@@ -188,9 +194,10 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
             season_number=2,
             episode_number=3,
         )
-        # Two extra Nones before the PlaybackProgress delete: the new
-        # duplicate-watch check (#390); trailing None: record_rewatch_progress's Media lookup
-        db = _FakeSession([mapped_media, None, None, None, None])
+        # Two extra Nones before the PlaybackProgress delete: the duplicate-
+        # watch check (#390); the remaining Nones cover the rewatch lookup and
+        # the post-commit TrackingDeletion/TrackedEntry reads.
+        db = _FakeSession([mapped_media, None, None, None, None, None, None])
         patches, _, _, get_episode, enrich, push_state = self._patch_dependencies()
 
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
@@ -211,12 +218,10 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
 class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
     async def _mark(self, payload: dict):
         media = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
-        # Five execute() calls: the media lookup, the new duplicate-watch check
-        # (get_dedup_window_minutes + find_duplicate_watch_event, #390), the
-        # PlaybackProgress delete, then record_rewatch_progress's own Media
-        # lookup (movies always no-op there, but the query still runs before
-        # that type check).
-        db = _FakeSession([media, None, None, None, None])
+        # Execute calls cover the media lookup, duplicate-watch settings and
+        # event reads (#390), PlaybackProgress delete, rewatch Media lookup,
+        # and the TrackingDeletion/TrackedEntry reads after the watch commits.
+        db = _FakeSession([media, None, None, None, None, None, None])
         with patch("routers.history._push_watch_state", new_callable=AsyncMock) as push:
             response = await history.mark_as_watched(
                 WatchEventCreate(**payload), db, SimpleNamespace(id=7)

@@ -55,6 +55,23 @@ def _generate_api_key() -> str:
 router = APIRouter()
 
 
+async def _lock_account_bootstrap(db: AsyncSession) -> None:
+    """Serialize account creation while deciding who gets bootstrap admin.
+
+    Every self-service account creation path uses the same transaction-scoped
+    PostgreSQL advisory lock. It is intentionally a no-op for non-PostgreSQL
+    test databases and lightweight session fakes.
+    """
+    get_bind = getattr(db, "get_bind", None)
+    if get_bind is None:
+        return
+    bind = get_bind()
+    if getattr(getattr(bind, "dialect", None), "name", None) == "postgresql":
+        # "MTRK" namespace plus the bootstrap-account lock id. This key is
+        # shared with routers/oidc.py and held until the insert commits.
+        await db.execute(select(func.pg_advisory_xact_lock(1297371723, 1)))
+
+
 def _prevent_sensitive_response_caching(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
@@ -166,6 +183,10 @@ async def reset_password(
 @router.post("/register", response_model=schemas.User)
 @limiter.limit("10/minute")
 async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+    # Acquire this before checking registration status or the user count so a
+    # concurrent password or OIDC signup observes the committed first user.
+    await _lock_account_bootstrap(db)
+
     if not await _registration_allowed(db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
