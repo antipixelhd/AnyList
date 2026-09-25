@@ -87,4 +87,5 @@ vuln.env
 test.py
 
 # --- Planning files ---
+docs/
 docs/tvdb-first-class-plan.md
