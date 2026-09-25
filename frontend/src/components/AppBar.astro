@@ -119,6 +119,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
+  let suppressScrollHideUntil = 0;
   document.addEventListener('astro:page-load', () => {
   appbarListeners?.abort();
   appbarListeners = new AbortController();
@@ -198,14 +199,16 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       }
       const incomingAppbar = event.newDocument?.querySelector<HTMLElement>('[data-appbar]');
       if (!incomingAppbar) return;
+      // List landings hide the bar for a full document load while content is prepared.
+      // During client navigation the existing bar is already rendered and must stay visible.
+      suppressScrollHideUntil = performance.now() + 500;
       appbar.classList.toggle('appbar-fade-capable', incomingAppbar.classList.contains('appbar-fade-capable'));
       const pointerActive = appbar.classList.contains('appbar-pointer-active') || appbar.matches(':hover');
       incomingAppbar.classList.toggle('appbar-pointer-active', pointerActive);
       const listLanding = event.newDocument?.body.hasAttribute('data-list-landing') ?? false;
       const startsTransparent = !listLanding && !mobile() && incomingAppbar.classList.contains('appbar-fade-capable');
       incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
-      if (listLanding) incomingAppbar.classList.add('appbar-hidden');
-      else if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
+      incomingAppbar.classList.remove('appbar-hidden');
       appbar.classList.toggle('appbar-at-top', incomingAppbar.classList.contains('appbar-at-top'));
       appbar.classList.toggle('appbar-hidden', incomingAppbar.classList.contains('appbar-hidden'));
     };
@@ -258,7 +261,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       appbar.classList.remove('appbar-hidden');
     };
     syncTopFade(previousY);
-    if (previousY <= topThreshold()) reveal();
+    if (previousY <= topThreshold() || performance.now() < suppressScrollHideUntil) reveal();
     const update = () => {
       const currentY = Math.max(0, window.scrollY);
       const delta = currentY - previousY;
@@ -266,7 +269,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       const isMobile = mobile();
       const hideAfter = isMobile ? appbar.offsetHeight : 0;
       syncTopFade(currentY);
-      if (currentY <= topThreshold() || delta < -4 || ownsFocus) reveal();
+      if (performance.now() < suppressScrollHideUntil || currentY <= topThreshold() || delta < -4 || ownsFocus) reveal();
       else if ((delta > 6 || (!isMobile && wheelDown && delta > 0)) && currentY > hideAfter) {
         appbar.classList.add('appbar-hidden');
         clearPointerState();
