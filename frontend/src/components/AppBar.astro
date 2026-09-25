@@ -54,7 +54,7 @@ const settingsRoute = ['/settings', '/user-settings', '/connections', '/admin'].
 const mobileSection = primaryItems.find(item => item.active)?.label
   || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : settingsRoute ? 'Settings' : 'Browse');
 ---
-<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar data-motion-static transition:animate="none">
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
