@@ -21,8 +21,7 @@
 .tracker[data-theme-active] .status-stat-list i {
   background: linear-gradient(90deg, var(--blue), color-mix(in srgb, var(--blue) 58%, #5d79df));
 }
-.tracker[data-theme-active] .stats-segment button[aria-pressed=true],
-.tracker[data-theme-active] .editor-status-options button[aria-current=true] {
+.tracker[data-theme-active] .stats-segment button[aria-pressed=true] {
   background: color-mix(in srgb, var(--blue) 18%, var(--panel));
 }
 .tracker[data-theme-active] .settings-app input:focus,

@@ -1,0 +1,123 @@
+.tracker {
+  --dropdown-bg:#151f2e;
+  --dropdown-hover:#2a3440;
+  --dropdown-scrollbar:#59687a
+}
+.tracker .tracker-dropdown-trigger,
+.tracker .tracker-dropdown-menu {
+  background:var(--dropdown-bg)
+}
+.tracker .tracker-dropdown-menu {
+  scrollbar-width:thin;
+  scrollbar-color:var(--dropdown-scrollbar) var(--dropdown-bg)
+}
+.tracker .tracker-dropdown-menu::-webkit-scrollbar {
+  width:8px
+}
+.tracker .tracker-dropdown-menu::-webkit-scrollbar-track {
+  background:var(--dropdown-bg)
+}
+.tracker .tracker-dropdown-menu::-webkit-scrollbar-thumb {
+  border:2px solid var(--dropdown-bg);
+  border-radius:8px;
+  background:var(--dropdown-scrollbar)
+}
+.tracker .tracker-dropdown-menu::-webkit-scrollbar-button {
+  display:none;
+  width:0;
+  height:0
+}
+.tracker .tracker-dropdown-menu button[aria-selected="true"],
+.tracker .tracker-dropdown-menu button[aria-current="true"] {
+  color:var(--blue);
+  background:transparent
+}
+.tracker .tracker-dropdown-menu button:hover,
+.tracker .tracker-dropdown-menu button:focus-visible {
+  color:var(--bright);
+  background:var(--dropdown-hover)
+}
+.tracker .tracker-dropdown-menu button[aria-selected="true"]:is(:hover,:focus-visible),
+.tracker .tracker-dropdown-menu button[aria-current="true"]:is(:hover,:focus-visible) {
+  color:var(--blue)
+}
+.tracker-select {
+  position:relative;
+  display:inline-grid;
+  max-width:100%;
+  vertical-align:middle
+}
+.tracker-select-full {
+  display:grid;
+  width:100%
+}
+.tracker-select > select.tracker-select-native {
+  grid-area:1/1;
+  visibility:hidden!important;
+  pointer-events:none!important
+}
+.tracker .tracker-select-trigger {
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  min-width:0;
+  margin:0;
+  border:1px solid #36516a;
+  color:var(--text);
+  text-align:left;
+  cursor:pointer
+}
+.tracker-select-trigger:focus-visible {
+  outline:2px solid var(--blue);
+  outline-offset:2px
+}
+.tracker-select-trigger:disabled {
+  opacity:.55;
+  cursor:default
+}
+.tracker-select-value {
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis
+}
+.tracker-select-chevron {
+  width:8px;
+  height:8px;
+  flex:none;
+  border-right:1.5px solid #9cb1c3;
+  border-bottom:1.5px solid #9cb1c3;
+  transform:rotate(45deg) translateY(-2px)
+}
+.tracker .tracker-select-options {
+  position:fixed;
+  z-index:1000;
+  min-width:0;
+  padding:5px;
+  overflow-y:auto;
+  border:1px solid #36516a;
+  border-radius:4px;
+  box-shadow:0 12px 30px #020711b3
+}
+.tracker-select-options[hidden] {
+  display:none!important
+}
+.tracker .tracker-select-options button {
+  display:block;
+  width:100%;
+  padding:10px 12px;
+  border:0;
+  border-radius:3px;
+  color:#b8c9d9;
+  background:transparent;
+  text-align:left;
+  font-size:var(--type-control-size);
+  cursor:pointer
+}
+.tracker .tracker-select-options button:disabled {
+  opacity:.45;
+  cursor:default
+}

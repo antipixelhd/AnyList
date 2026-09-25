@@ -1,0 +1,226 @@
+<script>
+  import { showMenu, hideMenu } from '../lib/ui-motion';
+
+  type StyledSelect = {
+    select: HTMLSelectElement;
+    wrapper: HTMLElement;
+    trigger: HTMLButtonElement;
+    value: HTMLElement;
+    menu: HTMLElement;
+    labels: Array<[HTMLLabelElement, string | null]>;
+    originalTabIndex: string | null;
+    originalAriaHidden: string | null;
+    observer: MutationObserver;
+  };
+
+  let cleanup: (() => void) | undefined;
+  let nextId = 0;
+
+  function mount() {
+    const listeners = new AbortController();
+    const controls = new Map<HTMLSelectElement, StyledSelect>();
+    let openControl: StyledSelect | null = null;
+
+    function close(control: StyledSelect, restoreFocus = false, immediate = false) {
+      if (control.trigger.getAttribute('aria-expanded') !== 'true') return;
+      control.trigger.setAttribute('aria-expanded', 'false');
+      if (openControl === control) openControl = null;
+      if (immediate) {
+        control.menu.hidden = true;
+        control.menu.inert = true;
+      } else void hideMenu(control.menu);
+      if (restoreFocus) control.trigger.focus();
+    }
+
+    function place(control: StyledSelect) {
+      const rect = control.trigger.getBoundingClientRect();
+      const below = innerHeight - rect.bottom - 8;
+      const above = rect.top - 8;
+      const upward = below < 180 && above > below;
+      const space = upward ? above : below;
+      const width = Math.min(rect.width, innerWidth - 16);
+      control.menu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - width - 8))}px`;
+      control.menu.style.width = `${width}px`;
+      control.menu.style.maxHeight = `${Math.min(290, Math.max(80, space - 5))}px`;
+      control.menu.style.top = upward ? 'auto' : `${rect.bottom + 5}px`;
+      control.menu.style.bottom = upward ? `${innerHeight - rect.top + 5}px` : 'auto';
+    }
+
+    function sync(control: StyledSelect, rebuild = false) {
+      const { select, trigger, value, menu } = control;
+      if (rebuild) {
+        menu.replaceChildren(...Array.from(select.options, (option, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.setAttribute('role', 'option');
+          button.dataset.optionIndex = String(index);
+          button.textContent = option.textContent;
+          button.disabled = option.disabled || option.parentElement instanceof HTMLOptGroupElement && option.parentElement.disabled;
+          return button;
+        }));
+      }
+      const selected = select.selectedOptions[0];
+      value.textContent = selected?.textContent || select.options[0]?.textContent || '';
+      trigger.disabled = select.matches(':disabled') || select.options.length === 0;
+      const label = select.getAttribute('aria-label') || control.labels[0]?.[0].querySelector(':scope > span')?.textContent?.trim() || control.labels[0]?.[0].firstChild?.textContent?.trim() || 'Choose option';
+      trigger.setAttribute('aria-label', `${label}: ${value.textContent}`);
+      menu.querySelectorAll<HTMLButtonElement>('[data-option-index]').forEach(button => {
+        button.setAttribute('aria-selected', String(Number(button.dataset.optionIndex) === select.selectedIndex));
+      });
+    }
+
+    function open(control: StyledSelect, focusOption = false) {
+      if (control.trigger.disabled) return;
+      if (openControl && openControl !== control) close(openControl, false, true);
+      sync(control, true);
+      place(control);
+      showMenu(control.menu);
+      control.trigger.setAttribute('aria-expanded', 'true');
+      openControl = control;
+      if (focusOption) {
+        const selected = control.menu.querySelector<HTMLButtonElement>(`[data-option-index="${control.select.selectedIndex}"]`);
+        (selected && !selected.disabled ? selected : control.menu.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
+      }
+    }
+
+    function enhance(select: HTMLSelectElement) {
+      if (controls.has(select) || select.matches('.filter-select-native, .editor-status-native, [data-native-select]') || select.multiple || select.size > 1) return;
+      const computed = getComputedStyle(select);
+      const parent = select.parentElement;
+      const parentWidth = parent?.getBoundingClientRect().width || 0;
+      const selectWidth = select.getBoundingClientRect().width;
+      const fullWidth = select.classList.contains('w-full') || parentWidth > 0 && selectWidth >= parentWidth - 2 && computed.display !== 'inline';
+      const wrapper = document.createElement('span');
+      wrapper.className = `tracker-select${fullWidth ? ' tracker-select-full' : ''}`;
+      wrapper.dataset.motionStatic = '';
+      const trigger = document.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'tracker-select-trigger tracker-dropdown-trigger';
+      trigger.id = `tracker-select-trigger-${++nextId}`;
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.style.padding = computed.padding;
+      trigger.style.borderRadius = computed.borderRadius;
+      trigger.style.fontFamily = computed.fontFamily;
+      trigger.style.fontSize = computed.fontSize;
+      trigger.style.fontWeight = computed.fontWeight;
+      trigger.style.lineHeight = computed.lineHeight;
+      const value = document.createElement('span');
+      value.className = 'tracker-select-value';
+      const chevron = document.createElement('span');
+      chevron.className = 'tracker-select-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+      trigger.append(value, chevron);
+      const menu = document.createElement('div');
+      menu.id = `tracker-select-menu-${nextId}`;
+      menu.className = 'tracker-select-options tracker-dropdown-menu';
+      menu.setAttribute('role', 'listbox');
+      menu.dataset.motionStatic = '';
+      menu.hidden = true;
+      trigger.setAttribute('aria-controls', menu.id);
+      const labels = Array.from(select.labels || [], label => [label, label.getAttribute('for')] as [HTMLLabelElement, string | null]);
+      const originalTabIndex = select.getAttribute('tabindex');
+      const originalAriaHidden = select.getAttribute('aria-hidden');
+      select.before(wrapper);
+      wrapper.append(select, trigger);
+      (select.closest('dialog') || document.body).append(menu);
+      select.classList.add('tracker-select-native');
+      select.tabIndex = -1;
+      select.setAttribute('aria-hidden', 'true');
+      labels.forEach(([label]) => label.setAttribute('for', trigger.id));
+      const observer = new MutationObserver(() => sync(control, true));
+      const control: StyledSelect = { select, wrapper, trigger, value, menu, labels, originalTabIndex, originalAriaHidden, observer };
+      controls.set(select, control);
+      observer.observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'selected', 'label', 'value'] });
+      sync(control, true);
+
+      trigger.addEventListener('click', () => {
+        if (trigger.getAttribute('aria-expanded') === 'true') close(control);
+        else open(control);
+      }, { signal: listeners.signal });
+      trigger.addEventListener('keydown', event => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault(); open(control, true);
+        } else if (event.key === 'Escape' && trigger.getAttribute('aria-expanded') === 'true') {
+          event.preventDefault(); event.stopPropagation(); close(control);
+        }
+      }, { signal: listeners.signal });
+      menu.addEventListener('click', event => {
+        const option = (event.target as Element).closest<HTMLButtonElement>('[data-option-index]');
+        if (!option || option.disabled) return;
+        select.selectedIndex = Number(option.dataset.optionIndex);
+        sync(control);
+        select.dispatchEvent(new Event('input', { bubbles: true }));
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        close(control, true);
+      }, { signal: listeners.signal });
+      menu.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation(); close(control, true); return;
+        }
+        const options = Array.from(menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+        const index = options.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : event.key === 'ArrowDown' ? (index + 1) % options.length : event.key === 'ArrowUp' ? (index - 1 + options.length) % options.length : -1;
+        if (next >= 0) { event.preventDefault(); options[next]?.focus(); return; }
+        if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+          const ordered = [...options.slice(index + 1), ...options.slice(0, index + 1)];
+          const match = ordered.find(option => option.textContent?.trim().toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()));
+          if (match) { event.preventDefault(); match.focus(); }
+        }
+      }, { signal: listeners.signal });
+      select.addEventListener('change', () => sync(control), { signal: listeners.signal });
+      select.addEventListener('input', () => sync(control), { signal: listeners.signal });
+    }
+
+    document.querySelectorAll<HTMLSelectElement>('select').forEach(enhance);
+    const added = new MutationObserver(records => {
+      for (const record of records) for (const node of record.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (node instanceof HTMLSelectElement) enhance(node);
+        node.querySelectorAll<HTMLSelectElement>('select').forEach(enhance);
+      }
+      for (const control of controls.values()) if (!control.select.isConnected) {
+        control.observer.disconnect();
+        control.menu.remove();
+        controls.delete(control.select);
+      }
+    });
+    added.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('click', event => {
+      if (openControl && !openControl.wrapper.contains(event.target as Node) && !openControl.menu.contains(event.target as Node)) close(openControl);
+    }, { signal: listeners.signal });
+    document.addEventListener('focusin', event => {
+      if (openControl && !openControl.wrapper.contains(event.target as Node) && !openControl.menu.contains(event.target as Node)) close(openControl);
+    }, { signal: listeners.signal });
+    document.addEventListener('scroll', event => {
+      if (openControl && !openControl.menu.contains(event.target as Node)) close(openControl);
+    }, { capture: true, signal: listeners.signal });
+    window.addEventListener('resize', () => { if (openControl) close(openControl); }, { signal: listeners.signal });
+
+    return () => {
+      listeners.abort();
+      added.disconnect();
+      for (const control of controls.values()) {
+        control.observer.disconnect();
+        control.menu.remove();
+        control.select.classList.remove('tracker-select-native');
+        if (control.originalTabIndex === null) control.select.removeAttribute('tabindex');
+        else control.select.setAttribute('tabindex', control.originalTabIndex);
+        if (control.originalAriaHidden === null) control.select.removeAttribute('aria-hidden');
+        else control.select.setAttribute('aria-hidden', control.originalAriaHidden);
+        control.labels.forEach(([label, original]) => {
+          if (original === null) label.removeAttribute('for');
+          else label.setAttribute('for', original);
+        });
+        control.wrapper.replaceWith(control.select);
+      }
+      controls.clear();
+    };
+  }
+
+  document.addEventListener('astro:page-load', () => {
+    cleanup?.();
+    if (document.body.classList.contains('tracker')) cleanup = mount();
+  });
+  document.addEventListener('astro:before-swap', () => { cleanup?.(); cleanup = undefined; });
+</script>

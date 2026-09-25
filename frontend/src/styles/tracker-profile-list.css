@@ -259,11 +259,11 @@
   cursor:pointer
 }
 .filter-dropdown-options button:hover,.filter-dropdown-options button:focus-visible {
-  background:#20364b;
+  background:#2a3440;
   color:var(--bright)
 }
 .filter-dropdown-options button[aria-selected="true"] {
-  background:#1b344a;
+  background:transparent;
   color:var(--blue)
 }
 .filter-year {

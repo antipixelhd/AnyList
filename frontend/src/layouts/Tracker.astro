@@ -11,6 +11,7 @@ import QuickRating from '../components/QuickRating.astro';
 import AttentionPrompt from '../components/AttentionPrompt.astro';
 import NavigationRuntime from '../components/NavigationRuntime.astro';
 import MotionRuntime from '../components/MotionRuntime.astro';
+import StyledSelectRuntime from '../components/StyledSelectRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
 import { profileColor, themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
@@ -30,6 +31,7 @@ const activeColor = ownerColor ?? (viewerTheme.applySiteWide ? viewerTheme.profi
   <PwaRuntime />
   <NavigationRuntime />
   <MotionRuntime />
+  <StyledSelectRuntime />
   <ProfileThemeRuntime />
   <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
 </body></html>

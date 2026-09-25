@@ -17,10 +17,10 @@ const selectedLabel = options.find(([optionValue]) => optionValue === value)?.[1
     {options.map(([optionValue, optionLabel]) => <option value={optionValue} selected={optionValue === value}>{optionLabel}</option>)}
   </select>
   <div class="filter-dropdown" data-filter-dropdown data-motion-static>
-    <button type="button" class="filter-dropdown-trigger" id={`${id}-trigger`} aria-labelledby={`${id}-label ${id}-value`} aria-haspopup="listbox" aria-expanded="false" aria-controls={`${id}-options`}>
+    <button type="button" class="filter-dropdown-trigger tracker-dropdown-trigger" id={`${id}-trigger`} aria-labelledby={`${id}-label ${id}-value`} aria-haspopup="listbox" aria-expanded="false" aria-controls={`${id}-options`}>
       <span id={`${id}-value`}>{selectedLabel}</span><Icon name="chevron-down" />
     </button>
-    <div class="filter-dropdown-options" id={`${id}-options`} role="listbox" aria-labelledby={`${id}-label`} hidden>
+    <div class="filter-dropdown-options tracker-dropdown-menu" id={`${id}-options`} role="listbox" aria-labelledby={`${id}-label`} hidden>
       {options.map(([optionValue, optionLabel]) => <button type="button" role="option" data-filter-value={optionValue} aria-selected={optionValue === value}>{optionLabel}</button>)}
     </div>
   </div>

@@ -13,6 +13,7 @@ import AttentionPrompt from '../components/AttentionPrompt.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import NavigationRuntime from '../components/NavigationRuntime.astro';
 import MotionRuntime from '../components/MotionRuntime.astro';
+import StyledSelectRuntime from '../components/StyledSelectRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
 import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
@@ -75,6 +76,7 @@ if (user?.is_admin) {
     <PwaRuntime />
     <NavigationRuntime />
     <MotionRuntime />
+    <StyledSelectRuntime />
     <ProfileThemeRuntime />
   </body>
 </html>

@@ -262,12 +262,12 @@
   font-size:var(--type-control-size)
 }
 .editor-status-options button:hover,.editor-status-options button:focus-visible {
-  background:#20364b;
+  background:#2a3440;
   color:var(--bright)
 }
-.editor-status-options button[aria-current=true] {
+.editor-status-options button[aria-selected=true] {
   color:var(--blue);
-  background:#1b344a
+  background:transparent
 }
 .editor-actions {
   justify-content:flex-end;
