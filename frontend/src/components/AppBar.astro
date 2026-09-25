@@ -50,8 +50,9 @@ const primaryItems = [
   ...listItems,
   {href: '/browse', label: 'Browse', icon: 'browse', active: active('/browse')},
 ];
+const settingsRoute = ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
 const mobileSection = primaryItems.find(item => item.active)?.label
-  || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : pathname.includes('settings') ? 'Settings' : 'Browse');
+  || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : settingsRoute ? 'Settings' : 'Browse');
 ---
 <header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">
   <div class="appbar-inner">
@@ -80,7 +81,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
           <span class="notification-badge notification-badge-quiet" aria-hidden="true" data-notification-quiet hidden={quietNotifications===0}>{quietNotifications > 99 ? '99+' : quietNotifications}</span>
           <span class="notification-badge notification-badge-attention" aria-hidden="true" data-notification-attention hidden={attentionNotifications===0}>{attentionNotifications > 99 ? '99+' : attentionNotifications}</span>
         </a>
-        <a class:list={{'appbar-icon-link': true, active: ['/settings','/user-settings','/connections','/admin'].includes(pathname)}} href="/user-settings" aria-label="Settings" aria-current={['/settings','/user-settings','/connections','/admin'].includes(pathname) ? 'page' : undefined}><Icon name="gear" /></a>
+        <a class:list={{'appbar-icon-link': true, active: settingsRoute}} href="/user-settings" aria-label="Settings" aria-current={settingsRoute ? 'page' : undefined}><Icon name="gear" /></a>
         <form method="POST" action="/logout" class="appbar-signout"><button class="appbar-icon-link" type="submit" aria-label="Sign out"><Icon name="sign-out" /></button></form>
       </> : <a href="/login">Sign in</a>}
     </div>

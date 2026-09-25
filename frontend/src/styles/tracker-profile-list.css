@@ -72,23 +72,6 @@
   padding-left:22px;
   margin:0 0 10px
 }
-.profile-settings .space-y-12 {
-  gap:13px
-}
-.profile-settings section:not([hidden]) {
-  padding:17px 20px
-}
-.profile-settings section>div.border-b {
-  margin-bottom:12px
-}
-.profile-settings .section-headline {
-  font-size:var(--type-control-size)
-}
-.profile-settings input:not([type=checkbox]):not([type=radio]):not([type=file]),.profile-settings select {
-  min-height:36px;
-  padding:7px 10px;
-  font-size:var(--type-label-size)
-}
 .profile-settings #avatar-preview {
   width:58px;
   height:58px;
@@ -99,16 +82,6 @@
 }
 .profile-settings #avatar-preview+div {
   gap:4px
-}
-.profile-settings section .mb-8 {
-  margin-bottom:17px
-}
-.profile-settings section .mb-4 {
-  margin-bottom:10px
-}
-.profile-settings .chip {
-  padding:6px 10px;
-  font-size:var(--type-caption-size)
 }
 .profile-settings .setting-switch-row small,.profile-settings section p.text-xs {
   font-size:var(--type-caption-size);
@@ -144,17 +117,6 @@
   .localization-grid {
     grid-template-columns:1fr
   }
-  .profile-settings section:not([hidden]) {
-    padding:15px 16px
-  }
-}
-/* Profile settings has its own compact rhythm; the legacy space-y margin must not stack with the grid gap. */
-.profile-settings-page .settings-heading>div {
-  padding-top:26px;
-  padding-bottom:24px
-}
-.profile-settings-page .settings-shell {
-  margin-top:24px
 }
 .profile-settings .profile-settings-cards {
   display:grid;
@@ -164,9 +126,6 @@
   margin:0;
   min-width:0
 }
-.profile-settings .profile-settings-cards>section>div.border-b {
-  margin-bottom:10px
-}
 .profile-settings .profile-settings-cards>section>.text-sm {
   margin:0 0 10px;
   line-height:1.45;
@@ -175,14 +134,6 @@
 }
 .profile-settings .profile-settings-cards>section .flex.flex-wrap.gap-2 {
   gap:7px
-}
-@media(max-width:800px) {
-  .profile-settings-page .settings-shell {
-    margin-top:16px
-  }
-  .profile-settings .profile-settings-cards {
-    gap:12px
-  }
 }
 .profile-tabs {
   min-height:46px;

@@ -42,7 +42,7 @@ if (user?.is_admin) {
     <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
     <ClientRouter fallback="swap" />
   </head>
-  <body class:list={['tracker', 'settings-app', { 'profile-settings-page': pathname === '/user-settings', 'connections-settings-page': pathname === '/connections' }]} data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
+  <body class:list={['tracker', 'settings-app', { 'connections-settings-page': pathname === '/connections' }]} data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
     <a class="skip-link" href="#settings-content">Skip to settings</a>
     <AppBar />
 
