@@ -1,21 +1,22 @@
 # AnyList public-ready gates
 
-This is the current Stage Two release checklist. `STAGE-TWO-PLAN.md` is the accepted product contract; `STATUS.md` records implementation and verification details. The 2026-09-21 owner refinements were implemented locally on 2026-09-22. **Owner manual verification is the next step; do not begin VPS work before it.** Local proof is not deployed or real-device proof.
+This is the current Stage Two release checklist. `STAGE-TWO-PLAN.md` is the accepted product contract; `STATUS.md` records implementation and verification details. The owner completed local manual review and authorized VPS rollout on 2026-09-25. Deployment proof and physical-device proof are tracked separately.
 
 | Gate | Current evidence | Remaining proof |
 | --- | --- | --- |
 | Standalone public source and licensing | [antipixelhd/AnyList](https://github.com/antipixelhd/AnyList) retains Scrob history, GPLv3, attribution and publication audit. | Keep later commits and notices in the public repository. |
-| Automated backend and frontend checks | The complete disposable-PostgreSQL backend suite passes 1,167 tests and the Astro production build passes. Public CI passed the final implementation head. | Keep CI green on the final documentation/deployment head; [issue #1](https://github.com/antipixelhd/AnyList/issues/1). |
+| Automated backend and frontend checks | A fresh PostgreSQL database migrated to `mt025`; all 1,307 backend tests and the Astro production build passed locally. Public CI passed release head `d90a663`. | Keep CI green on later documentation or code heads; [issue #1](https://github.com/antipixelhd/AnyList/issues/1). |
 | Movie/series core workflows | The completed slices and their focused tests/browser checks are recorded in `STATUS.md`. | Repeat acceptance paths on the final deployed build, including empty/error/loading, large lists, privacy, dates, progress, ratings, activity, statistics and attention prompts. |
-| Owner-discovered Phase Two backlog | The 2026-09-20 and 2026-09-21 findings have local implementation and focused verification evidence. | Owner manually verifies the local build before any VPS work. The current `f3d26dc` deployment is baseline evidence, not the approvable final build. |
-| Isolated test deployment | Public code head `f3d26dc` is on the isolated test instance after a validated private database backup. The app and retained database are healthy at `mt014`; login, PWA assets and OIDC entry passed HTTPS checks, and read-only SQL confirms disposable Stremio/Nuvio push flags remain off. | After owner manual verification, deploy the revised head and complete real-provider/Google-authenticated checks; [issue #2](https://github.com/antipixelhd/AnyList/issues/2). |
+| Owner-discovered Phase Two backlog | The owner completed local manual review and authorized this rollout. The 2026-09-20 and 2026-09-21 findings have local implementation and focused evidence. | Recheck the acceptance paths on the deployed build. |
+| Isolated test deployment | The published ARM64 image is healthy on the retained test database at `mt025`, after a validated private backup. Login, signed-out redirect, assets, and internal auth settings passed read-only checks. | Complete interactive Google and disposable-provider checks; [issue #2](https://github.com/antipixelhd/AnyList/issues/2). |
+| Production deployment | A fresh production stack is healthy at `mt025` behind HTTPS. The intended first account has both admin fields; ordinary registration closed and the temporary Caddy gate was removed. The owner signed into that account with Google; the database still contains one user. | Test a new verified Google account and confirm its non-admin permissions. |
 | Desktop and phone | Chromium walkthrough covered compact lists at 2560×1440, 3840×2160 and 390×844, plus Browse at 390×844 and 320×720; tested routes had no horizontal overflow. Mobile detail, stats, fuzzy search and public profile paths were also exercised. | Verify keyboard and touch flows, Android Chrome, and real iPhone Safari. Emulation alone cannot close the phone gate; [issue #3](https://github.com/antipixelhd/AnyList/issues/3). |
 | GitHub progress tracking | The repository and canonical in-tree plan/status exist. [Public-ready core milestone](https://github.com/antipixelhd/AnyList/milestone/1) and four gate issues now exist. | Link evidence and close issues only after proof. |
-| Owner acceptance | Review of the earlier deployed build produced mandatory backlogs on 2026-09-20 and 2026-09-21; their local implementation is ready for manual verification. | Owner manually verifies first, then resume isolated deployment, Google-authenticated/physical-phone review, and explicit core approval; [issue #4](https://github.com/antipixelhd/AnyList/issues/4). |
+| Owner acceptance | The owner finished the local manual review and authorized deployment on 2026-09-25. | Complete deployed interaction and physical-phone review before closing the core milestone; [issue #4](https://github.com/antipixelhd/AnyList/issues/4). |
 
 ## Additional local-first gates accepted 2026-09-21
 
-The detailed contract and precedence rules are in `STAGE-TWO-PLAN.md` under **Additional owner acceptance contract** and ADR-021/022 in `DECISIONS.md`. Each row has local implementation evidence; owner manual review precedes VPS work.
+The detailed contract and precedence rules are in `STAGE-TWO-PLAN.md` under **Additional owner acceptance contract** and ADR-021/022 in `DECISIONS.md`. Each row has local implementation evidence; the owner completed the manual review before VPS work.
 
 | Local gate | Current evidence | Required local proof before VPS work |
 | --- | --- | --- |
@@ -49,6 +50,6 @@ The owner reconfirmed this entire backlog as mandatory on 2026-09-21 and request
 | Remove obsolete Scrob UI pages and redesign login in AnyList style | All competing Scrob presentation families for released movie/series workflows are locally retired through documented compatibility mappings; required APIs, stored data, admin/auth and protocol surfaces remain. | Recheck representative redirects and integration compatibility on the final deployment; verify deployed Google, configured password fallback, 2FA, recovery and accessibility. |
 | Rated activity displays its score; legacy missing-score rows do not claim a rating | Locally implemented | Recheck the reported Interstellar-style row and scored activity on final build. |
 
-No Phase Two approval request is due while any row above remains open or final deployment, CI, physical-device verification, and owner review remain outstanding.
+Do not close the Phase Two milestone while deployed acceptance, new-account Google sign-in, disposable-provider verification, or physical-device checks remain open.
 
-After core approval, ask separately whether to implement the deferred season features. Level one would prompt for a season rating on Stremio/Nuvio completion while shows remain combined and a manual whole-show score takes priority over the rated-season average. Level two would add an optional setting for separate season rows in lists. Neither is authorized for the core build.
+The owner confirmed that existing season ratings, details, and release notices are sufficient for this release. A provider-triggered season-completion rating prompt and separate tracked-list season rows remain outside this rollout.
