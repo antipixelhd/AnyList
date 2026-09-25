@@ -43,7 +43,7 @@
     const related = event.relatedTarget as Node | null;
     const element = target?.closest<HTMLElement>(selector);
     if (!element || element.contains(related) || !element.getClientRects().length || element.matches(':disabled, [aria-disabled="true"]')) return;
-    if (element.matches('[aria-expanded], [aria-haspopup="menu"], [aria-haspopup="listbox"]') || element.closest('[data-motion-static]')) return;
+    if (element.matches('.quick-search-trigger, [aria-expanded], [aria-haspopup="menu"], [aria-haspopup="listbox"]') || element.closest('[data-motion-static]')) return;
     if (element.closest('.list-shell .filters') || element.matches('.list-shell .mobile-filter-toggle')) return;
     hovered.add(element);
     if (element !== pressed) animateScale(element, 1.012, .17);
