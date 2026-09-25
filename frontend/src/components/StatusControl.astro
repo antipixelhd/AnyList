@@ -14,6 +14,7 @@ const {mediaId,status}=Astro.props;
   <p class="status-error" role="alert" hidden></p>
 </div>
 <script>
+import { showMenu, hideMenu } from '../lib/ui-motion';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
 pageListeners?.abort();
@@ -22,9 +23,9 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
   const arrow=control.querySelector<HTMLButtonElement>('.status-arrow')!;
   const options=control.querySelector<HTMLElement>('.status-options')!;
   const error=control.querySelector<HTMLElement>('.status-error')!;
-  const close=()=>{options.hidden=true;arrow.setAttribute('aria-expanded','false');};
-  arrow.addEventListener('click',()=>{options.hidden=!options.hidden;arrow.setAttribute('aria-expanded',String(!options.hidden));});
-  arrow.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();options.hidden=false;arrow.setAttribute('aria-expanded','true');options.querySelector('button')?.focus();}});
+  const close=()=>{void hideMenu(options);arrow.setAttribute('aria-expanded','false');};
+  arrow.addEventListener('click',()=>{if(arrow.getAttribute('aria-expanded')==='true')close();else{showMenu(options);arrow.setAttribute('aria-expanded','true');}});
+  arrow.addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();showMenu(options);arrow.setAttribute('aria-expanded','true');options.querySelector('button')?.focus();}});
   control.addEventListener('keydown',event=>{if(event.key==='Escape'){close();arrow.focus();}});
   control.addEventListener('focusout',event=>{if(!control.contains(event.relatedTarget as Node))close();});
   document.addEventListener('click',event=>{if(!control.contains(event.target as Node))close();},{signal:pageListeners.signal});
@@ -44,5 +45,5 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
 });
 </script>
 <style>
-.status-control{position:relative;margin-top:18px}.status-split{display:flex}.status-split .button-primary{margin:0;width:auto;min-height:44px}.status-split>button:first-child{flex:1;border-radius:4px 0 0 4px;padding:10px 8px}.status-split .status-arrow{width:40px;flex:none;border-radius:0 4px 4px 0;border-left:1px solid #ffffff40;padding:8px}.status-options{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:210px;background:var(--panel);border:1px solid var(--border);border-radius:5px;box-shadow:0 8px 24px #0005;padding:6px;animation:reveal .14s ease-out}.status-options button{display:block;width:100%;text-align:left;border:0;background:none;color:var(--text);padding:10px;border-radius:3px;font-size:var(--type-label-size);font-weight:var(--type-label-weight);min-height:42px}.status-options button:hover,.status-options button:focus-visible{background:#20364b;color:var(--blue)}.status-options button:last-child{border-top:1px solid var(--border);margin-top:5px}.status-error{font-size:var(--type-label-size);color:#efb4c6}@keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.status-options{animation:none}}
+.status-control{position:relative;margin-top:18px}.status-split{display:flex}.status-split .button-primary{margin:0;width:auto;min-height:44px}.status-split>button:first-child{flex:1;border-radius:4px 0 0 4px;padding:10px 8px}.status-split .status-arrow{width:40px;flex:none;border-radius:0 4px 4px 0;border-left:1px solid #ffffff40;padding:8px}.status-options{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:210px;background:var(--panel);border:1px solid var(--border);border-radius:5px;box-shadow:0 8px 24px #0005;padding:6px}.status-options button{display:block;width:100%;text-align:left;border:0;background:none;color:var(--text);padding:10px;border-radius:3px;font-size:var(--type-label-size);font-weight:var(--type-label-weight);min-height:42px}.status-options button:hover,.status-options button:focus-visible{background:#20364b;color:var(--blue)}.status-options button:last-child{border-top:1px solid var(--border);margin-top:5px}.status-error{font-size:var(--type-label-size);color:#efb4c6}
 </style>

@@ -47,8 +47,7 @@
   border-radius:10px;
   background:#172a3c;
   color:var(--text);
-  box-shadow:0 22px 65px #02070dbf;
-  animation:attention-in .18s ease-out
+  box-shadow:0 22px 65px #02070dbf
 }
 .attention-prompt-copy {
   display:grid;
@@ -75,16 +74,6 @@
   min-height:36px;
   padding:7px 12px;
   font-size:var(--type-meta-size)
-}
-@keyframes attention-in {
-  from {
-    opacity:0;
-    transform:translateY(12px)
-  }
-  to {
-    opacity:1;
-    transform:translateY(0)
-  }
 }
 .attention-prompt:has([data-attention-rate]:not([hidden])) {
   display:flex;
@@ -166,11 +155,6 @@
   }
   .attention-prompt-actions {
     justify-content:space-between
-  }
-}
-@media(prefers-reduced-motion:reduce) {
-  .attention-prompt {
-    animation:none
   }
 }
 .stats-heading {

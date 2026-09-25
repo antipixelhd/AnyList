@@ -186,6 +186,7 @@ const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px
 
 <script>
 import { setupScoreSteppers } from '../../lib/scoreStepper';
+import { showDialog, closeDialog } from '../../lib/ui-motion';
 let titlePageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
 titlePageListeners?.abort();
@@ -288,7 +289,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-save-season]').forEach(butto
  const body:any={season_scores:{[button.dataset.saveSeason!]:Number(input.value||0)}};
  if(button.dataset.hasSeasons==='no'&&Number(input.value)>0){
   const dialog=document.querySelector<HTMLDialogElement>('#season-mode')!;
-  dialog.returnValue='cancel';dialog.showModal();
+  dialog.returnValue='cancel';showDialog(dialog);
   const mode=await new Promise<string>(resolve=>dialog.addEventListener('close',()=>resolve(dialog.returnValue),{once:true}));
   if(!['manual','average'].includes(mode))return;
   body.rating_mode=mode;
@@ -298,7 +299,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-save-season]').forEach(butto
  catch(e){document.querySelector('#season-message')!.textContent=(e as Error).message;button.disabled=false;}
 }));
 const seasonModeDialog=document.querySelector<HTMLDialogElement>('#season-mode');
-seasonModeDialog?.addEventListener('click',event=>{if(event.target===seasonModeDialog)seasonModeDialog.close('cancel');});
+seasonModeDialog?.addEventListener('click',event=>{if(event.target===seasonModeDialog)void closeDialog(seasonModeDialog,'cancel');});
 if(new URLSearchParams(location.search).get('rate')==='1'){
  const button=document.querySelector<HTMLElement>('[data-quick-rate-id]');
  if(button)setTimeout(()=>button.click(),0);

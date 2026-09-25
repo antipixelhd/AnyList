@@ -199,10 +199,11 @@
   }
   .mobile-appbar-menu nav {
     position:absolute;
-    left:50%;
+    left:0;
+    right:0;
     top:calc(100% + 7px);
     width:min(330px,calc(100vw - 32px));
-    transform:translateX(-50%);
+    margin-inline:auto;
     display:grid!important;
     gap:3px!important;
     padding:9px;

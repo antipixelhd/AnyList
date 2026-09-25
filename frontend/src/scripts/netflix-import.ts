@@ -1,3 +1,5 @@
+import { showDialog, closeDialog } from '../lib/ui-motion';
+
 type MatchCandidate = {
   media_type: "movie" | "show";
   tmdb_id: number;
@@ -521,7 +523,7 @@ function mountNetflixImport() {
   }
 
   function closeRemap() {
-    if (remapDialog.open) remapDialog.close();
+    if (remapDialog.open) void closeDialog(remapDialog);
     searchController?.abort();
     window.clearTimeout(searchTimer);
     remappingItemId = null;
@@ -614,7 +616,7 @@ function mountNetflixImport() {
       ? item.episodes[0].source_title || item.source_title : item.source_title;
     remapList.innerHTML = "";
     remapResults.hidden = true;
-    remapDialog.showModal();
+    showDialog(remapDialog);
     remapInput.focus();
     void searchTitles();
   }

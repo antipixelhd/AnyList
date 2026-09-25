@@ -40,7 +40,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       <section>
         <form id="connections-form" class="space-y-6">
           <!-- ======== SYNC SECTION ======== -->
-          <div class="space-y-3 mt-8">
+          <div class="space-y-3">
             <h2 class="section-headline border-b border-zinc-800 pb-2">Media Players</h2>
 
             <!-- Connections list (server-side rendered, managed client-side) -->
@@ -1773,6 +1773,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
 <script>
   import { applyResponsiveArtwork } from "../lib/responsive-artwork";
+  import { showOverlay, hideOverlay } from '../lib/ui-motion';
 
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
@@ -2607,11 +2608,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       bodyEl.textContent = body;
       confirmBtn.textContent = confirmLabel;
       cancelBtn.classList.toggle('hidden', infoOnly);
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
       const cleanup = (result: boolean) => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
         cancelBtn.classList.remove('hidden');
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
@@ -2661,12 +2660,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         return { opt, handler };
       });
 
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
 
       const cleanup = (result: TraktImportSelection | null) => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
         optionHandlers.forEach(({ opt, handler }) => opt.removeEventListener('click', handler));
@@ -2730,12 +2727,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         return { opt, handler };
       });
 
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
 
       const cleanup = (result: ScrobImportSelection | null) => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
         optionHandlers.forEach(({ opt, handler }) => opt.removeEventListener('click', handler));
@@ -2796,12 +2791,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         return { opt, handler };
       });
 
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
 
       const cleanup = (result: YamtrackImportSelection | null) => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
         optionHandlers.forEach(({ opt, handler }) => opt.removeEventListener('click', handler));
@@ -5634,8 +5627,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     let matchMovieTitle = '';
 
     const closeModal = () => {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
+      void hideOverlay(modal);
       (document.getElementById('remap-search-input') as HTMLInputElement).value = '';
       (document.getElementById('remap-tvdb-input') as HTMLInputElement).value = '';
       (document.getElementById('remap-search-results') as HTMLElement).innerHTML = '';
@@ -6024,8 +6016,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       // TVDB, so the remap target needs the same TMDB/TVDB choice the "Match"
       // flow already has, not just TMDB search.
       (document.getElementById('match-tab-bar') as HTMLElement).classList.remove('hidden');
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
       setMatchTab('tmdb');
     };
 
@@ -6041,8 +6032,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const tvdbInput = document.getElementById('remap-tvdb-input') as HTMLInputElement;
       tvdbInput.value = seriesName;
       (document.getElementById('remap-search-input') as HTMLInputElement).value = seriesName;
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
       // Default to TVDB tab and auto-search
       setMatchTab('tvdb');
       doTvdbSearch();
@@ -6059,8 +6049,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       (document.getElementById('remap-seasons-area') as HTMLElement).classList.add('hidden');
       (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
       searchInput.value = movieTitle;
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
       searchInput.focus();
       // Auto-search immediately so results appear right away
       doSearch();

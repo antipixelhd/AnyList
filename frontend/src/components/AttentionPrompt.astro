@@ -15,6 +15,7 @@
 </aside>
 
 <script>
+import { showMenu, hideMenu } from '../lib/ui-motion';
 import {refreshNotifications, subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
 import {applyResponsiveArtwork, responsiveArtwork} from '../lib/responsive-artwork';
 
@@ -48,7 +49,7 @@ document.addEventListener('astro:page-load', () => {
   let lastSnapshot: NotificationSnapshot | null = null;
   const hide = (acknowledge = true) => {
     if (acknowledge) writeAcknowledged(visibleIds);
-    prompt.hidden = true;
+    void hideMenu(prompt);
   };
   prompt.querySelector('[data-attention-close]')?.addEventListener('click', () => hide());
   let startX: number | null = null;
@@ -117,7 +118,7 @@ document.addEventListener('astro:page-load', () => {
 
     if (!items.length) {
       resetSingleRating();
-      prompt.hidden = true;
+      void hideMenu(prompt);
       return;
     }
     resetSingleRating();
@@ -154,7 +155,7 @@ document.addEventListener('astro:page-load', () => {
       if (posterImage?.src) rate.dataset.quickRatePoster = posterImage.src;
       rate.dataset.quickRateScore = '';
     }
-    prompt.hidden = false;
+    if (prompt.hidden) showMenu(prompt);
   };
   document.addEventListener('anylist:rating-popup-preference', event => {
     preferenceChangedLocally = true;

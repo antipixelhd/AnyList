@@ -87,7 +87,6 @@ document.addEventListener('astro:page-load', () => {
     grid.replaceChildren();
     for(const item of items){
       const card=document.createElement('a');card.className='media-card browse-result-card';
-      card.style.setProperty('--reveal-delay',`${Math.min(grid.childElementCount*25,150)}ms`);
       card.href=item.id?`/title/${item.id}`:`/discover-title?type=${encodeURIComponent(item.type)}&id=${item.tmdb_id}`;
       if(item.poster){const img=document.createElement('img');applyResponsiveArtwork(img,item.poster,imageOptions);img.alt='';img.loading='lazy';card.append(img);}
       else{const placeholder=document.createElement('span');placeholder.className='media-card-placeholder';placeholder.ariaHidden='true';placeholder.textContent=item.title.slice(0,1);card.append(placeholder);}

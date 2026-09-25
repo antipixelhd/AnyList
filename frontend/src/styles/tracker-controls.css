@@ -286,19 +286,6 @@
   box-shadow:0 28px 90px #020711cc;
   background:#151f2e
 }
-.editor[open] {
-  animation:editor-enter .16s ease-out
-}
-@keyframes editor-enter {
-  from {
-    opacity:0;
-    transform:translateY(5px) scale(.992)
-  }
-  to {
-    opacity:1;
-    transform:none
-  }
-}
 .editor-hero {
   height:170px;
   position:relative;
@@ -688,9 +675,6 @@
   }
 }
 @media(prefers-reduced-motion:reduce) {
-  .editor[open] {
-    animation:none
-  }
   .button-primary,.button-secondary,.button-quiet,.button-danger,.editor label input,.editor label select,.editor label textarea,.setting-switch-row input:before {
     transition:none
   }

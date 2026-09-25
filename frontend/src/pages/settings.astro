@@ -934,6 +934,7 @@ if (me.totp_enabled) {
 
 </TrackerSettings>
 <script>
+  import { showOverlay, hideOverlay } from '../lib/ui-motion';
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
 
@@ -1080,11 +1081,9 @@ if (me.totp_enabled) {
       bodyEl.textContent = body;
       confirmBtn.textContent = confirmLabel;
       cancelBtn.classList.toggle('hidden', infoOnly);
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
       const cleanup = (result: boolean) => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
         cancelBtn.classList.remove('hidden');
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
@@ -1134,12 +1133,10 @@ if (me.totp_enabled) {
         return { opt, handler };
       });
 
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
 
       const cleanup = (result: ExportSelection | null) => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
         optionHandlers.forEach(({ opt, handler }) => opt.removeEventListener('click', handler));
@@ -1358,13 +1355,11 @@ if (me.totp_enabled) {
 
     if (deleteBtn && modal && cancelBtn && confirmBtn) {
       deleteBtn.onclick = () => {
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
+        showOverlay(modal);
       };
 
       cancelBtn.onclick = () => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
+        void hideOverlay(modal);
       };
 
       confirmBtn.onclick = async () => {
@@ -1383,8 +1378,7 @@ if (me.totp_enabled) {
           }
         } catch (e) {
           showMessage(e.message, 'error');
-          modal.classList.add('hidden');
-          modal.classList.remove('flex');
+          void hideOverlay(modal);
           confirmBtn.disabled = false;
           confirmBtn.textContent = 'Yes, delete';
         }
@@ -1595,18 +1589,15 @@ if (me.totp_enabled) {
     if (!btn || !modal || !cancelBtn || !confirmBtn) return;
 
     btn.addEventListener('click', () => {
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      showOverlay(modal);
     });
 
     cancelBtn.addEventListener('click', () => {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
+      void hideOverlay(modal);
     });
 
     confirmBtn.addEventListener('click', async () => {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
+      void hideOverlay(modal);
       btn.disabled = true;
       const originalText = btn.textContent;
       btn.textContent = 'Healing...';

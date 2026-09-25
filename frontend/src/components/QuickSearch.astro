@@ -9,7 +9,7 @@ const { combineLists = true } = Astro.props;
     <Icon name="search" />
     <label class="sr-only" for="quick-search-input">Search movies and series</label>
     <input id="quick-search-input" type="search" placeholder="Search movies and series…" autocomplete="off" spellcheck="false" />
-    <button class="editor-icon-button" type="button" aria-label="Close search" data-quick-search-close><Icon name="close" /></button>
+    <button class="editor-icon-button" type="button" aria-label="Close search" data-motion-press data-quick-search-close><Icon name="close" /></button>
   </div>
   <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   <p class="quick-search-state" data-search-state role="status" hidden></p>
@@ -23,6 +23,7 @@ const { combineLists = true } = Astro.props;
 <template data-search-add-icon><Icon name="plus" /></template>
 
 <script>
+  import { showDialog, closeDialog, reveal } from '../lib/ui-motion';
 import { responsiveArtwork } from '../lib/responsive-artwork';
 
 let pageListeners: AbortController;
@@ -122,7 +123,10 @@ document.addEventListener('astro:page-load', () => {
       const section = dialog?.querySelector<HTMLElement>(`[data-search-section="${kind}"]`);
       if (section) section.hidden = !visible[kind];
     }
-    if (resultShell) resultShell.hidden = !Object.values(visible).some(Boolean);
+    if (resultShell) {
+      resultShell.hidden = !Object.values(visible).some(Boolean);
+      if (!resultShell.hidden) reveal(resultShell);
+    }
     showState(resultShell?.hidden ? 'No matching movies or series.' : '');
     if (announcement) announcement.textContent = resultShell?.hidden ? '' : `${latest.movie.length} movie and ${latest.series.length} series results.`;
   }
@@ -165,11 +169,11 @@ document.addEventListener('astro:page-load', () => {
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
-    if (!dialog?.open) dialog?.showModal();
+    if (dialog) showDialog(dialog);
     requestAnimationFrame(() => input?.focus());
   }
   openButton?.addEventListener('click', open);
-  closeButton?.addEventListener('click', () => dialog?.close());
+  closeButton?.addEventListener('click', () => { if (dialog) void closeDialog(dialog); });
   resultShell?.addEventListener('click', async event => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-search-add]');
     if (!button || button.disabled) return;
@@ -187,7 +191,7 @@ document.addEventListener('astro:page-load', () => {
       }
       if (!Number.isSafeInteger(mediaId) || mediaId <= 0) throw new Error('Could not load this title. Try again.');
       if (!dialog?.open) return;
-      dialog.close();
+      void closeDialog(dialog);
       document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId, opener:openButton}}));
     } catch (cause) {
       showState(cause instanceof Error ? cause.message : 'Could not load this title. Try again.');
@@ -196,7 +200,7 @@ document.addEventListener('astro:page-load', () => {
       button.removeAttribute('aria-busy');
     }
   }, {signal: pageListeners.signal});
-  dialog?.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  dialog?.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); });
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); });
   input?.addEventListener('input', () => {
     clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
@@ -205,7 +209,7 @@ document.addEventListener('astro:page-load', () => {
     showState('');
     timer = window.setTimeout(search, 180);
   });
-  window.addEventListener('resize', () => { if (matchMedia('(max-width:650px)').matches && dialog?.open) dialog.close(); }, { signal: pageListeners.signal });
+  window.addEventListener('resize', () => { if (matchMedia('(max-width:650px)').matches && dialog?.open) void closeDialog(dialog); }, { signal: pageListeners.signal });
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
   }, { signal: pageListeners.signal });

@@ -42,6 +42,7 @@ import Icon from './Icon.astro';
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
 import { applyResponsiveArtwork } from '../lib/responsive-artwork';
+import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -72,19 +73,21 @@ document.addEventListener('astro:page-load', () => {
   const statusValue = dialog.querySelector<HTMLElement>('#editor-status-value')!;
   const statusOptions = dialog.querySelector<HTMLElement>('#editor-status-options')!;
   const statusButtons = [...statusOptions.querySelectorAll<HTMLButtonElement>('[data-editor-status]')];
-  const closeStatus = () => { statusOptions.hidden = true; statusTrigger.setAttribute('aria-expanded', 'false'); };
+  const closeStatus = () => { void hideMenu(statusOptions); statusTrigger.setAttribute('aria-expanded', 'false'); };
   const syncStatus = () => {
     const selected = statusButtons.find(button => button.dataset.editorStatus === field('status').value);
     statusValue.textContent = selected?.textContent || 'Status';
     statusButtons.forEach(button => button.setAttribute('aria-current', String(button === selected)));
   };
   statusTrigger.addEventListener('click', () => {
-    statusOptions.hidden = !statusOptions.hidden;
-    statusTrigger.setAttribute('aria-expanded', String(!statusOptions.hidden));
+    if (statusTrigger.getAttribute('aria-expanded') !== 'true') {
+      showMenu(statusOptions);
+      statusTrigger.setAttribute('aria-expanded', 'true');
+    } else closeStatus();
   });
   statusTrigger.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault(); statusOptions.hidden = false; statusTrigger.setAttribute('aria-expanded', 'true');
+      event.preventDefault(); showMenu(statusOptions); statusTrigger.setAttribute('aria-expanded', 'true');
       (statusButtons.find(button => button.dataset.editorStatus === field('status').value) || statusButtons[0])?.focus();
     }
   });
@@ -107,7 +110,7 @@ document.addEventListener('astro:page-load', () => {
   dialog.addEventListener('focusout', event => { if (!statusTrigger.contains(event.relatedTarget as Node) && !statusOptions.contains(event.relatedTarget as Node)) closeStatus(); });
   const closeEditor = () => {
     if (!dialog.open) return;
-    dialog.close();
+    void closeDialog(dialog);
   };
   function populateEditor(title: any) {
     const embedded = !Object.prototype.hasOwnProperty.call(title, 'entry');
@@ -231,10 +234,10 @@ document.addEventListener('astro:page-load', () => {
     const cached = retained.get(mediaId);
     if (cached) {
       populateEditor(cached);
-      dialog.showModal();
+      showDialog(dialog);
       return;
     }
-    dialog.showModal();
+    showDialog(dialog);
     document.querySelector('#editor-title')!.textContent = 'Loading entry…';
     saveButton.disabled = true;
     try {
@@ -259,14 +262,13 @@ document.addEventListener('astro:page-load', () => {
   async function confirmScoreOverride() {
     const confirmation = document.querySelector<HTMLDialogElement>('#editor-score-override')!;
     confirmation.returnValue = 'cancel';
-    confirmation.showModal();
+    showDialog(confirmation);
     return new Promise<boolean>(resolve => confirmation.addEventListener('close', () => resolve(confirmation.returnValue === 'confirm'), {once:true}));
   }
   const confirmation = document.querySelector<HTMLDialogElement>('#editor-score-override')!;
-  confirmation.addEventListener('click', event => { if (event.target === confirmation) confirmation.close('cancel'); });
+  confirmation.addEventListener('click', event => { if (event.target === confirmation) void closeDialog(confirmation, 'cancel'); });
   confirmation.addEventListener('cancel', () => { confirmation.returnValue = 'cancel'; });
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
-  dialog.addEventListener('cancel', event => { event.preventDefault(); closeEditor(); });
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
   dialog.addEventListener('close', () => {
     loadController?.abort(); loadController = null; libraryRequest?.abort(); libraryRequest = null; libraryEpoch++; librarySyncing = false; libraryButton.hidden = true; libraryButton.disabled = true; libraryButton.removeAttribute('aria-busy'); current = null; displayedScore = ''; form.reset();

@@ -7,7 +7,7 @@ import Icon from './Icon.astro';
       <img id="quick-rating-poster" alt="" hidden />
       <div><span class="eyebrow">Quick rate</span><h2 id="quick-rating-title">Rate title</h2></div>
     </div>
-    <button type="button" class="quick-rating-close" id="quick-rating-close" aria-label="Close rating"><Icon name="close" /></button>
+    <button type="button" class="quick-rating-close" id="quick-rating-close" aria-label="Close rating" data-motion-press><Icon name="close" /></button>
   </div>
   <div class="quick-rating-body">
     <output id="quick-rating-value" aria-live="polite">Unrated</output>
@@ -24,6 +24,7 @@ import Icon from './Icon.astro';
 
 <script>
 import { applyResponsiveArtwork } from '../lib/responsive-artwork';
+import { showDialog, closeDialog } from '../lib/ui-motion';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -105,7 +106,7 @@ document.addEventListener('astro:page-load', () => {
       // after the picker closes. A failed request reopens the picker for retry.
       try {
         const pending = current.onScore(score);
-        dialog.close();
+        void closeDialog(dialog);
         void Promise.resolve(pending).catch(cause => {
           if (active !== current) return;
           savedScore = previousScore;
@@ -114,7 +115,7 @@ document.addEventListener('astro:page-load', () => {
           paint(previousScore);
           error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
           error.hidden = false;
-          if (!dialog.open) dialog.showModal();
+          showDialog(dialog);
         });
       } catch (cause) {
         savedScore = previousScore;
@@ -160,7 +161,7 @@ document.addEventListener('astro:page-load', () => {
         if (modeLabel) modeLabel.textContent = savedScore == null ? 'Unrated' : ratingMode === 'average' ? 'Rated-season average' : 'Manual rating';
       });
       document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: { id: active.id, score: savedScore } }));
-      setTimeout(() => dialog.close(), 140);
+      setTimeout(() => { void closeDialog(dialog); }, 140);
     } catch (cause) {
       error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
       error.hidden = false;
@@ -183,7 +184,7 @@ document.addEventListener('astro:page-load', () => {
     help.hidden = false;
     error.hidden = true;
     paint(savedScore);
-    if (!dialog.open) dialog.showModal();
+    showDialog(dialog);
   }
   buildStars();
   const scoreAt = (x: number) => {
@@ -217,7 +218,7 @@ document.addEventListener('astro:page-load', () => {
     if (suppressTouchClick) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   stars.addEventListener('pointerleave', () => { if (touchPointer == null) paint(savedScore); });
-  document.querySelector('#quick-rating-close')?.addEventListener('click', () => dialog.close());
+  document.querySelector('#quick-rating-close')?.addEventListener('click', () => { void closeDialog(dialog); });
   remove.addEventListener('click', () => save(null));
   override.addEventListener('click', () => { if (pendingScore != null) save(pendingScore, true); });
   document.querySelector('#quick-rating-cancel')?.addEventListener('click', () => {
@@ -226,7 +227,7 @@ document.addEventListener('astro:page-load', () => {
     help.hidden = false;
     paint(savedScore);
   });
-  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); });
   document.addEventListener('click', event => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-quick-rate-id]');
     if (!button) return;

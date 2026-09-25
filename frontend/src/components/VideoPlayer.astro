@@ -74,6 +74,7 @@ const useHls = settings.use_hls_player === true;
 
 <script>
   import Hls from 'hls.js';
+  import { showDialog, closeDialog } from '../lib/ui-motion';
 
   function esc(str: string | null | undefined): string {
     if (str == null) return '';
@@ -401,13 +402,13 @@ const useHls = settings.use_hls_player === true;
       destroyHls();
       video.pause();
       video.src = '';
-      dialog.close();
+      void closeDialog(dialog!);
     }
 
     playBtn?.addEventListener('click', async () => {
       titleEl.textContent = title;
       sourcesEl.innerHTML = '<span class="text-xs text-zinc-400">Loading sources…</span>';
-      dialog.showModal();
+      showDialog(dialog!);
 
       try {
         const res = await fetch(`/api/proxy/media/playback/${mediaType}/${tmdbId}${mediaId ? `?media_id=${mediaId}` : ''}`, {
@@ -424,6 +425,7 @@ const useHls = settings.use_hls_player === true;
     });
 
     closeBtn?.addEventListener('click', closePlayer);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); closePlayer(); });
     dialog.addEventListener('click', (e) => { if (e.target === dialog) closePlayer(); });
   }
 </script>

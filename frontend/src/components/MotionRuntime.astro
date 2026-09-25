@@ -1,0 +1,61 @@
+<script>
+  import { animate } from 'motion/mini';
+  import { cancelUiMotion } from '../lib/ui-motion';
+
+  const active = new Map<HTMLElement, ReturnType<typeof animate>>();
+  const selector = '.button-primary, .appbar-icon-link, [data-motion-press]';
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function targetFor(event: Event) {
+    const element = (event.target as Element | null)?.closest<HTMLElement>(selector);
+    return element && !element.matches(':disabled, [aria-disabled="true"]') ? element : null;
+  }
+
+  function press(element: HTMLElement) {
+    if (reduced()) return;
+    active.get(element)?.stop();
+    active.set(element, animate(element, { scale: .985 }, { duration: .09, ease: 'easeOut' }));
+  }
+
+  function release(element: HTMLElement | null) {
+    if (!element || !active.has(element)) return;
+    active.get(element)?.stop();
+    const control = animate(element, { scale: 1 }, { duration: .14, ease: 'easeOut' });
+    active.set(element, control);
+    void control.finished.then(() => {
+      if (active.get(element) === control) {
+        active.delete(element);
+        element.style.removeProperty('scale');
+      }
+    }).catch(() => {});
+  }
+
+  let pressed: HTMLElement | null = null;
+  document.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    pressed = targetFor(event);
+    if (pressed) press(pressed);
+  });
+  for (const eventName of ['pointerup', 'pointercancel']) {
+    document.addEventListener(eventName, () => { release(pressed); pressed = null; });
+  }
+  document.addEventListener('keydown', event => {
+    if (event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
+    const element = targetFor(event);
+    if (element) { pressed = element; press(element); }
+  });
+  document.addEventListener('keyup', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    release(pressed);
+    pressed = null;
+  });
+  document.addEventListener('astro:before-swap', () => {
+    cancelUiMotion();
+    for (const [element, control] of active) {
+      control.stop();
+      element.style.removeProperty('scale');
+    }
+    active.clear();
+    pressed = null;
+  });
+</script>

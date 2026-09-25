@@ -12,6 +12,7 @@ import QuickRating from '../components/QuickRating.astro';
 import AttentionPrompt from '../components/AttentionPrompt.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import NavigationRuntime from '../components/NavigationRuntime.astro';
+import MotionRuntime from '../components/MotionRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
 import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
@@ -31,7 +32,7 @@ if (user?.is_admin) {
 }
 ---
 <!doctype html>
-<html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}>
+<html lang="en" transition:animate="none" style={activeColor ? themeVariables(activeColor) : undefined}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -73,6 +74,7 @@ if (user?.is_admin) {
     <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
     <PwaRuntime />
     <NavigationRuntime />
+    <MotionRuntime />
     <ProfileThemeRuntime />
   </body>
 </html>

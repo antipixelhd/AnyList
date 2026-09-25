@@ -77,6 +77,7 @@ const rewatchLabel=(count:number)=>`${count} ${count===1?'rewatch':'rewatches'}`
 </Tracker>
 <script>
 import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
+import {reveal,dismiss} from '../../../lib/ui-motion';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -111,6 +112,7 @@ document.addEventListener('astro:page-load', () => {
     preview.style.left = `${Math.max(8, Math.min(innerWidth-width-8, rect.left-width-gap >= 8 ? rect.left-width-gap : rect.right+gap))}px`;
     preview.style.top = `${Math.max(8, Math.min(innerHeight-height-8, rect.top-(height-rect.height)/2))}px`;
     preview.hidden = false;
+    reveal(preview);
   }
   document.querySelectorAll<HTMLElement>('.entry-row').forEach(row => {
     row.addEventListener('pointerenter',()=>{previewDismissed=false;showPreview(row);});
@@ -221,8 +223,12 @@ document.addEventListener('astro:page-load', () => {
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();const grid=button.dataset.view==='grid';groups.classList.toggle('grid-view',grid);updateEntryImages(grid);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
     const mobileToggle=document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
     const filters=document.querySelector<HTMLElement>('#list-filters')!;
-    function setFiltersOpen(open:boolean){filters.classList.toggle('open',open);mobileToggle.setAttribute('aria-expanded',String(open));if(open)input('list-search').focus();else mobileToggle.focus();}
-    mobileToggle.addEventListener('click',()=>setFiltersOpen(!filters.classList.contains('open')));
+    function setFiltersOpen(open:boolean){
+      mobileToggle.setAttribute('aria-expanded',String(open));
+      if(open){filters.classList.add('open');reveal(filters);input('list-search').focus();}
+      else{void dismiss(filters).then(current=>{if(current)filters.classList.remove('open');});mobileToggle.focus();}
+    }
+    mobileToggle.addEventListener('click',()=>setFiltersOpen(mobileToggle.getAttribute('aria-expanded')!=='true'));
     document.querySelector('[data-close-filters]')!.addEventListener('click',()=>setFiltersOpen(false));
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
     document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});

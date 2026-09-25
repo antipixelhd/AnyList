@@ -115,6 +115,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   });
 </script>}
 <script>
+  import { reveal, dismiss } from '../lib/ui-motion';
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
@@ -267,6 +268,25 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   }
   const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
   const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');
+  const mobileMenuNav = mobileMenu?.querySelector<HTMLElement>('nav');
+  if (mobileMenu && mobileMenuSummary && mobileMenuNav) {
+    const closeMobileMenu = () => {
+      if (!mobileMenu.open) return;
+      mobileMenuNav.inert = true;
+      void dismiss(mobileMenuNav).then(current => { if (current) mobileMenu.open = false; });
+    };
+    mobileMenuSummary.addEventListener('click', event => {
+      event.preventDefault();
+      if (mobileMenu.open && !mobileMenuNav.inert) closeMobileMenu();
+      else { mobileMenu.open = true; mobileMenuNav.inert = false; reveal(mobileMenuNav); }
+    }, { signal: appbarListeners.signal });
+    document.addEventListener('click', event => {
+      if (!mobileMenu.contains(event.target as Node)) closeMobileMenu();
+    }, { signal: appbarListeners.signal });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && mobileMenu.open) { closeMobileMenu(); mobileMenuSummary.focus(); }
+    }, { signal: appbarListeners.signal });
+  }
   document.addEventListener('anylist:combine-lists-changed', rawEvent => {
     const combined = (rawEvent as CustomEvent<{combineLists: boolean}>).detail.combineLists;
     for (const nav of document.querySelectorAll<HTMLElement>('[data-desktop-main-nav], [data-mobile-main-nav]')) {

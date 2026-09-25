@@ -725,6 +725,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 </div>
 
 <script>
+  import { showOverlay, hideOverlay } from '../lib/ui-motion';
   const appData = document.getElementById('app-data') as HTMLElement;
   const token = appData.dataset.token!;
   const currentUserId = parseInt(appData.dataset.currentUserId!);
@@ -1149,11 +1150,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const file = restoreFile.files?.[0];
     if (!file) return;
     document.getElementById('restore-modal-filename')!.textContent = file.name;
-    restoreModal.classList.remove('hidden');
+    showOverlay(restoreModal);
   }
 
   function closeRestoreModal() {
-    restoreModal.classList.add('hidden');
+    void hideOverlay(restoreModal);
   }
 
   restoreFile?.addEventListener('change', () => {
@@ -1291,11 +1292,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     } else {
       body.innerHTML = `Are you sure you want to delete <strong class="text-zinc-100">${esc(username)}</strong>? This cannot be undone.`;
     }
-    deleteUserModal.classList.remove('hidden');
+    showOverlay(deleteUserModal);
   }
 
   function closeDeleteModal() {
-    deleteUserModal.classList.add('hidden');
+    void hideOverlay(deleteUserModal);
     pendingDelete = null;
   }
 
@@ -1336,15 +1337,15 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   const adminHealModal = document.getElementById('admin-heal-modal')!;
 
   adminHealBtn?.addEventListener('click', () => {
-    adminHealModal.classList.remove('hidden');
+    showOverlay(adminHealModal);
   });
 
   document.getElementById('admin-heal-cancel-btn')?.addEventListener('click', () => {
-    adminHealModal.classList.add('hidden');
+    void hideOverlay(adminHealModal);
   });
 
   document.getElementById('admin-heal-modal-backdrop')?.addEventListener('click', () => {
-    adminHealModal.classList.add('hidden');
+    void hideOverlay(adminHealModal);
   });
 
   // ── Admin heal progress tracking ─────────────────────────────────────────
@@ -1430,7 +1431,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   })();
 
   document.getElementById('admin-heal-confirm-btn')?.addEventListener('click', async () => {
-    adminHealModal.classList.add('hidden');
+    void hideOverlay(adminHealModal);
     adminHealBtn.disabled = true;
     adminHealBtn.textContent = 'Starting…';
     try {

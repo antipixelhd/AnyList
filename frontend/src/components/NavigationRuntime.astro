@@ -250,8 +250,6 @@
       resetForIdentity();
       const url = new URL(location.href);
       const key = keyFor(url);
-      document.documentElement.classList.add('route-content-enter');
-      requestAnimationFrame(() => document.documentElement.classList.remove('route-content-enter'));
       if (state.usedCached.has(key)) void validate(url, key);
       else remember(url, document);
     });

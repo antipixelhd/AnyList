@@ -631,9 +631,6 @@
     max-height:min(620px,calc(100vh - 150px));
     overflow-y:auto
   }
-  .filters.open {
-    animation:filter-panel-in .16s ease-out
-  }
   .mobile-filter-heading {
     display:flex;
     align-items:center;
@@ -652,21 +649,6 @@
   }
   .status-filters {
     gap:5px
-  }
-}
-@keyframes filter-panel-in {
-  from {
-    opacity:0;
-    transform:translateY(-6px)
-  }
-  to {
-    opacity:1;
-    transform:none
-  }
-}
-@media(prefers-reduced-motion:reduce) {
-  .filters.open {
-    animation:none
   }
 }
 .profile-overview {
