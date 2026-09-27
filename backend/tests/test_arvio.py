@@ -187,6 +187,8 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
         db.execute = AsyncMock(side_effect=[
             _Result(scalars=[]),  # Media search
             _Result(scalars=[]),  # get_dedup_window_minutes lookup (#390)
+            _Result(scalars=[]),  # confident dated event
+            _Result(scalars=[]),  # inferred dated event
             _Result(scalars=[]),  # WatchEvent search
         ])
 
@@ -210,6 +212,8 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
         db.execute = AsyncMock(side_effect=[
             _Result(scalars=[]),  # Media search
             _Result(scalars=[]),  # get_dedup_window_minutes lookup (#390)
+            _Result(scalars=[]),  # confident dated event
+            _Result(scalars=[]),  # inferred dated event
             _Result(scalars=[]),  # WatchEvent search
         ])
 
@@ -230,6 +234,8 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[]),  # Show search
             _Result(scalars=[]),  # Media episode search
             _Result(scalars=[]),  # get_dedup_window_minutes lookup (#390)
+            _Result(scalars=[]),  # confident dated event
+            _Result(scalars=[]),  # inferred dated event
             _Result(scalars=[]),  # WatchEvent search
         ])
 

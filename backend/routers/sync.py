@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 from typing import Any
+from types import SimpleNamespace
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -694,7 +695,7 @@ def _nuvio_imdb_id(entity: Media | Show | None) -> str | None:
     if entity is None:
         return None
     data = entity.tmdb_data or {}
-    value = data.get("imdb_id") or (data.get("external_ids") or {}).get("imdb_id")
+    value = data.get("imdb_id") or (data.get("external_ids") or {}).get("imdb_id") or getattr(entity, "imdb_id", None)
     imdb_id = str(value or "").strip()
     return imdb_id if imdb_id.startswith("tt") and imdb_id[2:].isdigit() else None
 
@@ -1190,26 +1191,31 @@ def _nuvio_progress_item(
     duration_ms = max(position_ms, duration_ms)
 
     updated_at = progress.updated_at
-    if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=timezone.utc)
-    last_watched = int(updated_at.timestamp() * 1000)
+    last_watched = None
+    if updated_at is not None:
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        last_watched = int(updated_at.timestamp() * 1000)
 
     if media.media_type == MediaType.movie and (content_id := _nuvio_imdb_id(media)):
-        return {
+        item = {
             "content_id": content_id,
             "content_type": "movie",
             "video_id": content_id,
             "position": position_ms,
             "duration": duration_ms,
-            "last_watched": last_watched,
+            "progress_key": content_id,
         }
+        if last_watched is not None:
+            item["last_watched"] = last_watched
+        return item
     if (
         media.media_type == MediaType.episode
         and (content_id := _nuvio_imdb_id(show))
         and media.season_number is not None
         and media.episode_number is not None
     ):
-        return {
+        item = {
             "content_id": content_id,
             "content_type": "series",
             "video_id": f"{content_id}:{media.season_number}:{media.episode_number}",
@@ -1217,8 +1223,11 @@ def _nuvio_progress_item(
             "episode": media.episode_number,
             "position": position_ms,
             "duration": duration_ms,
-            "last_watched": last_watched,
+            "progress_key": f"{content_id}_s{media.season_number}e{media.episode_number}",
         }
+        if last_watched is not None:
+            item["last_watched"] = last_watched
+        return item
     return None
 
 
@@ -1227,30 +1236,200 @@ async def _build_nuvio_progress_items(
     user_id: int,
     api_key: str | None = None,
 ) -> list[dict]:
-    result = await db.execute(
-        select(PlaybackProgress, Media)
-        .join(Media, Media.id == PlaybackProgress.media_id)
-        .where(PlaybackProgress.user_id == user_id)
+    from models.tracking import TrackedEntry
+
+    tracked_result = await db.execute(
+        select(TrackedEntry, Media)
+        .join(Media, Media.id == TrackedEntry.media_id)
+        .where(TrackedEntry.user_id == user_id, TrackedEntry.status == "watching")
         .order_by(Media.id)
     )
-    rows = result.all()
-    show_ids = {
-        media.show_id
-        for _, media in rows
-        if media.media_type == MediaType.episode and media.show_id is not None
-    }
+    tracked_rows = tracked_result.all()
+    if not tracked_rows:
+        return []
+    entries_by_media = {media.id: entry for entry, media in tracked_rows}
+    media_by_id = {media.id: media for _, media in tracked_rows}
+    series_media = [media for _, media in tracked_rows if media.media_type == MediaType.series]
     shows_by_id: dict[int, Show] = {}
+    if series_media:
+        series_tmdb_ids = {media.tmdb_id for media in series_media if media.tmdb_id is not None}
+        if series_tmdb_ids:
+            shows_result = await db.execute(select(Show).where(Show.tmdb_id.in_(series_tmdb_ids)))
+            shows_by_id = {show.id: show for show in shows_result.scalars().all()}
+    show_id_to_entry = {
+        show.id: entries_by_media[media.id]
+        for media in series_media
+        for show in shows_by_id.values()
+        if media.tmdb_id is not None and show.tmdb_id == media.tmdb_id
+    }
+    episode_by_show: dict[int, list[Media]] = {}
+    if show_id_to_entry:
+        episodes_result = await db.execute(select(Media).where(
+            Media.show_id.in_(show_id_to_entry), Media.media_type == MediaType.episode,
+        ).order_by(Media.show_id, Media.season_number, Media.episode_number))
+        for episode in episodes_result.scalars().all():
+            episode_by_show.setdefault(episode.show_id, []).append(episode)
+            media_by_id[episode.id] = episode
+
+    candidate_media_ids = set(entries_by_media)
+    candidate_media_ids.update(episode.id for episodes in episode_by_show.values() for episode in episodes)
+    progress_result = await db.execute(
+        select(PlaybackProgress, Media)
+        .join(Media, Media.id == PlaybackProgress.media_id)
+        .where(PlaybackProgress.user_id == user_id, PlaybackProgress.media_id.in_(candidate_media_ids))
+        .order_by(Media.id)
+    )
+
+    def fresh_for(progress: PlaybackProgress, entry) -> bool:
+        changed_at = entry.status_changed_at
+        updated_at = progress.updated_at
+        if changed_at is None:
+            return True
+        if updated_at is None:
+            return False
+        if changed_at.tzinfo is None:
+            changed_at = changed_at.replace(tzinfo=timezone.utc)
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        return updated_at >= changed_at
+
+    fresh_progress: dict[int, PlaybackProgress] = {}
+    for progress, media in progress_result.all():
+        owner = entries_by_media.get(media.id) or show_id_to_entry.get(media.show_id)
+        if owner is not None and fresh_for(progress, owner):
+            fresh_progress[media.id] = progress
+
+    def synthetic_at(entry) -> datetime:
+        # Anchor synthetic resume activity to the latest stored status decision
+        # so repeated full pushes do not make the title look newly played.
+        value = entry.status_changed_at or entry.updated_at or datetime.now(timezone.utc)
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
+
+    progress_by_media = dict(fresh_progress)
+    for media_id, entry in entries_by_media.items():
+        media = media_by_id[media_id]
+        if media.media_type == MediaType.series:
+            show = next((row for row in shows_by_id.values() if row.tmdb_id == media.tmdb_id), None)
+            if show is None:
+                continue
+            episodes = episode_by_show.get(show.id, [])
+            if not episodes or any(episode.id in fresh_progress for episode in episodes):
+                continue
+            released = [episode for episode in episodes
+                if not episode.release_date or episode.release_date <= datetime.now(timezone.utc).date().isoformat()]
+            if not released:
+                continue
+            episode_ids = {episode.id for episode in released}
+            watched_result = await db.execute(select(WatchEvent.media_id).where(
+                WatchEvent.user_id == user_id, WatchEvent.completed.is_(True), WatchEvent.media_id.in_(episode_ids),
+            ))
+            watched_ids = set(watched_result.scalars().all())
+            target = next((episode for episode in released if episode.id not in watched_ids), released[0])
+            progress_by_media[target.id] = SimpleNamespace(
+                progress_seconds=1, progress_percent=0.01, updated_at=synthetic_at(entry),
+            )
+        elif media.media_type in (MediaType.movie, MediaType.episode) and media_id not in fresh_progress:
+            progress_by_media[media_id] = SimpleNamespace(
+                progress_seconds=1, progress_percent=0.01, updated_at=synthetic_at(entry),
+            )
+
+    media_rows = [media_by_id[media_id] for media_id in progress_by_media]
+    show_ids = {media.show_id for media in media_rows
+        if media.media_type == MediaType.episode and media.show_id is not None}
     if show_ids:
         shows_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
-        shows_by_id = {show.id: show for show in shows_result.scalars().all()}
-    await _ensure_nuvio_imdb_ids([media for _, media in rows], shows_by_id, api_key)
+        shows_by_id.update({show.id: show for show in shows_result.scalars().all()})
+    await _ensure_nuvio_imdb_ids(media_rows, shows_by_id, api_key)
 
     items: list[dict] = []
-    for progress, media in rows:
+    for media_id, progress in progress_by_media.items():
+        media = media_by_id[media_id]
         item = _nuvio_progress_item(progress, media, shows_by_id.get(media.show_id))
         if item:
             items.append(item)
     return items
+
+
+async def _nuvio_progress_keys_to_clear(db: AsyncSession, user_id: int, connection_id: int,
+                                        remote_rows: list[dict]) -> list[str]:
+    """Find mapped Nuvio resumes whose local title is no longer Watching."""
+    from models.tracking import StreamBaseline, TrackedEntry, TrackingDeletion
+
+    baseline = await db.get(StreamBaseline, connection_id)
+    mappings = (baseline.snapshot or {}).get("mappings", {}) if baseline else {}
+    statuses_result = await db.execute(
+        select(Media, TrackedEntry.status)
+        .join(TrackedEntry, TrackedEntry.media_id == Media.id)
+        .where(TrackedEntry.user_id == user_id,
+            Media.media_type.in_([MediaType.movie, MediaType.series]))
+    )
+    status_by_media: dict[tuple[int, str], str] = {}
+    status_by_external: dict[tuple[str, str], str] = {}
+    for media, status in statuses_result.all():
+        media_type = media.media_type.value if hasattr(media.media_type, "value") else str(media.media_type)
+        if media.tmdb_id is not None:
+            status_by_media[(int(media.tmdb_id), media_type)] = status
+        if (content_id := _nuvio_imdb_id(media)):
+            status_by_external[(content_id, media_type)] = status
+    deleted_result = await db.execute(
+        select(Media, TrackingDeletion.deleted_at)
+        .join(TrackingDeletion, TrackingDeletion.media_id == Media.id)
+        .where(TrackingDeletion.user_id == user_id,
+            Media.media_type.in_([MediaType.movie, MediaType.series]))
+    )
+    for media, _deleted_at in deleted_result.all():
+        media_type = media.media_type.value if hasattr(media.media_type, "value") else str(media.media_type)
+        if (content_id := _nuvio_imdb_id(media)):
+            status_by_external[(content_id, media_type)] = "deleted"
+
+    clear_keys: list[str] = []
+    for row in remote_rows:
+        content_id = str(row.get("content_id") or "")
+        content_type = str(row.get("content_type") or "")
+        mapped_tmdb_id = mappings.get(content_id)
+        previously_pushed = content_id in ((baseline.snapshot or {}).get("outbound", {}) if baseline else {})
+        known = mapped_tmdb_id is not None or (content_id, content_type) in status_by_external or previously_pushed
+        if not known:
+            continue
+        status = status_by_media.get((int(mapped_tmdb_id), content_type)) if mapped_tmdb_id is not None else None
+        if status is None:
+            status = status_by_external.get((content_id, content_type))
+        if status == "watching":
+            continue
+        progress_key = row.get("progress_key")
+        if not progress_key:
+            raise nuvio.NuvioAPIError("Nuvio progress row has no progress_key; refusing an unsafe clear")
+        clear_keys.append(str(progress_key))
+    return list(dict.fromkeys(clear_keys))
+
+
+async def _nuvio_progress_mappings_for_items(db: AsyncSession, user_id: int,
+                                            progress_items: list[dict]) -> dict[str, int]:
+    from models.tracking import TrackedEntry
+
+    content_ids = {str(item.get("content_id") or "") for item in progress_items}
+    if not content_ids:
+        return {}
+    result = await db.execute(
+        select(Media, TrackedEntry.status)
+        .join(TrackedEntry, TrackedEntry.media_id == Media.id)
+        .where(TrackedEntry.user_id == user_id, TrackedEntry.status == "watching",
+            Media.media_type.in_([MediaType.movie, MediaType.series]))
+    )
+    mappings: dict[str, int] = {}
+    for media, _status in result.all():
+        content_id = _nuvio_imdb_id(media)
+        if content_id in content_ids and media.tmdb_id is not None:
+            mappings[content_id] = int(media.tmdb_id)
+    return mappings
+
+
+def _nuvio_progress_matches(left: dict, right: dict) -> bool:
+    return all(left.get(key) == right.get(key) for key in (
+        "content_id", "content_type", "position", "duration", "season", "episode", "progress_key",
+    ))
 
 
 async def _fan_out_changes_to_other_connections(
@@ -2599,6 +2778,11 @@ async def sync_items(
                 if media_id_for_watch is not None:
                     watch_state = extract_watch_state(item, source)
                     if sync_watched and (watch_state["completed"] or watch_state["play_count"] > 0):
+                        from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
+                        if watch_state["completed"] and watch_state["last_played"] is not None:
+                            await reconcile_inferred_watch_date(
+                                db, user_id, media_id_for_watch, watch_state["last_played"],
+                            )
                         already_recorded = media_id_for_watch in existing_watched
                         rewatch_eligible = is_fresh_rewatch_play(
                             already_recorded,
@@ -2617,15 +2801,13 @@ async def sync_items(
                         # ALREADY completed counts as nothing new to do here.
                         needs_completion = watch_state["completed"] and media_id_for_watch not in existing_completed
                         if not already_recorded or rewatch_eligible or needs_completion:
-                            # Falling back to "now" here (#238) misrepresents every title
-                            # the source has no last-played date for as watched at sync
-                            # time, flooding the activity feed with false "just watched"
-                            # entries. None (unknown date) is an established, already
-                            # -supported state for this column - see Simkl's import path.
+                            # Keep the estimate replaceable if a later pull
+                            # supplies the server's actual play date.
                             watch_event = WatchEvent(
                                 user_id=user_id,
                                 media_id=media_id_for_watch,
-                                watched_at=watch_state["last_played"],
+                                watched_at=watch_state["last_played"] or inferred_watch_datetime(),
+                                date_inferred=watch_state["last_played"] is None,
                                 completed=watch_state["completed"],
                                 play_count=max(1, watch_state["play_count"]),
                                 progress_percent=1.0 if watch_state["completed"] else 0.0,
@@ -4396,10 +4578,8 @@ async def _resolve_nuvio_tmdb_ids(
 
 
 def _nuvio_datetime(epoch_ms: object) -> datetime | None:
-    try:
-        return datetime.fromtimestamp(int(epoch_ms) / 1000, tz=timezone.utc).replace(tzinfo=None)
-    except (TypeError, ValueError, OSError, OverflowError):
-        return None
+    from core.watch_dates import normalize_watch_datetime
+    return normalize_watch_datetime(epoch_ms)
 
 
 def _normalize_nuvio_item(
@@ -4536,6 +4716,7 @@ async def _apply_nuvio_watch_history(
     if not candidates:
         return set()
     media_ids = {media.id for media, _ in candidates}
+    from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
     existing_by_media: dict[int, list[datetime | None]] = {}
     media_id_list = list(media_ids)
     for i in range(0, len(media_id_list), _MAX_IN_PARAMS):
@@ -4543,6 +4724,7 @@ async def _apply_nuvio_watch_history(
             select(WatchEvent.media_id, WatchEvent.watched_at).where(
                 WatchEvent.user_id == user_id,
                 WatchEvent.media_id.in_(media_id_list[i : i + _MAX_IN_PARAMS]),
+                WatchEvent.completed.is_(True),
             )
         )
         for existing_media_id, existing_watched_at in existing_result.all():
@@ -4553,18 +4735,26 @@ async def _apply_nuvio_watch_history(
     new_events: list[WatchEvent] = []
     for media, watched_at in candidates:
         times = existing_by_media.get(media.id, [])
+        if watched_at is not None and await reconcile_inferred_watch_date(
+            db, user_id, media.id, watched_at,
+        ):
+            existing_by_media.setdefault(media.id, []).append(watched_at)
+            continue
         if dedupe_by_media_id_only:
             if times:
                 continue
         elif watched_at is None:
-            if any(t is None for t in times):
+            # An undated watched flag does not prove a new rewatch when any
+            # completed play already exists for this title.
+            if times:
                 continue
         elif is_duplicate_watch_time({media.id: [t for t in times if t is not None]}, media.id, watched_at, window_minutes):
             continue
         event = WatchEvent(
             user_id=user_id,
             media_id=media.id,
-            watched_at=watched_at,
+            watched_at=watched_at or inferred_watch_datetime(),
+            date_inferred=watched_at is None,
             completed=True,
             play_count=1,
             progress_percent=1.0,
@@ -4573,7 +4763,7 @@ async def _apply_nuvio_watch_history(
         new_events.append(event)
         # Keep in sync - a duplicate row later in the same batch must still be
         # caught, or it'd create a second WatchEvent for it in one sync run.
-        existing_by_media.setdefault(media.id, []).append(watched_at)
+        existing_by_media.setdefault(media.id, []).append(event.watched_at)
         added_media_ids.add(media.id)
     await db.commit()
     for event in new_events:
@@ -5212,7 +5402,10 @@ async def _stremio_records(
             duration = int(state.get("duration") or 0)
         except (TypeError, ValueError):
             position = duration = 0
-        if current_parts and position > 0 and duration > 0:
+        # Stremio can retain a stale timeOffset after the same episode has
+        # already been marked watched. That offset is historical residue, not
+        # active Continue Watching progress, so it must not recreate Watching.
+        if current_parts and current_video_id not in watched_ids and position > 0 and duration > 0:
             season, episode = current_parts
             progress_records.append(
                 {
@@ -5870,13 +6063,17 @@ async def _apply_arvio_watched_movie(
             await enrich_media(media, api_key=tmdb_api_key)
 
     window_minutes = await get_dedup_window_minutes(db, user_id)
+    from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
+    if watched_at is not None and await reconcile_inferred_watch_date(db, user_id, media.id, watched_at):
+        return False
     existing = await find_duplicate_watch_event(db, user_id, media.id, watched_at, window_minutes)
     if not existing:
         event = WatchEvent(
             user_id=user_id,
             media_id=media.id,
             completed=True,
-            watched_at=watched_at or datetime.now(timezone.utc).replace(tzinfo=None),
+            watched_at=watched_at or inferred_watch_datetime(),
+            date_inferred=watched_at is None,
         )
         db.add(event)
         await db.commit()
@@ -6000,13 +6197,17 @@ async def _apply_arvio_watched_episode(
             await enrich_media(media, api_key=tmdb_api_key)
 
     window_minutes = await get_dedup_window_minutes(db, user_id)
+    from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
+    if watched_at is not None and await reconcile_inferred_watch_date(db, user_id, media.id, watched_at):
+        return False
     existing = await find_duplicate_watch_event(db, user_id, media.id, watched_at, window_minutes)
     if not existing:
         event = WatchEvent(
             user_id=user_id,
             media_id=media.id,
             completed=True,
-            watched_at=watched_at or datetime.now(timezone.utc).replace(tzinfo=None),
+            watched_at=watched_at or inferred_watch_datetime(),
+            date_inferred=watched_at is None,
         )
         db.add(event)
         await db.commit()
@@ -6612,11 +6813,65 @@ async def _push_stremio_connection(
         }
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         candidates: dict[str, dict] = {}
+        clear_progress_ids: set[str] = set()
+        if conn.push_playback and not watch_only:
+            from models.tracking import StreamBaseline, TrackedEntry, TrackingDeletion
+
+            baseline = await db.get(StreamBaseline, conn.id)
+            mappings = (baseline.snapshot or {}).get("mappings", {}) if baseline else {}
+            status_by_media: dict[tuple[int, str], str] = {}
+            status_by_external: dict[tuple[str, str], str] = {}
+            status_result = await db.execute(
+                select(Media, TrackedEntry.status)
+                .join(TrackedEntry, TrackedEntry.media_id == Media.id)
+                .where(TrackedEntry.user_id == user_id,
+                    Media.media_type.in_([MediaType.movie, MediaType.series]))
+            )
+            for media, status in status_result.all():
+                media_type = media.media_type.value if hasattr(media.media_type, "value") else str(media.media_type)
+                if media.tmdb_id is not None:
+                    status_by_media[(int(media.tmdb_id), media_type)] = status
+                for external_id in (media.imdb_id, _nuvio_imdb_id(media),
+                    f"tmdb:{media.tmdb_id}" if media.tmdb_id is not None else None):
+                    if external_id:
+                        status_by_external[(str(external_id), media_type)] = status
+            deleted_result = await db.execute(
+                select(Media)
+                .join(TrackingDeletion, TrackingDeletion.media_id == Media.id)
+                .where(TrackingDeletion.user_id == user_id,
+                    Media.media_type.in_([MediaType.movie, MediaType.series]))
+            )
+            for media in deleted_result.scalars().all():
+                media_type = media.media_type.value if hasattr(media.media_type, "value") else str(media.media_type)
+                for external_id in (media.imdb_id, _nuvio_imdb_id(media),
+                    f"tmdb:{media.tmdb_id}" if media.tmdb_id is not None else None):
+                    if external_id:
+                        status_by_external[(str(external_id), media_type)] = "deleted"
+            for content_id, remote in remote_by_id.items():
+                if target_ids is not None and content_id not in target_ids:
+                    continue
+                content_type = str(remote.get("type") or "")
+                tmdb_id = mappings.get(content_id)
+                status = status_by_media.get((int(tmdb_id), content_type)) if tmdb_id is not None else None
+                known = tmdb_id is not None or (content_id, content_type) in status_by_external
+                if status is None:
+                    status = status_by_external.get((content_id, content_type))
+                if not known or status == "watching":
+                    continue
+                state = dict(remote.get("state") or {})
+                if state.get("timeOffset") in (None, 0, "0"):
+                    continue
+                candidate = dict(remote)
+                state["timeOffset"] = 0
+                candidate["state"] = state
+                candidates[content_id] = candidate
+                clear_progress_ids.add(content_id)
 
         for record in library_records:
             content_id = str(record["content_id"])
             candidate = dict(
-                remote_by_id.get(content_id)
+                candidates.get(content_id)
+                or remote_by_id.get(content_id)
                 or _stremio_new_library_item(record, now)
             )
             candidate["removed"] = False
@@ -6628,7 +6883,7 @@ async def _push_stremio_connection(
         for content_id in removed_library_ids:
             if content_id not in remote_by_id:
                 continue
-            candidate = dict(remote_by_id[content_id])
+            candidate = dict(candidates.get(content_id) or remote_by_id[content_id])
             candidate["removed"] = True
             candidate["temp"] = False
             candidates[content_id] = candidate
@@ -6754,6 +7009,15 @@ async def _push_stremio_connection(
                 conn.token,
                 changes[start : start + BATCH_SIZE],
             )
+        if clear_progress_ids:
+            confirmed = await stremio.datastore_get(conn.token, ids=sorted(clear_progress_ids))
+            confirmed_by_id = {str(item.get("_id")): item for item in confirmed if isinstance(item, dict)}
+            if any(
+                content_id not in confirmed_by_id
+                or (confirmed_by_id[content_id].get("state") or {}).get("timeOffset") not in (0, "0", None)
+                for content_id in clear_progress_ids
+            ):
+                raise stremio.StremioAPIError("Stremio did not confirm removal of stale progress")
 
     if conn.push_collection and not watch_only:
         conn.stremio_pushed_library_ids = sorted(current_library_ids)
@@ -6909,15 +7173,76 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             on_refresh=_persist_refresh,
                         )
                         conn.stremio_pushed_library_ids = sorted(current_library_ids)
-                    if watched_items or progress_items:
-                        await nuvio.push_sync_items(
-                            conn.url,
-                            conn.token,
-                            _nuvio_profile_id(conn),
-                            watched_items,
-                            progress_items,
-                            on_refresh=_persist_refresh,
-                        )
+                    if conn.push_watched or conn.push_playback:
+                        async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+                            session = await nuvio.refresh_session(conn.url, conn.token, client=client)
+                            await _persist_refresh(session)
+                            profile = _nuvio_profile_id(conn)
+                            remote_progress = (
+                                await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
+                                if conn.push_playback else []
+                            )
+                            clear_keys = (
+                                await _nuvio_progress_keys_to_clear(db, user_id, conn.id, remote_progress)
+                                if conn.push_playback else []
+                            )
+                            if clear_keys:
+                                await nuvio._rpc(client, conn.url, session.access_token,
+                                    "sync_delete_watch_progress", {"p_profile_id": profile, "p_keys": clear_keys})
+                            for offset in range(0, len(watched_items), nuvio._PAGE_SIZE):
+                                await nuvio._rpc(client, conn.url, session.access_token,
+                                    "sync_push_watched_items", {"p_profile_id": profile,
+                                        "p_items": watched_items[offset:offset + nuvio._PAGE_SIZE]})
+                            pushed_progress = []
+                            for item in progress_items:
+                                payload = dict(item)
+                                payload.setdefault("progress_key", f"{payload['content_id']}_s{payload['season']}e{payload['episode']}"
+                                    if payload.get("season") is not None else payload["content_id"])
+                                pushed_progress.append(payload)
+                            for offset in range(0, len(pushed_progress), nuvio._PAGE_SIZE):
+                                await nuvio._rpc(client, conn.url, session.access_token,
+                                    "sync_push_watch_progress", {"p_profile_id": profile,
+                                        "p_entries": pushed_progress[offset:offset + nuvio._PAGE_SIZE]})
+                            if clear_keys or pushed_progress:
+                                confirmed_rows = await nuvio._pull_watch_progress(
+                                    client, conn.url, session.access_token, profile,
+                                )
+                                confirmed_by_key: dict[str, list[dict]] = {}
+                                for row in confirmed_rows:
+                                    if row.get("progress_key"):
+                                        confirmed_by_key.setdefault(str(row["progress_key"]), []).append(row)
+                                if any(key in confirmed_by_key for key in clear_keys):
+                                    raise nuvio.NuvioAPIError("Nuvio did not confirm removal of stale progress")
+                                for payload in pushed_progress:
+                                    matches = confirmed_by_key.get(str(payload["progress_key"]), [])
+                                    if len(matches) != 1 or not _nuvio_progress_matches(matches[0], payload):
+                                        raise nuvio.NuvioAPIError("Nuvio did not confirm the pushed progress")
+                                from models.tracking import StreamBaseline
+                                managed_mappings = await _nuvio_progress_mappings_for_items(
+                                    db, user_id, pushed_progress,
+                                ) if pushed_progress else {}
+                                baseline = await db.get(StreamBaseline, conn.id)
+                                if baseline is not None:
+                                    snapshot = dict(baseline.snapshot or {})
+                                    mappings = dict(snapshot.get("mappings", {}))
+                                    mappings.update(managed_mappings)
+                                    outbound = dict(snapshot.get("outbound", {}))
+                                    clear_content_ids = {
+                                        str(row.get("content_id")) for row in remote_progress
+                                        if str(row.get("progress_key") or "") in set(clear_keys)
+                                    }
+                                    for content_id in clear_content_ids:
+                                        outbound.pop(content_id, None)
+                                    for payload in pushed_progress:
+                                        outbound[str(payload["content_id"])] = {
+                                            field: payload.get(field)
+                                            for field in ("position", "duration", "season", "episode", "observed_at")
+                                        }
+                                        outbound[str(payload["content_id"])]["progress_key"] = payload["progress_key"]
+                                        outbound[str(payload["content_id"])]["action"] = "upsert"
+                                    snapshot["mappings"] = mappings
+                                    snapshot["outbound"] = outbound
+                                    baseline.snapshot = snapshot
 
                 await db.execute(
                     update(SyncJob)

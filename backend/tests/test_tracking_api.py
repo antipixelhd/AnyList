@@ -934,16 +934,17 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['viewing']['unique_episodes'], 1)
         self.assertEqual(result['viewing']['unique_seasons'], 1)
         self.assertEqual(result['viewing']['repeat_views'], 2)
-        self.assertEqual(result['viewing']['estimated_watch_minutes'], 245)
+        self.assertEqual(result['viewing']['estimated_watch_minutes'], 290)
         self.assertEqual(result['scores']['average'], 7.8)
         self.assertEqual([item['genre'] for item in result['genres']], ['Drama', 'Mystery'])
-        self.assertEqual([item['month'] for item in result['activity']], ['2025-05', '2026-01'])
+        self.assertEqual([item['month'] for item in result['activity']], ['2025-05', '2026-01', datetime.now().strftime('%Y-%m')])
 
         year = (await self.client.get(f'/tracking/profile/{self.owner.username}/stats/summary', params={'year': 2026})).json()
         self.assertEqual(year['current']['total'], 2)
         self.assertEqual(year['viewing']['unique_titles'], 1)
-        self.assertEqual(year['viewing']['estimated_watch_minutes'], 45)
-        self.assertEqual(year['activity'], [{'month': '2026-01', 'movies': 0, 'episodes': 1}])
+        self.assertEqual(year['viewing']['estimated_watch_minutes'], 90)
+        self.assertEqual(year['activity'], [{'month': '2026-01', 'movies': 0, 'episodes': 1},
+                                            {'month': datetime.now().strftime('%Y-%m'), 'movies': 0, 'episodes': 1}])
 
     async def test_private_profile_denied_even_to_an_admin_viewer(self):
         self.owner.is_admin=True
@@ -1273,7 +1274,62 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity[0].status, 'completed')
         self.assertTrue(activity[0].payload['status_changed'])
 
-    async def test_unordered_cloud_watch_preserves_local_status_and_creates_conflict(self):
+    async def test_next_sync_dismisses_only_unambiguous_legacy_watch_conflicts(self):
+        from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='jellyfin', name='Fixture Jellyfin',
+            url='https://example.test', token='fixture',
+        )
+        self.db.add(conn)
+        await self.db.flush()
+        changes = [{'field': 'status', 'previous': 'dropped', 'proposed': 'completed'}]
+        legacy_cloud = SyncReview(
+            user_id=self.owner.id, provider='trakt', kind='cloud_conflict',
+            state='pending', payload={'changes': changes},
+            message='Trakt: imported watch history differs from your local title data, '
+                    'but its time cannot be ordered against your local edit. Your local values were kept.',
+        )
+        legacy_stream = SyncReview(
+            user_id=self.owner.id, connection_id=conn.id, provider='jellyfin',
+            kind='conflict', state='pending', payload={'changes': changes},
+            message='jellyfin: imported watch history differs from your local title data, '
+                    'but its time cannot be ordered against your local edit. Your local values were kept.',
+        )
+        playback_conflict = SyncReview(
+            user_id=self.owner.id, connection_id=conn.id, provider='jellyfin',
+            kind='conflict', state='pending', payload={},
+            message='Playback changed on a connected account.',
+        )
+        ambiguous_unmatched = SyncReview(
+            user_id=self.owner.id, provider='trakt', kind='unmatched_import',
+            state='pending', payload={'external_key': 'movies:imdb:tt1234567',
+                                      'title': 'Fixture Film', 'media_kind': 'movies'},
+            message='Trakt could not match Fixture Film.',
+        )
+        self.db.add_all([legacy_cloud, legacy_stream, playback_conflict, ambiguous_unmatched])
+        await self.db.commit()
+
+        await reconcile_cloud_watch_events(
+            self.db, user_id=self.owner.id, provider='trakt', new_media_ids=set(),
+        )
+        await reconcile_cloud_watch_events(
+            self.db, user_id=self.owner.id, provider='jellyfin',
+            connection_id=conn.id, new_media_ids=set(),
+        )
+
+        for review in (legacy_cloud, legacy_stream):
+            await self.db.refresh(review)
+            self.assertEqual(review.state, 'corrected')
+            self.assertIsNotNone(review.dismissed_at)
+        await self.db.refresh(playback_conflict)
+        await self.db.refresh(ambiguous_unmatched)
+        self.assertEqual(playback_conflict.state, 'pending')
+        self.assertIsNone(playback_conflict.dismissed_at)
+        self.assertEqual(ambiguous_unmatched.state, 'pending')
+        self.assertIsNone(ambiguous_unmatched.dismissed_at)
+
+    async def test_unordered_cloud_watch_preserves_local_status_without_conflict_notification(self):
         from core.cloud_history_reconciliation import reconcile_cloud_watch_events
         from core.cloud_reconciliation import cloud_push_is_approved
 
@@ -1305,19 +1361,18 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             TrackedEntry.user_id == self.owner.id,
             TrackedEntry.media_id == self.movie.id,
         ))).scalar_one()
-        review = (await self.db.execute(select(SyncReview).where(
+        reviews = (await self.db.execute(select(SyncReview).where(
             SyncReview.user_id == self.owner.id,
             SyncReview.provider == 'simkl',
             SyncReview.kind == 'cloud_conflict',
-        ))).scalar_one()
+        ))).scalars().all()
         self.assertEqual(stats['conflicts'], 1)
         self.assertEqual(applied_media_ids, set())
         self.assertEqual(entry.status, 'dropped')
-        self.assertEqual(review.previous_status, 'dropped')
-        self.assertEqual(review.proposed_status, 'completed')
-        self.assertFalse(await cloud_push_is_approved(self.db, self.owner.id, 'simkl'))
+        self.assertEqual(reviews, [])
+        self.assertTrue(await cloud_push_is_approved(self.db, self.owner.id, 'simkl'))
 
-    async def test_first_cloud_import_preserves_ambiguous_existing_history(self):
+    async def test_first_cloud_import_preserves_ambiguous_history_without_conflict_notification(self):
         from core.cloud_history_reconciliation import reconcile_cloud_watch_events
 
         await self.save(self.movie, status='dropped', progress=1)
@@ -1340,15 +1395,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             TrackedEntry.user_id == self.owner.id,
             TrackedEntry.media_id == self.movie.id,
         ))).scalar_one()
-        review = (await self.db.execute(select(SyncReview).where(
+        reviews = (await self.db.execute(select(SyncReview).where(
             SyncReview.user_id == self.owner.id,
             SyncReview.provider == 'trakt',
             SyncReview.kind == 'cloud_conflict',
-        ))).scalar_one()
+        ))).scalars().all()
         self.assertEqual(stats['conflicts'], 1)
         self.assertEqual(entry.status, 'dropped')
         self.assertEqual(entry.progress, 0)
-        self.assertIn({'field': 'status', 'previous': 'dropped', 'proposed': 'completed'}, review.payload['changes'])
+        self.assertEqual(reviews, [])
 
     async def test_cloud_history_resolution_applies_reviewed_fields_together(self):
         await self.save(self.movie, status='paused', progress=1)
@@ -1805,6 +1860,36 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             ProviderIgnore.user_id==self.owner.id,ProviderIgnore.provider=='simkl'
         ))).scalar_one_or_none())
 
+    async def test_unmatched_watch_item_can_be_silent_without_changing_other_import_notifications(self):
+        from core.provider_matching import record_unmatched_import
+
+        silent = {'movie': {'title': 'Unmatched Watch', 'ids': {'imdb': 'tt1111111'}}}
+        self.assertTrue(await record_unmatched_import(
+            self.db, user_id=self.owner.id, provider='trakt', kind='movies',
+            entry=silent, notify=False,
+        ))
+        await self.db.commit()
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.provider == 'trakt',
+            SyncReview.kind == 'unmatched_import',
+        ))).scalars().all()
+        self.assertEqual(reviews, [])
+
+        visible = {'movie': {'title': 'Unmatched Rating', 'ids': {'imdb': 'tt2222222'}}}
+        self.assertTrue(await record_unmatched_import(
+            self.db, user_id=self.owner.id, provider='trakt', kind='movies',
+            entry=visible,
+        ))
+        await self.db.commit()
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id,
+            SyncReview.provider == 'trakt',
+            SyncReview.kind == 'unmatched_import',
+        ))).scalars().all()
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0].payload['title'], 'Unmatched Rating')
+
     async def test_combined_list_and_anime_visibility_are_presentation_only(self):
         anime=Media(title='Fixture Anime',media_type=MediaType.series,tmdb_data={
             'genres':['Animation'],'original_language':'ja','origin_country':['JP'],
@@ -2061,7 +2146,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.json()['added'],1)
         entry=(await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id==self.owner.id))).scalar_one()
         self.assertEqual(entry.status,'completed')
-        self.assertIsNone(entry.start_date);self.assertIsNone(entry.finish_date)
+        self.assertIsNone(entry.start_date);self.assertEqual(entry.finish_date, date.today())
         await self.client.delete(f'/tracking/entry/{self.movie.id}?confirmed=true')
         self.db.add(WatchEvent(user_id=self.owner.id,media_id=self.movie.id,completed=True))
         await self.db.commit()
@@ -2085,6 +2170,10 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.json()['status'],'completed')
         ids=set((await self.db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id==self.owner.id))).scalars())
         self.assertEqual(ids,{e.id for e in episodes[1:4]})
+        marked_events=(await self.db.execute(select(WatchEvent).where(
+            WatchEvent.user_id==self.owner.id,WatchEvent.media_id.in_([e.id for e in episodes[1:4]])
+        ))).scalars().all()
+        self.assertTrue(all(event.watched_at is not None and event.date_inferred for event in marked_events))
         res=await self.client.patch(url+'1',json={'watched':False})
         self.assertEqual(res.status_code,409,res.text)
         res=await self.client.patch(url+'1',json={'watched':False,'confirm_rollback':True})
@@ -2113,6 +2202,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['progress'],1)
         self.assertEqual((await self.db.execute(select(WatchEvent.media_id).where(
             WatchEvent.user_id==self.owner.id))).scalars().all(),[self.movie.id])
+        movie_event=(await self.db.execute(select(WatchEvent).where(
+            WatchEvent.user_id==self.owner.id,WatchEvent.media_id==self.movie.id
+        ))).scalar_one()
+        self.assertIsNotNone(movie_event.watched_at)
+        self.assertTrue(movie_event.date_inferred)
         over_limit=await self.save(self.movie,progress=2)
         self.assertEqual(over_limit.status_code,409,over_limit.text)
 
@@ -2514,7 +2608,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_approved_media_server_exports_only_accepted_watch_change(self):
         from core.media_server_reconciliation import reconcile_media_server_pull
         from core.tracking_snapshot import require_stream_reconciliation
-        from fastapi import HTTPException
 
         conn = MediaServerConnection(
             user_id=self.owner.id, type='jellyfin', name='Fixture Jellyfin',
@@ -2560,9 +2653,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             SyncReview.connection_id == conn.id, SyncReview.kind == 'conflict',
             SyncReview.state == 'pending',
         ))).scalars().all()
-        self.assertEqual(len(conflicts), 1)
-        with self.assertRaises(HTTPException):
-            await require_stream_reconciliation(self.db, conn)
+        self.assertEqual(conflicts, [])
+        await require_stream_reconciliation(self.db, conn)
 
     async def test_media_server_rating_uses_source_baseline_and_preserves_local_edit(self):
         from core.media_server_reconciliation import reconcile_media_server_pull
@@ -2717,6 +2809,31 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         baseline=await self.db.get(StreamBaseline,conn.id)
         baseline.approved=True;await self.db.commit()
         with self.assertRaises(HTTPException):await require_stream_reconciliation(self.db,conn)
+
+    async def test_first_stremio_watch_history_does_not_propose_dropped_as_watching(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.show.tmdb_id = 987654304
+        await self.save(self.show, status='dropped')
+        conn = MediaServerConnection(user_id=self.owner.id, type='stremio',
+            name='Fresh Stremio', url='https://example.test', token='fixture',
+            sync_watched=True, sync_playback=True, push_watched=True,
+            push_playback=True)
+        self.db.add(conn)
+        await self.db.commit()
+        watched_row = {'content_id': 'tt-old-history', 'content_type': 'series',
+            'season': 1, 'episode': 1, 'watched_at': None}
+        await observe_stream_snapshot(self.db, conn, [], [watched_row], [],
+            {'tt-old-history': self.show.tmdb_id})
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.show.id,
+        ))).scalar_one()
+        self.assertEqual(entry.status, 'dropped')
+        conflicts = (await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id, SyncReview.kind == 'conflict',
+        ))).scalars().all()
+        self.assertEqual(conflicts, [])
 
     async def test_empty_first_connection_cannot_override_or_fan_out_local_status(self):
         from core.tracking_snapshot import observe_stream_snapshot, require_stream_reconciliation
@@ -2995,9 +3112,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         record={'content_id':'tt-target','content_type':'series','season':1,'episode':2,
             'position':20,'duration':100,'observed_at':'2026-01-02T12:05:00Z',
             'last_watched':1760000000000}
-        with patch('core.stream_actions.stremio.datastore_get',AsyncMock(return_value=[remote])), \
-             patch('core.stream_actions.stremio.datastore_put',AsyncMock()) as put:
-            await push_stremio_progress('token',record)
+        with patch('core.stream_actions.stremio.datastore_put',AsyncMock()) as put:
+            async def read_progress(*_args, **_kwargs):
+                return [put.await_args.args[1][0]] if put.await_count else [remote]
+            with patch('core.stream_actions.stremio.datastore_get',AsyncMock(side_effect=read_progress)):
+                await push_stremio_progress('token',record)
         candidate=put.await_args.args[1][0]
         self.assertEqual(candidate['state']['timeOffset'],20)
         self.assertEqual(candidate['state']['duration'],100)
@@ -3074,7 +3193,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             WatchEvent.user_id==self.owner.id,WatchEvent.completed.is_(True)))).scalars())
         self.assertEqual(watched,{episode.id for episode in episodes})
 
-    async def test_correcting_to_watching_restores_saved_progress_once(self):
+    async def test_correcting_to_watching_discards_stale_saved_progress(self):
         from core.stream_actions import dispatch_stream_actions
         from models.tracking import StreamAction
         self.movie.tmdb_id=987654313
@@ -3090,12 +3209,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.stream_actions.dismiss_stremio',AsyncMock()) as write:
             await dispatch_stream_actions(self.db,self.owner.id)
             await dispatch_stream_actions(self.db,self.owner.id)
-            write.assert_awaited_once_with('fixture',record,restore=True)
-        self.assertEqual(baseline.snapshot['progress']['tt-restore'],record)
+            write.assert_not_awaited()
+        self.assertEqual(baseline.snapshot.get('progress',{}),{})
         self.assertEqual(baseline.snapshot['resume'],{})
         self.assertEqual(baseline.snapshot['library'],[])
 
-    async def test_nuvio_restore_waits_for_echo_before_inferring_a_later_removal(self):
+    async def test_nuvio_stale_resume_is_not_restored_and_later_removal_is_observed(self):
         from core.stream_actions import dispatch_stream_actions
         from core.tracking_snapshot import observe_stream_snapshot
         from models.tracking import StreamAction
@@ -3115,37 +3234,31 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.save(self.movie,status='watching')
         entry=(await self.db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
-        # The provider last showed this title after the local Watching edit.
-        # A restore that is accepted by the RPC but absent from the next pull
-        # must not be mistaken for a later user removal.
         baseline.observed_at=entry.status_changed_at+timedelta(seconds=1)
         await self.db.commit()
-        restore=(await self.db.execute(select(StreamAction).where(
+        restores=(await self.db.execute(select(StreamAction).where(
             StreamAction.connection_id==conn.id,StreamAction.action=='restore',
-            StreamAction.state=='pending'))).scalar_one()
+            StreamAction.state=='pending'))).scalars().all()
+        self.assertEqual(restores,[])
         with patch('core.stream_actions.dismiss_nuvio',AsyncMock()) as write:
             await dispatch_stream_actions(self.db,self.owner.id)
-            write.assert_awaited_once_with(self.db,conn,record,restore=True)
-        self.assertEqual(restore.state,'applied')
-        self.assertEqual(baseline.snapshot['outbound'][key]['action'],'restore')
+            write.assert_not_awaited()
+        self.assertEqual(baseline.snapshot.get('resume',{}),{})
 
-        # An absent row cannot distinguish an ignored restore from a user
-        # removal. Repeated complete snapshots preserve the local status and
-        # the marker until the provider acknowledges playback.
+        # Repeated empty snapshots cannot erase a fresh local Watching edit.
         for _ in range(2):
             await observe_stream_snapshot(self.db,conn,[],[],[],{})
             await self.db.refresh(entry)
             await self.db.refresh(baseline)
             self.assertEqual(entry.status,'watching')
-            self.assertIn(key,baseline.snapshot['outbound'])
             self.assertEqual((await self.db.execute(select(SyncReview.id).where(
                 SyncReview.user_id==self.owner.id,SyncReview.media_id==self.movie.id,
                 SyncReview.kind=='playback_removed'))).scalars().all(),[])
 
-        # Once matching progress is observed, the outbound echo is acknowledged.
+        # A later real provider resume is observed, then its removal is a new
+        # source change rather than a failed legacy restore.
         await observe_stream_snapshot(self.db,conn,[],[],[record],{key:self.movie.tmdb_id})
         await self.db.refresh(baseline)
-        self.assertNotIn(key,baseline.snapshot['outbound'])
 
         # A later complete-snapshot removal is now an independent provider
         # change and retains the existing Dropped interpretation for movies.
@@ -3508,7 +3621,24 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
             WatchEvent.completed.is_(True),
         ))).scalar_one()
-        self.assertIsNone(event.watched_at)
+        self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
+
+        # A later provider history entry with a confident date updates this
+        # estimate in place instead of adding a duplicate play.
+        confident_date = datetime(2024, 5, 6, 12, 30)
+        corrected = await _apply_nuvio_watch_history(
+            self.db, self.owner.id, [{**row, 'watched_at': confident_date.isoformat()}],
+            {key: canonical_show.id}, {key: self.show.tmdb_id}, include_unknown_dates=True,
+        )
+        self.assertEqual(corrected, set())
+        await self.db.refresh(event)
+        self.assertEqual(event.watched_at, confident_date)
+        self.assertFalse(event.date_inferred)
+        self.assertEqual((await self.db.execute(select(WatchEvent.id).where(
+            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
+            WatchEvent.completed.is_(True),
+        ))).scalars().all(), [event.id])
 
         # A first import records its baseline for review but never fans out.
         first_connection = MediaServerConnection(user_id=self.owner.id, type='stremio',
@@ -3578,7 +3708,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()):
             await dispatch_watch_intents(self.db, self.owner.id, writer=writer)
             await dispatch_watch_intents(self.db, self.owner.id, writer=writer)
-        self.assertEqual(delivered, [(connections[1].id, self.movie.id, True, None)])
+        self.assertEqual(len(delivered), 1)
+        self.assertEqual(delivered[0][:3], (connections[1].id, self.movie.id, True))
+        self.assertIsNotNone(delivered[0][3])
         await self.db.refresh(intents[0])
         self.assertEqual((intents[0].state, intents[0].attempts), ('applied', 1))
 

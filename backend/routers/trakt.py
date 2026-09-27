@@ -23,6 +23,7 @@ from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import DEFAULT_DEDUP_WINDOW_MINUTES, dedup_window_from_settings, is_duplicate_watch_time, load_existing_watch_times
+from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -418,7 +419,15 @@ async def _get_or_create_series_media(
     return media
 
 
-async def _resolve_trakt_title(db, user_id: int, kind: str, entry: dict, api_key: str | None) -> Media | None:
+async def _resolve_trakt_title(
+    db,
+    user_id: int,
+    kind: str,
+    entry: dict,
+    api_key: str | None,
+    *,
+    notify_unmatched: bool = True,
+) -> Media | None:
     """Resolve a top-level Trakt movie/show, honoring durable user matches."""
     from core.provider_matching import provider_override, record_unmatched_import
     plural = "movies" if kind == "movie" else "shows"
@@ -433,7 +442,10 @@ async def _resolve_trakt_title(db, user_id: int, kind: str, entry: dict, api_key
         creator = _get_or_create_movie_media if kind == "movie" else _get_or_create_series_media
         media = await creator(db, tmdb_id, data.get("title", ""), api_key)
     if media is None:
-        await record_unmatched_import(db, user_id=user_id, provider="trakt", kind=plural, entry=entry)
+        await record_unmatched_import(
+            db, user_id=user_id, provider="trakt", kind=plural,
+            entry=entry, notify=notify_unmatched,
+        )
     return media
 
 
@@ -709,24 +721,32 @@ async def _apply_trakt_import(
             try:
                 try:
                     async with db.begin_nested():
-                        media = await _resolve_trakt_title(db, user_id, "movie", item, api_key)
+                        media = await _resolve_trakt_title(
+                            db, user_id, "movie", item, api_key, notify_unmatched=False,
+                        )
                         if not media:
                             stats["skipped"] += 1
                             continue
-                        # A dateless play (submitted with watched_at="unknown", which Trakt
-                        # silently stores/returns as the Unix epoch — see
-                        # _TRAKT_UNKNOWN_DATE_EPOCH) is stored as unknown locally too,
-                        # rather than fabricating a "now" timestamp or importing 1970-01-01.
+                        # Trakt returns an unknown-dated play as the Unix epoch.
+                        # Store an inferred date locally so a later reliable
+                        # observation can correct it in place.
                         watched_at = _parse_trakt_datetime(item.get("watched_at"))
-                        if not _is_duplicate_play(existing_times, media.id, watched_at):
+                        corrected = bool(watched_at and await reconcile_inferred_watch_date(
+                            db, user_id, media.id, watched_at,
+                        ))
+                        if corrected:
+                            existing_times.setdefault(media.id, []).append(watched_at)
+                            stats["skipped"] += 1
+                        elif not _is_duplicate_play(existing_times, media.id, watched_at):
                             db.add(WatchEvent(
                                 user_id=user_id,
                                 media_id=media.id,
-                                watched_at=watched_at,
+                                watched_at=watched_at or inferred_watch_datetime(),
+                                date_inferred=watched_at is None,
                                 completed=True,
                                 play_count=1,
                             ))
-                            existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                            existing_times.setdefault(media.id, []).append(watched_at or inferred_watch_datetime())
                             _new_watched.add(media.id)
                             stats["movies"] += 1
                         else:
@@ -779,7 +799,10 @@ async def _apply_trakt_import(
                 )
                 show_tmdb_id = mapped.tmdb_id if mapped else None
                 if not show_tmdb_id and not ignored:
-                    await record_unmatched_import(db, user_id=user_id, provider="trakt", kind="shows", entry={"show": entry.get("show", {})})
+                    await record_unmatched_import(
+                        db, user_id=user_id, provider="trakt", kind="shows",
+                        entry={"show": entry.get("show", {})}, notify=False,
+                    )
             if show_tmdb_id:
                 plays_by_show.setdefault(show_tmdb_id, []).append(entry)
             else:
@@ -810,21 +833,28 @@ async def _apply_trakt_import(
                             if not media:
                                 stats["errors"] += 1
                                 continue
-                            # See the movie-import branch above: preserve an unknown
-                            # date as unknown rather than fabricating "now".
+                            # See the movie branch: an unknown date remains
+                            # replaceable when better evidence arrives.
                             watched_at = _parse_trakt_datetime(entry.get("watched_at"))
-                            if not _is_duplicate_play(existing_times, media.id, watched_at):
+                            corrected = bool(watched_at and await reconcile_inferred_watch_date(
+                                db, user_id, media.id, watched_at,
+                            ))
+                            if corrected:
+                                existing_times.setdefault(media.id, []).append(watched_at)
+                                stats["skipped"] += 1
+                            elif not _is_duplicate_play(existing_times, media.id, watched_at):
                                 event = WatchEvent(
                                     user_id=user_id,
                                     media_id=media.id,
-                                    watched_at=watched_at,
+                                    watched_at=watched_at or inferred_watch_datetime(),
+                                    date_inferred=watched_at is None,
                                     completed=True,
                                     play_count=1,
                                 )
                                 db.add(event)
                                 await db.flush()
                                 await record_rewatch_progress(db, user_id, media.id, event.id)
-                                existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                                existing_times.setdefault(media.id, []).append(watched_at or inferred_watch_datetime())
                                 _new_watched.add(media.id)
                                 stats["episodes"] += 1
                             else:

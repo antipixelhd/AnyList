@@ -30,6 +30,7 @@ from models.scrobble_connection import ScrobbleConnection
 from models.show import Show
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes, is_duplicate_watch_time, load_existing_watch_times
+from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from models.sync import SyncJob
 from models.users import UserSettings
 
@@ -313,9 +314,15 @@ async def apply_scrob_import(
                             stats["errors"] += 1
                             continue
                         watched_at = _parse_iso(entry.get("watched_at"))
-                        if not _is_duplicate_play(media.id, watched_at):
-                            db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1))
-                            existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                        source_inferred = entry.get("date_inferred") is True
+                        if watched_at is not None and not source_inferred and await reconcile_inferred_watch_date(db, user_id, media.id, watched_at):
+                            existing_times.setdefault(media.id, []).append(watched_at)
+                            stats["skipped"] += 1
+                        elif not _is_duplicate_play(media.id, watched_at):
+                            inferred_at = watched_at or inferred_watch_datetime()
+                            db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=inferred_at,
+                                date_inferred=source_inferred or watched_at is None, completed=True, play_count=1))
+                            existing_times.setdefault(media.id, []).append(inferred_at)
                             stats["movies"] += 1
                         else:
                             stats["skipped"] += 1
@@ -352,12 +359,18 @@ async def apply_scrob_import(
                             stats["errors"] += 1
                             continue
                         watched_at = _parse_iso(entry.get("watched_at"))
-                        if not _is_duplicate_play(media.id, watched_at):
-                            event = WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1)
+                        source_inferred = entry.get("date_inferred") is True
+                        if watched_at is not None and not source_inferred and await reconcile_inferred_watch_date(db, user_id, media.id, watched_at):
+                            existing_times.setdefault(media.id, []).append(watched_at)
+                            stats["skipped"] += 1
+                        elif not _is_duplicate_play(media.id, watched_at):
+                            inferred_at = watched_at or inferred_watch_datetime()
+                            event = WatchEvent(user_id=user_id, media_id=media.id, watched_at=inferred_at,
+                                date_inferred=source_inferred or watched_at is None, completed=True, play_count=1)
                             db.add(event)
                             await db.flush()
                             await record_rewatch_progress(db, user_id, media.id, event.id)
-                            existing_times.setdefault(media.id, []).append(watched_at or datetime.utcnow())
+                            existing_times.setdefault(media.id, []).append(inferred_at)
                             stats["episodes"] += 1
                         else:
                             stats["skipped"] += 1

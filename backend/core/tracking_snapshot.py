@@ -202,10 +202,14 @@ async def apply_series_observation(db, user_id, media, entry, row, finished, new
     through=index+1 if finished else index
     watched=set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id==user_id,
         WatchEvent.media_id.in_([e.id for e in episodes]),WatchEvent.completed.is_(True)))).scalars())
+    from core.watch_dates import inferred_watch_datetime, normalize_watch_datetime
+    source_watch_at = normalize_watch_datetime(row.get('watched_at') or row.get('last_watched'))
+    evidence_watch_at = source_watch_at or inferred_watch_datetime(entry.finish_date)
     for episode in episodes[:through]:
         if episode.id not in watched:
-            db.add(WatchEvent(user_id=user_id,media_id=episode.id,completed=True,provisional=True,
-                watched_at=datetime.now(timezone.utc).replace(tzinfo=None) if finished and episode.id==episodes[index].id else None))
+            db.add(WatchEvent(user_id=user_id,media_id=episode.id,completed=True,
+                watched_at=evidence_watch_at,
+                date_inferred=(source_watch_at is None or not (finished and episode.id==episodes[index].id))))
             watched.add(episode.id)
             if newly_watched_ids is not None:
                 newly_watched_ids.add(episode.id)
@@ -282,12 +286,15 @@ async def observe_stream_snapshot(
         lookup.update({(m.tmdb_id,m.media_type.value):m for m in rows})
     preferences = await db.get(TrackingPreferences, conn.user_id)
     if first:
-        for row in [*active.values(), *completed]:
+        # Watched-history rows describe past plays, not current Continue
+        # Watching membership. Only active resume progress can disagree with
+        # an existing Watching status on a newly attached connection.
+        for row in active.values():
             media = lookup.get((mappings.get(str(row.get('content_id'))), row.get('content_type')))
             if not media or media.id not in existing_ids:
                 continue
             entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == conn.user_id, TrackedEntry.media_id == media.id))).scalar_one()
-            proposed = observed_status(entry.status, media.media_type == MediaType.movie and row in completed, True)
+            proposed = observed_status(entry.status, False, True)
             if proposed == entry.status:
                 continue
             pending = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,

@@ -17,6 +17,7 @@ from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes
+from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from db import engine, get_db
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -256,6 +257,8 @@ async def _resolve_media(
     entry: dict[str, Any],
     api_key: str | None,
     external_cache: dict[tuple[str, str], int | None],
+    *,
+    notify_unmatched: bool = True,
 ) -> Media | None:
     from core.provider_matching import provider_override, record_unmatched_import
     user_id = external_cache.get(("__media_tracker__", "user_id"))
@@ -290,7 +293,10 @@ async def _resolve_media(
                     db, show.id, show_tmdb_id, season, episode, api_key
                 )
     if media is None and user_id is not None:
-        await record_unmatched_import(db, user_id=user_id, provider="mdblist", kind=kind, entry=entry)
+        await record_unmatched_import(
+            db, user_id=user_id, provider="mdblist", kind=kind,
+            entry=entry, notify=notify_unmatched,
+        )
     return media
 
 
@@ -495,13 +501,25 @@ async def _import_watched(
         for entry in payload.get(kind, []):
             try:
                 async with db.begin_nested():
-                    media = await _resolve_media(db, kind, entry, api_key, external_cache)
+                    media = await _resolve_media(
+                        db, kind, entry, api_key, external_cache,
+                        notify_unmatched=False,
+                    )
                     if not media:
                         stats["skipped"] += 1
                         continue
-                    watched_at = _utc_naive(entry.get("watched_at") or entry.get("last_watched_at"))
+                    watched_at = _utc_naive_optional(entry.get("watched_at") or entry.get("last_watched_at"))
+                    if watched_at is not None and await reconcile_inferred_watch_date(
+                        db, user_id, media.id, watched_at,
+                    ):
+                        stats["skipped"] += 1
+                        continue
+                    if watched_at is None and existing.get(media.id):
+                        stats["skipped"] += 1
+                        continue
                     if any(
-                        existing_at is not None and abs(watched_at - existing_at) <= dedup_window
+                        watched_at is not None and existing_at is not None
+                        and abs(watched_at - existing_at) <= dedup_window
                         for existing_at in existing.get(media.id, [])
                     ):
                         stats["skipped"] += 1
@@ -509,14 +527,15 @@ async def _import_watched(
                     event = WatchEvent(
                         user_id=user_id,
                         media_id=media.id,
-                        watched_at=watched_at,
+                        watched_at=watched_at or inferred_watch_datetime(),
+                        date_inferred=watched_at is None,
                         completed=True,
                         play_count=max(_integer(entry.get("plays")) or 1, 1),
                     )
                     db.add(event)
                     await db.flush()
                     await record_rewatch_progress(db, user_id, media.id, event.id)
-                    existing[media.id].append(watched_at)
+                    existing[media.id].append(event.watched_at)
                     changed.add(media.id)
                     stats["watched"] += 1
             except Exception as exc:

@@ -5,11 +5,41 @@ from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
-from core.stream_actions import dismiss_stremio, dismiss_nuvio, RemotePlaybackChanged
+from core.stream_actions import dismiss_stremio, dismiss_nuvio, push_stremio_progress, push_nuvio_progress, RemotePlaybackChanged
 from models import MediaServerConnection
 
 
 class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stremio_progress_upsert_is_confirmed_by_readback(self):
+        record={'content_id':'tt1','position':30,'duration':100,'observed_at':'2026-09-20T12:00:00Z'}
+        before={'_id':'tt1','state':{'timeOffset':0,'duration':0}}
+        after={'_id':'tt1','state':{'timeOffset':30,'duration':100}}
+        with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[before],[after]])) as read, \
+             patch('core.stremio.datastore_put',AsyncMock()) as write:
+            await push_stremio_progress('fixture',record)
+
+        write.assert_awaited_once()
+        read.assert_awaited_with('fixture',ids=['tt1'])
+
+    async def test_nuvio_progress_upsert_uses_progress_key_and_confirms_readback(self):
+        conn=MediaServerConnection(id=988,user_id=1,type='nuvio',name='Fixture',url='https://example.test',token='old',server_user_id='1')
+        record={'content_id':'tt1','content_type':'series','video_id':'tt1:1:2','position':30,'duration':100,
+            'season':1,'episode':2,'progress_key':'tt1_s1e2','observed_at':'2026-09-20T12:00:00Z'}
+        token_db=AsyncMock();context=AsyncMock();context.__aenter__.return_value=token_db
+        client=object();client_context=AsyncMock();client_context.__aenter__.return_value=client
+        db=SimpleNamespace(refresh=AsyncMock())
+        with patch('db.AsyncSessionLocal',return_value=context), \
+             patch('core.nuvio.httpx.AsyncClient',return_value=client_context), \
+             patch('core.nuvio.refresh_session',AsyncMock(return_value=SimpleNamespace(refresh_token='rotated',access_token='fixture'))), \
+             patch('core.nuvio._pull_watch_progress',AsyncMock(side_effect=[[],[record]])) as read, \
+             patch('core.nuvio._rpc',AsyncMock()) as write:
+            await push_nuvio_progress(db,conn,record)
+
+        self.assertEqual(write.await_args.args[-2],'sync_push_watch_progress')
+        self.assertEqual(write.await_args.args[-1]['p_entries'],[{key:value for key,value in record.items()
+            if key in ('content_id','content_type','video_id','season','episode','position','duration','last_watched','progress_key')}])
+        self.assertEqual(read.await_count,2)
+
     async def test_nuvio_restore_and_reset_use_separate_progress_history_rpcs(self):
         conn=MediaServerConnection(id=987,user_id=1,type='nuvio',name='Fixture',url='https://example.test',token='old',server_user_id='1')
         record={'content_id':'tt1','content_type':'series','position':30,'duration':100,'season':1,'episode':2,'progress_key':'tt1_s1e2'}

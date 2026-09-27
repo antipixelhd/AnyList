@@ -667,7 +667,7 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         title must not create a second WatchEvent."""
         from routers.mdblist import _import_watched
 
-        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             return SimpleNamespace(id=1)
 
         payload = {
@@ -678,7 +678,8 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         # Existing completed watch for media 1 four minutes before the incoming one.
         db = _WatchedFakeSessionWithHistory([(1, datetime(2026, 8, 1, 11, 56, 0))])
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
+                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
             changed = await _import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
@@ -695,7 +696,7 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         watching a movie twice in a row to make sense of it)."""
         from routers.mdblist import _import_watched
 
-        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             return SimpleNamespace(id=1)
 
         payload = {
@@ -706,7 +707,8 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         # Existing completed watch for media 1 two hours before the incoming one.
         db = _WatchedFakeSessionWithHistory([(1, datetime(2026, 8, 1, 12, 0, 0))])
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
+                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
             changed = await _import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
@@ -717,15 +719,11 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(changed, {1})
 
     async def test_null_dated_existing_watch_does_not_crash_the_window_check(self) -> None:
-        """A title can already have a completed WatchEvent with no date at
-        all (explicit "mark watched without a date" - see
-        UnknownWatchDateTests in test_history.py). The window comparison
-        must not blow up comparing a real timestamp against that None, and
-        a null-dated existing watch can't be used to dedup against (there's
-        no timestamp to compare), so the new watch is still recorded."""
+        """A legacy undated event can receive a reliable provider date in
+        place without creating a duplicate watch."""
         from routers.mdblist import _import_watched
 
-        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             return SimpleNamespace(id=1)
 
         payload = {
@@ -735,15 +733,17 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         stats = {"watched": 0, "skipped": 0, "errors": 0}
         db = _WatchedFakeSessionWithHistory([(1, None)])
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
+                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=True):
             changed = await _import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
         self.assertEqual(stats["errors"], 0)
-        self.assertEqual({obj.media_id for obj in db.added}, {1})
-        self.assertEqual(stats["watched"], 1)
-        self.assertEqual(changed, {1})
+        self.assertEqual(db.added, [])
+        self.assertEqual(stats["watched"], 0)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(changed, set())
 
 
 class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
@@ -759,9 +759,11 @@ class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
         from routers.mdblist import _import_watched
 
         seen_kinds: list[str] = []
+        unmatched_notifications: list[bool] = []
 
-        async def fake_resolve_media(db, kind, entry, api_key, external_cache):
+        async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             seen_kinds.append(kind)
+            unmatched_notifications.append(notify_unmatched)
             if kind == "movies":
                 return SimpleNamespace(id=1)
             if kind == "episodes":
@@ -784,12 +786,14 @@ class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
         stats = {"watched": 0, "skipped": 0, "errors": 0}
         db = _WatchedFakeSession()
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media):
+        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
+                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
             changed = await _import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
         self.assertEqual(seen_kinds, ["movies", "episodes"])
+        self.assertEqual(unmatched_notifications, [False, False])
         self.assertEqual({obj.media_id for obj in db.added}, {1, 2})
         self.assertEqual(stats["watched"], 2)
         self.assertEqual(stats["skipped"], 1)

@@ -2035,13 +2035,13 @@ class SeasonWatchRequest(BaseModel):
     series_tvdb_id: int | None = None  # links the show to TVDB on demand, see #101
     season_number: int
     episode_order: str | None = None
-    watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
+    watched_at: datetime | None = None  # omitted/null = infer from today's manual action
 
 
 class ShowWatchRequest(BaseModel):
     series_tmdb_id: int
     series_tvdb_id: int | None = None  # links the show to TVDB on demand, see #101
-    watched_at: datetime | None = None  # omitted = now; explicit null = unknown date
+    watched_at: datetime | None = None  # omitted/null = infer from today's manual action
 
 
 @router.post("", response_model=dict)
@@ -2231,13 +2231,11 @@ async def mark_as_watched(
             raise HTTPException(status_code=404, detail=f"TMDB Media not found: {e}")
 
     # 3. Create WatchEvent
-    # Omitted watched_at retains the existing API default ("now"); explicit
-    # null marks the play watched without a known date.
-    watched_at = (
-        event_in.watched_at.replace(tzinfo=None) if event_in.watched_at is not None
-        else None if "watched_at" in event_in.model_fields_set
-        else datetime.utcnow()
-    )
+    # A manual watched action without an explicit date means "today". The
+    # date is inferred from the user's action and can later be corrected by a
+    # provider history import.
+    date_inferred = event_in.watched_at is None
+    watched_at = event_in.watched_at.replace(tzinfo=None) if event_in.watched_at is not None else datetime.utcnow()
     if event_in.completed and not event_in.force:
         window_minutes = await get_dedup_window_minutes(db, current_user.id)
         duplicate = await find_duplicate_watch_event(db, current_user.id, media.id, watched_at, window_minutes)
@@ -2256,6 +2254,7 @@ async def mark_as_watched(
         user_id=current_user.id,
         media_id=media.id,
         watched_at=watched_at,
+        date_inferred=date_inferred,
         completed=event_in.completed,
         play_count=1,
         progress_percent=1.0 if event_in.completed else 0.0,
@@ -2322,7 +2321,8 @@ async def mark_as_watched(
                     for episode in episodes[:last + 1]:
                         if episode.id not in watched_ids:
                             db.add(WatchEvent(user_id=current_user.id, media_id=episode.id,
-                                              completed=True, watched_at=None, provisional=True))
+                                              completed=True, watched_at=watched_at,
+                                              date_inferred=True))
 
             from core.tracking_rules import observed_status, default_dates
             from core.status_provenance import mark_status_change
@@ -2621,14 +2621,10 @@ async def mark_season_watched(
 
     now = datetime.utcnow()
     today = now.date()
-    # "Has this episode aired yet" stays tied to the real current date, independent
-    # of what date the user says they watched it. Omitted watched_at retains the
-    # existing API default ("now"); explicit null marks it watched without a known date.
-    resolved_watched_at = (
-        body.watched_at.replace(tzinfo=None) if body.watched_at is not None
-        else None if "watched_at" in body.model_fields_set
-        else now
-    )
+    # "Has this episode aired yet" stays tied to the real current date. When
+    # the user does not supply a watch date, this manual mark means today.
+    resolved_watched_inferred = body.watched_at is None
+    resolved_watched_at = body.watched_at.replace(tzinfo=None) if body.watched_at is not None else now
 
     all_season_episodes = []
     if tvdb_fallback_episodes is not None:
@@ -2756,6 +2752,7 @@ async def mark_season_watched(
                 user_id=current_user.id,
                 media_id=ep.id,
                 watched_at=resolved_watched_at,
+                date_inferred=resolved_watched_inferred,
                 completed=True,
                 play_count=1,
                 progress_percent=1.0,
@@ -2904,12 +2901,9 @@ async def mark_show_watched(
     now = datetime.utcnow()
     today = now.date()
     # See mark_season_watched: aired-cutoff stays tied to the real current date;
-    # omitted watched_at retains "now", explicit null means unknown watch date.
-    resolved_watched_at = (
-        body.watched_at.replace(tzinfo=None) if body.watched_at is not None
-        else None if "watched_at" in body.model_fields_set
-        else now
-    )
+    # a manual mark without an explicit date is estimated as today.
+    resolved_watched_inferred = body.watched_at is None
+    resolved_watched_at = body.watched_at.replace(tzinfo=None) if body.watched_at is not None else now
 
     for sn in seasons:
         try:
@@ -2966,6 +2960,7 @@ async def mark_show_watched(
                     user_id=current_user.id,
                     media_id=ep.id,
                     watched_at=resolved_watched_at,
+                    date_inferred=resolved_watched_inferred,
                     completed=True,
                     play_count=1,
                     progress_percent=1.0,
@@ -3062,6 +3057,7 @@ async def mark_show_watched(
                                 user_id=current_user.id,
                                 media_id=ep.id,
                                 watched_at=resolved_watched_at,
+                                date_inferred=resolved_watched_inferred,
                                 completed=True,
                                 play_count=1,
                                 progress_percent=1.0,

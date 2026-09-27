@@ -186,6 +186,53 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress[0]["position"], 120_000)
         self.assertEqual(removed, set())
 
+    async def test_series_stale_resume_offset_is_ignored_when_current_episode_is_watched(self) -> None:
+        videos = [
+            {"id": "tt0944947:1:1", "season": 1, "episode": 1, "name": "S1E1"},
+            {"id": "tt0944947:1:2", "season": 1, "episode": 2, "name": "S1E2"},
+        ]
+        watched = stremio.encode_watched_bitfield({"tt0944947:1:2"}, [video["id"] for video in videos])
+        item = {
+            "_id": "tt0944947", "type": "series", "name": "Game of Thrones",
+            "state": {"watched": watched, "video_id": "tt0944947:1:2", "timeOffset": 120_000,
+                "duration": 3_600_000, "lastWatched": "2026-07-26T12:00:00Z"},
+        }
+
+        with patch.object(stremio, "get_cinemeta_series", AsyncMock(return_value={"videos": videos})):
+            library, watched_records, progress, removed = await _stremio_records([item])
+
+        self.assertEqual(len(watched_records), 1)
+        self.assertEqual((watched_records[0]["season"], watched_records[0]["episode"]), (1, 2))
+        self.assertEqual(progress, [])
+        self.assertEqual(removed, set())
+
+    async def test_full_push_clears_stale_resume_for_paused_item_and_preserves_other_state(self) -> None:
+        connection = SimpleNamespace(id=49, token="auth-key", push_collection=True,
+            push_watched=False, push_playback=True, stremio_pushed_library_ids=None)
+        remote = {"_id":"tt0133093", "type":"movie", "name":"The Matrix", "removed":False,
+            "temp":False, "state":{"timeOffset":120_000, "duration":600_000, "timesWatched":2,
+                "watched":"history", "lastWatched":"date"}}
+        cleared = {**remote, "state":{**remote["state"], "timeOffset":0}}
+        media = SimpleNamespace(tmdb_id=603, media_type=MediaType.movie, imdb_id="tt0133093", tmdb_data=None)
+        baseline = SimpleNamespace(snapshot={"mappings":{"tt0133093":603}})
+        db = SimpleNamespace(get=AsyncMock(return_value=baseline), execute=AsyncMock(side_effect=[
+            SimpleNamespace(all=lambda:[(media,"paused")]),
+            SimpleNamespace(scalars=lambda:SimpleNamespace(all=lambda:[])),
+        ]))
+        with patch("routers.sync._build_nuvio_library_items", AsyncMock(return_value=[{
+                "content_id":"tt0133093", "content_type":"movie", "title":"The Matrix",
+            }])), \
+             patch("routers.sync._build_nuvio_progress_items", AsyncMock(return_value=[])), \
+             patch.object(stremio, "datastore_get", AsyncMock(side_effect=[[remote],[cleared]])), \
+             patch.object(stremio, "datastore_put", AsyncMock()) as write:
+            await _push_stremio_connection(db, connection, 7, api_key=None)
+
+        payload = write.await_args.args[1][0]
+        self.assertEqual(payload["state"]["timeOffset"], 0)
+        self.assertEqual(payload["state"]["watched"], "history")
+        self.assertEqual(payload["state"]["timesWatched"], 2)
+        self.assertEqual(payload["state"]["lastWatched"], "date")
+
     async def test_temporary_removed_movie_still_emits_watched_state(self) -> None:
         item = {
             "_id": "tt0133093",
@@ -567,7 +614,13 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(stremio, "datastore_put", datastore_put),
         ):
             await _push_stremio_connection(
-                SimpleNamespace(),
+                SimpleNamespace(
+                    get=AsyncMock(return_value=None),
+                    execute=AsyncMock(side_effect=[
+                        SimpleNamespace(all=lambda: []),
+                        SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
+                    ]),
+                ),
                 connection,
                 7,
                 api_key="tmdb-key",
@@ -621,7 +674,8 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(added, {10})
-        self.assertIsNone(db.add.call_args.args[0].watched_at)
+        self.assertIsNotNone(db.add.call_args.args[0].watched_at)
+        self.assertTrue(db.add.call_args.args[0].date_inferred)
 
     async def test_manual_unwatch_is_forwarded_to_stremio(self) -> None:
         connection = SimpleNamespace(id=49, type="stremio")
@@ -807,7 +861,11 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
         )
         rewatch_media_result = SimpleNamespace(scalar_one_or_none=lambda: None)
         db = SimpleNamespace(
-            execute=AsyncMock(side_effect=[media_result, existing_result, rewatch_media_result]),
+            execute=AsyncMock(side_effect=[media_result, existing_result,
+                SimpleNamespace(scalar_one_or_none=lambda: None),
+                SimpleNamespace(scalar_one_or_none=lambda: None),
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
+                rewatch_media_result]),
             add=MagicMock(),
             commit=AsyncMock(),
         )
@@ -849,7 +907,10 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
         dedup_window_result = SimpleNamespace(scalar_one_or_none=lambda: None)
         rewatch_media_result = SimpleNamespace(scalar_one_or_none=lambda: None)
         db = SimpleNamespace(
-            execute=AsyncMock(side_effect=[media_result, existing_result, dedup_window_result, rewatch_media_result]),
+            execute=AsyncMock(side_effect=[media_result, existing_result, dedup_window_result,
+                SimpleNamespace(scalar_one_or_none=lambda: None),
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
+                rewatch_media_result]),
             add=MagicMock(),
             commit=AsyncMock(),
         )

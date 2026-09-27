@@ -143,7 +143,8 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         events_by_episode = {event.media_id % 100: event for event in db.added}
         self.assertEqual(set(events_by_episode), {1, 2, 3})
         self.assertTrue(events_by_episode[1].provisional)
-        self.assertIsNone(events_by_episode[1].watched_at)
+        self.assertEqual(events_by_episode[1].watched_at.date(), date(2020, 1, 2))
+        self.assertTrue(events_by_episode[1].date_inferred)
         self.assertFalse(events_by_episode[2].provisional)
         self.assertEqual(events_by_episode[2].watched_at.date(), date(2020, 1, 2))
         self.assertFalse(events_by_episode[3].provisional)
@@ -550,7 +551,8 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         events = (await self.db.execute(select(WatchEvent, Media).join(Media, Media.id == WatchEvent.media_id).where(WatchEvent.user_id == self.user.id))).all()
         self.assertEqual({media.episode_number for _, media in events}, {1, 2})
         self.assertEqual({media.episode_number for event, media in events if event.provisional}, {1})
-        self.assertEqual({media.episode_number for event, media in events if event.watched_at is not None}, {2})
+        self.assertEqual({media.episode_number for event, media in events if event.watched_at is not None}, {1, 2})
+        self.assertEqual({media.episode_number for event, media in events if event.date_inferred}, {1})
         entry = (await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id))).scalar_one()
         self.assertEqual((entry.status, entry.progress, entry.start_date, entry.finish_date),
                          ("watching", 2, date(2020, 1, 2), None))

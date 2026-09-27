@@ -37,7 +37,11 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
             await db.delete(event)
             continue
         item=evidence.setdefault(root.id,{'media':root,'watched':[],'playing':False,'dates':[],'scores':{}})
-        if event.completed:item['watched'].append(media)
+        if event.completed:
+            item['watched'].append(media)
+            if event.watched_at:
+                dates=item.setdefault('episode_dates',{}).setdefault(media.id,[])
+                dates.append(event.watched_at)
         else:item['playing']=True
         if event.watched_at:item['dates'].append(event.watched_at.date())
     for event,media in progress:
@@ -66,8 +70,19 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
             episodes=(await db.execute(select(Media).where(Media.show_id==show_id,Media.media_type==MediaType.episode,Media.season_number>0,Media.release_date.is_not(None),Media.release_date<=date.today().isoformat()).order_by(Media.season_number,Media.episode_number))).scalars().all() if show_id else []
             watched_ids={m.id for m in watched_items}
             last=max((i for i,m in enumerate(episodes) if m.id in watched_ids),default=-1)
-            for episode in episodes[:last+1]:
-                if episode.id not in watched_ids:db.add(WatchEvent(user_id=user_id,media_id=episode.id,completed=True,watched_at=None,provisional=True))
+            episode_dates=item.get('episode_dates',{})
+            for index,episode in enumerate(episodes[:last+1]):
+                if episode.id in watched_ids:
+                    continue
+                # When progress reveals an earlier missing episode, copy the
+                # date from the nearest later watched episode as evidence.
+                evidence=next((max(episode_dates.get(later.id,[])) for later in episodes[index+1:last+1]
+                    if episode_dates.get(later.id)),None)
+                if evidence is None and item['dates']:
+                    evidence=datetime.combine(max(item['dates']),datetime.min.time())
+                from core.watch_dates import inferred_watch_datetime
+                db.add(WatchEvent(user_id=user_id,media_id=episode.id,completed=True,
+                    watched_at=inferred_watch_datetime(evidence),date_inferred=True))
             count=last+1 if last>=0 else count
             complete=bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') and episodes and count==len(episodes))
         status=observed_status(None,complete,item['playing'] or count>0)

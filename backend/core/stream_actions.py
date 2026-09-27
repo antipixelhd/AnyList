@@ -53,6 +53,18 @@ async def push_stremio_progress(token, record):
     if candidate.get('removed'):
         candidate['temp'] = True
     await stremio.datastore_put(token, [candidate])
+    confirmed = await stremio.datastore_get(token, ids=[record['content_id']])
+    if len(confirmed) != 1:
+        raise stremio.StremioAPIError('Stremio progress write was not visible on readback')
+    confirmed_state = confirmed[0].get('state') or {}
+    confirmed_season = record.get('season')
+    confirmed_episode = record.get('episode')
+    if confirmed_season is not None and not str(confirmed_state.get('video_id') or '').endswith(
+        f":{confirmed_season}:{confirmed_episode}"
+    ):
+        raise stremio.StremioAPIError('Stremio progress write did not match the requested episode')
+    if confirmed_state.get('timeOffset') != record['position'] or confirmed_state.get('duration') != record['duration']:
+        raise stremio.StremioAPIError('Stremio progress write did not persist')
 
 
 async def push_nuvio_progress(db, conn, record):
@@ -91,6 +103,10 @@ async def push_nuvio_progress(db, conn, record):
                 if record.get('season') is not None else record['content_id'])
             await nuvio._rpc(client, conn.url, session.access_token, 'sync_push_watch_progress',
                 {'p_profile_id': profile, 'p_entries': [payload]})
+            confirmed_rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
+            confirmed = [row for row in confirmed_rows if row.get('progress_key') == payload['progress_key']]
+            if len(confirmed) != 1 or not same_progress(confirmed[0], record):
+                raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
 
 
 async def queue_progress_update(db, source, media, record):
@@ -287,16 +303,33 @@ async def queue_local_dismissals(db, user_id, media):
 
 
 async def queue_restorations(db, user_id, media):
+    """Discard legacy resume restores when a title re-enters Watching.
+
+    A title returning to Watching is projected from fresh local playback, or
+    from the one-second synthetic resume built by the full-push path. Reusing a
+    provider's previously dismissed position would resurrect stale progress.
+    """
+    pending=(await db.execute(select(StreamAction).where(StreamAction.user_id==user_id,
+        StreamAction.media_id==media.id,StreamAction.state=='pending',StreamAction.action=='restore'))).scalars().all()
+    for action in pending:
+        action.state='cancelled'
+        action.payload={}
+        action.last_error=None
     targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
         MediaServerConnection.type.in_(['stremio','nuvio']),MediaServerConnection.push_playback.is_(True)))).scalars().all()
     for conn in targets:
         baseline=await db.get(StreamBaseline,conn.id)
-        if not baseline:continue
-        for key,record in baseline.snapshot.get('resume',{}).items():
-            if baseline.snapshot.get('mappings',{}).get(key)!=media.tmdb_id or record.get('content_type')!=media.media_type.value:continue
-            pending=(await db.execute(select(StreamAction.id).where(StreamAction.connection_id==conn.id,
-                StreamAction.media_id==media.id,StreamAction.state=='pending',StreamAction.action=='restore'))).first()
-            if not pending:db.add(StreamAction(user_id=user_id,connection_id=conn.id,media_id=media.id,action='restore',payload=dict(record)))
+        if not baseline:
+            continue
+        snapshot=dict(baseline.snapshot or {})
+        mappings=snapshot.get('mappings',{})
+        resume=dict(snapshot.get('resume',{}))
+        stale_keys=[key for key in resume if mappings.get(key)==media.tmdb_id]
+        if stale_keys:
+            for key in stale_keys:
+                resume.pop(key,None)
+            snapshot['resume']=resume
+            baseline.snapshot=snapshot
 
 
 async def queue_resets(db,user_id,media,deleted_at):
@@ -328,6 +361,14 @@ async def dispatch_stream_actions(db, user_id):
     actions = (await db.execute(select(StreamAction).where(StreamAction.user_id == user_id,
         StreamAction.state == 'pending').order_by(StreamAction.id).limit(100).with_for_update(skip_locked=True))).scalars().all()
     for action in actions:
+        if action.action == 'restore':
+            # Legacy queued restores contain the old provider position. A
+            # transition back to Watching now uses fresh local playback or a
+            # synthetic one-second resume from the full-push projection.
+            action.state = 'cancelled'
+            action.payload = {}
+            action.last_error = None
+            continue
         conn = await db.get(MediaServerConnection, action.connection_id)
         if not conn or action.action not in ('dismiss','restore','reset','upsert'):
             continue
@@ -372,8 +413,7 @@ async def dispatch_stream_actions(db, user_id):
             key = action.payload['content_id']
             snapshot['progress'] = {k:v for k,v in snapshot.get('progress', {}).items() if k != key}
             snapshot['resume'] = {**snapshot.get('resume',{})}
-            if action.action=='dismiss':snapshot['resume'][key]=dict(action.payload)
-            if action.action=='reset':snapshot['resume'].pop(key,None)
+            if action.action in ('dismiss','reset'):snapshot['resume'].pop(key,None)
             if action.action in ('restore','upsert'):
                 snapshot['progress'][key]=dict(action.payload)
                 snapshot['resume'].pop(key,None)

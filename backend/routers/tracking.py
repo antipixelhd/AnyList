@@ -1503,6 +1503,9 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids), WatchEvent.completed.is_(True)))).scalars())
+        from core.watch_dates import inferred_watch_datetime
+        completion_evidence_date = entry.finish_date if entry.status == 'completed' else None
+        inferred_watched_at = inferred_watch_datetime(completion_evidence_date)
         # Watch events are canonical. A cached aggregate can lag after a
         # catalogue refresh, so only later watched events make this a rollback.
         # Status alone changes the movie's current 0/1 progress, not its past
@@ -1512,7 +1515,8 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             raise HTTPException(409, "Confirm marking later episodes unwatched")
         for episode in episodes[:target]:
             if episode.id not in watched or (media.media_type == MediaType.movie and old_progress == 0 and previous != 'completed'):
-                db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True, watched_at=None, provisional=True))
+                db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True,
+                    watched_at=inferred_watched_at, date_inferred=True))
                 added_watched_ids.add(episode.id)
         if rollback:
             removed_watched_ids = watched.intersection(ids[target:])

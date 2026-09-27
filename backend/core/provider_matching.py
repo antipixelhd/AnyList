@@ -55,12 +55,22 @@ async def provider_override(db, *, user_id: int, provider: str, kind: str, entry
     return (await db.get(Media, match.media_id) if match else None), False, external_key, title
 
 
-async def record_unmatched_import(db, *, user_id: int, provider: str, kind: str, entry: dict[str, Any]) -> bool:
+async def record_unmatched_import(
+    db,
+    *,
+    user_id: int,
+    provider: str,
+    kind: str,
+    entry: dict[str, Any],
+    notify: bool = True,
+) -> bool:
     mapped, ignored, external_key, title = await provider_override(
         db, user_id=user_id, provider=provider, kind=kind, entry=entry
     )
     if mapped or ignored:
         return False
+    if not notify:
+        return True
     pending = (await db.execute(select(SyncReview).where(
         SyncReview.user_id == user_id,
         SyncReview.provider == provider,

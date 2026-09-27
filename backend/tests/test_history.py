@@ -229,7 +229,7 @@ class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
         event = next(value for value in db.added if isinstance(value, WatchEvent))
         return response, event, push
 
-    async def test_explicit_null_marks_watched_without_a_date(self) -> None:
+    async def test_explicit_null_uses_an_inferred_date_for_today(self) -> None:
         response, event, push = await self._mark({
             "tmdb_id": 550,
             "media_type": "movie",
@@ -237,9 +237,10 @@ class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
         })
 
         self.assertEqual(response["status"], "ok")
-        self.assertIsNone(event.watched_at)
+        self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
         push.assert_awaited_once()
-        self.assertEqual(push.await_args.kwargs["watched_at_by_media"], {10: None})
+        self.assertEqual(push.await_args.kwargs["watched_at_by_media"], {10: event.watched_at})
 
     async def test_omitted_watched_at_defaults_to_now(self) -> None:
         response, event, push = await self._mark({
@@ -249,6 +250,7 @@ class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response["status"], "ok")
         self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
         self.assertEqual(
             push.await_args.kwargs["watched_at_by_media"],
             {10: event.watched_at},
@@ -286,8 +288,7 @@ _SEASON_PAYLOAD = {
 
 
 class MarkSeasonWatchedDateTests(unittest.IsolatedAsyncioTestCase):
-    """Regression test for issue #92: marking a season watched had no way to
-    pick a custom date or leave it unknown — every episode got watched_at=now()."""
+    """Manual marks default to today's inferred date and accept a custom date."""
 
     async def _mark_season(self, **watched_at_kwargs) -> tuple[dict, WatchEvent]:
         show = Show(id=55, tmdb_id=100, title="Test Show")
@@ -306,21 +307,24 @@ class MarkSeasonWatchedDateTests(unittest.IsolatedAsyncioTestCase):
         event = next(v for v in db.added if isinstance(v, WatchEvent))
         return response, event
 
-    async def test_explicit_null_marks_season_watched_without_a_date(self) -> None:
+    async def test_explicit_null_uses_an_inferred_date_for_today(self) -> None:
         response, event = await self._mark_season(watched_at=None)
         self.assertEqual(response["count"], 1)
-        self.assertIsNone(event.watched_at)
+        self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
 
     async def test_omitted_watched_at_defaults_to_now(self) -> None:
         response, event = await self._mark_season()
         self.assertEqual(response["count"], 1)
         self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
 
     async def test_explicit_custom_date_is_used(self) -> None:
         custom = datetime(2020, 6, 15, 12, 0, 0)
         response, event = await self._mark_season(watched_at=custom)
         self.assertEqual(response["count"], 1)
         self.assertEqual(event.watched_at, custom)
+        self.assertFalse(event.date_inferred)
 
 
 class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
@@ -348,21 +352,24 @@ class MarkShowWatchedDateTests(unittest.IsolatedAsyncioTestCase):
         event = next(v for v in db.added if isinstance(v, WatchEvent))
         return response, event
 
-    async def test_explicit_null_marks_show_watched_without_a_date(self) -> None:
+    async def test_explicit_null_uses_an_inferred_date_for_today(self) -> None:
         response, event = await self._mark_show(watched_at=None)
         self.assertEqual(response["count"], 1)
-        self.assertIsNone(event.watched_at)
+        self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
 
     async def test_omitted_watched_at_defaults_to_now(self) -> None:
         response, event = await self._mark_show()
         self.assertEqual(response["count"], 1)
         self.assertIsNotNone(event.watched_at)
+        self.assertTrue(event.date_inferred)
 
     async def test_explicit_custom_date_is_used(self) -> None:
         custom = datetime(2020, 6, 15, 12, 0, 0)
         response, event = await self._mark_show(watched_at=custom)
         self.assertEqual(response["count"], 1)
         self.assertEqual(event.watched_at, custom)
+        self.assertFalse(event.date_inferred)
 
 
 class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):

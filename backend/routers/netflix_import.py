@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core import tmdb
 from core.enrichment import create_media_safely
 from core.status_provenance import mark_status_change
+from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from core.tracking_rules import effective_score
 from db import engine, get_db
 from dependencies import get_current_user
@@ -1134,7 +1135,7 @@ async def _has_completed_event(db: AsyncSession, user_id: int, media_id: int, wa
         WatchEventModel.completed.is_(True),
     )
     if watched_at is None:
-        query = query.where(WatchEventModel.watched_at.is_(None), WatchEventModel.provisional.is_(True))
+        query = query.where(WatchEventModel.date_inferred.is_(True))
     else:
         query = query.where(WatchEventModel.watched_at == watched_at)
     return (await db.execute(query.limit(1))).scalar_one_or_none() is not None
@@ -1249,7 +1250,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             watched_dates = sorted({_to_date(d) for d in item.get("source_dates", []) if _to_date(d) is not None})
             for watched_date in watched_dates:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await _has_completed_event(db, user_id, movie.id, watched_at):
+                if await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
                     stats["duplicates"] += 1
                     continue
                 db.add(WatchEvent(user_id=user_id, media_id=movie.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
@@ -1327,7 +1328,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             # Only source rows through the reviewed endpoint are imported.
             for watched_date in sorted(set(dates_for_position)):
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await _has_completed_event(db, user_id, media.id, watched_at):
+                if await reconcile_inferred_watch_date(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
                     stats["duplicates"] += 1
                 else:
                     db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
@@ -1342,7 +1343,10 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     WatchEventModel.completed.is_(True),
                 ).limit(1))).scalar_one_or_none()
                 if any_existing is None:
-                    db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=None, completed=True, play_count=1, provisional=True))
+                    evidence_date = min(date_values) if date_values else today
+                    db.add(WatchEvent(user_id=user_id, media_id=media.id,
+                        watched_at=inferred_watch_datetime(datetime.combine(evidence_date, datetime.min.time())),
+                        date_inferred=True, completed=True, play_count=1, provisional=True))
                     stats["inferred_episodes"] += 1
                 watched_media.add(media.id)
             if position in source_positions:

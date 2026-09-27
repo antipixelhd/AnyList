@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, func, Index
@@ -38,6 +38,20 @@ class WatchEvent(Base):
     # these instead of exact-matching against it and creating a duplicate
     # (see GitHub #135).
     provisional      : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    # Estimated watch date. Kept separate from ``provisional``, which marks
+    # webhook events awaiting reconciliation.
+    date_inferred    : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     user  : Mapped["User"]  = relationship(back_populates="watch_events")
     media : Mapped["Media"] = relationship(back_populates="watch_events")
+
+
+from sqlalchemy import event as sqlalchemy_event
+
+
+@sqlalchemy_event.listens_for(WatchEvent, "before_insert")
+def _infer_missing_completed_watch_date(mapper, connection, target):
+    """New completed events always have a usable date, even for old adapters."""
+    if target.completed and target.watched_at is None:
+        target.watched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        target.date_inferred = True

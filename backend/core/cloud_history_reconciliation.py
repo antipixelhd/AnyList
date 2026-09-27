@@ -37,35 +37,42 @@ def _history_changes(entry, *, proposed_status, proposed_start, proposed_finish,
     return fields
 
 
-async def _add_status_conflict(db, *, user_id, provider, entry, proposed_status, changes, connection_id=None):
-    kind = "conflict" if connection_id is not None else "cloud_conflict"
-    pending = (await db.execute(select(SyncReview).where(
+def _is_legacy_watch_conflict(review: SyncReview) -> bool:
+    """Recognize only conflict cards created by the retired watch-history path."""
+    marker = "imported watch history differs from your local title data"
+    if marker not in (review.message or ""):
+        return False
+    changes = (review.payload or {}).get("changes")
+    if not isinstance(changes, list):
+        return False
+    watch_fields = {"status", "start_date", "finish_date", "progress"}
+    return all(
+        isinstance(change, dict) and change.get("field") in watch_fields
+        for change in changes
+    )
+
+
+async def _dismiss_legacy_watch_conflicts(db, *, user_id, provider, connection_id=None) -> int:
+    kind = "cloud_conflict" if connection_id is None else "conflict"
+    rows = (await db.execute(select(SyncReview).where(
         SyncReview.user_id == user_id,
         SyncReview.provider == provider,
         SyncReview.connection_id == connection_id,
-        SyncReview.media_id == entry.media_id,
         SyncReview.kind == kind,
         SyncReview.state == "pending",
-    ).limit(1))).scalar_one_or_none()
-    if pending is None:
-        label = {"trakt": "Trakt", "simkl": "Simkl", "mdblist": "MDBList"}.get(provider, provider)
-        db.add(SyncReview(
-            user_id=user_id,
-            media_id=entry.media_id,
-            provider=provider,
-            connection_id=connection_id,
-            kind=kind,
-            previous_status=entry.status,
-            proposed_status=proposed_status,
-            payload={"changes": changes},
-            message=(
-                f"{label}: imported watch history differs from your local title data, "
-                "but its time cannot be ordered against your local edit. Your local values were kept."
-            ),
-        ))
-    else:
-        pending.proposed_status = proposed_status
-        pending.payload = {"changes": changes}
+    ))).scalars().all()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    dismissed = 0
+    for review in rows:
+        # All legacy cloud_conflict rows were produced by watch-history
+        # reconciliation. Stream connections share kind="conflict", so those
+        # require the distinctive old payload/message before dismissal.
+        if connection_id is not None and not _is_legacy_watch_conflict(review):
+            continue
+        review.state = "corrected"
+        review.dismissed_at = now
+        dismissed += 1
+    return dismissed
 
 
 async def _add_applied_notification(db, *, user_id, provider, entry, previous_status, changes, connection_id=None):
@@ -100,7 +107,12 @@ async def reconcile_cloud_watch_events(
     observed_after: datetime | None = None,
 ) -> dict[str, int]:
     stats = {"applied": 0, "conflicts": 0, "preserved": 0}
+    dismissed_legacy = await _dismiss_legacy_watch_conflicts(
+        db, user_id=user_id, provider=provider, connection_id=connection_id,
+    )
     if not new_media_ids:
+        if dismissed_legacy:
+            await db.commit()
         return stats
     if initial_import_override is None:
         initial_import = (await db.execute(select(CloudBaseline.id).where(
@@ -145,11 +157,13 @@ async def reconcile_cloud_watch_events(
         if entry is None:
             continue
         latest_at = max(
-            (_naive_utc(event.watched_at) for event, _ in item["events"] if event.watched_at),
+            (_naive_utc(event.watched_at) for event, _ in item["events"]
+             if event.watched_at and not event.date_inferred),
             default=None,
         )
         earliest_at = min(
-            (_naive_utc(event.watched_at) for event, _ in item["events"] if event.watched_at),
+            (_naive_utc(event.watched_at) for event, _ in item["events"]
+             if event.watched_at and not event.date_inferred),
             default=None,
         )
         local_at = status_changed_at(entry)
@@ -205,12 +219,14 @@ async def reconcile_cloud_watch_events(
             # First release never reopens a completed title merely because it
             # was watched again or gained later episodes.
             for episode in inferred_previous:
+                from core.watch_dates import inferred_watch_datetime
                 db.add(WatchEvent(
                     user_id=user_id,
                     media_id=episode.id,
                     completed=True,
                     provisional=True,
-                    watched_at=None,
+                    watched_at=inferred_watch_datetime(latest_at),
+                    date_inferred=True,
                 ))
             if media.media_type == MediaType.movie:
                 entry.progress = 1
@@ -233,15 +249,8 @@ async def reconcile_cloud_watch_events(
             if reliably_older:
                 stats["preserved"] += 1
             else:
-                await _add_status_conflict(
-                    db,
-                    user_id=user_id,
-                    provider=provider,
-                    entry=entry,
-                    proposed_status=proposed_status,
-                    changes=changes,
-                    connection_id=connection_id,
-                )
+                # Ambiguous watch-history ordering keeps the user's local
+                # status. Watch history is too noisy to create a review card.
                 stats["conflicts"] += 1
             continue
 
@@ -250,12 +259,14 @@ async def reconcile_cloud_watch_events(
         previous_progress = entry.progress
         changed = previous_status != proposed_status
         for episode in inferred_previous:
+            from core.watch_dates import inferred_watch_datetime
             db.add(WatchEvent(
                 user_id=user_id,
                 media_id=episode.id,
                 completed=True,
                 provisional=True,
-                watched_at=None,
+                watched_at=inferred_watch_datetime(latest_at),
+                date_inferred=True,
             ))
         if released:
             entry.progress = proposed_progress

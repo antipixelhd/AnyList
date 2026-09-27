@@ -148,6 +148,7 @@ async def build_history(db: AsyncSession, user_id: int) -> list[dict]:
             entries.append({
                 "id": event.id,
                 "watched_at": _iso(event.watched_at),
+                "date_inferred": bool(getattr(event, "date_inferred", False)),
                 "action": "watch",
                 "type": "movie",
                 "movie": _movie_dict(media),
@@ -157,6 +158,7 @@ async def build_history(db: AsyncSession, user_id: int) -> list[dict]:
             entries.append({
                 "id": event.id,
                 "watched_at": _iso(event.watched_at),
+                "date_inferred": bool(getattr(event, "date_inferred", False)),
                 "action": "watch",
                 "type": "episode",
                 "episode": {

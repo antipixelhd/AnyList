@@ -20,6 +20,7 @@ from core import simkl as simkl_client
 from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
+from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from db import get_db, engine
 from dependencies import get_current_user
 from models.base import CollectionSource, MediaType
@@ -198,7 +199,15 @@ async def _get_or_create_series_media(db: AsyncSession, tmdb_id: int, title: str
     return media
 
 
-async def _resolve_simkl_title(db, user_id: int, kind: str, entry: dict, api_key: str | None) -> Media | None:
+async def _resolve_simkl_title(
+    db,
+    user_id: int,
+    kind: str,
+    entry: dict,
+    api_key: str | None,
+    *,
+    notify_unmatched: bool = True,
+) -> Media | None:
     """Resolve a top-level Simkl movie/show, honoring durable user matches."""
     from core.provider_matching import provider_override, record_unmatched_import
     plural = "movies" if kind == "movie" else "shows"
@@ -213,7 +222,10 @@ async def _resolve_simkl_title(db, user_id: int, kind: str, entry: dict, api_key
         creator = _get_or_create_movie_media if kind == "movie" else _get_or_create_series_media
         media = await creator(db, int(tmdb_id), data.get("title", ""), api_key)
     if media is None:
-        await record_unmatched_import(db, user_id=user_id, provider="simkl", kind=plural, entry=entry)
+        await record_unmatched_import(
+            db, user_id=user_id, provider="simkl", kind=plural,
+            entry=entry, notify=notify_unmatched,
+        )
     return media
 
 
@@ -358,7 +370,9 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                     tmdb_id = movie_data.get("ids", {}).get("tmdb")
                     try:
                         async with db.begin_nested():
-                            media = await _resolve_simkl_title(db, user_id, "movie", item, api_key)
+                            media = await _resolve_simkl_title(
+                                db, user_id, "movie", item, api_key, notify_unmatched=False,
+                            )
                             if not media:
                                 stats["skipped"] += 1
                                 continue
@@ -367,11 +381,11 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                 db.add(WatchEvent(
                                     user_id=user_id,
                                     media_id=media.id,
-                                    # A dateless Simkl play stays dateless (the
-                                    # column is nullable, same as the Trakt
-                                    # import) — stamping "now" floods history
-                                    # with "watched today" on first sync (#127).
-                                    watched_at=watched_at,
+                                    # A dateless play receives an explicitly
+                                    # inferred date so a later dated import can
+                                    # correct it without creating a rewatch.
+                                    watched_at=watched_at or inferred_watch_datetime(),
+                                    date_inferred=watched_at is None,
                                     completed=True,
                                     play_count=1,
                                 ))
@@ -379,6 +393,9 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                 _new_watched.add(media.id)
                                 stats["movies"] += 1
                             else:
+                                watched_at = _parse_watched_at(item.get("last_watched_at"))
+                                if watched_at is not None:
+                                    await reconcile_inferred_watch_date(db, user_id, media.id, watched_at)
                                 stats["skipped"] += 1
                     except Exception as exc:
                         logger.warning("Error processing Simkl movie tmdb=%s: %s", tmdb_id, exc)
@@ -399,7 +416,10 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         )
                         show_tmdb_id = mapped.tmdb_id if mapped else None
                         if not show_tmdb_id and not ignored:
-                            await record_unmatched_import(db, user_id=user_id, provider="simkl", kind="shows", entry=show_entry)
+                            await record_unmatched_import(
+                                db, user_id=user_id, provider="simkl", kind="shows",
+                                entry=show_entry, notify=False,
+                            )
                         if not show_tmdb_id:
                             stats["skipped"] += 1
                             continue
@@ -440,8 +460,9 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                             event = WatchEvent(
                                                 user_id=user_id,
                                                 media_id=media.id,
-                                                # See the movie branch above (#127).
-                                                watched_at=watched_at,
+                                                # See the movie branch above.
+                                                watched_at=watched_at or inferred_watch_datetime(),
+                                                date_inferred=watched_at is None,
                                                 completed=True,
                                                 play_count=1,
                                             )
@@ -452,6 +473,9 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                             _new_watched.add(media.id)
                                             stats["episodes"] += 1
                                         else:
+                                            watched_at = _parse_watched_at(ep_entry.get("watched_at"))
+                                            if watched_at is not None:
+                                                await reconcile_inferred_watch_date(db, user_id, media.id, watched_at)
                                             stats["skipped"] += 1
                                 except Exception as exc:
                                     logger.warning("Error processing Simkl episode s%se%s show tmdb=%s: %s", season_num, ep_num, show_tmdb_id, exc)
