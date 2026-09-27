@@ -268,7 +268,8 @@ async def _auto_sync_scheduler():
                     schedules: list[tuple[str, float, object]] = []
                     if conn.auto_sync_interval is not None:
                         schedules.append(("pull", conn.auto_sync_interval, pull_runner))
-                    if conn.auto_push_interval is not None and conn.push_enabled:
+                    auto_push_interval = conn.scheduled_auto_push_interval
+                    if auto_push_interval is not None and conn.push_enabled:
                         from core.tracking_snapshot import require_stream_reconciliation
                         from fastapi import HTTPException
                         try:
@@ -276,7 +277,7 @@ async def _auto_sync_scheduler():
                         except HTTPException:
                             pass
                         else:
-                            schedules.append(("push", conn.auto_push_interval, _run_full_push))
+                            schedules.append(("push", auto_push_interval, _run_full_push))
 
                     due: list[tuple[datetime, str, object]] = []
                     for job_type, interval, runner in schedules:

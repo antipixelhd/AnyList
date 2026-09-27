@@ -2,7 +2,9 @@
 from datetime import datetime, timezone
 from sqlalchemy import select, update
 from fastapi import HTTPException
-from models import MediaServerConnection
+from models import MediaServerConnection, Media, MediaType, Show
+from models.events import WatchEvent
+from models.playback_progress import PlaybackProgress
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingDeletion
 from core import stremio, nuvio
 from core.status_provenance import provider_changed_at
@@ -25,9 +27,35 @@ def _iso_utc(value):
     return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def _stremio_last_watched(value):
+    """Stremio stores lastWatched as an ISO timestamp; peer snapshots may use epoch ms."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _iso_utc(value)
+    try:
+        milliseconds = int(value)
+    except (TypeError, ValueError):
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return None
+        return _iso_utc(parsed)
+    try:
+        return _iso_utc(datetime.fromtimestamp(milliseconds / 1000, timezone.utc))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 async def push_stremio_progress(token, record):
-    rows = await stremio.datastore_get(token, ids=[record['content_id']])
-    item = rows[0]
+    rows = await stremio.datastore_get(token, ids=[record['content_id']], allow_missing=True)
+    if rows:
+        item = rows[0]
+    else:
+        from routers.sync import _stremio_new_library_item
+        item = _stremio_new_library_item(record, _iso_utc(datetime.now(timezone.utc)), in_library=False)
+    if item.get('type') and record.get('content_type') and item['type'] != record['content_type']:
+        raise RemotePlaybackChanged()
     state = dict(item.get('state') or {})
     remote = {
         'position': state.get('timeOffset'), 'duration': state.get('duration'),
@@ -37,18 +65,25 @@ async def push_stremio_progress(token, record):
         video_id = str(state.get('video_id') or '')
         if not video_id.endswith(f":{record['season']}:{record['episode']}"):
             remote['season'] = remote['episode'] = None
-    if same_progress(remote, record):
+    eligible = not item.get('removed') or bool(item.get('temp'))
+    matching_video = (str(state.get('video_id') or '') == record['content_id']
+        if record.get('season') is None else remote['season'] is not None)
+    if same_progress(remote, record) and eligible and matching_video:
         return
     observed_at = provider_changed_at({'modified_at': record.get('observed_at')})
-    remote_at = provider_changed_at({'modified_at': item.get('_mtime')})
+    remote_at = provider_changed_at({'modified_at': item.get('_mtime')}) if rows else None
     if not observed_at or (remote_at and remote_at > observed_at):
         raise RemotePlaybackChanged()
     state['timeOffset'] = record['position']
     state['duration'] = record['duration']
     if record.get('season') is not None:
         state['video_id'] = record.get('video_id') or f"{record['content_id']}:{record['season']}:{record['episode']}"
+    else:
+        state['video_id'] = record.get('video_id') or record['content_id']
     if record.get('last_watched') is not None:
-        state['lastWatched'] = record['last_watched']
+        last_watched = _stremio_last_watched(record['last_watched'])
+        if last_watched is not None:
+            state['lastWatched'] = last_watched
     candidate = {**item, 'state': state, '_mtime': _iso_utc(datetime.now(timezone.utc))}
     if candidate.get('removed'):
         candidate['temp'] = True
@@ -63,6 +98,8 @@ async def push_stremio_progress(token, record):
         f":{confirmed_season}:{confirmed_episode}"
     ):
         raise stremio.StremioAPIError('Stremio progress write did not match the requested episode')
+    if confirmed_season is None and confirmed_state.get('video_id') != record['content_id']:
+        raise stremio.StremioAPIError('Stremio progress write did not match the requested movie')
     if confirmed_state.get('timeOffset') != record['position'] or confirmed_state.get('duration') != record['duration']:
         raise stremio.StremioAPIError('Stremio progress write did not persist')
 
@@ -303,26 +340,83 @@ async def queue_local_dismissals(db, user_id, media):
 
 
 async def queue_restorations(db, user_id, media):
-    """Discard legacy resume restores when a title re-enters Watching.
-
-    A title returning to Watching is projected from fresh local playback, or
-    from the one-second synthetic resume built by the full-push path. Reusing a
-    provider's previously dismissed position would resurrect stale progress.
-    """
+    """Queue a fresh resume for eligible providers when a title enters Watching."""
     pending=(await db.execute(select(StreamAction).where(StreamAction.user_id==user_id,
         StreamAction.media_id==media.id,StreamAction.state=='pending',StreamAction.action=='restore'))).scalars().all()
     for action in pending:
         action.state='cancelled'
         action.payload={}
         action.last_error=None
+    entry=(await db.execute(select(TrackedEntry).where(
+        TrackedEntry.user_id==user_id,TrackedEntry.media_id==media.id))).scalar_one_or_none()
+    if not entry or entry.status!='watching':
+        return
+
+    observed_at=datetime.now(timezone.utc)
+    record=await _local_resume_record(db,user_id,media,entry,observed_at)
+    if record is None:
+        return
+    from models.users import UserSettings
+    from routers.sync import _ensure_nuvio_imdb_ids, _get_effective_tmdb_key, _nuvio_imdb_id
+    show = await db.get(Show, record['episode_media'].show_id) if media.media_type == MediaType.series else None
+    settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
+    api_key = await _get_effective_tmdb_key(db, settings)
+    await _ensure_nuvio_imdb_ids([record['episode_media']], {show.id: show} if show else {}, api_key)
+    resolved_imdb_id = _nuvio_imdb_id(show or media)
     targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
         MediaServerConnection.type.in_(['stremio','nuvio']),MediaServerConnection.push_playback.is_(True)))).scalars().all()
     for conn in targets:
         baseline=await db.get(StreamBaseline,conn.id)
-        if not baseline:
+        if not baseline or not baseline.approved:
             continue
         snapshot=dict(baseline.snapshot or {})
         mappings=snapshot.get('mappings',{})
+        keys=[key for key,tmdb_id in mappings.items() if media.tmdb_id is not None and tmdb_id==media.tmdb_id]
+        if not keys and resolved_imdb_id:
+            keys=[resolved_imdb_id]
+        if not keys:
+            continue
+        content_id=next((key for key in keys if key in snapshot.get('progress',{})),keys[0])
+        if media.media_type==MediaType.series:
+            episode=record['episode_media']
+            season=episode.season_number
+            episode_number=episode.episode_number
+            progress_key=f"{content_id}_s{season}e{episode_number}"
+            video_id=f"{content_id}:{season}:{episode_number}"
+            content_type='series'
+        else:
+            progress_key=content_id
+            video_id=content_id
+            season=episode_number=None
+            content_type='movie'
+        provider_time=observed_at
+        action_record={
+            'content_id':content_id,'content_type':content_type,'video_id':video_id,
+            'title':media.title,
+            'season':season,'episode':episode_number,
+            'position':record['position'],'duration':record['duration'],
+            'observed_at':_iso_utc(observed_at),
+            'last_watched':(_iso_utc(provider_time) if conn.type=='stremio'
+                else int(provider_time.timestamp()*1000)),
+            'progress_key':progress_key,
+        }
+        # A progress row should replace an older dismissal for the same title.
+        stale_dismissals=(await db.execute(select(StreamAction).where(
+            StreamAction.user_id==user_id,StreamAction.connection_id==conn.id,
+            StreamAction.media_id==media.id,StreamAction.action=='dismiss',
+            StreamAction.state=='pending'))).scalars().all()
+        for action in stale_dismissals:
+            action.state='cancelled';action.payload={};action.last_error=None
+        existing=(await db.execute(select(StreamAction).where(
+            StreamAction.connection_id==conn.id,StreamAction.media_id==media.id,
+            StreamAction.action=='upsert',StreamAction.state=='pending').with_for_update())).scalar_one_or_none()
+        if existing:
+            existing.payload=action_record
+            existing.attempts=0
+            existing.last_error=None
+        else:
+            db.add(StreamAction(user_id=user_id,connection_id=conn.id,media_id=media.id,
+                action='upsert',payload=action_record))
         resume=dict(snapshot.get('resume',{}))
         stale_keys=[key for key in resume if mappings.get(key)==media.tmdb_id]
         if stale_keys:
@@ -330,6 +424,61 @@ async def queue_restorations(db, user_id, media):
                 resume.pop(key,None)
             snapshot['resume']=resume
             baseline.snapshot=snapshot
+
+
+async def _local_resume_record(db, user_id, media, entry, observed_at):
+    """Build local playback in provider units, synthesizing a one-second resume when needed."""
+    target=media
+    if media.media_type==MediaType.series:
+        show_ids=(await db.execute(select(Show.id).where(Show.tmdb_id==media.tmdb_id))).scalars().all()
+        if not show_ids:
+            return None
+        episodes=(await db.execute(select(Media).where(
+            Media.show_id.in_(show_ids),Media.media_type==MediaType.episode,
+        ).order_by(Media.season_number,Media.episode_number,Media.id))).scalars().all()
+        today=datetime.now(timezone.utc).date().isoformat()
+        released=[episode for episode in episodes if not episode.release_date or episode.release_date<=today]
+        if not released:
+            return None
+        watched=(await db.execute(select(WatchEvent.media_id).where(
+            WatchEvent.user_id==user_id,WatchEvent.completed.is_(True),
+            WatchEvent.media_id.in_([episode.id for episode in released]),
+        ))).scalars().all()
+        watched_ids=set(watched)
+        target=next((episode for episode in released if episode.id not in watched_ids),released[0])
+
+    progress=(await db.execute(select(PlaybackProgress).where(
+        PlaybackProgress.user_id==user_id,PlaybackProgress.media_id==target.id,
+    ))).scalar_one_or_none()
+    if progress and progress.updated_at:
+        updated_at=progress.updated_at
+        if updated_at.tzinfo is None:
+            updated_at=updated_at.replace(tzinfo=timezone.utc)
+        cutoff=entry.status_changed_at or observed_at
+        if cutoff.tzinfo is None:
+            cutoff=cutoff.replace(tzinfo=timezone.utc)
+        fresh=updated_at>=cutoff
+    else:
+        fresh=False
+
+    if fresh and progress:
+        try:
+            position_ms=max(0,int(progress.progress_seconds))*1000
+            percent=float(progress.progress_percent)
+        except (TypeError,ValueError):
+            position_ms=0;percent=0
+    else:
+        position_ms=1000
+        percent=0.01
+    if position_ms<=0 or percent<=0:
+        position_ms=1000
+        percent=0.01
+    if target.runtime and target.runtime>0:
+        duration_ms=int(target.runtime)*60_000
+    else:
+        duration_ms=round(position_ms/max(min(percent,1.0),0.01))
+    duration_ms=max(position_ms,duration_ms)
+    return {'position':position_ms,'duration':duration_ms,'episode_media':target}
 
 
 async def queue_resets(db,user_id,media,deleted_at):

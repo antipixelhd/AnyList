@@ -116,7 +116,7 @@ def _content_id_for_connection(conn, baseline, media: Media, show: Show | None) 
     if direct and direct in matching:
         return direct
     imdb_mapping = next((key for key in matching if _valid_imdb_id(key)), None)
-    return imdb_mapping or direct or (matching[0] if matching else None)
+    return imdb_mapping or (matching[0] if matching else None) or direct
 
 
 async def _write_provider_watch_state(

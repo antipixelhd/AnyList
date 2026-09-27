@@ -127,6 +127,7 @@ async def datastore_get(
     *,
     ids: list[str] | None = None,
     all_items: bool = False,
+    allow_missing: bool = False,
 ) -> list[dict[str, Any]]:
     result = await _api_request(
         "datastoreGet",
@@ -140,7 +141,7 @@ async def datastore_get(
     )
     if not isinstance(result, list) or any(not isinstance(item, dict) or not item.get('_id') for item in result):
         raise StremioAPIError('Stremio library pull returned an incomplete collection')
-    if ids and not all_items and set(ids) - {str(item['_id']) for item in result}:
+    if ids and not all_items and not allow_missing and set(ids) - {str(item['_id']) for item in result}:
         raise StremioAPIError('Stremio incremental pull omitted requested records')
     return result
 

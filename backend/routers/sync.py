@@ -700,6 +700,25 @@ def _nuvio_imdb_id(entity: Media | Show | None) -> str | None:
     return imdb_id if imdb_id.startswith("tt") and imdb_id[2:].isdigit() else None
 
 
+def _nuvio_remap_payload(item: dict, media: Media, show: Show | None, baseline) -> dict:
+    """Use the content ID already observed for this title on this Nuvio profile."""
+    if baseline is None:
+        return item
+    from core.watch_intents import _content_id_for_connection
+    content_id = _content_id_for_connection(None, baseline, media, show)
+    if not content_id or content_id == item.get("content_id"):
+        return item
+    item = {**item, "content_id": content_id}
+    if "progress_key" in item:
+        if item.get("season") is not None and item.get("episode") is not None:
+            item["video_id"] = f"{content_id}:{item['season']}:{item['episode']}"
+            item["progress_key"] = f"{content_id}_s{item['season']}e{item['episode']}"
+        else:
+            item["video_id"] = content_id
+            item["progress_key"] = content_id
+    return item
+
+
 async def _ensure_nuvio_imdb_ids(
     media_rows: list[Media],
     shows_by_id: dict[int, Show],
@@ -807,6 +826,7 @@ async def _build_nuvio_library_items(
     db: AsyncSession,
     user_id: int,
     api_key: str | None = None,
+    baseline=None,
 ) -> list[dict]:
     # An explicit Library removal must not be undone by another source's
     # CollectionFile during the next Stremio/Nuvio full push.
@@ -867,6 +887,7 @@ async def _build_nuvio_library_items(
         )
         item = _nuvio_library_item(media, added_at, show)
         if item:
+            item = _nuvio_remap_payload(item, media, show, baseline)
             items_by_content_id.setdefault(item["content_id"], item)
     return list(items_by_content_id.values())
 
@@ -1118,6 +1139,8 @@ async def _build_nuvio_watched_items(
     api_key: str | None = None,
     *,
     include_unknown_dates: bool = True,
+    baseline=None,
+    tracked_only: bool = False,
 ) -> list[dict]:
     """Project canonical WatchEvents, preserving watched state with a null date.
 
@@ -1156,6 +1179,30 @@ async def _build_nuvio_watched_items(
         )
         shows_by_id = {show.id: show for show in shows}
 
+    if tracked_only:
+        from models.tracking import TrackedEntry
+        tracked_result = await db.execute(
+            select(Media.id, Media.tmdb_id, Media.tvdb_id, Media.media_type)
+            .join(TrackedEntry, TrackedEntry.media_id == Media.id)
+            .where(TrackedEntry.user_id == user_id)
+        )
+        tracked_ids: set[int] = set()
+        tracked_series_tmdb: set[int] = set()
+        tracked_series_tvdb: set[int] = set()
+        for tracked_id, tmdb_id, tvdb_id, media_type in tracked_result.all():
+            tracked_ids.add(tracked_id)
+            if media_type == MediaType.series and tmdb_id is not None:
+                tracked_series_tmdb.add(tmdb_id)
+            if media_type == MediaType.series and tvdb_id is not None:
+                tracked_series_tvdb.add(tvdb_id)
+        media_rows = [media for media in media_rows
+            if media.id in tracked_ids or (
+                media.media_type == MediaType.episode
+                and media.show_id in shows_by_id
+                and (shows_by_id[media.show_id].tmdb_id in tracked_series_tmdb
+                    or shows_by_id[media.show_id].tvdb_id in tracked_series_tvdb)
+            )]
+
     await _ensure_nuvio_imdb_ids(media_rows, shows_by_id, api_key)
     items: list[dict] = []
     for media in media_rows:
@@ -1166,7 +1213,7 @@ async def _build_nuvio_watched_items(
             include_unknown_date=include_unknown_dates,
         )
         if item:
-            items.append(item)
+            items.append(_nuvio_remap_payload(item, media, shows_by_id.get(media.show_id), baseline))
     return items
 
 
@@ -1235,6 +1282,7 @@ async def _build_nuvio_progress_items(
     db: AsyncSession,
     user_id: int,
     api_key: str | None = None,
+    baseline=None,
 ) -> list[dict]:
     from models.tracking import TrackedEntry
 
@@ -1315,7 +1363,7 @@ async def _build_nuvio_progress_items(
             if show is None:
                 continue
             episodes = episode_by_show.get(show.id, [])
-            if not episodes or any(episode.id in fresh_progress for episode in episodes):
+            if not episodes:
                 continue
             released = [episode for episode in episodes
                 if not episode.release_date or episode.release_date <= datetime.now(timezone.utc).date().isoformat()]
@@ -1326,10 +1374,31 @@ async def _build_nuvio_progress_items(
                 WatchEvent.user_id == user_id, WatchEvent.completed.is_(True), WatchEvent.media_id.in_(episode_ids),
             ))
             watched_ids = set(watched_result.scalars().all())
-            target = next((episode for episode in released if episode.id not in watched_ids), released[0])
-            progress_by_media[target.id] = SimpleNamespace(
-                progress_seconds=1, progress_percent=0.01, updated_at=synthetic_at(entry),
-            )
+            # A completed episode often retains a 100% PlaybackProgress row.
+            # Sending that row as the show's resume position hides the next
+            # episode from Continue Watching. Publish only one active resume
+            # per series, or seed the next unwatched episode at one second.
+            for episode in episodes:
+                progress_by_media.pop(episode.id, None)
+            active = [episode for episode in released
+                if episode.id in fresh_progress
+                and episode.id not in watched_ids
+                and float(fresh_progress[episode.id].progress_percent or 0) < 0.95]
+            if active:
+                def activity_time(episode: Media) -> float:
+                    value = fresh_progress[episode.id].updated_at
+                    if value is None:
+                        return 0
+                    if value.tzinfo is None:
+                        value = value.replace(tzinfo=timezone.utc)
+                    return value.timestamp()
+                target = max(active, key=activity_time)
+                progress_by_media[target.id] = fresh_progress[target.id]
+            else:
+                target = next((episode for episode in released if episode.id not in watched_ids), released[0])
+                progress_by_media[target.id] = SimpleNamespace(
+                    progress_seconds=1, progress_percent=0.01, updated_at=synthetic_at(entry),
+                )
         elif media.media_type in (MediaType.movie, MediaType.episode) and media_id not in fresh_progress:
             progress_by_media[media_id] = SimpleNamespace(
                 progress_seconds=1, progress_percent=0.01, updated_at=synthetic_at(entry),
@@ -1348,7 +1417,25 @@ async def _build_nuvio_progress_items(
         media = media_by_id[media_id]
         item = _nuvio_progress_item(progress, media, shows_by_id.get(media.show_id))
         if item:
-            items.append(item)
+            items.append(_nuvio_remap_payload(item, media, shows_by_id.get(media.show_id), baseline))
+    projected_content_ids = {str(item["content_id"]) for item in items}
+    missing = []
+    for _entry, media in tracked_rows:
+        if media.media_type not in (MediaType.movie, MediaType.series):
+            continue
+        content_id = _nuvio_imdb_id(media)
+        if media.media_type == MediaType.series:
+            show = next((row for row in shows_by_id.values() if row.tmdb_id == media.tmdb_id), None)
+            content_id = _nuvio_imdb_id(show) or content_id
+        if content_id:
+            content_id = _nuvio_remap_payload({"content_id": content_id}, media, None, baseline)["content_id"]
+        if not content_id or content_id not in projected_content_ids:
+            missing.append(media.title)
+    if missing:
+        raise nuvio.NuvioAPIError(
+            f"Cannot publish Continue Watching for {len(missing)} watching title(s): "
+            + ", ".join(missing[:3])
+        )
     return items
 
 
@@ -1430,6 +1517,20 @@ def _nuvio_progress_matches(left: dict, right: dict) -> bool:
     return all(left.get(key) == right.get(key) for key in (
         "content_id", "content_type", "position", "duration", "season", "episode", "progress_key",
     ))
+
+
+def _nuvio_obsolete_progress_keys(remote_rows: list[dict], desired_items: list[dict]) -> list[str]:
+    """A full push keeps one active resume per locally Watching title."""
+    desired = {str(item["content_id"]): str(item["progress_key"]) for item in desired_items}
+    obsolete = []
+    for row in remote_rows:
+        content_id = str(row.get("content_id") or "")
+        if content_id not in desired or str(row.get("progress_key") or "") == desired[content_id]:
+            continue
+        if not row.get("progress_key"):
+            raise nuvio.NuvioAPIError("Nuvio progress row has no progress_key; refusing an unsafe clear")
+        obsolete.append(str(row["progress_key"]))
+    return list(dict.fromkeys(obsolete))
 
 
 async def _fan_out_changes_to_other_connections(
@@ -6733,6 +6834,7 @@ async def _push_stremio_connection(
             media_ids=effective_watch_ids,
             api_key=api_key,
             include_unknown_dates=True,
+            tracked_only=True,
         )
         if conn.push_watched
         else []
@@ -7009,6 +7111,20 @@ async def _push_stremio_connection(
                 conn.token,
                 changes[start : start + BATCH_SIZE],
             )
+        if progress_records:
+            progress_ids = sorted({str(record["content_id"]) for record in progress_records})
+            confirmed = await stremio.datastore_get(conn.token, ids=progress_ids)
+            confirmed_by_id = {str(item.get("_id")): item for item in confirmed}
+            for content_id in progress_ids:
+                expected_state = (candidates.get(content_id) or {}).get("state") or {}
+                actual = confirmed_by_id.get(content_id) or {}
+                state = actual.get("state") or {}
+                if (int(state.get("timeOffset") or 0) != int(expected_state.get("timeOffset") or 0)
+                    or str(state.get("video_id") or "") != str(expected_state.get("video_id") or "")
+                    or (actual.get("removed") and not actual.get("temp"))):
+                    raise stremio.StremioAPIError(
+                        "Stremio did not confirm the pushed Continue Watching progress"
+                    )
         if clear_progress_ids:
             confirmed = await stremio.datastore_get(conn.token, ids=sorted(clear_progress_ids))
             confirmed_by_id = {str(item.get("_id")): item for item in confirmed if isinstance(item, dict)}
@@ -7110,13 +7226,17 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 return
 
             if conn.type == "nuvio":
+                from models.tracking import StreamBaseline
+                baseline = await db.get(StreamBaseline, conn.id)
+                if not isinstance(getattr(baseline, "snapshot", None), dict):
+                    baseline = None
                 settings_result = await db.execute(
                     select(UserSettings).where(UserSettings.user_id == user_id)
                 )
                 user_settings = settings_result.scalar_one_or_none()
                 api_key = await _get_effective_tmdb_key(db, user_settings)
                 library_items = (
-                    await _build_nuvio_library_items(db, user_id, api_key=api_key)
+                    await _build_nuvio_library_items(db, user_id, api_key=api_key, baseline=baseline)
                     if conn.push_collection
                     else []
                 )
@@ -7134,12 +7254,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     else set()
                 )
                 watched_items = (
-                    await _build_nuvio_watched_items(db, user_id, api_key=api_key)
+                    await _build_nuvio_watched_items(db, user_id, api_key=api_key,
+                        baseline=baseline, tracked_only=True)
                     if conn.push_watched
                     else []
                 )
                 progress_items = (
-                    await _build_nuvio_progress_items(db, user_id, api_key=api_key)
+                    await _build_nuvio_progress_items(db, user_id, api_key=api_key, baseline=baseline)
                     if conn.push_playback
                     else []
                 )
@@ -7186,6 +7307,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 await _nuvio_progress_keys_to_clear(db, user_id, conn.id, remote_progress)
                                 if conn.push_playback else []
                             )
+                            if progress_items:
+                                clear_keys = list(dict.fromkeys([
+                                    *clear_keys,
+                                    *_nuvio_obsolete_progress_keys(remote_progress, progress_items),
+                                ]))
                             if clear_keys:
                                 await nuvio._rpc(client, conn.url, session.access_token,
                                     "sync_delete_watch_progress", {"p_profile_id": profile, "p_keys": clear_keys})
@@ -7193,6 +7319,19 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 await nuvio._rpc(client, conn.url, session.access_token,
                                     "sync_push_watched_items", {"p_profile_id": profile,
                                         "p_items": watched_items[offset:offset + nuvio._PAGE_SIZE]})
+                            if watched_items:
+                                confirmed_watches = await nuvio._pull_watched_items(
+                                    client, conn.url, session.access_token, profile,
+                                )
+                                def watch_identity(row: dict) -> tuple[str, str, int | None, int | None]:
+                                    return (str(row.get("content_id") or ""),
+                                        str(row.get("content_type") or ""),
+                                        row.get("season"), row.get("episode"))
+                                confirmed_keys = {watch_identity(row) for row in confirmed_watches}
+                                if any(watch_identity(item) not in confirmed_keys for item in watched_items):
+                                    raise nuvio.NuvioAPIError(
+                                        "Nuvio did not confirm the pushed watched episodes"
+                                    )
                             pushed_progress = []
                             for item in progress_items:
                                 payload = dict(item)

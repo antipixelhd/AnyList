@@ -242,7 +242,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       </div>
                       )}
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
                         <div class="flex items-center justify-between gap-4">
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select class="conn-auto-sync bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
@@ -426,7 +426,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       </label>
                     </div>
                     <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
                       <div class="flex items-center justify-between gap-4">
                         <label class="text-sm text-zinc-300">Pull interval</label>
                         <select id="new-auto-sync" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
@@ -769,7 +769,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     )}
                     {settings.trakt_connected && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
                         <div class="flex items-center justify-between gap-4">
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select name="trakt_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
@@ -903,7 +903,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                         >Push</button>
                       </div>
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
                         <div class="flex items-center justify-between gap-4">
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select name="simkl_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all cursor-pointer">
@@ -1039,7 +1039,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                     )}
                     {settings.mdblist_connected && (
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Auto Sync</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
                         <div class="flex items-center justify-between gap-4">
                           <label class="text-sm text-zinc-300">Pull interval</label>
                           <select name="mdblist_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all cursor-pointer">

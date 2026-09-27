@@ -1535,9 +1535,6 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, viewer.id, media)
     # Mirror the effective value into the existing provider-facing rating rows.
-    if entry.status=='watching' and previous!='watching':
-        from core.stream_actions import queue_restorations
-        await queue_restorations(db,viewer.id,media)
     score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
     if score is not None:
         from core.web_push import resolve_rating_prompts
@@ -1586,6 +1583,12 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         else:
             changed_ratings[key] = after
     await db.flush()
+    if entry.status == 'watching' and (previous != 'watching' or entry.progress != old_progress):
+        # A manual start or episode-progress edit needs a current resume row on
+        # approved playback connections. The local outbound job dispatches the
+        # durable action immediately after this transaction commits.
+        from core.stream_actions import queue_restorations
+        await queue_restorations(db, viewer.id, media)
     changed_watch_ids = added_watched_ids | removed_watched_ids
     if changed_watch_ids:
         # Persist the Nuvio/Stremio delivery intent in the same transaction as

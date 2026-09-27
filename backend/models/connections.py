@@ -94,3 +94,15 @@ class MediaServerConnection(Base):
             or self.push_ratings
             or self.plex_push_watchlist
         )
+
+    @property
+    def scheduled_auto_push_interval(self) -> Optional[float]:
+        """Interval for scheduled full pushes, when this provider supports them.
+
+        Nuvio and Stremio receive targeted updates as local changes happen, so
+        periodic full pushes are redundant work. Keep the stored field for
+        compatibility, but never schedule those full pushes automatically.
+        """
+        if self.type in {"nuvio", "stremio"}:
+            return None
+        return self.auto_push_interval

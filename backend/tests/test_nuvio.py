@@ -11,10 +11,12 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from core import nuvio
+import core.stream_actions
 from models.base import MediaType
 from models.media import Media
 from models.playback_progress import PlaybackProgress
 from models.show import Show
+from models.sync import SyncStatus
 from routers.sync import (
     _build_nuvio_progress_items,
     _build_nuvio_watched_items,
@@ -24,6 +26,8 @@ from routers.sync import (
     _normalize_nuvio_item,
     _nuvio_library_item,
     _nuvio_progress_item,
+    _nuvio_obsolete_progress_keys,
+    _nuvio_remap_payload,
     _nuvio_progress_keys_to_clear,
     _nuvio_watched_item,
     _push_nuvio_library_delta,
@@ -995,6 +999,53 @@ class NuvioNormalizationTests(unittest.TestCase):
 
 
 class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_push_clears_only_old_resume_for_same_watching_title(self) -> None:
+        desired=[{"content_id":"tt1234567","progress_key":"tt1234567_s1e4"}]
+        remote=[
+            {"content_id":"tt1234567","progress_key":"tt1234567_s1e3"},
+            {"content_id":"tt1234567","progress_key":"tt1234567_s1e4"},
+            {"content_id":"tt9999999","progress_key":"tt9999999_s1e1"},
+        ]
+        self.assertEqual(_nuvio_obsolete_progress_keys(remote, desired),
+            ["tt1234567_s1e3"])
+
+    async def test_full_push_history_omits_deleted_titles_but_keeps_listed_episodes(self) -> None:
+        now = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+        old_show = Show(id=5, tmdb_id=1396, title="Removed",
+            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
+        kept_show = Show(id=6, tmdb_id=1400, title="Listed",
+            tmdb_data={"external_ids": {"imdb_id": "tt1234567"}})
+        old_episode = Media(id=21, media_type=MediaType.episode, title="Old", show_id=5,
+            season_number=1, episode_number=1)
+        kept_episode = Media(id=22, media_type=MediaType.episode, title="Kept", show_id=6,
+            season_number=1, episode_number=1)
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(rows=[(21, now), (22, now)]),
+            _Result(scalars=[old_episode, kept_episode]),
+            _Result(scalars=[old_show, kept_show]),
+            _Result(rows=[(10, 1400, None, MediaType.series)]),
+        ]))
+
+        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
+            items = await _build_nuvio_watched_items(db, user_id=7, tracked_only=True)
+
+        self.assertEqual([(item["content_id"], item["episode"]) for item in items],
+            [("tt1234567", 1)])
+
+    async def test_outbound_progress_uses_observed_nuvio_content_id(self) -> None:
+        movie = Media(id=10, tmdb_id=550, media_type=MediaType.movie,
+            title="Fight Club", imdb_id="tt0137523")
+        baseline = SimpleNamespace(snapshot={"mappings": {"tmdb:550": 550}})
+        payload = _nuvio_remap_payload({
+            "content_id": "tt0137523", "content_type": "movie",
+            "video_id": "tt0137523", "progress_key": "tt0137523",
+            "position": 1000, "duration": 120000,
+        }, movie, None, baseline)
+
+        self.assertEqual(payload["content_id"], "tmdb:550")
+        self.assertEqual(payload["video_id"], "tmdb:550")
+        self.assertEqual(payload["progress_key"], "tmdb:550")
+
     async def test_watching_movie_without_fresh_local_progress_gets_one_second_resume(self) -> None:
         status_changed_at = datetime(2026, 9, 20, 12, 0)
         entry = SimpleNamespace(status="watching", status_changed_at=status_changed_at, updated_at=status_changed_at)
@@ -1047,6 +1098,48 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[0]["episode"], 3)
         self.assertEqual(items[0]["position"], 1000)
         self.assertEqual(items[0]["progress_key"], "tt0903747_s1e3")
+
+    async def test_completed_episode_progress_does_not_hide_next_episode(self) -> None:
+        changed_at = datetime(2026, 9, 20, 12, 0)
+        entry = SimpleNamespace(status="watching", status_changed_at=changed_at, updated_at=changed_at)
+        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
+        show = Show(id=5, tmdb_id=1396, title="Breaking Bad",
+            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
+        episodes = [
+            Media(id=21 + index, media_type=MediaType.episode, title=f"Episode {index + 1}",
+                show_id=5, season_number=1, episode_number=index + 1, runtime=45,
+                release_date="2008-01-20")
+            for index in range(4)
+        ]
+        completed = PlaybackProgress(user_id=7, media_id=23, progress_seconds=2700,
+            progress_percent=1.0, updated_at=datetime(2026, 9, 21, 12, 0))
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(rows=[(entry, series)]),
+            _Result(scalars=[show]),
+            _Result(scalars=episodes),
+            _Result(rows=[(completed, episodes[2])]),
+            _Result(scalars=[21, 22, 23]),
+            _Result(scalars=[show]),
+        ]))
+
+        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
+            items = await _build_nuvio_progress_items(db, user_id=7)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e4")
+        self.assertEqual(items[0]["position"], 1000)
+
+    async def test_watching_series_without_episode_catalogue_is_not_silent_success(self) -> None:
+        entry = SimpleNamespace(status="watching", status_changed_at=None, updated_at=None)
+        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(rows=[(entry, series)]),
+            _Result(scalars=[]),
+            _Result(rows=[]),
+        ]))
+
+        with self.assertRaisesRegex(nuvio.NuvioAPIError, "Breaking Bad"):
+            await _build_nuvio_progress_items(db, user_id=7)
 
     async def test_full_push_clear_resolves_manually_added_imdb_ids_and_keeps_remote_only_rows(self) -> None:
         paused = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club", imdb_id="tt0137523")
@@ -1259,6 +1352,8 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path.endswith("/sync_push_watched_items"):
                 pushed_items.extend(json.loads(request.content)["p_items"])
                 return httpx.Response(204)
+            if request.url.path.endswith("/sync_pull_watched_items"):
+                return httpx.Response(200, json=pushed_items)
             return httpx.Response(404, json={"message": "unexpected request"})
 
         transport = httpx.MockTransport(handler)
@@ -1275,6 +1370,43 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(pushed_items, [watched_record])
         self.assertIsNone(pushed_items[0]["watched_at"])
+
+    async def test_full_push_fails_when_nuvio_does_not_store_watched_episodes(self) -> None:
+        conn = SimpleNamespace(id=4, user_id=7, type="nuvio", url="https://api.nuvio.tv",
+            token="old-refresh", server_user_id="1", push_collection=False,
+            push_watched=True, push_playback=False, stremio_pushed_library_ids=None)
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(scalars=[99]), _Result(scalars=[conn]), _Result(scalars=[]),
+            _Result(scalars=[SimpleNamespace(tmdb_api_key="tmdb-key")]),
+            None, None,
+        ]), commit=AsyncMock(), refresh=AsyncMock(),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True)))
+        watched_record = {"content_id": "tt1234567", "content_type": "series",
+            "title": "The Rescue", "season": 1, "episode": 2, "watched_at": None}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(200, json={"access_token": "access-token",
+                    "refresh_token": "rotated-refresh", "expires_in": 3600})
+            if request.url.path.endswith("/sync_push_watched_items"):
+                return httpx.Response(204)
+            if request.url.path.endswith("/sync_pull_watched_items"):
+                return httpx.Response(200, json=[])
+            return httpx.Response(404)
+
+        with (
+            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[watched_record])),
+            patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
+                _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)),
+        ):
+            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+
+        self.assertTrue(any(
+            getattr(value, "value", None) == SyncStatus.failed
+            for call in db.execute.await_args_list
+            for value in getattr(call.args[0], "_values", {}).values()
+        ))
 
     async def test_full_push_merges_instead_of_replacing_remote_library(self) -> None:
         """A first full push must merge the local library without dropping

@@ -721,6 +721,18 @@ class PushEnabledPropertyTests(unittest.TestCase):
         self.assertTrue(conn.push_enabled)
 
 
+class ScheduledAutoPushIntervalTests(unittest.TestCase):
+    def test_nuvio_and_stremio_do_not_schedule_full_pushes(self):
+        for provider in ("nuvio", "stremio"):
+            with self.subTest(provider=provider):
+                conn = MediaServerConnection(type=provider, auto_push_interval=6)
+                self.assertIsNone(conn.scheduled_auto_push_interval)
+
+    def test_other_media_servers_keep_their_configured_interval(self):
+        conn = MediaServerConnection(type="jellyfin", auto_push_interval=12)
+        self.assertEqual(conn.scheduled_auto_push_interval, 12)
+
+
 class ConnectionUpdateBaselineResetTests(unittest.IsolatedAsyncioTestCase):
     """Flipping a watchlist direction off→on must restart from a clean
     bootstrap - a baseline recorded under the old settings must not drive

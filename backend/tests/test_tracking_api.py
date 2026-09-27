@@ -3121,7 +3121,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate['state']['timeOffset'],20)
         self.assertEqual(candidate['state']['duration'],100)
         self.assertEqual(candidate['state']['video_id'],'tt-target:1:2')
-        self.assertEqual(candidate['state']['lastWatched'],1760000000000)
+        self.assertEqual(candidate['state']['lastWatched'],'2025-10-09T08:53:20Z')
 
         newer_remote={**remote,'_mtime':'2026-01-02T12:06:00Z'}
         with patch('core.stream_actions.stremio.datastore_get',AsyncMock(return_value=[newer_remote])):
@@ -3260,15 +3260,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await observe_stream_snapshot(self.db,conn,[],[],[record],{key:self.movie.tmdb_id})
         await self.db.refresh(baseline)
 
-        # A later complete-snapshot removal is now an independent provider
-        # change and retains the existing Dropped interpretation for movies.
+        # An empty provider snapshot must not undo the newer local Watching
+        # decision while its targeted resume delivery is still unresolved.
         await observe_stream_snapshot(self.db,conn,[],[],[],{})
         await self.db.refresh(entry)
-        self.assertEqual(entry.status,'dropped')
-        review=(await self.db.execute(select(SyncReview).where(
+        self.assertEqual(entry.status,'watching')
+        reviews=(await self.db.execute(select(SyncReview).where(
             SyncReview.user_id==self.owner.id,SyncReview.media_id==self.movie.id,
-            SyncReview.kind=='playback_removed'))).scalar_one()
-        self.assertEqual(review.proposed_status,'dropped')
+            SyncReview.kind=='playback_removed'))).scalars().all()
+        self.assertEqual(reviews,[])
 
     async def test_failed_nuvio_restore_does_not_turn_watching_into_dropped(self):
         from core.stream_actions import dispatch_stream_actions
@@ -3297,9 +3297,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.db.add(action)
         await self.db.commit()
 
-        with patch('core.stream_actions.dismiss_nuvio', AsyncMock(side_effect=RuntimeError('offline'))):
+        with patch('core.stream_actions.push_nuvio_progress', AsyncMock(side_effect=RuntimeError('offline'))):
             await dispatch_stream_actions(self.db, self.owner.id)
-        self.assertEqual(action.state, 'pending')
+        self.assertEqual(action.state, 'cancelled')
+        pending_upserts=(await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id==self.owner.id,StreamAction.connection_id==conn.id,
+            StreamAction.action=='upsert',StreamAction.state=='pending'))).scalars().all()
+        self.assertTrue(pending_upserts)
         await observe_stream_snapshot(self.db, conn, [], [], [], {})
         await self.db.refresh(entry)
         self.assertEqual(entry.status, 'watching')

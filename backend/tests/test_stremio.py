@@ -520,6 +520,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             media_ids={10},
             api_key="tmdb-key",
             include_unknown_dates=True,
+            tracked_only=True,
         )
         pushed = datastore_put.await_args.args[1][0]
         self.assertTrue(pushed["removed"])
@@ -604,13 +605,16 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             "duration": 600_000,
             "last_watched": None,
         }
-        datastore_put = AsyncMock()
+        stored: list[dict] = []
+        async def save_items(_token, items):
+            stored.extend(items)
+        datastore_put = AsyncMock(side_effect=save_items)
         with (
             patch(
                 "routers.sync._build_nuvio_progress_items",
                 AsyncMock(return_value=[progress]),
             ),
-            patch.object(stremio, "datastore_get", AsyncMock(return_value=[])),
+            patch.object(stremio, "datastore_get", AsyncMock(side_effect=[[], stored])),
             patch.object(stremio, "datastore_put", datastore_put),
         ):
             await _push_stremio_connection(
