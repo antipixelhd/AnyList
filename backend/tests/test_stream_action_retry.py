@@ -10,6 +10,7 @@ os.environ.setdefault(
 
 import main
 from core import cloud_actions, stream_actions
+from core import watch_intents
 
 
 class _Scalars:
@@ -51,22 +52,28 @@ class StreamActionRetryTests(unittest.IsolatedAsyncioTestCase):
     async def test_retries_every_pending_user_in_a_separate_session(self):
         factory = _Factory([4, 9])
         dispatch = AsyncMock()
+        watch_dispatch = AsyncMock()
         cloud_dispatch = AsyncMock()
         with patch.object(stream_actions, "dispatch_stream_actions", dispatch), \
+             patch.object(watch_intents, "dispatch_watch_intents", watch_dispatch), \
              patch.object(cloud_actions, "dispatch_cloud_actions", cloud_dispatch):
             await main._dispatch_pending_stream_actions_once(factory)
 
         self.assertEqual([call.args[1] for call in dispatch.await_args_list], [4, 9])
+        self.assertEqual([call.args[1] for call in watch_dispatch.await_args_list], [4, 9])
         self.assertEqual([call.args[1] for call in cloud_dispatch.await_args_list], [4, 9])
         self.assertIsNot(dispatch.await_args_list[0].args[0], dispatch.await_args_list[1].args[0])
 
     async def test_one_user_failure_does_not_block_the_next(self):
         factory = _Factory([4, 9])
         dispatch = AsyncMock(side_effect=[RuntimeError("remote body"), None])
+        watch_dispatch = AsyncMock()
         cloud_dispatch = AsyncMock()
         with patch.object(stream_actions, "dispatch_stream_actions", dispatch), \
+             patch.object(watch_intents, "dispatch_watch_intents", watch_dispatch), \
              patch.object(cloud_actions, "dispatch_cloud_actions", cloud_dispatch):
             await main._dispatch_pending_stream_actions_once(factory)
 
         self.assertEqual([call.args[1] for call in dispatch.await_args_list], [4, 9])
+        self.assertEqual([call.args[1] for call in watch_dispatch.await_args_list], [4, 9])
         self.assertEqual([call.args[1] for call in cloud_dispatch.await_args_list], [9])

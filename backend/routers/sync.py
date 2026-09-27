@@ -1071,8 +1071,7 @@ def _nuvio_watched_item(
 ) -> dict | None:
     if watched_at is None:
         if not include_unknown_date:
-            # Nuvio cannot represent an unknown date. Stremio can still merge
-            # the watched state without replacing its last-watched timestamp.
+            # Callers that project only dated plays can omit this record.
             return None
         watched_epoch_ms = None
     else:
@@ -1117,8 +1116,14 @@ async def _build_nuvio_watched_items(
     media_ids: set[int] | None = None,
     api_key: str | None = None,
     *,
-    include_unknown_dates: bool = False,
+    include_unknown_dates: bool = True,
 ) -> list[dict]:
+    """Project canonical WatchEvents, preserving watched state with a null date.
+
+    A missing timestamp is not evidence that an episode is unwatched. Keep it
+    null in the provider payload instead of dropping the watch or inventing a
+    viewing time.
+    """
     event_query = (
         select(WatchEvent.media_id, WatchEvent.watched_at)
         .where(WatchEvent.user_id == user_id, WatchEvent.completed == True)
@@ -1261,6 +1266,7 @@ async def _fan_out_changes_to_other_connections(
     removed_collected_ids: set[int] | None = None,
     exclude_connection_ids: set[int] | None = None,
     exclude_cloud_sources: set[CollectionSource] | None = None,
+    durable_watch_media_ids: set[int] | None = None,
 ) -> None:
     """Push an inbound sync delta to every enabled media server and cloud target.
 
@@ -1270,6 +1276,8 @@ async def _fan_out_changes_to_other_connections(
     removed_ratings = removed_ratings or set()
     new_collected_ids = new_collected_ids or set()
     removed_collected_ids = removed_collected_ids or set()
+    durable_watch_media_ids = set(durable_watch_media_ids or ())
+    directly_pushed_watch_ids = set(new_watched_ids) - durable_watch_media_ids
     if not new_watched_ids and not new_ratings and not removed_ratings and not new_collected_ids and not removed_collected_ids:
         return
 
@@ -1477,6 +1485,7 @@ async def _fan_out_changes_to_other_connections(
                         user_id,
                         api_key=stremio_api_key,
                         changed_media_ids=all_changed_ids,
+                        skip_watch_media_ids=durable_watch_media_ids,
                     )
                 except Exception:
                     logger.exception(
@@ -1490,7 +1499,7 @@ async def _fan_out_changes_to_other_connections(
                         nuvio_watched_items = await _build_nuvio_watched_items(
                             db,
                             user_id,
-                            new_watched_ids,
+                            directly_pushed_watch_ids,
                             api_key=nuvio_api_key,
                         )
                     if nuvio_watched_items:
@@ -4900,14 +4909,16 @@ async def _run_nuvio_sync(
                     sync_watched=False,
                 )
 
-            if watched_records:
+            if conn.sync_watched and watched_records:
+                from core.tracking_snapshot import changed_watch_rows_from_source
                 new_watched_ids.update(
                     await _apply_nuvio_watch_history(
                         db,
                         user_id,
-                        watched_records,
+                        await changed_watch_rows_from_source(db, conn, watched_records),
                         show_map,
                         tmdb_ids,
+                        include_unknown_dates=True,
                     )
                 )
 
@@ -4943,10 +4954,22 @@ async def _run_nuvio_sync(
                     api_key=tmdb_api_key,
                 )
 
-            if conn.sync_playback and conn.sync_watched and not stats['errors']:
+            if (conn.sync_playback or conn.sync_watched) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
-                await observe_stream_snapshot(db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                    complete=len(progress_records) < 200)
+                removed_watch_ids = set()
+                propagated_watch_ids = await observe_stream_snapshot(
+                    db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                    complete=len(progress_records) < 200,
+                    sync_playback=conn.sync_playback,
+                    sync_watched=conn.sync_watched,
+                    removed_watched_ids=removed_watch_ids,
+                )
+                if propagated_watch_ids or removed_watch_ids:
+                    from core.pull_propagation import propagate_media_server_pull
+                    await propagate_media_server_pull(
+                        db, conn=conn, watched_ids=propagated_watch_ids, ratings={},
+                        removed_watched_ids=removed_watch_ids,
+                    )
                 from core.stream_actions import dispatch_stream_actions
                 await dispatch_stream_actions(db, user_id)
             from core.streaming_library import retry_pending_library_deliveries
@@ -5446,12 +5469,13 @@ async def _run_stremio_sync(
                 await sync_group(normalized_watched, media_type, sync_collection=False)
                 await sync_group(normalized_progress, media_type, sync_collection=False)
 
-            if watched_records:
+            if conn.sync_watched and watched_records:
+                from core.tracking_snapshot import changed_watch_rows_from_source
                 new_watched_ids.update(
                     await _apply_nuvio_watch_history(
                         db,
                         user_id,
-                        watched_records,
+                        await changed_watch_rows_from_source(db, conn, watched_records),
                         show_map,
                         tmdb_ids,
                         include_unknown_dates=True,
@@ -5484,10 +5508,22 @@ async def _run_stremio_sync(
                     removed_collected_ids=removed_collected_ids,
                     api_key=tmdb_api_key,
                 )
-            if conn.sync_playback and conn.sync_watched and not stats['errors']:
+            if (conn.sync_playback or conn.sync_watched) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
-                await observe_stream_snapshot(db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                    complete=complete_snapshot, touched={str(item['_id']) for item in items})
+                removed_watch_ids = set()
+                propagated_watch_ids = await observe_stream_snapshot(
+                    db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                    complete=complete_snapshot, touched={str(item['_id']) for item in items},
+                    sync_playback=conn.sync_playback,
+                    sync_watched=conn.sync_watched,
+                    removed_watched_ids=removed_watch_ids,
+                )
+                if propagated_watch_ids or removed_watch_ids:
+                    from core.pull_propagation import propagate_media_server_pull
+                    await propagate_media_server_pull(
+                        db, conn=conn, watched_ids=propagated_watch_ids, ratings={},
+                        removed_watched_ids=removed_watch_ids,
+                    )
                 from core.stream_actions import dispatch_stream_actions
                 await dispatch_stream_actions(db, user_id)
             from core.streaming_library import retry_pending_library_deliveries
@@ -6445,15 +6481,22 @@ async def _push_stremio_connection(
     api_key: str | None,
     changed_media_ids: set[int] | None = None,
     watch_overrides: dict[int, bool] | None = None,
+    watch_only: bool = False,
+    skip_watch_media_ids: set[int] | None = None,
 ) -> int:
     effective_changed_ids = (
         set(changed_media_ids or set()) | set(watch_overrides or {})
         if changed_media_ids is not None or watch_overrides
         else None
     )
+    effective_watch_ids = (
+        set(effective_changed_ids) - set(skip_watch_media_ids or ())
+        if effective_changed_ids is not None
+        else None
+    )
     all_library_records = (
         await _build_nuvio_library_items(db, user_id, api_key=api_key)
-        if conn.push_collection
+        if conn.push_collection and not watch_only
         else []
     )
     library_records = list(all_library_records)
@@ -6461,7 +6504,7 @@ async def _push_stremio_connection(
         await _build_nuvio_watched_items(
             db,
             user_id,
-            media_ids=effective_changed_ids,
+            media_ids=effective_watch_ids,
             api_key=api_key,
             include_unknown_dates=True,
         )
@@ -6489,6 +6532,8 @@ async def _push_stremio_connection(
 
         watched_by_key = {watch_key(record): record for record in watched_records}
         for media_id, watched in watch_overrides.items():
+            if media_id in (skip_watch_media_ids or set()):
+                continue
             record = override_media.get(media_id)
             if record is None:
                 continue
@@ -6500,7 +6545,7 @@ async def _push_stremio_connection(
         watched_records = list(watched_by_key.values())
     progress_records = (
         await _build_nuvio_progress_items(db, user_id, api_key=api_key)
-        if conn.push_playback
+        if conn.push_playback and not watch_only
         else []
     )
     target_ids = (
@@ -6526,7 +6571,7 @@ async def _push_stremio_connection(
     previously_pushed_ids = set(conn.stremio_pushed_library_ids or [])
     removed_library_ids = (
         previously_pushed_ids - current_library_ids
-        if conn.push_collection and conn.stremio_pushed_library_ids is not None
+        if conn.push_collection and not watch_only and conn.stremio_pushed_library_ids is not None
         else set()
     )
     if target_ids is not None:
@@ -6685,7 +6730,7 @@ async def _push_stremio_connection(
                 changes[start : start + BATCH_SIZE],
             )
 
-    if conn.push_collection:
+    if conn.push_collection and not watch_only:
         conn.stremio_pushed_library_ids = sorted(current_library_ids)
     return len(changes)
 

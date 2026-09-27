@@ -31,6 +31,8 @@ class PullCycleState:
     library_removed_ids: set[int] = field(default_factory=set)
     library_source_ids: set[int] = field(default_factory=set)
     library_api_key: str | None = None
+    watched_exclusions: dict[int, tuple[set[int], set[CollectionSource]]] = field(default_factory=dict)
+    removed_watch_exclusions: dict[int, set[int]] = field(default_factory=dict)
 
 
 _states: dict[int, PullCycleState] = {}
@@ -83,6 +85,12 @@ def defer_fan_out(
     if state is None or not is_active(user_id):
         return False
     state.new_watched_ids.update(new_watched_ids)
+    for media_id in new_watched_ids:
+        connection_ids, cloud_sources = state.watched_exclusions.setdefault(media_id, (set(), set()))
+        if exclude_connection_id is not None:
+            connection_ids.add(exclude_connection_id)
+        if exclude_cloud_source is not None:
+            cloud_sources.add(exclude_cloud_source)
     state.new_ratings.update(new_ratings)
     state.removed_ratings.update(removed_ratings)
     state.new_collected_ids.update(new_collected_ids)
@@ -91,6 +99,15 @@ def defer_fan_out(
         state.excluded_connection_ids.add(exclude_connection_id)
     if exclude_cloud_source is not None:
         state.excluded_cloud_sources.add(exclude_cloud_source)
+    return True
+
+
+def defer_watch_removals(user_id: int, media_ids: set[int], source_connection_id: int) -> bool:
+    state = _states.get(user_id)
+    if state is None or not is_active(user_id):
+        return False
+    for media_id in media_ids:
+        state.removed_watch_exclusions.setdefault(media_id, set()).add(source_connection_id)
     return True
 
 

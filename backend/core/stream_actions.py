@@ -378,9 +378,10 @@ async def dispatch_stream_actions(db, user_id):
                 snapshot['progress'][key]=dict(action.payload)
                 snapshot['resume'].pop(key,None)
             snapshot['outbound'] = {**snapshot.get('outbound', {})}
-            if action.action == 'upsert':
+            if action.action in ('restore', 'upsert'):
                 snapshot['outbound'][key] = {field: action.payload.get(field)
                     for field in ('position','duration','season','episode','observed_at')}
+                snapshot['outbound'][key]['action'] = action.action
             elif action.action in ('dismiss','reset'):
                 snapshot['outbound'].pop(key, None)
             records = dict(snapshot.get('records', {}))

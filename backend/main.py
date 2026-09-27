@@ -22,6 +22,7 @@ from core.limiter import limiter
 from sqlalchemy import or_, select, update, delete
 from models.sync import SyncJob, SyncStatus
 from models.base import CollectionSource
+from models.events import WatchEvent
 from models.playback_session import PlaybackSession
 
 
@@ -50,6 +51,61 @@ async def _flush_pull_cycle(state) -> None:
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == state.user_id
         ))).scalar_one_or_none()
+        changed_watch_ids = state.new_watched_ids
+        final_watched_ids = set()
+        if changed_watch_ids:
+            final_watched_ids = set((await db.execute(select(WatchEvent.media_id).where(
+                WatchEvent.user_id == state.user_id,
+                WatchEvent.media_id.in_(changed_watch_ids),
+                WatchEvent.completed.is_(True),
+            ))).scalars())
+        watched_groups: dict[tuple[frozenset[int], frozenset[CollectionSource]], set[int]] = {}
+        for media_id in final_watched_ids:
+            excluded_connections, excluded_cloud = state.watched_exclusions.get(media_id, (set(), set()))
+            watched_groups.setdefault((frozenset(excluded_connections), frozenset(excluded_cloud)), set()).add(media_id)
+        if watched_groups:
+            from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+            for exclusions, media_ids in watched_groups.items():
+                await queue_watch_intents(
+                    db,
+                    state.user_id,
+                    media_ids,
+                    exclude_connection_ids=set(exclusions[0]),
+                )
+            await db.commit()
+            await dispatch_watch_intents(db, state.user_id)
+        for exclusions, media_ids in watched_groups.items():
+            await _fan_out_changes_to_other_connections(
+                db, state.user_id, None, media_ids, {}, settings,
+                exclude_connection_ids=set(exclusions[0]),
+                exclude_cloud_sources=set(exclusions[1]),
+                durable_watch_media_ids=media_ids,
+            )
+        removed_watch_ids = set(state.removed_watch_exclusions)
+        if removed_watch_ids:
+            still_watched = set((await db.execute(select(WatchEvent.media_id).where(
+                WatchEvent.user_id == state.user_id,
+                WatchEvent.media_id.in_(removed_watch_ids),
+                WatchEvent.completed.is_(True),
+            ))).scalars())
+            removal_groups: dict[frozenset[int], set[int]] = {}
+            for media_id in removed_watch_ids - still_watched:
+                excluded = frozenset(state.removed_watch_exclusions[media_id])
+                removal_groups.setdefault(excluded, set()).add(media_id)
+            if removal_groups:
+                from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+                from routers.history import _push_watch_state
+                for excluded, media_ids in removal_groups.items():
+                    await queue_watch_intents(db, state.user_id, media_ids,
+                                              exclude_connection_ids=set(excluded))
+                await db.commit()
+                await dispatch_watch_intents(db, state.user_id)
+                for excluded, media_ids in removal_groups.items():
+                    await _push_watch_state(
+                        db, state.user_id, sorted(media_ids), watched=False,
+                        exclude_connection_ids=set(excluded),
+                        skip_stream_watch_writes=True,
+                    )
         if state.library_new_ids or state.library_removed_ids:
             await _fan_out_streaming_library_changes(
                 db,
@@ -64,7 +120,7 @@ async def _flush_pull_cycle(state) -> None:
             db,
             state.user_id,
             None,
-            state.new_watched_ids,
+            set(),
             state.new_ratings,
             settings,
             removed_ratings=state.removed_ratings,
@@ -399,8 +455,10 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
     """Retry durable streaming writes independently of provider pull schedules."""
     from db import async_sessionmaker
     from models.tracking import StreamAction, CloudAction
+    from models.watch_intent import WatchIntent
     from core.stream_actions import dispatch_stream_actions
     from core.cloud_actions import dispatch_cloud_actions
+    from core.watch_intents import dispatch_watch_intents
 
     factory = session_factory or async_sessionmaker(
         engine,
@@ -409,7 +467,8 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
     )
     async with factory() as db:
         pending_users = select(StreamAction.user_id).where(StreamAction.state == "pending").union(
-            select(CloudAction.user_id).where(CloudAction.state == "pending")
+            select(CloudAction.user_id).where(CloudAction.state == "pending"),
+            select(WatchIntent.user_id).where(WatchIntent.state == "pending"),
         ).subquery()
         result = await db.execute(select(pending_users.c.user_id).order_by(pending_users.c.user_id))
         user_ids = list(result.scalars().all())
@@ -419,8 +478,15 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
     for user_id in user_ids:
         try:
             async with factory() as db:
-                await dispatch_stream_actions(db, user_id)
-                await dispatch_cloud_actions(db, user_id)
+                stream_ok = True
+                try:
+                    await dispatch_stream_actions(db, user_id)
+                except Exception as error:
+                    stream_ok = False
+                    print(f"Stream action retry failed for user {user_id}: {type(error).__name__}")
+                await dispatch_watch_intents(db, user_id)
+                if stream_ok:
+                    await dispatch_cloud_actions(db, user_id)
         except Exception as error:
             # One unavailable connection must not prevent another user's writes
             # from being retried on this tick. Remote error bodies are not logged.

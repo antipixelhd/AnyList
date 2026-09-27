@@ -160,6 +160,9 @@ class _Result:
             return self.item
         return [] if self.item is None else [self.item]
 
+    def scalars(self):
+        return iter(self.all())
+
     @property
     def rowcount(self):
         return len(self.item) if isinstance(self.item, list) else 0

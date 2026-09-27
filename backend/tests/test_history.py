@@ -621,12 +621,15 @@ class ClearHistoryTests(unittest.IsolatedAsyncioTestCase):
         # Continue Watching is sourced from PlaybackProgress, not WatchEvent -
         # a full clear must reset it too, or finished/cleared items keep
         # showing up there as if still in progress.
-        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            SimpleNamespace(scalars=lambda: []), None, None, None,
+        ]), commit=AsyncMock())
 
         await history.clear_history(db=db, current_user=SimpleNamespace(id=7))
 
         tables_deleted = {
             call.args[0].table.name for call in db.execute.call_args_list
+            if hasattr(call.args[0], 'table')
         }
         self.assertEqual(tables_deleted, {ShowRewatch.__tablename__, WatchEvent.__tablename__, PlaybackProgress.__tablename__})
         db.commit.assert_awaited_once()

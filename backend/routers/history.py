@@ -49,6 +49,8 @@ async def _push_watch_state(
     watched: bool,
     watched_at_by_media: dict[int, datetime | None] | None = None,
     exclude_connection_id: int | None = None,
+    exclude_connection_ids: set[int] | None = None,
+    skip_stream_watch_writes: bool = False,
 ) -> None:
     """Fan-out watched/unwatched state to all connections with push_watched enabled.
 
@@ -70,7 +72,17 @@ async def _push_watch_state(
             MediaServerConnection.push_watched == True,
         )
     )
-    connections = [c for c in conns_result.scalars().all() if c.id != exclude_connection_id]
+    excluded = set(exclude_connection_ids or ())
+    if exclude_connection_id is not None:
+        excluded.add(exclude_connection_id)
+    connections = [c for c in conns_result.scalars().all() if c.id not in excluded]
+    if not skip_stream_watch_writes and any(c.type in ('nuvio', 'stremio') for c in connections):
+        from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+        await queue_watch_intents(db, user_id, media_ids, exclude_connection_ids=excluded)
+        # Persist retryable intent before making a provider write.
+        await db.commit()
+        await dispatch_watch_intents(db, user_id)
+        skip_stream_watch_writes = True
     from core.tracking_snapshot import require_stream_reconciliation
     approved_connections = []
     for connection in connections:
@@ -257,7 +269,10 @@ async def _push_watch_state(
                 # the remote service, not a bug here.
                 logger.warning("Can't send history event to %s because %s", label, result)
 
-    nuvio_connections = [conn for conn in connections if conn.type == "nuvio"]
+    nuvio_connections = [
+        conn for conn in connections
+        if conn.type == "nuvio" and not skip_stream_watch_writes
+    ]
     if nuvio_connections:
         media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
         media_items = media_result.scalars().all()
@@ -323,7 +338,10 @@ async def _push_watch_state(
                 continue
         await db.commit()
 
-    stremio_connections = [conn for conn in connections if conn.type == "stremio"]
+    stremio_connections = [
+        conn for conn in connections
+        if conn.type == "stremio" and not skip_stream_watch_writes
+    ]
     if stremio_connections:
         from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
 
@@ -2478,12 +2496,21 @@ async def clear_history(
     # ShowRewatch "currently rewatching" marker itself doesn't depend on any
     # WatchEvent and would otherwise survive a full clear, stuck at 0
     # progress forever with nothing left to progress it.
+    media_ids = set((await db.execute(select(WatchEvent.media_id).where(
+        WatchEvent.user_id == current_user.id,
+    ))).scalars())
     await db.execute(delete(ShowRewatch).where(ShowRewatch.user_id == current_user.id))
     await db.execute(delete(WatchEvent).where(WatchEvent.user_id == current_user.id))
     # Continue Watching is sourced from PlaybackProgress, not WatchEvent -
     # without this, in-progress items kept showing up there after a clear.
     await db.execute(delete(PlaybackProgress).where(PlaybackProgress.user_id == current_user.id))
+    if media_ids:
+        from core.watch_intents import queue_watch_intents
+        await queue_watch_intents(db, current_user.id, media_ids)
     await db.commit()
+    if media_ids:
+        from core.watch_intents import dispatch_watch_intents
+        await dispatch_watch_intents(db, current_user.id)
     return {"status": "ok", "message": "Watch history cleared"}
 
 

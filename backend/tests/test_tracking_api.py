@@ -2089,10 +2089,10 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.status_code,409,res.text)
         res=await self.client.patch(url+'1',json={'watched':False,'confirm_rollback':True})
         self.assertEqual(res.status_code,200,res.text)
-        self.local_rollback.assert_awaited_once()
-        self.assertEqual(self.local_rollback.await_args.args,
-            (self.owner.id, {e.id for e in episodes[1:4]}))
-        self.assertEqual(self.local_rollback.await_args.kwargs['delivery_job_id'],
+        self.assertEqual(self.local_outbound.await_args.args[0], self.owner.id)
+        self.assertEqual(self.local_outbound.await_args.kwargs['removed_watched_ids'],
+            {e.id for e in episodes[1:4]})
+        self.assertEqual(self.local_outbound.await_args.kwargs['delivery_job_id'],
             res.json()['delivery_job_id'])
         self.assertEqual(res.json()['progress'],0)
         self.assertEqual(res.json()['status'],'completed')
@@ -2159,6 +2159,47 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.local_outbound.assert_not_awaited()
         await self.db.refresh(rating)
         self.assertEqual(rating.rated_at, rated_at)
+
+    async def test_completed_series_fanout_and_rollback_share_canonical_episode_ids(self):
+        self.show.tmdb_id = 987654321
+        self.show.tmdb_data = {'tracking_catalogue_refreshed_at': datetime.now().isoformat()}
+        series = Show(title='Fixture Show', tmdb_id=self.show.tmdb_id)
+        self.db.add(series)
+        await self.db.flush()
+        episodes = [
+            Media(title=f'Episode {number}', media_type=MediaType.episode,
+                  show_id=series.id, season_number=1, episode_number=number,
+                  release_date=f'2020-01-0{number}')
+            for number in (1, 2)
+        ]
+        self.db.add_all(episodes)
+        await self.db.commit()
+
+        await self.save(self.show, status='watching')
+        self.local_outbound.reset_mock()
+        completed = await self.save(self.show, status='completed')
+        self.assertEqual(completed.status_code, 200, completed.text)
+        episode_ids = {episode.id for episode in episodes}
+        self.local_outbound.assert_awaited_once()
+        self.assertEqual(self.local_outbound.await_args.args[1], episode_ids)
+        self.assertEqual(self.local_outbound.await_args.kwargs['removed_watched_ids'], set())
+        self.local_rollback.assert_not_awaited()
+        completion_job = (await self.db.execute(select(TrackingDeliveryJob).where(
+            TrackingDeliveryJob.id == completed.json()['delivery_job_id'],
+        ))).scalar_one()
+        self.assertEqual(set(completion_job.changes['watched_media_ids']), episode_ids)
+
+        self.local_outbound.reset_mock()
+        reverted = await self.save(self.show, progress=0, confirm_rollback=True)
+        self.assertEqual(reverted.status_code, 200, reverted.text)
+        self.local_outbound.assert_awaited_once()
+        self.assertEqual(self.local_outbound.await_args.args[1], set())
+        self.assertEqual(self.local_outbound.await_args.kwargs['removed_watched_ids'], episode_ids)
+        self.local_rollback.assert_not_awaited()
+        rollback_job = (await self.db.execute(select(TrackingDeliveryJob).where(
+            TrackingDeliveryJob.id == reverted.json()['delivery_job_id'],
+        ))).scalar_one()
+        self.assertEqual(set(rollback_job.changes['removed_watched_media_ids']), episode_ids)
 
     async def test_external_tracking_write_scope_is_narrow_and_returns_delivery_receipt(self):
         response = await self.client.patch(f'/tracking/entry/{self.movie.id}/external', json={
@@ -2995,6 +3036,106 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(baseline.snapshot['resume'],{})
         self.assertEqual(baseline.snapshot['library'],[])
 
+    async def test_nuvio_restore_waits_for_echo_before_inferring_a_later_removal(self):
+        from core.stream_actions import dispatch_stream_actions
+        from core.tracking_snapshot import observe_stream_snapshot
+        from models.tracking import StreamAction
+
+        self.movie.tmdb_id=987654296
+        key='tt-nuvio-restore'
+        record={'content_id':key,'content_type':'movie','position':30,'duration':100}
+        conn=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Nuvio fixture',
+            url='https://example.test',token='fixture',server_user_id='1',push_playback=True)
+        self.db.add(conn);await self.db.flush()
+        baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            snapshot={'library':[],'progress':{},'resume':{key:record},
+                'mappings':{key:self.movie.tmdb_id},'watched':[],'outbound':{}})
+        self.db.add(baseline);await self.db.commit()
+
+        await self.save(self.movie,status='dropped')
+        await self.save(self.movie,status='watching')
+        entry=(await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
+        # The provider last showed this title after the local Watching edit.
+        # A restore that is accepted by the RPC but absent from the next pull
+        # must not be mistaken for a later user removal.
+        baseline.observed_at=entry.status_changed_at+timedelta(seconds=1)
+        await self.db.commit()
+        restore=(await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id==conn.id,StreamAction.action=='restore',
+            StreamAction.state=='pending'))).scalar_one()
+        with patch('core.stream_actions.dismiss_nuvio',AsyncMock()) as write:
+            await dispatch_stream_actions(self.db,self.owner.id)
+            write.assert_awaited_once_with(self.db,conn,record,restore=True)
+        self.assertEqual(restore.state,'applied')
+        self.assertEqual(baseline.snapshot['outbound'][key]['action'],'restore')
+
+        # An absent row cannot distinguish an ignored restore from a user
+        # removal. Repeated complete snapshots preserve the local status and
+        # the marker until the provider acknowledges playback.
+        for _ in range(2):
+            await observe_stream_snapshot(self.db,conn,[],[],[],{})
+            await self.db.refresh(entry)
+            await self.db.refresh(baseline)
+            self.assertEqual(entry.status,'watching')
+            self.assertIn(key,baseline.snapshot['outbound'])
+            self.assertEqual((await self.db.execute(select(SyncReview.id).where(
+                SyncReview.user_id==self.owner.id,SyncReview.media_id==self.movie.id,
+                SyncReview.kind=='playback_removed'))).scalars().all(),[])
+
+        # Once matching progress is observed, the outbound echo is acknowledged.
+        await observe_stream_snapshot(self.db,conn,[],[],[record],{key:self.movie.tmdb_id})
+        await self.db.refresh(baseline)
+        self.assertNotIn(key,baseline.snapshot['outbound'])
+
+        # A later complete-snapshot removal is now an independent provider
+        # change and retains the existing Dropped interpretation for movies.
+        await observe_stream_snapshot(self.db,conn,[],[],[],{})
+        await self.db.refresh(entry)
+        self.assertEqual(entry.status,'dropped')
+        review=(await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id==self.owner.id,SyncReview.media_id==self.movie.id,
+            SyncReview.kind=='playback_removed'))).scalar_one()
+        self.assertEqual(review.proposed_status,'dropped')
+
+    async def test_failed_nuvio_restore_does_not_turn_watching_into_dropped(self):
+        from core.stream_actions import dispatch_stream_actions
+        from core.tracking_snapshot import observe_stream_snapshot
+        from models.tracking import StreamAction
+
+        self.movie.tmdb_id = 987654295
+        key = 'tt-pending-restore'
+        record = {'content_id': key, 'content_type': 'movie', 'position': 30, 'duration': 100}
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio fixture',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add(conn)
+        await self.db.flush()
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={'library': [], 'progress': {key: record}, 'resume': {},
+                'mappings': {key: self.movie.tmdb_id}, 'watched': [], 'outbound': {}})
+        self.db.add(baseline)
+        await self.db.commit()
+        await self.save(self.movie, status='watching')
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        baseline.observed_at = entry.status_changed_at + timedelta(seconds=1)
+        action = StreamAction(user_id=self.owner.id, connection_id=conn.id,
+            media_id=self.movie.id, action='restore', payload=record)
+        self.db.add(action)
+        await self.db.commit()
+
+        with patch('core.stream_actions.dismiss_nuvio', AsyncMock(side_effect=RuntimeError('offline'))):
+            await dispatch_stream_actions(self.db, self.owner.id)
+        self.assertEqual(action.state, 'pending')
+        await observe_stream_snapshot(self.db, conn, [], [], [], {})
+        await self.db.refresh(entry)
+        self.assertEqual(entry.status, 'watching')
+        self.assertEqual((await self.db.execute(select(SyncReview.id).where(
+            SyncReview.user_id == self.owner.id, SyncReview.media_id == self.movie.id,
+            SyncReview.kind == 'playback_removed',
+        ))).scalars().all(), [])
+
     async def test_deletion_reset_retries_conflict_and_acknowledges_without_library_removal(self):
         from core.stream_actions import dispatch_stream_actions,RemotePlaybackChanged
         from models.tracking import StreamAction
@@ -3249,5 +3390,217 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action.attempts,3)
         self.assertEqual(marker.pending_connections,['connection:999'])
         self.assertEqual(review.state,'pending')
+
+    async def test_approved_nuvio_null_dated_episode_watch_propagates_with_watch_only_sync(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        from routers.sync import _apply_nuvio_watch_history
+
+        self.show.tmdb_id = 987654399
+        self.show.tmdb_data = {'tracking_catalogue_refreshed_at': datetime.now().isoformat()}
+        canonical_show = Show(title='External fixture show', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical_show)
+        await self.db.flush()
+        episode = Media(title='S1E1', media_type=MediaType.episode, show_id=canonical_show.id,
+                        season_number=1, episode_number=1, release_date='2020-01-01')
+        connection = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio source',
+            url='https://example.test', token='fixture', sync_playback=False, sync_watched=True)
+        self.db.add_all([episode, connection, TrackedEntry(
+            user_id=self.owner.id, media_id=self.show.id, status='watching',
+        )])
+        await self.db.flush()
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=connection.id, approved=True,
+            snapshot={'library': [], 'progress': {'tt-old': {'content_id': 'tt-old', 'position': 20}},
+                'resume': {}, 'mappings': {}, 'watched': [],
+                'records': {'library': [], 'watched': [], 'progress': []}})
+        self.db.add(baseline)
+        await self.db.commit()
+
+        key = 'tt-nuvio-episode'
+        row = {'content_id': key, 'content_type': 'series', 'season': 1,
+               'episode': 1, 'watched_at': None}
+        added = await _apply_nuvio_watch_history(
+            self.db, self.owner.id, [row], {key: canonical_show.id},
+            {key: self.show.tmdb_id}, include_unknown_dates=True,
+        )
+        self.assertEqual(added, {episode.id})
+
+        accepted = await observe_stream_snapshot(
+            self.db, connection, [], [row], [], {key: self.show.tmdb_id},
+            sync_playback=False, sync_watched=True,
+        )
+        self.assertEqual(accepted, {episode.id})
+        await self.db.refresh(baseline)
+        self.assertEqual(baseline.snapshot['progress'],
+                         {'tt-old': {'content_id': 'tt-old', 'position': 20}})
+
+        # The same provider key is idempotent and an unmaterialized partial
+        # pull cannot claim a new delta or remove the canonical watch event.
+        repeated = await observe_stream_snapshot(
+            self.db, connection, [], [row], [], {key: self.show.tmdb_id},
+            sync_playback=False, sync_watched=True,
+        )
+        incomplete = await observe_stream_snapshot(
+            self.db, connection, [], [], [], {}, complete=False,
+            sync_playback=False, sync_watched=True,
+        )
+        self.assertEqual(repeated, set())
+        self.assertEqual(incomplete, set())
+        event = (await self.db.execute(select(WatchEvent).where(
+            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
+            WatchEvent.completed.is_(True),
+        ))).scalar_one()
+        self.assertIsNone(event.watched_at)
+
+        # A first import records its baseline for review but never fans out.
+        first_connection = MediaServerConnection(user_id=self.owner.id, type='stremio',
+            name='First source', url='https://example.test', token='fixture',
+            sync_playback=False, sync_watched=True)
+        self.db.add(first_connection)
+        await self.db.commit()
+        first_delta = await observe_stream_snapshot(
+            self.db, first_connection, [], [row], [], {key: self.show.tmdb_id},
+            sync_playback=False, sync_watched=True,
+        )
+        self.assertEqual(first_delta, set())
+        first_baseline = await self.db.get(StreamBaseline, first_connection.id)
+        self.assertFalse(first_baseline.approved)
+
+    async def test_watch_intent_retries_current_state_after_failed_write_and_rapid_rewatch(self):
+        from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+        from models.watch_intent import WatchIntent
+
+        self.db.add_all([
+            MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio target',
+                                  url='https://example.test', token='fixture', push_watched=True),
+            MediaServerConnection(user_id=self.owner.id, type='stremio', name='Stremio target',
+                                  url='https://example.test', token='fixture', push_watched=True),
+        ])
+        await self.db.flush()
+        connections = (await self.db.execute(select(MediaServerConnection).where(
+            MediaServerConnection.user_id == self.owner.id,
+        ).order_by(MediaServerConnection.id))).scalars().all()
+        event = WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                           completed=True, watched_at=None)
+        self.db.add(event)
+        await self.db.flush()
+        await queue_watch_intents(self.db, self.owner.id, {self.movie.id},
+                                  exclude_connection_id=connections[0].id)
+        await self.db.commit()
+        intents = (await self.db.execute(select(WatchIntent).where(
+            WatchIntent.user_id == self.owner.id,
+        ))).scalars().all()
+        self.assertEqual(len(intents), 1)
+        self.assertEqual(intents[0].connection_id, connections[1].id)
+
+        async def failed_writer(_intent, _watched, _watched_at):
+            raise RuntimeError('provider unavailable')
+
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()):
+            await dispatch_watch_intents(self.db, self.owner.id, writer=failed_writer)
+        await self.db.refresh(intents[0])
+        self.assertEqual((intents[0].state, intents[0].attempts, intents[0].last_error),
+                         ('pending', 1, 'RuntimeError'))
+
+        await self.db.delete(event)
+        await self.db.flush()
+        await queue_watch_intents(self.db, self.owner.id, {self.movie.id},
+                                  exclude_connection_id=connections[0].id)
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                               completed=True, watched_at=None))
+        await self.db.flush()
+        await queue_watch_intents(self.db, self.owner.id, {self.movie.id},
+                                  exclude_connection_id=connections[0].id)
+        await self.db.commit()
+
+        delivered = []
+        async def writer(intent, watched, watched_at):
+            delivered.append((intent.connection_id, intent.media_id, watched, watched_at))
+
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()):
+            await dispatch_watch_intents(self.db, self.owner.id, writer=writer)
+            await dispatch_watch_intents(self.db, self.owner.id, writer=writer)
+        self.assertEqual(delivered, [(connections[1].id, self.movie.id, True, None)])
+        await self.db.refresh(intents[0])
+        self.assertEqual((intents[0].state, intents[0].attempts), ('applied', 1))
+
+    async def test_approved_nuvio_unwatch_removes_canonical_episode_and_progress(self):
+        from core.tracking_snapshot import observe_stream_snapshot, changed_watch_rows_from_source
+
+        self.show.tmdb_id = 987654499
+        show = Show(title='Unwatch fixture', tmdb_id=self.show.tmdb_id)
+        self.db.add(show)
+        await self.db.flush()
+        episode = Media(title='S1E1', media_type=MediaType.episode, show_id=show.id,
+                        season_number=1, episode_number=1, release_date='2020-01-01')
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
+            url='https://example.test', token='fixture', sync_watched=True, sync_playback=False)
+        self.db.add_all([episode, conn, TrackedEntry(
+            user_id=self.owner.id, media_id=self.show.id, status='watching', progress=1,
+        )])
+        await self.db.flush()
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=episode.id,
+                               completed=True, watched_at=None))
+        await self.db.commit()
+        row = {'content_id': 'tt-unwatch', 'content_type': 'series',
+               'season': 1, 'episode': 1, 'watched_at': None}
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id,
+            approved=True, observed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            snapshot={'library': [], 'progress': {}, 'mappings': {'tt-unwatch': self.show.tmdb_id},
+                      'watched': ['tt-unwatch:1:1'],
+                      'records': {'library': [], 'progress': [], 'watched': [row]}})
+        self.db.add(baseline)
+        await self.db.commit()
+
+        removed = set()
+        await observe_stream_snapshot(self.db, conn, [], [], [],
+            {'tt-unwatch': self.show.tmdb_id}, sync_playback=False,
+            removed_watched_ids=removed)
+        self.assertEqual(removed, {episode.id})
+        remaining = (await self.db.execute(select(WatchEvent.id).where(
+            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
+        ))).scalars().all()
+        self.assertEqual(remaining, [])
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.show.id,
+        ))).scalar_one()
+        self.assertEqual(entry.progress, 0)
+        # A peer still reporting its unchanged prior watch is not a new edit
+        # and must not resurrect the just-removed canonical event.
+        peer = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Peer',
+            url='https://example.test', token='fixture', sync_watched=True)
+        self.db.add(peer)
+        await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=peer.id,
+            approved=True, observed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            snapshot={'records': {'watched': [row]}, 'watched': ['tt-unwatch:1:1']}))
+        await self.db.commit()
+        self.assertEqual(await changed_watch_rows_from_source(self.db, peer, [row]), [])
+        repeated = set()
+        await observe_stream_snapshot(self.db, conn, [], [], [],
+            {'tt-unwatch': self.show.tmdb_id}, sync_playback=False,
+            removed_watched_ids=repeated)
+        self.assertEqual(repeated, set())
+
+        # A local rewatch newer than the provider's last observation wins over
+        # an undated missing row from that provider.
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=episode.id,
+                               completed=True, watched_at=None))
+        baseline.snapshot = {**baseline.snapshot,
+            'watched': ['tt-unwatch:1:1'],
+            'records': {**baseline.snapshot['records'], 'watched': [row]}}
+        baseline.observed_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+        await self.db.commit()
+        newest_event = (await self.db.execute(select(WatchEvent).where(
+            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
+        ))).scalar_one()
+        self.assertGreater(newest_event.created_at, baseline.observed_at)
+        newer_local = set()
+        await observe_stream_snapshot(self.db, conn, [], [], [],
+            {'tt-unwatch': self.show.tmdb_id}, sync_playback=False,
+            removed_watched_ids=newer_local)
+        self.assertEqual(newer_local, set())
+        self.assertEqual(len((await self.db.execute(select(WatchEvent.id).where(
+            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
+        ))).scalars().all()), 1)
 
 if __name__=='__main__': unittest.main()

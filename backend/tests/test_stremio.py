@@ -637,23 +637,17 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         # _push_watch_state selects (CollectionFile, Collection.media_id) and
         # reads it via .all() directly, not .scalars().all().
         files_result = SimpleNamespace(all=lambda: [])
-        movie = Media(id=10, tmdb_id=603, media_type=MediaType.movie, title="The Matrix")
-        stremio_media_result = SimpleNamespace(
-            scalars=lambda: SimpleNamespace(all=lambda: [movie]),
-        )
         db = SimpleNamespace(
             execute=AsyncMock(
-                side_effect=[connection_result, settings_result, files_result, stremio_media_result],
+                side_effect=[connection_result, settings_result, files_result],
             ),
             commit=AsyncMock(),
         )
-        push = AsyncMock()
+        queue = AsyncMock()
+        dispatch = AsyncMock()
         with (
-            patch(
-                "routers.sync._get_effective_tmdb_key",
-                AsyncMock(return_value="tmdb-key"),
-            ),
-            patch("routers.sync._push_stremio_connection", push),
+            patch("core.watch_intents.queue_watch_intents", queue),
+            patch("core.watch_intents.dispatch_watch_intents", dispatch),
             patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()),
         ):
             await _push_watch_state(
@@ -663,14 +657,8 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
                 watched=False,
             )
 
-        push.assert_awaited_once_with(
-            db,
-            connection,
-            7,
-            api_key="tmdb-key",
-            changed_media_ids={10},
-            watch_overrides={10: False},
-        )
+        queue.assert_awaited_once_with(db, 7, [10], exclude_connection_ids=set())
+        dispatch.assert_awaited_once_with(db, 7)
         db.commit.assert_awaited_once()
 
 

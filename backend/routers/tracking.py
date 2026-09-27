@@ -1582,6 +1582,13 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         else:
             changed_ratings[key] = after
     await db.flush()
+    changed_watch_ids = added_watched_ids | removed_watched_ids
+    if changed_watch_ids:
+        # Persist the Nuvio/Stremio delivery intent in the same transaction as
+        # the canonical WatchEvent edit. The background dispatcher may retry,
+        # but process shutdown after this commit cannot lose the write.
+        from core.watch_intents import queue_watch_intents
+        await queue_watch_intents(db, viewer.id, changed_watch_ids)
     pending_stream_actions = (await db.execute(select(StreamAction.id, StreamAction.connection_id, StreamAction.action).where(
         StreamAction.user_id == viewer.id,
         StreamAction.media_id == media_id,
@@ -1607,12 +1614,8 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         background_tasks.add_task(
             dispatch_local_tracking_delta, viewer.id,
             added_watched_ids, changed_ratings, removed_ratings,
-            delivery_job_id=job.id,
+            delivery_job_id=job.id, removed_watched_ids=removed_watched_ids,
         )
-    if removed_watched_ids:
-        from core.local_outbound import dispatch_local_watch_rollback
-        background_tasks.add_task(dispatch_local_watch_rollback, viewer.id, removed_watched_ids,
-                                  delivery_job_id=job.id)
     result = entry_data(entry, media, True)
     if media.media_type == MediaType.series:
         dot, reason = await media_availability_dot(db, viewer.id, media, entry.status)

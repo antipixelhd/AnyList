@@ -33,6 +33,11 @@ async def propagate_cloud_pull(
     from routers.sync import _fan_out_changes_to_other_connections
 
     try:
+        if watched_ids:
+            from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+            await queue_watch_intents(db, user_id, watched_ids)
+            await db.commit()
+            await dispatch_watch_intents(db, user_id)
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == user_id,
         ))).scalar_one_or_none()
@@ -44,6 +49,7 @@ async def propagate_cloud_pull(
             ratings,
             settings,
             exclude_cloud_source=CollectionSource(provider),
+            durable_watch_media_ids=set(watched_ids),
         )
     except Exception:
         # The import has already committed. A destination outage cannot turn an
@@ -53,8 +59,10 @@ async def propagate_cloud_pull(
 
 async def propagate_media_server_pull(
     db, *, conn, watched_ids: set[int], ratings: RatingChanges,
+    removed_watched_ids: set[int] | None = None,
 ) -> None:
-    if not watched_ids and not ratings:
+    removed_watched_ids = removed_watched_ids or set()
+    if not watched_ids and not ratings and not removed_watched_ids:
         return
     from models.tracking import StreamBaseline
 
@@ -64,11 +72,34 @@ async def propagate_media_server_pull(
     from routers.sync import _fan_out_changes_to_other_connections
 
     try:
+        from core.pull_cycle import defer_watch_removals
+        deferred_removals = bool(removed_watched_ids and defer_watch_removals(
+            conn.user_id, removed_watched_ids, conn.id,
+        ))
+        if removed_watched_ids and not deferred_removals:
+            from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+            await queue_watch_intents(db, conn.user_id, removed_watched_ids,
+                                      exclude_connection_id=conn.id)
+            await db.commit()
+            await dispatch_watch_intents(db, conn.user_id)
+            from routers.history import _push_watch_state
+            await _push_watch_state(db, conn.user_id, sorted(removed_watched_ids),
+                                    watched=False, exclude_connection_id=conn.id,
+                                    skip_stream_watch_writes=True)
+        if watched_ids:
+            from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+            await queue_watch_intents(
+                db, conn.user_id, watched_ids,
+                exclude_connection_id=conn.id,
+            )
+            await db.commit()
+            await dispatch_watch_intents(db, conn.user_id)
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == conn.user_id,
         ))).scalar_one_or_none()
         await _fan_out_changes_to_other_connections(
             db, conn.user_id, conn.id, watched_ids, ratings, settings,
+            durable_watch_media_ids=set(watched_ids),
         )
     except Exception:
         logger.exception("Media server pull propagation failed for connection %s", conn.id)

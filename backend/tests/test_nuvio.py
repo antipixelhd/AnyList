@@ -16,6 +16,7 @@ from models.media import Media
 from models.playback_progress import PlaybackProgress
 from models.show import Show
 from routers.sync import (
+    _build_nuvio_watched_items,
     _fan_out_changes_to_other_connections,
     _apply_nuvio_watch_history,
     _ensure_nuvio_imdb_ids,
@@ -981,7 +982,213 @@ class NuvioNormalizationTests(unittest.TestCase):
         self.assertIsNone(_nuvio_watched_item(tmdb_only_movie, watched_at))
 
 
+class NuvioWatchedStateProjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unknown_date_episode_is_projected_as_watched_without_a_date(self) -> None:
+        episode = Media(
+            id=10,
+            media_type=MediaType.episode,
+            title="The Rescue",
+            show_id=5,
+            season_number=1,
+            episode_number=2,
+        )
+        show = Show(
+            id=5,
+            tmdb_id=123,
+            title="Fixture Show",
+            tmdb_data={"external_ids": {"imdb_id": "tt1234567"}},
+        )
+        db = SimpleNamespace(execute=AsyncMock(return_value=_Result(rows=[(episode.id, None)])))
+
+        with (
+            patch("routers.sync._select_in_chunks", AsyncMock(side_effect=[[episode], [show]])),
+            patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()),
+        ):
+            items = await _build_nuvio_watched_items(db, user_id=7, media_ids={episode.id})
+
+        self.assertEqual(items, [{
+            "content_id": "tt1234567",
+            "content_type": "series",
+            "title": "The Rescue",
+            "season": 1,
+            "episode": 2,
+            "watched_at": None,
+        }])
+
+
+class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_episode_watch_delta_sends_null_dated_watch_to_nuvio(self) -> None:
+        episode = Media(
+            id=10,
+            tmdb_id=987,
+            media_type=MediaType.episode,
+            title="The Rescue",
+            show_id=5,
+            season_number=1,
+            episode_number=2,
+        )
+        show = Show(
+            id=5,
+            tmdb_id=123,
+            title="Fixture Show",
+            tmdb_data={"external_ids": {"imdb_id": "tt1234567"}},
+        )
+        connection = SimpleNamespace(
+            id=4,
+            user_id=7,
+            type="nuvio",
+            url="https://api.nuvio.tv",
+            token="refresh-token",
+            server_user_id="1",
+            push_collection=False,
+            push_watched=True,
+            push_ratings=False,
+            push_playback=False,
+        )
+
+        class _FanoutDB:
+            def __init__(self):
+                self.execute = AsyncMock(side_effect=[
+                    _Result(scalars=[connection]),  # connected providers
+                    _Result(rows=[]),               # collection file mappings
+                    _Result(rows=[(episode.id, None)]),  # canonical watch event
+                ])
+                self.refresh = AsyncMock()
+                self.commit = AsyncMock()
+
+        db = _FanoutDB()
+        selected = AsyncMock(side_effect=[[episode], [show], [episode], [show]])
+        pushed = AsyncMock()
+        with (
+            patch("core.pull_cycle.defer_fan_out", return_value=False),
+            patch("routers.sync._select_in_chunks", selected),
+            patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()),
+            patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
+            patch.object(nuvio, "push_watched_items", pushed),
+        ):
+            await _fan_out_changes_to_other_connections(
+                db,
+                user_id=7,
+                exclude_connection_id=None,
+                new_watched_ids={episode.id},
+                new_ratings={},
+                settings=None,
+            )
+
+        pushed.assert_awaited_once()
+        self.assertEqual(pushed.await_args.args[3], [{
+            "content_id": "tt1234567",
+            "content_type": "series",
+            "title": "The Rescue",
+            "season": 1,
+            "episode": 2,
+            "watched_at": None,
+        }])
+
+
+class LocalTrackingRollbackDispatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_unwatch_delta_uses_history_adapter_once_in_delivery_job(self) -> None:
+        from core.local_outbound import dispatch_local_tracking_delta
+
+        db = SimpleNamespace(execute=AsyncMock(return_value=_Result()), commit=AsyncMock())
+        fan_out = AsyncMock()
+        push_watch_state = AsyncMock()
+        start_job = AsyncMock()
+        finish_job = AsyncMock()
+        with (
+            patch("core.local_outbound.async_sessionmaker", return_value=lambda: _SessionCM(db)),
+            patch("routers.sync._fan_out_changes_to_other_connections", fan_out),
+            patch("routers.history._push_watch_state", push_watch_state),
+            patch("core.watch_intents.queue_watch_intents", AsyncMock()),
+            patch("core.watch_intents.dispatch_watch_intents", AsyncMock()),
+            patch("core.tracking_delivery.start_tracking_delivery_job", start_job),
+            patch("core.tracking_delivery.finish_tracking_delivery_job", finish_job),
+            patch("core.stream_actions.dispatch_stream_actions", AsyncMock()),
+            patch("core.cloud_actions.dispatch_cloud_actions", AsyncMock()),
+        ):
+            await dispatch_local_tracking_delta(
+                user_id=7,
+                watched_ids=set(),
+                ratings={},
+                removed_ratings=set(),
+                delivery_job_id=55,
+                removed_watched_ids={10, 2},
+            )
+
+        fan_out.assert_not_awaited()
+        push_watch_state.assert_awaited_once_with(
+            db, 7, [2, 10], watched=False, skip_stream_watch_writes=True,
+        )
+        start_job.assert_awaited_once_with(db, 55)
+        finish_job.assert_awaited_once_with(55)
+
+
 class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_push_sends_unknown_date_episode_watches_without_fabricating_dates(self) -> None:
+        conn = SimpleNamespace(
+            id=4,
+            user_id=7,
+            type="nuvio",
+            url="https://api.nuvio.tv",
+            token="old-refresh",
+            server_user_id="1",
+            push_collection=False,
+            push_watched=True,
+            push_playback=False,
+            stremio_pushed_library_ids=None,
+        )
+        user_settings = SimpleNamespace(tmdb_api_key="tmdb-key")
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[
+                _Result(scalars=[99]),  # SyncJob status=running update
+                _Result(scalars=[conn]),
+                _Result(scalars=[]),
+                _Result(scalars=[user_settings]),
+                None,  # SyncJob totals update
+                None,  # SyncJob completed update
+            ]),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True)),
+        )
+        watched_record = {
+            "content_id": "tt1234567",
+            "content_type": "series",
+            "title": "The Rescue",
+            "season": 1,
+            "episode": 2,
+            "watched_at": None,
+        }
+        pushed_items: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(200, json={
+                    "access_token": "access-token",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                })
+            if request.url.path.endswith("/sync_push_watched_items"):
+                pushed_items.extend(json.loads(request.content)["p_items"])
+                return httpx.Response(204)
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with (
+            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[watched_record])),
+            patch.object(
+                nuvio.httpx,
+                "AsyncClient",
+                side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+            ),
+        ):
+            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+
+        self.assertEqual(pushed_items, [watched_record])
+        self.assertIsNone(pushed_items[0]["watched_at"])
+
     async def test_full_push_merges_instead_of_replacing_remote_library(self) -> None:
         """A first full push must merge the local library without dropping
         remote-only items that AnyList has never managed."""

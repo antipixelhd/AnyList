@@ -19,15 +19,25 @@ async def dispatch_local_tracking_delta(
     ratings: RatingChanges,
     removed_ratings: set[RatingKey],
     delivery_job_id: int | None = None,
+    removed_watched_ids: set[int] | None = None,
 ) -> None:
     from routers.sync import _fan_out_changes_to_other_connections
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    removed_watched_ids = removed_watched_ids or set()
     try:
         async with factory() as db:
             if delivery_job_id is not None:
                 from core.tracking_delivery import start_tracking_delivery_job
                 await start_tracking_delivery_job(db, delivery_job_id)
+            changed_watch_ids = set(watched_ids) | set(removed_watched_ids)
+            if changed_watch_ids:
+                from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+                await queue_watch_intents(db, user_id, changed_watch_ids)
+                # Preserve the local decision if provider delivery fails or the
+                # process exits before it can be attempted.
+                await db.commit()
+                await dispatch_watch_intents(db, user_id)
             settings = (await db.execute(select(UserSettings).where(
                 UserSettings.user_id == user_id,
             ))).scalar_one_or_none()
@@ -35,6 +45,13 @@ async def dispatch_local_tracking_delta(
                 await _fan_out_changes_to_other_connections(
                     db, user_id, None, watched_ids, ratings, settings,
                     removed_ratings=removed_ratings,
+                    durable_watch_media_ids=set(watched_ids),
+                )
+            if removed_watched_ids:
+                from routers.history import _push_watch_state
+                await _push_watch_state(
+                    db, user_id, sorted(removed_watched_ids), watched=False,
+                    skip_stream_watch_writes=True,
                 )
             if delivery_job_id is not None:
                 # Status changes may have queued stream restore/dismiss actions
@@ -65,7 +82,14 @@ async def dispatch_local_watch_rollback(user_id: int, media_ids: set[int], deliv
             if delivery_job_id is not None:
                 from core.tracking_delivery import start_tracking_delivery_job
                 await start_tracking_delivery_job(db, delivery_job_id)
-            await _push_watch_state(db, user_id, sorted(media_ids), watched=False)
+            from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+            await queue_watch_intents(db, user_id, media_ids)
+            await db.commit()
+            await dispatch_watch_intents(db, user_id)
+            await _push_watch_state(
+                db, user_id, sorted(media_ids), watched=False,
+                skip_stream_watch_writes=True,
+            )
     except Exception:
         logger.exception("Local watch rollback delivery failed for user %s", user_id)
         if delivery_job_id is not None:
