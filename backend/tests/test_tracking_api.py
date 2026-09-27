@@ -2254,7 +2254,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_snapshot_first_empty_and_partial_pull_cannot_remove_tracking(self):
         from core.tracking_snapshot import observe_stream_snapshot
-        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Test only',url='https://example.test',token='fixture')
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Test only',url='https://example.test',token='fixture',push_playback=True)
         self.db.add(conn);await self.db.commit()
         await self.save(self.movie,status='watching')
         await observe_stream_snapshot(self.db,conn,[],[],[],{},complete=False)
@@ -2269,7 +2269,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_verified_removal_auto_confirms_only_after_initial_approval(self):
         from core.tracking_snapshot import observe_stream_snapshot
-        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Test only',url='https://example.test',token='fixture')
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Test only',url='https://example.test',token='fixture',push_playback=True)
         self.movie.tmdb_id=987654320
         self.db.add_all([conn,TrackingPreferences(user_id=self.owner.id,auto_confirm=True)])
         await self.db.commit()
@@ -2413,6 +2413,65 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException):await require_stream_reconciliation(self.db,conn)
         review.state='confirmed';await self.db.commit()
         await require_stream_reconciliation(self.db,conn)
+
+    async def test_pull_only_connection_cannot_drop_existing_watching_after_first_import(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.movie.tmdb_id = 987654302
+        await self.save(self.movie, status='watching')
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Pull only',
+            url='https://example.test', token='fixture', sync_playback=True,
+            push_playback=False)
+        self.db.add(conn)
+        await self.db.commit()
+        row = {'content_id': 'tt-pull-only', 'content_type': 'movie',
+               'position': 30, 'duration': 100}
+        await observe_stream_snapshot(self.db, conn, [], [], [row],
+            {'tt-pull-only': self.movie.tmdb_id})
+        baseline = await self.db.get(StreamBaseline, conn.id)
+        baseline.approved = True
+        await self.db.commit()
+        await observe_stream_snapshot(self.db, conn, [], [], [],
+            {'tt-pull-only': self.movie.tmdb_id})
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(entry.status, 'watching')
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.connection_id == conn.id,
+            SyncReview.kind == 'playback_removed',
+        ))).scalars().all()
+        self.assertEqual(reviews, [])
+
+    async def test_new_pull_only_connection_preserves_local_continue_watching(self):
+        from routers.sync import _apply_nuvio_progress
+        from models.playback_progress import PlaybackProgress
+
+        self.movie.tmdb_id = 987654303
+        progress = PlaybackProgress(user_id=self.owner.id, media_id=self.movie.id,
+            progress_percent=0.8, progress_seconds=80,
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Pull only',
+            url='https://example.test', token='fixture', sync_playback=True,
+            push_playback=False)
+        self.db.add_all([progress, conn])
+        await self.db.commit()
+        stale = {'content_id': 'tt-stale-progress', 'content_type': 'movie',
+                 'position': 20_000, 'duration': 100_000}
+        await _apply_nuvio_progress(self.db, self.owner.id, [stale], {},
+            {'tt-stale-progress': self.movie.tmdb_id}, conn)
+        await self.db.refresh(progress)
+        self.assertEqual((progress.progress_percent, progress.progress_seconds), (0.8, 80))
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=conn.id,
+            approved=True, snapshot={'records': {'progress': [
+                {**stale, 'position': 10_000},
+            ]}}))
+        await self.db.commit()
+        await _apply_nuvio_progress(self.db, self.owner.id, [stale], {},
+            {'tt-stale-progress': self.movie.tmdb_id}, conn)
+        await self.db.refresh(progress)
+        self.assertEqual((progress.progress_percent, progress.progress_seconds), (0.8, 80))
 
     async def test_media_server_first_import_requires_approval(self):
         from core.media_server_reconciliation import record_media_server_import
@@ -2588,7 +2647,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_completion_threshold_does_not_infer_removal(self):
         from core.tracking_snapshot import observe_stream_snapshot
-        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=True)
         self.movie.tmdb_id=987654317
         self.db.add(conn);await self.db.commit()
         await self.save(self.movie,status='watching')
@@ -2726,7 +2785,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_incremental_snapshot_preserves_untouched_titles(self):
         from core.tracking_snapshot import observe_stream_snapshot
-        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture')
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=True)
         self.movie.tmdb_id=987654315
         self.db.add(conn);await self.db.commit()
         await self.save(self.movie,status='watching')
@@ -3533,7 +3592,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         episode = Media(title='S1E1', media_type=MediaType.episode, show_id=show.id,
                         season_number=1, episode_number=1, release_date='2020-01-01')
         conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
-            url='https://example.test', token='fixture', sync_watched=True, sync_playback=False)
+            url='https://example.test', token='fixture', sync_watched=True,
+            sync_playback=False, push_watched=True)
         self.db.add_all([episode, conn, TrackedEntry(
             user_id=self.owner.id, media_id=self.show.id, status='watching', progress=1,
         )])
@@ -3599,6 +3659,23 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             {'tt-unwatch': self.show.tmdb_id}, sync_playback=False,
             removed_watched_ids=newer_local)
         self.assertEqual(newer_local, set())
+        self.assertEqual(len((await self.db.execute(select(WatchEvent.id).where(
+            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
+        ))).scalars().all()), 1)
+
+        # A pull-only account cannot receive local corrections, so its later
+        # absence has no removal authority even after a prior watched row.
+        conn.push_watched = False
+        baseline.snapshot = {**baseline.snapshot,
+            'watched': ['tt-unwatch:1:1'],
+            'records': {**baseline.snapshot['records'], 'watched': [row]}}
+        baseline.observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await self.db.commit()
+        pull_only_removed = set()
+        await observe_stream_snapshot(self.db, conn, [], [], [],
+            {'tt-unwatch': self.show.tmdb_id}, sync_playback=False,
+            removed_watched_ids=pull_only_removed)
+        self.assertEqual(pull_only_removed, set())
         self.assertEqual(len((await self.db.execute(select(WatchEvent.id).where(
             WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
         ))).scalars().all()), 1)

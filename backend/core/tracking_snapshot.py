@@ -263,7 +263,9 @@ async def observe_stream_snapshot(
     inferred_watch_ids = set()
     old_active=previous.get('progress',{})
     outbound = dict(previous.get('outbound', {}))
-    removed=set(old_active)-set(active) if not first and sync_playback else set()
+    # A pull-only connection cannot be kept current by AnyList writes, so its
+    # missing playback is never authority to drop a local Watching entry.
+    removed=set(old_active)-set(active) if not first and sync_playback and conn.push_playback else set()
     pending_writes = (await db.execute(select(StreamAction.payload).where(
         StreamAction.connection_id == conn.id,
         StreamAction.state == 'pending',
@@ -463,7 +465,7 @@ async def observe_stream_snapshot(
     baseline.observed_at=datetime.now(timezone.utc).replace(tzinfo=None)
     propagated_watch_ids = set()
     if can_propagate_watches:
-        if sync_watched and removed_watched_ids is not None:
+        if sync_watched and conn.push_watched and removed_watched_ids is not None:
             from models.watch_intent import WatchIntent
             old_rows = previous.get('records', {}).get('watched', [])
             now_keys = {watch_key(row) for row in watched_rows}

@@ -4589,7 +4589,14 @@ async def _apply_nuvio_progress(
     rows: list[dict],
     show_map: dict[str, int],
     tmdb_ids: dict[str, int],
+    conn: MediaServerConnection | None = None,
 ) -> None:
+    from models.tracking import StreamBaseline
+    baseline = await db.get(StreamBaseline, conn.id) if conn else None
+    previous_progress = {
+        (str(row.get('content_id')), row.get('season'), row.get('episode')): row
+        for row in (baseline.snapshot or {}).get('records', {}).get('progress', [])
+    } if baseline else {}
     movie_tmdb_ids = {
         tmdb_id
         for row in rows
@@ -4654,6 +4661,12 @@ async def _apply_nuvio_progress(
     existing = {progress.media_id: progress for progress in existing_rows}
 
     for row, media in media_rows:
+        if baseline:
+            key = (str(row.get('content_id')), row.get('season'), row.get('episode'))
+            prior = previous_progress.get(key)
+            if prior and all(prior.get(field) == row.get(field)
+                             for field in ('position', 'duration', 'last_watched')):
+                continue
         try:
             position_ms = max(0, int(row.get("position") or 0))
             duration_ms = max(0, int(row.get("duration") or 0))
@@ -4663,8 +4676,20 @@ async def _apply_nuvio_progress(
             continue
         progress_percent = min(1.0, position_ms / duration_ms)
         progress = existing.get(media.id)
+        provider_at = _nuvio_datetime(row.get('last_watched'))
+        if progress:
+            if baseline is None:
+                # A new connection can fill gaps, but cannot replace local
+                # Continue Watching data during its first import.
+                continue
+            if conn and not conn.push_playback and progress_percent <= progress.progress_percent:
+                continue
+            if provider_at is None and progress_percent <= progress.progress_percent:
+                continue
+            if provider_at and progress.updated_at and provider_at <= progress.updated_at:
+                continue
         if 0.05 <= progress_percent < 0.90:
-            updated_at = _nuvio_datetime(row.get("last_watched")) or datetime.utcnow()
+            updated_at = provider_at or datetime.utcnow()
             if progress:
                 progress.progress_percent = progress_percent
                 progress.progress_seconds = position_ms // 1000
@@ -4679,7 +4704,7 @@ async def _apply_nuvio_progress(
                 )
                 db.add(progress)
                 existing[media.id] = progress
-        elif progress:
+        elif progress and conn and conn.push_playback and provider_at:
             await db.delete(progress)
             existing.pop(media.id, None)
     await db.commit()
@@ -4923,7 +4948,7 @@ async def _run_nuvio_sync(
                 )
 
             if progress_records:
-                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
+                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids, conn)
 
             complete_library_source_ids = (
                 {str(item["Id"]) for _, item in normalized_library}
@@ -5483,7 +5508,7 @@ async def _run_stremio_sync(
                     )
                 )
             if progress_records:
-                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids)
+                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids, conn)
 
             complete_snapshot_ids = (
                 {str(record["content_id"]) for record in library_records}
