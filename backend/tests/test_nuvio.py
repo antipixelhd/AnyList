@@ -347,6 +347,111 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.refresh_token, "rotated-refresh")
         self.assertEqual(batch_sizes, [500, 1])
 
+    async def test_verified_watched_history_push_and_delete_read_back_cloud_state(self) -> None:
+        stored: dict[tuple[str, int | None, int | None], dict] = {}
+        refreshes = 0
+
+        def key(item: dict) -> tuple[str, int | None, int | None]:
+            return item["content_id"], item.get("season"), item.get("episode")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal refreshes
+            if request.url.path == "/auth/v1/token":
+                refreshes += 1
+                return httpx.Response(200, json={
+                    "access_token": "access-token",
+                    "refresh_token": f"rotated-{refreshes}",
+                    "expires_in": 3600,
+                })
+            if request.url.path.endswith("/sync_push_watched_items"):
+                payload = json.loads(request.content)
+                stored.update({key(item): item for item in payload["p_items"]})
+                return httpx.Response(204)
+            if request.url.path.endswith("/sync_pull_watched_items"):
+                return httpx.Response(200, json=list(stored.values()))
+            if request.url.path.endswith("/sync_delete_watched_items"):
+                payload = json.loads(request.content)
+                for item in payload["p_keys"]:
+                    stored.pop(key(item), None)
+                return httpx.Response(204)
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        item = {
+            "content_id": "tt1234567",
+            "content_type": "series",
+            "season": 1,
+            "episode": 2,
+            "watched_at": 1780000000000,
+        }
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            pushed = await nuvio.push_watched_items(
+                "https://api.nuvio.tv", "old-refresh", 1, [item], verify=True,
+            )
+            deleted = await nuvio.delete_watched_items(
+                "https://api.nuvio.tv", pushed.refresh_token, 1,
+                [{"content_id": "tt1234567", "season": 1, "episode": 2}], verify=True,
+            )
+
+        self.assertEqual(pushed.refresh_token, "rotated-1")
+        self.assertEqual(deleted.refresh_token, "rotated-2")
+        self.assertEqual(stored, {})
+
+    async def test_verified_watched_history_rejects_missing_rows_and_nonnumeric_dates(self) -> None:
+        refresh_requests = 0
+        writes: list[dict] = []
+        remote_mode = "null-date"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal refresh_requests
+            if request.url.path == "/auth/v1/token":
+                refresh_requests += 1
+                return httpx.Response(200, json={
+                    "access_token": "access-token",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                })
+            if request.url.path.endswith("/sync_push_watched_items"):
+                writes.extend(json.loads(request.content)["p_items"])
+                return httpx.Response(204)
+            if request.url.path.endswith("/sync_pull_watched_items"):
+                if remote_mode == "missing":
+                    return httpx.Response(200, json=[])
+                # The RPC accepted the write but the row cannot be decoded by
+                # Nuvio Android because its required watched_at is null.
+                return httpx.Response(200, json=[{**writes[0], "watched_at": None}])
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        item = {"content_id": "tt1234567", "content_type": "movie", "watched_at": 1}
+        with patch.object(
+            nuvio.httpx,
+            "AsyncClient",
+            side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
+        ):
+            with self.assertRaisesRegex(nuvio.NuvioAPIError, "without a numeric watched_at"):
+                await nuvio.push_watched_items(
+                    "https://api.nuvio.tv", "old-refresh", 1, [item], verify=True,
+                )
+
+            remote_mode = "missing"
+            with self.assertRaisesRegex(nuvio.NuvioAPIError, "did not confirm"):
+                await nuvio.push_watched_items(
+                    "https://api.nuvio.tv", "old-refresh", 1, [item], verify=True,
+                )
+
+            with self.assertRaisesRegex(nuvio.NuvioAPIError, "requires a numeric watched_at"):
+                await nuvio.push_watched_items(
+                    "https://api.nuvio.tv", "old-refresh", 1,
+                    [{**item, "watched_at": None}], verify=True,
+                )
+
+        self.assertEqual(refresh_requests, 2)
+
     async def test_push_sync_items_uses_watched_and_progress_endpoints(self) -> None:
         calls: list[tuple[str, int]] = []
         refresh_count = 0
@@ -1020,7 +1125,7 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
         kept_episode = Media(id=22, media_type=MediaType.episode, title="Kept", show_id=6,
             season_number=1, episode_number=1)
         db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(21, now), (22, now)]),
+            _Result(rows=[(21, now, now), (22, now, now)]),
             _Result(scalars=[old_episode, kept_episode]),
             _Result(scalars=[old_show, kept_show]),
             _Result(rows=[(10, 1400, None, MediaType.series)]),
@@ -1163,7 +1268,7 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NuvioWatchedStateProjectionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_unknown_date_episode_is_projected_as_watched_without_a_date(self) -> None:
+    async def test_unknown_date_episode_uses_event_creation_time_for_nuvio(self) -> None:
         episode = Media(
             id=10,
             media_type=MediaType.episode,
@@ -1178,7 +1283,8 @@ class NuvioWatchedStateProjectionTests(unittest.IsolatedAsyncioTestCase):
             title="Fixture Show",
             tmdb_data={"external_ids": {"imdb_id": "tt1234567"}},
         )
-        db = SimpleNamespace(execute=AsyncMock(return_value=_Result(rows=[(episode.id, None)])))
+        created_at = datetime(2026, 9, 1, 12, 30)
+        db = SimpleNamespace(execute=AsyncMock(return_value=_Result(rows=[(episode.id, None, created_at)])))
 
         with (
             patch("routers.sync._select_in_chunks", AsyncMock(side_effect=[[episode], [show]])),
@@ -1192,7 +1298,7 @@ class NuvioWatchedStateProjectionTests(unittest.IsolatedAsyncioTestCase):
             "title": "The Rescue",
             "season": 1,
             "episode": 2,
-            "watched_at": None,
+            "watched_at": int(created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
         }])
 
 
@@ -1231,7 +1337,7 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
                 self.execute = AsyncMock(side_effect=[
                     _Result(scalars=[connection]),  # connected providers
                     _Result(rows=[]),               # collection file mappings
-                    _Result(rows=[(episode.id, None)]),  # canonical watch event
+                    _Result(rows=[(episode.id, None, datetime(2026, 9, 1, 12, 30))]),  # canonical watch event
                 ])
                 self.refresh = AsyncMock()
                 self.commit = AsyncMock()
@@ -1263,7 +1369,7 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
             "title": "The Rescue",
             "season": 1,
             "episode": 2,
-            "watched_at": None,
+            "watched_at": int(datetime(2026, 9, 1, 12, 30, tzinfo=timezone.utc).timestamp() * 1000),
         }])
 
 
@@ -1305,7 +1411,7 @@ class LocalTrackingRollbackDispatchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
-    async def test_full_push_sends_unknown_date_episode_watches_without_fabricating_dates(self) -> None:
+    async def test_full_push_uses_creation_time_for_unknown_date_episode_watches(self) -> None:
         conn = SimpleNamespace(
             id=4,
             user_id=7,
@@ -1332,13 +1438,14 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             refresh=AsyncMock(),
             get=AsyncMock(return_value=SimpleNamespace(approved=True)),
         )
+        created_at = datetime(2026, 9, 1, 12, 30, tzinfo=timezone.utc)
         watched_record = {
             "content_id": "tt1234567",
             "content_type": "series",
             "title": "The Rescue",
             "season": 1,
             "episode": 2,
-            "watched_at": None,
+            "watched_at": int(created_at.timestamp() * 1000),
         }
         pushed_items: list[dict] = []
 
@@ -1369,7 +1476,49 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             await _run_full_push(user_id=7, connection_id=4, job_id=99)
 
         self.assertEqual(pushed_items, [watched_record])
-        self.assertIsNone(pushed_items[0]["watched_at"])
+        self.assertEqual(pushed_items[0]["watched_at"], int(created_at.timestamp() * 1000))
+
+    async def test_full_push_skips_existing_watches_and_pushes_new_numeric_date(self) -> None:
+        conn = SimpleNamespace(id=4, user_id=7, type="nuvio", url="https://api.nuvio.tv",
+            token="old-refresh", server_user_id="1", push_collection=False,
+            push_watched=True, push_playback=False, stremio_pushed_library_ids=None)
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(scalars=[99]), _Result(scalars=[conn]), _Result(scalars=[]),
+            _Result(scalars=[SimpleNamespace(tmdb_api_key="tmdb-key")]), None, None,
+        ]), commit=AsyncMock(), refresh=AsyncMock(),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True)))
+        already_watched = {
+            "content_id": "tt0000001", "content_type": "movie", "watched_at": 1700000000000,
+        }
+        newly_watched = {
+            "content_id": "tt0000002", "content_type": "movie", "watched_at": 1800000000000,
+        }
+        remote_rows = [already_watched]
+        pushed_items: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(200, json={"access_token": "access-token",
+                    "refresh_token": "rotated-refresh", "expires_in": 3600})
+            if request.url.path.endswith("/sync_push_watched_items"):
+                batch = json.loads(request.content)["p_items"]
+                pushed_items.extend(batch)
+                remote_rows.extend(batch)
+                return httpx.Response(204)
+            if request.url.path.endswith("/sync_pull_watched_items"):
+                return httpx.Response(200, json=remote_rows)
+            return httpx.Response(404)
+
+        with (
+            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("routers.sync._build_nuvio_watched_items",
+                  AsyncMock(return_value=[already_watched, newly_watched])),
+            patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
+                _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)),
+        ):
+            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+
+        self.assertEqual(pushed_items, [newly_watched])
 
     async def test_full_push_fails_when_nuvio_does_not_store_watched_episodes(self) -> None:
         conn = SimpleNamespace(id=4, user_id=7, type="nuvio", url="https://api.nuvio.tv",

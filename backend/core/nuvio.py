@@ -273,6 +273,60 @@ async def _pull_watched_items(
         page_number += 1
 
 
+def _watched_history_key(item: dict[str, Any]) -> tuple[str, int | None, int | None]:
+    content_id = str(item.get("content_id") or "").strip()
+    if not content_id:
+        raise NuvioAPIError("Nuvio watched item is missing content_id")
+
+    def number_or_none(value: Any) -> int | None:
+        return int(value) if value is not None else None
+
+    try:
+        season = number_or_none(item.get("season"))
+        episode = number_or_none(item.get("episode"))
+    except (TypeError, ValueError) as error:
+        raise NuvioAPIError("Nuvio watched item has an invalid episode key") from error
+    return content_id, season, episode
+
+
+def _has_numeric_watched_at(item: dict[str, Any]) -> bool:
+    value = item.get("watched_at")
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+async def _confirm_watched_history(
+    client: httpx.AsyncClient,
+    url: str,
+    access_token: str,
+    profile_id: int,
+    *,
+    expected_present: list[dict[str, Any]] | None = None,
+    expected_absent: list[dict[str, Any]] | None = None,
+) -> None:
+    expected_present = expected_present or []
+    expected_absent = expected_absent or []
+    if not expected_present and not expected_absent:
+        return
+    if any(not _has_numeric_watched_at(item) for item in expected_present):
+        raise NuvioAPIError("Nuvio watched item requires a numeric watched_at value")
+    remote = await _pull_watched_items(client, url, access_token, profile_id)
+    remote_by_key: dict[tuple[str, int | None, int | None], list[dict[str, Any]]] = {}
+    for row in remote:
+        remote_by_key.setdefault(_watched_history_key(row), []).append(row)
+    missing = {_watched_history_key(row) for row in expected_present} - remote_by_key.keys()
+    if missing:
+        raise NuvioAPIError("Nuvio did not confirm the pushed watched items")
+    invalid_date = any(
+        not any(_has_numeric_watched_at(remote_row) for remote_row in remote_by_key[_watched_history_key(row)])
+        for row in expected_present
+    )
+    if invalid_date:
+        raise NuvioAPIError("Nuvio stored a watched item without a numeric watched_at value")
+    still_present = {_watched_history_key(row) for row in expected_absent} & remote_by_key.keys()
+    if still_present:
+        raise NuvioAPIError("Nuvio did not confirm removal of watched items")
+
+
 async def _pull_watch_progress(
     client: httpx.AsyncClient,
     url: str,
@@ -447,7 +501,10 @@ async def _push_sync_items(
     progress_items: list[dict[str, Any]] | None = None,
     *,
     on_refresh: OnRefresh = None,
+    verify_watched_items: bool = False,
 ) -> NuvioSession:
+    if verify_watched_items and any(not _has_numeric_watched_at(item) for item in watched_items or []):
+        raise NuvioAPIError("Nuvio watched item requires a numeric watched_at value")
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
         if on_refresh:
@@ -464,6 +521,14 @@ async def _push_sync_items(
                     function_name,
                     {"p_profile_id": profile_id, items_key: items[offset : offset + _PAGE_SIZE]},
                 )
+        if verify_watched_items:
+            await _confirm_watched_history(
+                client,
+                url,
+                session.access_token,
+                profile_id,
+                expected_present=watched_items,
+            )
     return session
 
 
@@ -474,8 +539,12 @@ async def push_watched_items(
     items: list[dict[str, Any]],
     *,
     on_refresh: OnRefresh = None,
+    verify: bool = False,
 ) -> NuvioSession:
-    return await _push_sync_items(url, refresh_token, profile_id, watched_items=items, on_refresh=on_refresh)
+    return await _push_sync_items(
+        url, refresh_token, profile_id, watched_items=items,
+        on_refresh=on_refresh, verify_watched_items=verify,
+    )
 
 
 async def push_watch_progress(
@@ -515,6 +584,7 @@ async def delete_watched_items(
     keys: list[dict[str, Any]],
     *,
     on_refresh: OnRefresh = None,
+    verify: bool = False,
 ) -> NuvioSession:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
@@ -527,5 +597,13 @@ async def delete_watched_items(
                 session.access_token,
                 "sync_delete_watched_items",
                 {"p_profile_id": profile_id, "p_keys": keys[offset : offset + _PAGE_SIZE]},
+            )
+        if verify:
+            await _confirm_watched_history(
+                client,
+                url,
+                session.access_token,
+                profile_id,
+                expected_absent=keys,
             )
     return session

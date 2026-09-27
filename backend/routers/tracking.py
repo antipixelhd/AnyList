@@ -407,7 +407,8 @@ def connection_failure_events(jobs, connection_names):
     return results
 
 
-def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names, library_actions=()):
+def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names,
+                            library_actions=(), watch_intents=()):
     """Project unresolved per-service actions as one card per title."""
     by_media={}
     def add(media_id:int,title:str,poster:str|None,key:str,connection:str,state:str,attempts:int,error:str|None):
@@ -428,6 +429,9 @@ def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers,
     for delivery,media,connection in library_actions:
         add(media.id,media.title,media.poster_path,f'library:{connection.id}',
             f'{connection.name} · Library',delivery.state,delivery.attempts,delivery.last_error)
+    for intent,media,connection in watch_intents:
+        add(media.id,media.title,media.poster_path,f'connection:{connection.id}',connection.name,
+            intent.state,intent.attempts,intent.last_error)
     for review,media in review_rows:
         marker=markers.get(review.media_id)
         if review.state!='pending' or not marker or not marker.pending_connections:continue
@@ -474,6 +478,41 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .join(MediaServerConnection,MediaServerConnection.id==StreamAction.connection_id)
         .where(StreamAction.user_id==viewer.id,StreamAction.state.in_(['pending','conflict']))
         .order_by(StreamAction.id).limit(100))).all()
+    from models.watch_intent import WatchIntent
+    watch_intents=(await db.execute(select(WatchIntent,Media,MediaServerConnection)
+        .join(Media,Media.id==WatchIntent.media_id)
+        .join(MediaServerConnection,MediaServerConnection.id==WatchIntent.connection_id)
+        .where(WatchIntent.user_id==viewer.id,WatchIntent.state.in_(['pending','conflict']),
+            MediaServerConnection.push_watched.is_(True))
+        .order_by(WatchIntent.updated_at.desc(),WatchIntent.id.desc()).limit(100))).all()
+    # Watch writes are keyed by canonical episode, while the operational queue
+    # is organized by the title the owner tracks. Collapse all episode intents
+    # for one show/provider into one series card.
+    episode_show_ids={media.show_id for _,media,_ in watch_intents
+        if media.media_type==MediaType.episode and media.show_id is not None}
+    if episode_show_ids:
+        shows=(await db.execute(select(Show).where(Show.id.in_(episode_show_ids)))).scalars().all()
+        show_ids_by_id={show.id:show for show in shows}
+        tmdb_ids={show.tmdb_id for show in shows if show.tmdb_id is not None}
+        series_by_tmdb={}
+        if tmdb_ids:
+            tracked_series=(await db.execute(select(TrackedEntry,Media)
+                .join(Media,Media.id==TrackedEntry.media_id)
+                .where(TrackedEntry.user_id==viewer.id,Media.media_type==MediaType.series,
+                    Media.tmdb_id.in_(tmdb_ids))
+                .order_by(TrackedEntry.updated_at.desc(),TrackedEntry.id.desc()))).all()
+            for _,series in tracked_series:
+                series_by_tmdb.setdefault(series.tmdb_id,series)
+        projected_watch_intents=[]
+        for intent,media,connection in watch_intents:
+            if media.media_type==MediaType.episode:
+                show=show_ids_by_id.get(media.show_id)
+                parent=series_by_tmdb.get(show.tmdb_id) if show else None
+                if parent is not None:
+                    projected_watch_intents.append((intent,parent,connection))
+            else:
+                projected_watch_intents.append((intent,media,connection))
+        watch_intents=projected_watch_intents
     await db.commit()
     cloud_actions=(await db.execute(select(CloudAction,Media).join(Media,Media.id==CloudAction.media_id)
         .where(CloudAction.user_id==viewer.id,CloudAction.state.in_(['pending','conflict']))
@@ -490,7 +529,8 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
             MediaServerConnection.push_collection.is_(True))
         .order_by(StreamingLibraryDelivery.id).limit(100))).all()
     review_media_ids={review.media_id for review,_ in outbound_review_rows if review.media_id is not None}
-    marker_media_ids=review_media_ids|{media.id for _,media,_ in actions}|{media.id for _,media in cloud_actions}
+    marker_media_ids=(review_media_ids|{media.id for _,media,_ in actions}|{media.id for _,media in cloud_actions}
+        |{media.id for _,media,_ in watch_intents})
     markers={row.media_id:row for row in (await db.execute(select(TrackingDeletion).where(
         TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id.in_(marker_media_ids)))).scalars()} if marker_media_ids else {}
     connection_names={row.id:row.name for row in (await db.execute(select(MediaServerConnection.id,MediaServerConnection.name).where(
@@ -499,7 +539,8 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         .order_by(SyncJob.updated_at.desc(),SyncJob.id.desc()).limit(200))).scalars().all()
     failure_events=connection_failure_events(recent_jobs,connection_names)
     pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)
-    outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,library_actions)
+    outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,
+        library_actions,watch_intents)
     return {'pending':pending,'outbound':outbound,
         'results':failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
@@ -1590,12 +1631,19 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         from core.stream_actions import queue_restorations
         await queue_restorations(db, viewer.id, media)
     changed_watch_ids = added_watched_ids | removed_watched_ids
+    queued_watch_intent_ids = []
     if changed_watch_ids:
         # Persist the Nuvio/Stremio delivery intent in the same transaction as
         # the canonical WatchEvent edit. The background dispatcher may retry,
         # but process shutdown after this commit cannot lose the write.
         from core.watch_intents import queue_watch_intents
+        from models.watch_intent import WatchIntent
         await queue_watch_intents(db, viewer.id, changed_watch_ids)
+        queued_watch_intent_ids = (await db.execute(select(WatchIntent.id).where(
+            WatchIntent.user_id == viewer.id,
+            WatchIntent.media_id.in_(changed_watch_ids),
+            WatchIntent.state == 'pending',
+        ))).scalars().all()
     pending_stream_actions = (await db.execute(select(StreamAction.id, StreamAction.connection_id, StreamAction.action).where(
         StreamAction.user_id == viewer.id,
         StreamAction.media_id == media_id,
@@ -1609,6 +1657,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         "progress_changed": entry.progress != old_progress,
         "stream_actions": [{"id": action_id, "connection_id": connection_id, "action": action}
                            for action_id, connection_id, action in pending_stream_actions],
+        "watch_intents": [{"id": intent_id} for intent_id in queued_watch_intent_ids],
         "ratings": [{"media_id": mid, "season_number": season, "score": value}
                     for (mid, season), value in changed_ratings.items()],
         "removed_ratings": [{"media_id": mid, "season_number": season}

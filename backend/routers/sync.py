@@ -1142,14 +1142,14 @@ async def _build_nuvio_watched_items(
     baseline=None,
     tracked_only: bool = False,
 ) -> list[dict]:
-    """Project canonical WatchEvents, preserving watched state with a null date.
+    """Project canonical WatchEvents, using the event receipt time if needed.
 
-    A missing timestamp is not evidence that an episode is unwatched. Keep it
-    null in the provider payload instead of dropping the watch or inventing a
-    viewing time.
+    A missing watch timestamp is not evidence that an episode is unwatched.
+    Nuvio requires a numeric date, so an older null-dated event uses the time
+    AnyList first recorded it as a clearly inferred provider-side fallback.
     """
     event_query = (
-        select(WatchEvent.media_id, WatchEvent.watched_at)
+        select(WatchEvent.media_id, WatchEvent.watched_at, WatchEvent.created_at)
         .where(WatchEvent.user_id == user_id, WatchEvent.completed == True)
         .order_by(WatchEvent.watched_at.desc().nulls_last())
     )
@@ -1159,8 +1159,11 @@ async def _build_nuvio_watched_items(
         event_query = event_query.where(WatchEvent.media_id.in_(media_ids))
     event_result = await db.execute(event_query)
     latest_watched_at: dict[int, datetime | None] = {}
-    for media_id, watched_at in event_result.all():
-        latest_watched_at.setdefault(media_id, watched_at)
+    for media_id, watched_at, created_at in event_result.all():
+        # Older imported events can still have an unknown watch date. Nuvio's
+        # watched-items API and Android model require a numeric epoch, so use
+        # the time AnyList first recorded that event as an inferred fallback.
+        latest_watched_at.setdefault(media_id, watched_at or created_at)
     if not latest_watched_at:
         return []
 
@@ -7070,6 +7073,9 @@ async def _push_stremio_connection(
                 or _stremio_new_library_item(record, now, in_library=False)
             )
             candidate = dict(base_item)
+            if candidate.get("removed") and content_id not in current_library_ids:
+                candidate["temp"] = True
+            candidate["removed"] = False
             state = {**_stremio_default_state(), **(candidate.get("state") or {})}
             state["timeOffset"] = int(record["position"])
             state["duration"] = int(record["duration"])
@@ -7121,7 +7127,7 @@ async def _push_stremio_connection(
                 state = actual.get("state") or {}
                 if (int(state.get("timeOffset") or 0) != int(expected_state.get("timeOffset") or 0)
                     or str(state.get("video_id") or "") != str(expected_state.get("video_id") or "")
-                    or (actual.get("removed") and not actual.get("temp"))):
+                    or actual.get("removed")):
                     raise stremio.StremioAPIError(
                         "Stremio did not confirm the pushed Continue Watching progress"
                     )
@@ -7276,6 +7282,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     conn.token = session.refresh_token
                     await db.commit()
 
+                watched_to_push: list[dict] = []
                 async with nuvio.connection_lock(conn.id):
                     # See core/nuvio.py's connection_lock docstring - conn may
                     # have been loaded before another request already rotated
@@ -7299,6 +7306,20 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             session = await nuvio.refresh_session(conn.url, conn.token, client=client)
                             await _persist_refresh(session)
                             profile = _nuvio_profile_id(conn)
+                            def watch_identity(row: dict) -> tuple[str, str, int | None, int | None]:
+                                return (str(row.get("content_id") or ""),
+                                    str(row.get("content_type") or ""),
+                                    row.get("season"), row.get("episode"))
+                            remote_watches = (
+                                await nuvio._pull_watched_items(client, conn.url, session.access_token, profile)
+                                if conn.push_watched else []
+                            )
+                            remote_watch_by_key = {watch_identity(row): row for row in remote_watches}
+                            watched_to_push = [item for item in watched_items
+                                if watch_identity(item) not in remote_watch_by_key
+                                or not isinstance(remote_watch_by_key[watch_identity(item)].get("watched_at"), int)]
+                            if any(not isinstance(item.get("watched_at"), int) for item in watched_to_push):
+                                raise nuvio.NuvioAPIError("Cannot push a watched item without a numeric watch date")
                             remote_progress = (
                                 await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
                                 if conn.push_playback else []
@@ -7315,22 +7336,25 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             if clear_keys:
                                 await nuvio._rpc(client, conn.url, session.access_token,
                                     "sync_delete_watch_progress", {"p_profile_id": profile, "p_keys": clear_keys})
-                            for offset in range(0, len(watched_items), nuvio._PAGE_SIZE):
+                            for offset in range(0, len(watched_to_push), nuvio._PAGE_SIZE):
                                 await nuvio._rpc(client, conn.url, session.access_token,
                                     "sync_push_watched_items", {"p_profile_id": profile,
-                                        "p_items": watched_items[offset:offset + nuvio._PAGE_SIZE]})
+                                        "p_items": watched_to_push[offset:offset + nuvio._PAGE_SIZE]})
                             if watched_items:
                                 confirmed_watches = await nuvio._pull_watched_items(
                                     client, conn.url, session.access_token, profile,
                                 )
-                                def watch_identity(row: dict) -> tuple[str, str, int | None, int | None]:
-                                    return (str(row.get("content_id") or ""),
-                                        str(row.get("content_type") or ""),
-                                        row.get("season"), row.get("episode"))
+                                desired_watch_keys = {watch_identity(item) for item in watched_items}
                                 confirmed_keys = {watch_identity(row) for row in confirmed_watches}
-                                if any(watch_identity(item) not in confirmed_keys for item in watched_items):
+                                if not desired_watch_keys.issubset(confirmed_keys):
                                     raise nuvio.NuvioAPIError(
                                         "Nuvio did not confirm the pushed watched episodes"
+                                    )
+                                if any(not isinstance(row.get("watched_at"), int)
+                                       for row in confirmed_watches
+                                       if watch_identity(row) in desired_watch_keys):
+                                    raise nuvio.NuvioAPIError(
+                                        "Nuvio returned watched items without usable watch dates"
                                     )
                             pushed_progress = []
                             for item in progress_items:
@@ -7390,11 +7414,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         status=SyncStatus.completed,
                         processed_items=total,
                         stats={
-                            "succeeded": total,
+                            "succeeded": len(library_items) + len(watched_to_push) + len(progress_items),
                             "failed": 0,
                             "collection": len(library_items),
-                            "watched": len(watched_items),
+                            "watched": len(watched_to_push),
                             "progress": len(progress_items),
+                            "already_watched": len(watched_items) - len(watched_to_push),
                         },
                     )
                 )
@@ -7404,7 +7429,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     "and %s progress items",
                     connection_id,
                     len(library_items),
-                    len(watched_items),
+                    len(watched_to_push),
                     len(progress_items),
                 )
                 return

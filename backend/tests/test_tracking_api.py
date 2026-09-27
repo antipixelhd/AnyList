@@ -2146,7 +2146,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.json()['added'],1)
         entry=(await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id==self.owner.id))).scalar_one()
         self.assertEqual(entry.status,'completed')
-        self.assertIsNone(entry.start_date);self.assertEqual(entry.finish_date, date.today())
+        self.assertIsNone(entry.start_date);self.assertEqual(entry.finish_date, datetime.now(timezone.utc).date())
         await self.client.delete(f'/tracking/entry/{self.movie.id}?confirmed=true')
         self.db.add(WatchEvent(user_id=self.owner.id,media_id=self.movie.id,completed=True))
         await self.db.commit()
@@ -2253,6 +2253,65 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.local_outbound.assert_not_awaited()
         await self.db.refresh(rating)
         self.assertEqual(rating.rated_at, rated_at)
+
+    async def test_pending_completed_watch_write_is_in_delivery_receipt_and_connection_queue(self):
+        from models.watch_intent import WatchIntent
+
+        connection = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Living Room',
+            url='https://example.test', token='fixture', push_watched=True)
+        self.db.add(connection)
+        await self.db.commit()
+
+        completed = await self.save(self.movie, status='completed')
+        self.assertEqual(completed.status_code, 200, completed.text)
+        job = (await self.db.execute(select(TrackingDeliveryJob).where(
+            TrackingDeliveryJob.id == completed.json()['delivery_job_id'],
+        ))).scalar_one()
+        intent = (await self.db.execute(select(WatchIntent).where(
+            WatchIntent.user_id == self.owner.id,
+            WatchIntent.connection_id == connection.id,
+            WatchIntent.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertEqual(intent.state, 'pending')
+        self.assertEqual(job.state, 'queued')
+        self.assertEqual(job.changes['watch_intents'], [{'id': intent.id}])
+
+        outbound = (await self.client.get('/tracking/recent-events')).json()['outbound']
+        self.assertEqual(len(outbound), 1)
+        self.assertEqual(outbound[0]['media_id'], self.movie.id)
+        self.assertEqual(outbound[0]['deliveries'], [{
+            'connection': 'Living Room', 'state': 'pending', 'attempts': 0, 'error': None,
+        }])
+        self.local_outbound.assert_awaited_once()
+
+    async def test_pending_episode_watch_writes_group_under_one_tracked_series_card(self):
+        from models.watch_intent import WatchIntent
+
+        tmdb_id = 987654398
+        self.show.tmdb_id = tmdb_id
+        self.show.title = 'Reacher'
+        canonical_show = Show(title='Reacher', tmdb_id=tmdb_id)
+        self.db.add(canonical_show)
+        await self.db.flush()
+        episodes = [Media(title=f'Reacher S1E{number}', media_type=MediaType.episode,
+            show_id=canonical_show.id, season_number=1, episode_number=number)
+            for number in range(1, 4)]
+        connection = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Living Room',
+            url='https://example.test', token='fixture', push_watched=True)
+        self.db.add_all([*episodes, connection, TrackedEntry(user_id=self.owner.id,
+            media_id=self.show.id, status='watching', progress=3)])
+        await self.db.flush()
+        self.db.add_all([WatchIntent(user_id=self.owner.id, connection_id=connection.id,
+            media_id=episode.id, desired_watched=True, state='pending') for episode in episodes])
+        await self.db.commit()
+
+        outbound = (await self.client.get('/tracking/recent-events')).json()['outbound']
+        self.assertEqual(len(outbound), 1)
+        self.assertEqual(outbound[0]['media_id'], self.show.id)
+        self.assertEqual(outbound[0]['title'], 'Reacher')
+        self.assertEqual(outbound[0]['deliveries'], [{
+            'connection': 'Living Room', 'state': 'pending', 'attempts': 0, 'error': None,
+        }])
 
     async def test_completed_series_fanout_and_rollback_share_canonical_episode_ids(self):
         self.show.tmdb_id = 987654321
@@ -3676,6 +3735,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                            completed=True, watched_at=None)
         self.db.add(event)
         await self.db.flush()
+        # Legacy imported rows can retain an unknown watch date. Their event
+        # creation time supplies the numeric timestamp required by Nuvio.
+        event.watched_at = None
+        await self.db.flush()
+        inferred_at = event.created_at
         await queue_watch_intents(self.db, self.owner.id, {self.movie.id},
                                   exclude_connection_id=connections[0].id)
         await self.db.commit()
@@ -3698,9 +3762,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.flush()
         await queue_watch_intents(self.db, self.owner.id, {self.movie.id},
                                   exclude_connection_id=connections[0].id)
-        self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
-                               completed=True, watched_at=None))
+        replacement_event = WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                                       completed=True, watched_at=None)
+        self.db.add(replacement_event)
         await self.db.flush()
+        replacement_event.watched_at = None
+        await self.db.flush()
+        inferred_at = replacement_event.created_at
         await queue_watch_intents(self.db, self.owner.id, {self.movie.id},
                                   exclude_connection_id=connections[0].id)
         await self.db.commit()
@@ -3714,9 +3782,66 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             await dispatch_watch_intents(self.db, self.owner.id, writer=writer)
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0][:3], (connections[1].id, self.movie.id, True))
-        self.assertIsNotNone(delivered[0][3])
+        self.assertEqual(delivered[0][3], inferred_at)
         await self.db.refresh(intents[0])
         self.assertEqual((intents[0].state, intents[0].attempts), ('applied', 1))
+
+    async def test_new_watch_intents_are_not_starved_by_the_first_hundred_retries(self):
+        from core.watch_intents import dispatch_watch_intents
+        from models.watch_intent import WatchIntent
+
+        connection = MediaServerConnection(
+            user_id=self.owner.id,
+            type='stremio',
+            name='Fairness fixture',
+            url='https://example.test',
+            token='fixture',
+            push_watched=True,
+        )
+        stale_media = [
+            Media(title=f'Retry fixture {index}', media_type=MediaType.movie,
+                  tmdb_id=980000000 + index)
+            for index in range(100)
+        ]
+        fresh_media = Media(title='Fresh watch fixture', media_type=MediaType.movie,
+                            tmdb_id=980001000)
+        self.db.add_all([connection, *stale_media, fresh_media])
+        await self.db.flush()
+        self.db.add_all([
+            WatchIntent(
+                user_id=self.owner.id,
+                connection_id=connection.id,
+                media_id=media.id,
+                desired_watched=True,
+                state='pending',
+                attempts=3,
+                last_error='TimeoutError',
+            )
+            for media in stale_media
+        ])
+        fresh_intent = WatchIntent(
+            user_id=self.owner.id,
+            connection_id=connection.id,
+            media_id=fresh_media.id,
+            desired_watched=True,
+            state='pending',
+            attempts=0,
+        )
+        self.db.add(fresh_intent)
+        await self.db.commit()
+
+        delivered_media_ids = []
+
+        async def writer(intent, watched, watched_at):
+            delivered_media_ids.append(intent.media_id)
+
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()):
+            await dispatch_watch_intents(self.db, self.owner.id, writer=writer)
+
+        self.assertEqual(len(delivered_media_ids), 100)
+        self.assertEqual(delivered_media_ids[0], fresh_media.id)
+        await self.db.refresh(fresh_intent)
+        self.assertEqual((fresh_intent.state, fresh_intent.attempts), ('applied', 1))
 
     async def test_approved_nuvio_unwatch_removes_canonical_episode_and_progress(self):
         from core.tracking_snapshot import observe_stream_snapshot, changed_watch_rows_from_source

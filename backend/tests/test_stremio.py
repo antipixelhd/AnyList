@@ -631,7 +631,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         pushed = datastore_put.await_args.args[1][0]
-        self.assertTrue(pushed["removed"])
+        self.assertFalse(pushed["removed"])
         self.assertTrue(pushed["temp"])
         self.assertEqual(pushed["state"]["timeOffset"], 120_000)
         self.assertEqual(pushed["state"]["duration"], 600_000)

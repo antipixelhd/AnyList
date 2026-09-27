@@ -65,14 +65,18 @@ async def push_stremio_progress(token, record):
         video_id = str(state.get('video_id') or '')
         if not video_id.endswith(f":{record['season']}:{record['episode']}"):
             remote['season'] = remote['episode'] = None
-    eligible = not item.get('removed') or bool(item.get('temp'))
     matching_video = (str(state.get('video_id') or '') == record['content_id']
         if record.get('season') is None else remote['season'] is not None)
-    if same_progress(remote, record) and eligible and matching_video:
+    matching_progress = same_progress(remote, record) and matching_video
+    # Continue Watching is derived from visible library records. Stremio's
+    # temporary marker keeps this resume out of the permanent collection, but
+    # `removed` must be false for the client to include it in that view.
+    eligible = not item.get('removed')
+    if matching_progress and eligible:
         return
     observed_at = provider_changed_at({'modified_at': record.get('observed_at')})
     remote_at = provider_changed_at({'modified_at': item.get('_mtime')}) if rows else None
-    if not observed_at or (remote_at and remote_at > observed_at):
+    if not matching_progress and (not observed_at or (remote_at and remote_at > observed_at)):
         raise RemotePlaybackChanged()
     state['timeOffset'] = record['position']
     state['duration'] = record['duration']
@@ -86,12 +90,15 @@ async def push_stremio_progress(token, record):
             state['lastWatched'] = last_watched
     candidate = {**item, 'state': state, '_mtime': _iso_utc(datetime.now(timezone.utc))}
     if candidate.get('removed'):
+        candidate['removed'] = False
         candidate['temp'] = True
     await stremio.datastore_put(token, [candidate])
     confirmed = await stremio.datastore_get(token, ids=[record['content_id']])
     if len(confirmed) != 1:
         raise stremio.StremioAPIError('Stremio progress write was not visible on readback')
     confirmed_state = confirmed[0].get('state') or {}
+    if confirmed[0].get('removed'):
+        raise stremio.StremioAPIError('Stremio progress write remained hidden from Continue Watching')
     confirmed_season = record.get('season')
     confirmed_episode = record.get('episode')
     if confirmed_season is not None and not str(confirmed_state.get('video_id') or '').endswith(
@@ -193,7 +200,16 @@ async def queue_progress_update(db, source, media, record):
 
 
 async def dismiss_stremio(token, record, *, restore=False, reset=False):
-    rows = await stremio.datastore_get(token, ids=[record['content_id']])
+    rows = await stremio.datastore_get(
+        token,
+        ids=[record['content_id']],
+        allow_missing=reset,
+    )
+    # A deleted title that is already absent from the provider has no remote
+    # playback state left to clear. Treat it as a completed reset rather than
+    # failing the queued deletion action on datastore_get's missing-item check.
+    if not rows and reset:
+        return
     item = rows[0]
     if item.get('type') and record.get('content_type') and item['type']!=record['content_type']:
         raise RemotePlaybackChanged()
@@ -222,8 +238,10 @@ async def dismiss_stremio(token, record, *, restore=False, reset=False):
         if record.get('season') is not None:
             state['video_id'] = record.get('video_id') or f"{record['content_id']}:{record['season']}:{record['episode']}"
         candidate = {**item, 'state':state, '_mtime':datetime.now(timezone.utc).isoformat().replace('+00:00','Z')}
-        # A temporary non-library entry can participate in Continue Watching.
+        # Make a restored resume visible in Continue Watching without turning
+        # a temporary progress record into permanent library membership.
         if candidate.get('removed'):
+            candidate['removed'] = False
             candidate['temp'] = True
         await stremio.datastore_put(token, [candidate])
         return

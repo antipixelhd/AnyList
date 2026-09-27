@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.tracking import StreamAction, TrackingDeliveryJob
+from models.watch_intent import WatchIntent
 
 
 async def create_tracking_delivery_job(
@@ -14,7 +15,7 @@ async def create_tracking_delivery_job(
 ) -> TrackingDeliveryJob:
     has_outbound_change = bool(changes.get("watched_media_ids") or changes.get("removed_watched_media_ids")
                                or changes.get("ratings") or changes.get("removed_ratings")
-                               or changes.get("stream_actions"))
+                               or changes.get("stream_actions") or changes.get("watch_intents"))
     job = TrackingDeliveryJob(
         user_id=user_id,
         media_id=media_id,
@@ -49,6 +50,16 @@ async def finish_tracking_delivery_job(job_id: int, *, error: str | None = None)
                 if pending:
                     job.state = "queued"
                     job.detail = "Provider work remains queued and has not been acknowledged."
+                    await db.commit()
+                    return
+            watch_intent_ids = [row.get("id") for row in (job.changes or {}).get("watch_intents", []) if row.get("id")]
+            if watch_intent_ids:
+                pending = (await db.execute(select(WatchIntent.id).where(
+                    WatchIntent.id.in_(watch_intent_ids), WatchIntent.state == "pending",
+                ))).scalars().all()
+                if pending:
+                    job.state = "queued"
+                    job.detail = "Provider watch updates remain queued and have not been acknowledged."
                     await db.commit()
                     return
         job.state = "failed" if error else "attempted_unverified"

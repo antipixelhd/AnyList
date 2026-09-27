@@ -7,6 +7,7 @@ os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 from core.stream_actions import (dismiss_stremio, dismiss_nuvio, push_stremio_progress,
     push_nuvio_progress, queue_restorations, RemotePlaybackChanged)
+from core import stremio
 from models import MediaServerConnection, Media, MediaType, Show
 from models.tracking import StreamAction, StreamBaseline, TrackedEntry
 
@@ -54,7 +55,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[],stored])) as read, \
              patch('core.stremio.datastore_put',AsyncMock(side_effect=save)):
             await push_stremio_progress('fixture',record)
-        self.assertTrue(stored[0]['removed'])
+        self.assertFalse(stored[0]['removed'])
         self.assertTrue(stored[0]['temp'])
         self.assertEqual(stored[0]['state']['timeOffset'],1000)
         self.assertEqual(stored[0]['state']['video_id'],'tt1234567')
@@ -64,16 +65,30 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         record={'content_id':'tt1234567','content_type':'movie','position':1000,
             'duration':120_000,'observed_at':'2026-09-20T12:00:00Z'}
         hidden={'_id':'tt1234567','type':'movie','removed':True,'temp':False,
-            '_mtime':'2026-09-19T12:00:00Z',
-            'state':{'timeOffset':1000,'duration':120_000,'video_id':None}}
+            '_mtime':'2026-09-21T12:00:00Z',
+            'state':{'timeOffset':1000,'duration':120_000,'video_id':'tt1234567'}}
         saved=[]
         async def save(_token, items):
             saved.extend(items)
         with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[hidden],saved])), \
              patch('core.stremio.datastore_put',AsyncMock(side_effect=save)):
             await push_stremio_progress('fixture',record)
+        self.assertFalse(saved[0]['removed'])
         self.assertTrue(saved[0]['temp'])
         self.assertEqual(saved[0]['state']['video_id'],'tt1234567')
+
+    async def test_stremio_progress_rejects_a_readback_that_remains_hidden(self):
+        record={'content_id':'tt1234567','content_type':'movie','position':1000,
+            'duration':120_000,'observed_at':'2026-09-20T12:00:00Z'}
+        hidden={'_id':'tt1234567','type':'movie','removed':True,'temp':True,
+            '_mtime':'2026-09-19T12:00:00Z',
+            'state':{'timeOffset':0,'duration':0,'video_id':None}}
+        after={'_id':'tt1234567','type':'movie','removed':True,'temp':True,
+            'state':{'timeOffset':1000,'duration':120_000,'video_id':'tt1234567'}}
+        with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[hidden],[after]])), \
+             patch('core.stremio.datastore_put',AsyncMock()):
+            with self.assertRaises(stremio.StremioAPIError):
+                await push_stremio_progress('fixture',record)
 
     async def test_stremio_progress_upsert_is_confirmed_by_readback(self):
         last_watched_ms=1_789_905_600_000
@@ -211,6 +226,26 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.stremio.datastore_get',AsyncMock(return_value=[remote])), patch('core.stremio.datastore_put',AsyncMock()) as write:
             with self.assertRaises(RemotePlaybackChanged):await dismiss_stremio('fixture',record,reset=True)
             write.assert_not_awaited()
+
+    async def test_reset_treats_a_missing_stremio_item_as_already_cleared(self):
+        record={'content_id':'tt1','content_type':'movie','deleted_at':'2026-09-18T12:00:00+00:00'}
+        with patch('core.stremio.datastore_get',AsyncMock(return_value=[])) as read, \
+             patch('core.stremio.datastore_put',AsyncMock()) as write:
+            await dismiss_stremio('fixture',record,reset=True)
+        read.assert_awaited_once_with('fixture',ids=['tt1'],allow_missing=True)
+        write.assert_not_awaited()
+
+    async def test_restore_of_removed_item_becomes_temporary_visible_resume(self):
+        record={'content_id':'tt1','content_type':'movie','position':30,'duration':100}
+        remote={'_id':'tt1','type':'movie','removed':True,'temp':False,
+            'state':{'timeOffset':0,'duration':100}}
+        with patch('core.stremio.datastore_get',AsyncMock(return_value=[remote])), \
+             patch('core.stremio.datastore_put',AsyncMock()) as write:
+            await dismiss_stremio('fixture',record,restore=True)
+        restored=write.await_args.args[1][0]
+        self.assertFalse(restored['removed'])
+        self.assertTrue(restored['temp'])
+        self.assertEqual(restored['state']['timeOffset'],30)
 
     async def test_nuvio_rotated_token_commits_before_progress_delete_and_survives_failure(self):
         conn=MediaServerConnection(id=987,user_id=1,type='nuvio',name='Fixture',url='https://example.test',token='old',server_user_id='1')

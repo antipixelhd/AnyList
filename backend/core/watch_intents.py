@@ -195,12 +195,12 @@ async def _write_provider_watch_state(
         if watched:
             await nuvio.push_watched_items(
                 conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
-                [payload], on_refresh=persist_refresh,
+                [payload], on_refresh=persist_refresh, verify=True,
             )
         else:
             await nuvio.delete_watched_items(
                 conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
-                [key], on_refresh=persist_refresh,
+                [key], on_refresh=persist_refresh, verify=True,
             )
 
 
@@ -227,7 +227,14 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
     intents = (await db.execute(select(WatchIntent).where(
         WatchIntent.user_id == user_id,
         WatchIntent.state == "pending",
-    ).order_by(WatchIntent.id).limit(100).with_for_update(skip_locked=True))).scalars().all()
+    ).order_by(
+        # Give never-attempted or freshly re-queued local changes a chance
+        # before repeatedly failing provider writes. Without this, the oldest
+        # 100 failures can occupy every batch and starve newer edits forever.
+        WatchIntent.attempts.asc(),
+        WatchIntent.updated_at.desc(),
+        WatchIntent.id.desc(),
+    ).limit(100).with_for_update(skip_locked=True))).scalars().all()
     for intent in intents:
         conn = await db.get(MediaServerConnection, intent.connection_id)
         if not conn or conn.type not in ("nuvio", "stremio") or not conn.push_watched:
@@ -256,7 +263,12 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         else:
             perform_write = writer
 
-        succeeded = await _attempt_watch_write(intent, watched, event.watched_at if event else None, perform_write)
+        succeeded = await _attempt_watch_write(
+            intent,
+            watched,
+            (event.watched_at or event.created_at) if event else None,
+            perform_write,
+        )
         if succeeded:
             intent.state = "applied"
         else:
