@@ -41,6 +41,7 @@ document.addEventListener('astro:page-load', () => {
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
   const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
   const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
+  const restoreKey = 'anylist.quick-search.restore';
   let controller: AbortController | null = null;
   let timer = 0;
   let progressTimer = 0;
@@ -191,8 +192,7 @@ document.addEventListener('astro:page-load', () => {
       }
       if (!Number.isSafeInteger(mediaId) || mediaId <= 0) throw new Error('Could not load this title. Try again.');
       if (!dialog?.open) return;
-      void closeDialog(dialog);
-      document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId, opener:openButton}}));
+      document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId, opener:input || openButton}}));
     } catch (cause) {
       showState(cause instanceof Error ? cause.message : 'Could not load this title. Try again.');
     } finally {
@@ -213,5 +213,19 @@ document.addEventListener('astro:page-load', () => {
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
   }, { signal: pageListeners.signal });
+  try {
+    const saved = sessionStorage.getItem(restoreKey);
+    if (saved) {
+      sessionStorage.removeItem(restoreKey);
+      const query = (JSON.parse(saved) as {query?: unknown}).query;
+      if (typeof query === 'string' && query.trim().length >= 2) {
+        open();
+        if (input) input.value = query;
+        void search();
+      }
+    }
+  } catch {
+    try { sessionStorage.removeItem(restoreKey); } catch { /* Storage may be unavailable. */ }
+  }
 });
 </script>

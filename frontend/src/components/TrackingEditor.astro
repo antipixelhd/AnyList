@@ -112,6 +112,11 @@ document.addEventListener('astro:page-load', () => {
     if (!dialog.open) return;
     void closeDialog(dialog);
   };
+  function preserveQuickSearchAfterReload() {
+    if (!(opener instanceof HTMLInputElement) || opener.id !== 'quick-search-input') return;
+    try { sessionStorage.setItem('anylist.quick-search.restore', JSON.stringify({query:opener.value})); }
+    catch { /* Search restoration is optional when session storage is unavailable. */ }
+  }
   function populateEditor(title: any) {
     const embedded = !Object.prototype.hasOwnProperty.call(title, 'entry');
     const entry = embedded ? title : title.entry;
@@ -286,7 +291,7 @@ document.addEventListener('astro:page-load', () => {
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
-    try{const response=await fetch(`/api/proxy/tracking/entry/${current.id}?confirmed=true`,{method:'DELETE'});if(!response.ok)throw new Error('Could not delete the entry. Try again.');location.reload();}catch(e){error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+    try{const response=await fetch(`/api/proxy/tracking/entry/${current.id}?confirmed=true`,{method:'DELETE'});if(!response.ok)throw new Error('Could not delete the entry. Try again.');preserveQuickSearchAfterReload();location.reload();}catch(e){error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
   });
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!current) return;
@@ -319,6 +324,7 @@ document.addEventListener('astro:page-load', () => {
     try {
       const response = await fetch(`/api/proxy/tracking/entry/${current.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if (!response.ok) { const data = await response.json(); throw new Error(typeof data.detail === 'string' ? data.detail : 'Check your entry and try again.'); }
+      preserveQuickSearchAfterReload();
       location.reload();
     } catch(e) { error.textContent = (e as Error).message; error.hidden = false; submit.disabled = false; }
   });
