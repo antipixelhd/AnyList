@@ -1,9 +1,8 @@
 ---
+import FavoriteCard from "../../../components/FavoriteCard.astro";
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
-import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
-import {responsiveArtwork} from '../../../lib/responsive-artwork';
 import {profileMediaGroups} from '../../../lib/profile-media-groups';
 import '../../../styles/profile-overview.css';
 import '../../../styles/favorites-page.css';
@@ -34,15 +33,7 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
             </div>}
           </div>
           <div class="favorite-posters favorites-grid">
-        {group.items.map(item => {
-          const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
-          return <article class="favorite-card" data-favorite-card data-media-id={item.id} data-title={item.title}>
-            <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>
-              {image?.src ? <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}
-            </a>
-            {profile.owner && <button type="button" class="favorite-remove alert-icon-button" data-favorite-remove={item.id} aria-label={`Remove ${item.title} from favorites`} title={`Remove ${item.title} from favorites`}><Icon name="close"/></button>}
-          </article>;
-        })}
+        {group.items.map(item => <FavoriteCard item={item} owner={profile.owner}/>)}
           </div>
         </section>)}
       </div>

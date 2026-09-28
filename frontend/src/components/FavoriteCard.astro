@@ -1,0 +1,12 @@
+---
+import Icon from './Icon.astro';
+import {responsiveArtwork} from '../lib/responsive-artwork';
+const {item, owner = false} = Astro.props;
+const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
+---
+<article class="favorite-card" data-favorite-card data-media-id={item.id} data-title={item.title}>
+            <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>
+              {image?.src ? <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}
+            </a>
+            {owner && <button type="button" class="favorite-remove alert-icon-button" data-favorite-remove={item.id} aria-label={`Remove ${item.title} from favorites`} title={`Remove ${item.title} from favorites`}><Icon name="close"/></button>}
+          </article>

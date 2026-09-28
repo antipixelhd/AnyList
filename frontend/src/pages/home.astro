@@ -1,4 +1,5 @@
 ---
+import ProgressCard from "../components/ProgressCard.astro";
 import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
@@ -44,21 +45,7 @@ const formatReleaseDate=(value:string)=>{
 <Tracker title="Home"><div class="page-width dashboard home-dashboard" data-username={Astro.locals.user.username} data-watching-count={watchingCount??''}>
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse" data-find-title hidden={watchingCount!==0}>Find your next title</a></header>
   <div class="home-columns"><aside class="series-progress" aria-labelledby="series-progress-heading"><div class="section-heading"><h2 id="series-progress-heading">Series in Progress</h2></div>
-    {seriesCards.length ? <div class="series-progress-grid" data-progress-grid>{seriesCards.map((entry:any)=><article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
-        <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}`}>
-          {entry.artwork?.src&&<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>}
-          {entry.airing&&<span class="progress-card-airing-label"><strong data-latest-episode>{entry.latest||'Latest episode'}</strong><span data-countdown>Release date unavailable</span></span>}
-          {entry.airing&&<span class="progress-card-catchup" data-catchup-bar data-caught-up={String(entry.caughtUp)} data-known={String(entry.released_episodes!==undefined)} aria-hidden="true"></span>}
-        </a>
-        <button class="progress-card-quick-action" type="button" data-progress-action={entry.id} data-next-progress={entry.progress+1} disabled={!entry.canIncrement} aria-label={entry.canIncrement?`Mark next episode of ${entry.title} watched`:entry.caughtUp?`${entry.title} is caught up`:`Progress unavailable for ${entry.title}`}>
-          <span data-current-position>{entry.season_position||'0'}</span>{entry.canIncrement&&<span class="progress-card-plus" aria-hidden="true">+</span>}
-        </button>
-        <div class="progress-card-details" aria-label={`${entry.title} progress`}>
-          <strong class="progress-card-behind" data-episodes-behind>{entry.canIncrement?`${entry.released_episodes-entry.progress} ${entry.released_episodes-entry.progress===1?'episode':'episodes'} behind`:entry.caughtUp?'Caught up':'Progress unavailable'}</strong>
-          <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}</a>
-          <span class="progress-card-progress-label">Progress: <span data-progress-count>{entry.progress}</span>/<span data-released-count>{entry.released_episodes??'?'}</span></span>
-        </div>
-      </article>)}</div> : <p class="series-progress-empty" data-progress-empty>Series you mark as Watching will appear here.</p>}
+    {seriesCards.length ? <div class="series-progress-grid" data-progress-grid>{seriesCards.map((entry:any)=><ProgressCard entry={entry}/>)}</div> : <p class="series-progress-empty" data-progress-empty>Series you mark as Watching will appear here.</p>}
     <section class="upcoming-releases" aria-labelledby="upcoming-releases-heading" data-upcoming-releases>
       <div class="section-heading"><h2 id="upcoming-releases-heading">Upcoming releases</h2></div>
       {upcomingSeasonCards.length ? <div class="series-progress-grid upcoming-releases-grid" data-upcoming-grid>{upcomingSeasonCards.map((entry:any)=><article class="progress-card upcoming-season-card" data-upcoming-card data-media-id={entry.id} data-season-number={entry.seasonNumber} data-release-date={entry.releaseDate} data-season-poster={entry.season_poster_path||''} data-artwork-fallback={String(entry.artworkFallback)} data-artwork-retry={String(entry.artwork_retry===true)}>

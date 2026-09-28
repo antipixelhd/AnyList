@@ -66,6 +66,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get("token")?.value;
   const { pathname } = context.url;
 
+  // The card playground is isolated from sessions and backend data. Never serve
+  // it in a production build or through a non-loopback development hostname.
+  if (pathname === '/dev/cards' || pathname.startsWith('/dev/cards/')) {
+    if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(context.url.hostname)) {
+      return new Response('Not found', { status: 404 });
+    }
+    const response = await next();
+    response.headers.set('Cache-Control', 'no-store');
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(header, value);
+    return response;
+  }
+
   // Requests to the backend proxy carrying a Scrob API key (header or query
   // param) skip the cookie/JWT gate below — the proxy forwards the key as-is
   // (see api/proxy/[...path].ts) and the backend's own per-endpoint auth

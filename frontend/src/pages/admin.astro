@@ -54,6 +54,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             <div class="px-6 py-6">
               <div class="space-y-2 max-w-md">
                 <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">Read Access Token</label>
+                <p class="text-xs"><a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Open TMDB API settings</a></p>
                 <div class="relative group/field">
                   <input
                     type="password"
@@ -86,6 +87,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
           <div id="mdblist-catalog-body" class="border-t border-zinc-800 hidden">
             <div class="px-6 py-6 space-y-2 max-w-md">
               <label for="mdblist_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+              <p class="text-xs"><a href="https://mdblist.com/preferences/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Open MDBList API preferences</a></p>
               <input type="password" name="mdblist_api_key" id="mdblist_api_key" value={globalSettings.mdblist_api_key ?? ""} placeholder="Server-wide fallback key" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
               <p class="text-xs text-zinc-500">Caches IMDb and Rotten Tomatoes critic/audience scores for 24 hours. A user's own MDBList key is preferred.</p>
             </div>
@@ -107,6 +109,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             <div class="px-6 py-6">
               <div class="space-y-2 max-w-md">
                 <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">API Key</label>
+                <p class="text-xs"><a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Open TVDB API keys</a></p>
                 <div class="relative group/field">
                   <input
                     type="password"
@@ -121,7 +124,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
                   </button>
                 </div>
-                <p class="text-xs text-zinc-500">Server-wide fallback for TVDB-sourced shows and TVDB-ordered episode mapping. A free project key from <span class="text-zinc-400">thetvdb.com/api-information</span> needs no PIN; a subscriber-supported key needs the PIN below.</p>
+                <p class="text-xs text-zinc-500">Server-wide fallback for TVDB-sourced shows and TVDB-ordered episode mapping. A free project key from <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">thetvdb.com/api-information</a> needs no PIN; a subscriber-supported key needs the PIN below.</p>
 
                 <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-3">Subscriber PIN <span class="text-zinc-600">(optional)</span></label>
                 <div class="relative group/field">

@@ -1,0 +1,174 @@
+---
+import NoticeCard from '../../components/NoticeCard.astro';
+import ActivityCard from '../../components/ActivityCard.astro';
+import FavoriteCard from '../../components/FavoriteCard.astro';
+import ProgressCard from '../../components/ProgressCard.astro';
+import MediaCard from '../../components/MediaCard.astro';
+import EpisodeCard from '../../components/EpisodeCard.astro';
+import ContinueWatchingCard from '../../components/ContinueWatchingCard.astro';
+import HistoryCard from '../../components/HistoryCard.astro';
+import ListCard from '../../components/ListCard.astro';
+import SocialPersonCard from '../../components/SocialPersonCard.astro';
+import type {MediaItem} from '../../lib/api';
+import '../../styles/global.css';
+import '../../styles/typography.css';
+import '../../styles/tracker.css';
+import '../../styles/action-controls.css';
+import '../../styles/profile-overview.css';
+import '../../styles/favorites-page.css';
+import '../../styles/social.css';
+
+if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(Astro.url.hostname)) return new Response('Not found', {status:404});
+// A synthetic viewer enables the real MediaCard action bar without loading a session.
+Astro.locals.user = {id:-1, username:'playground'} as typeof Astro.locals.user;
+Astro.locals.hasRpdbKey = false;
+const poster = (title: string, color: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${color}"/><stop offset="1" stop-color="#081320"/></linearGradient></defs><rect width="300" height="450" fill="url(#g)"/><circle cx="150" cy="180" r="85" fill="none" stroke="#ffffff" stroke-opacity=".3" stroke-width="2"/><path d="M130 145l55 35-55 35z" fill="#ffffff" fill-opacity=".6"/><text x="150" y="330" text-anchor="middle" fill="white" font-family="sans-serif" font-size="22">${title}</text><text x="150" y="365" text-anchor="middle" fill="#b0c4da" font-family="sans-serif" font-size="12">PLAYGROUND ARTWORK</text></svg>`)}`;
+const movie: MediaItem = {id:-101, tmdb_id:-101, type:'movie', title:'The Last Signal', poster_path:poster('The Last Signal','#6b3f9b'), release_date:'2025-04-12', tmdb_rating:8.2, watched:false, in_library:false, in_lists:[]};
+const episode: MediaItem = {...movie, id:-102, tmdb_id:-102, type:'episode', title:'Into the Blue', show_title:'Orbit Station', show_tmdb_id:-103, season_number:1, episode_number:4, show_poster_path:poster('Orbit Station','#176882'), runtime:48};
+const favorites = [{id:-101, title:movie.title, poster:movie.poster_path}, {id:-103, title:'Orbit Station', poster:episode.show_poster_path}, {id:-104, title:'No artwork example', poster:null}];
+const progress = [
+  {id:-103,title:'Orbit Station',progress:3,released_episodes:6,season_position:'S1E3',latest:'S1E6',airing:true,caughtUp:false,canIncrement:true,artwork:{src:episode.show_poster_path}},
+  {id:-105,title:'Caught up series',progress:8,released_episodes:8,season_position:'S1E8',latest:'S1E8',airing:true,caughtUp:true,canIncrement:false,artwork:{src:poster('Caught up','#426b45')}},
+  {id:-106,title:'Unknown episode count',progress:0,season_position:'',airing:false,caughtUp:false,canIncrement:false,artwork:null},
+];
+const notices = [
+  {variant:'warning' as const,title:'Provider status changed',message:'Trakt suggests Paused. Choose a status or keep the previous value.',badge:'Needs review',actions:['Confirm','Keep previous'],status:true},
+  {variant:'warning' as const,title:'Rating conflict',message:'Local score: 8.0 → Provider score: 6.5',badge:'Needs review',actions:['Use provider score','Keep local score']},
+  {variant:'danger' as const,title:'Connection failed',message:'The provider token has expired. Reconnect to continue syncing.',badge:'Connection issue',actions:['Resolve','Dismiss']},
+  {variant:'info' as const,title:'Unmatched import',message:'Search the catalogue to match this imported title.',badge:'Needs review',actions:['Ignore'],search:true},
+  {variant:'info' as const,title:'New season released',message:'Orbit Station · Season 2 is now releasing.',actions:['Add to Watching','Add to Planning','Dismiss']},
+  {variant:'default' as const,title:'Rate your latest watch',message:'The Last Signal is ready for your rating.',actions:['Rate now','Dismiss'],rating:true},
+  {variant:'success' as const,title:'History imported',message:'12 watch events were imported successfully.',actions:['Dismiss']},
+];
+const activities = [
+  {payload:{status_changed:true,started_watching:true},status:'watching'},
+  {payload:{episodes_watched:3,position_start:'S1E2',position:'S1E4'},status:'watching'},
+  {payload:{rating_changed:true,previous_score:7},score:8.5},
+  {payload:{status_changed:true},status:'completed'},
+];
+---
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Card playground · AnyList</title></head>
+  <body class="tracker">
+    <main class="lab">
+      <header class="lab-header">
+        <div><span class="eyebrow">Local development · dummy data</span><h1>Card playground</h1><p>Real card components with simulated actions. Hover or focus cards to reveal controls.</p></div>
+        <button type="button" id="reset" class="button-primary">Reset everything</button>
+      </header>
+      <div class="lab-tools"><label>Show <select id="category"><option value="all">All cards</option>{['Notifications','Activities','Favorites','Progress','Media','Episodes','Continue watching','History','Lists & people'].map(label => <option>{label}</option>)}</select></label><label>Content width <select id="width"><option value="full">Full width</option><option value="390">390px</option><option value="768">768px</option></select></label><label><input type="checkbox" id="fail"/> Simulate action failure</label></div>
+      <p id="feedback" role="status" aria-live="polite">Ready. All actions stay in this page; no account data is changed.</p>
+      <div id="canvas">
+        <section data-category="Notifications"><h2>Notifications</h2><div class="notice-list">
+          {notices.map((notice, index) => <div data-sample data-name={notice.title}><NoticeCard variant={notice.variant} title={notice.title} source="Connection sync" badge={notice.badge} message={notice.message} image={index===4?episode.show_poster_path:null}>
+            <Fragment slot="actions">
+              {notice.status && <label class="status-select">Status <select aria-label="Proposed status"><option>Paused</option><option>Watching</option><option>Completed</option><option>Dropped</option><option>Plan to Watch</option></select></label>}
+              {notice.search && <div class="provider-match"><div><input type="search" aria-label="Catalogue title" value="The Last Signal"/><button class="button-secondary" data-lab-action="search">Search</button></div><div class="match-results" data-results></div></div>}
+              {notice.rating && <label>Score <input aria-label="Rating" type="number" min="1" max="10" step="0.5" value="8"/></label>}
+              {notice.actions.map((action,i) => <button type="button" class={i===0?'button-primary':'button-quiet'} data-lab-action={action==='Dismiss'?'remove':'resolve'}>{action}</button>)}
+            </Fragment>
+          </NoticeCard></div>)}
+          <div data-sample data-name="Pending delivery"><NoticeCard title="Pending connection update" variant="info" source="Connected services" badge="Pending"><Fragment slot="detail"><ul class="delivery-list"><li><strong>Trakt</strong><span>Queued</span></li><li><strong>MDBList</strong><span>Retry needed</span><small>Provider temporarily unavailable · 2 attempts</small></li></ul></Fragment><Fragment slot="actions"><button class="button-secondary" data-lab-action="resolve">Retry delivery</button></Fragment></NoticeCard></div>
+        </div></section>
+        <section data-category="Activities"><h2>Activities</h2><div class="activity-stream">{activities.map((activity,i) => <ActivityCard showUser activity={{...activity,key:`sample-${i}`,username:'alex',display_name:'Alex Example',has_avatar:false,created_at:new Date(Date.now()-i*3600000).toISOString(),media:{id:-103,title:'Orbit Station',type:'series',poster:i===3?null:episode.show_poster_path}}}/>)}</div></section>
+        <section data-category="Favorites" class="favorites-page"><h2>Favorites</h2><p>Remove a favorite with its hover button. Move cards with the controls below.</p><div class="favorite-posters favorites-grid">{favorites.map(item => <div data-sample data-name={item.title}><FavoriteCard item={item} owner/><div class="lab-order"><button data-lab-action="left" aria-label={`Move ${item.title} left`}>←</button><button data-lab-action="right" aria-label={`Move ${item.title} right`}>→</button></div></div>)}</div></section>
+        <section data-category="Progress"><h2>Progress</h2><p>Includes episodes behind, caught up, and unavailable states. Hover a card and click +.</p><div class="series-progress-grid">{progress.map(entry => <ProgressCard entry={entry}/>)}</div></section>
+        <section data-category="Media"><h2>Media</h2><div class="lab-poster-grid">{[movie,{...movie,id:-107,title:'Collected & watched',watched:true,in_library:true,in_lists:[1]},{...movie,id:-108,type:'series' as const,title:'Partial series',watch_pct:40,collection_pct:65},{...movie,id:-109,title:'Missing artwork',poster_path:null}].map(item => <div data-sample data-name={item.title}><MediaCard item={item}/></div>)}</div></section>
+        <section data-category="Episodes"><h2>Episodes / Next up</h2><div class="lab-poster-grid">{[episode,{...episode,id:-110,title:'Watched episode',watched:true,in_library:true},{...episode,id:-111,title:'Could not identify',season_number:null,poster_path:null,show_poster_path:null}].map(item => <div data-sample data-name={item.title}><EpisodeCard item={item}/></div>)}</div></section>
+        <section data-category="Continue watching"><h2>Continue watching</h2><div class="lab-poster-grid">{[0,0.42,0.95].map((percent,i) => <div data-sample data-name={`Continue watching ${Math.round(percent*100)}%`}><ContinueWatchingCard item={{id:-120-i,media:i===1?episode:movie,user_id:-1,watched_at:'2026-09-28T12:00:00',progress_seconds:1200,progress_percent:percent,completed:false}}/></div>)}</div></section>
+        <section data-category="History"><h2>History</h2><div class="notice-list">{[movie,{...episode,user_rating:8.5}].map((media,i) => <div data-sample data-name={media.title}><HistoryCard event={{id:-130-i,media,user_id:-1,watched_at:'2026-09-28T12:30:00',completed:true,progress_percent:1}}/></div>)}</div></section>
+        <section data-category="Lists & people"><h2>Lists & people</h2><div class="notice-list"><ListCard id={-1} name="Weekend watchlist" description="A sample private list" privacy_level="private" item_count={3} preview_posters={favorites.filter(f=>f.poster).map(f=>({url:f.poster!,adult:false}))}/><ListCard id={-2} name="Empty public list" description={null} privacy_level="public" item_count={0} preview_posters={[]}/><SocialPersonCard person={{username:'alex',display_name:'Alex Example'}}/></div></section>
+      </div>
+    </main>
+  </body>
+</html>
+<style>
+  .lab h1{font-size:32px;font-weight:700;line-height:1.2;margin:8px 0}.lab section>h2{font-size:22px;font-weight:600}.lab :global(.lab-outcome){color:#62c98c;margin-top:10px}.lab :global(.lab-active){background:color-mix(in srgb,var(--blue) 20%,transparent);color:var(--blue)}
+  .lab{max-width:1280px;margin:auto;padding:32px 24px 80px}.lab-header{display:flex;justify-content:space-between;align-items:center;gap:24px}.lab-header p,section>p{color:var(--muted)}.lab-tools{display:flex;flex-wrap:wrap;gap:20px;padding:18px 0;align-items:center}.lab-tools label{display:flex;align-items:center;gap:8px}#feedback{position:sticky;top:0;z-index:20;background:var(--panel);border:1px solid var(--border);padding:12px;border-radius:6px}#canvas{max-width:100%;margin:auto}section{margin-top:36px}section>h2{margin-bottom:16px}.lab-poster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:18px}.lab :global([hidden]){display:none!important}.lab-order{display:flex;justify-content:space-between;margin-top:8px}.lab-order button{padding:4px 12px;background:var(--panel);border:1px solid var(--border);cursor:pointer}.lab :global(.favorites-grid){grid-template-columns:repeat(auto-fill,minmax(108px,150px))}.lab :global(.series-progress-grid){justify-content:start;gap:22px;padding:24px}.lab :global(.lab-active){outline:2px solid var(--blue);outline-offset:-2px}.lab :global(input[type=number]){width:70px}.lab :global(.favorite-remove){cursor:pointer}@media(max-width:650px){.lab{padding:20px 14px}.lab-header{align-items:start;flex-direction:column}.lab-poster-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+<script>
+  const canvas = document.querySelector<HTMLElement>('#canvas')!;
+  const positionDetails = () => {
+    const bounds = canvas.getBoundingClientRect();
+    canvas.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
+      const details = card.querySelector<HTMLElement>('.progress-card-details')!;
+      const rect = card.getBoundingClientRect();
+      const availableRight = Math.min(bounds.right, window.innerWidth - 14);
+      const left = Math.max(bounds.left, Math.min(rect.right + 16, availableRight - details.getBoundingClientRect().width));
+      details.style.left = `${left - rect.left}px`;
+    });
+  };
+  positionDetails();
+  const initial = canvas.innerHTML;
+  const feedback = document.querySelector<HTMLElement>('#feedback')!;
+  const category = document.querySelector<HTMLSelectElement>('#category')!;
+  const width = document.querySelector<HTMLSelectElement>('#width')!;
+  const fail = document.querySelector<HTMLInputElement>('#fail')!;
+  const report = (message: string) => { feedback.textContent = message; };
+  category.addEventListener('change', () => {canvas.querySelectorAll<HTMLElement>('[data-category]').forEach(section => {section.hidden = category.value !== 'all' && section.dataset.category !== category.value;});positionDetails();});
+  width.addEventListener('change', () => {canvas.style.width = width.value === 'full' ? '' : `${width.value}px`;positionDetails();});
+  window.addEventListener('resize', positionDetails);
+  document.querySelector('#reset')!.addEventListener('click', () => {
+    canvas.innerHTML = initial; canvas.style.width = ''; category.value = 'all'; width.value = 'full'; fail.checked = false;
+    positionDetails();
+    report('Reset complete. All sample cards and controls are back at their starting state.');
+  });
+  canvas.addEventListener('click', event => {
+    const target = event.target as HTMLElement;
+    const link = target.closest<HTMLAnchorElement>('a');
+    if (link) {event.preventDefault(); report(`Preview navigation: ${link.getAttribute('href')}. You remain in the playground.`); return;}
+    const button = target.closest<HTMLButtonElement>('button');
+    if (!button) {
+      const history = target.closest<HTMLElement>('[data-href]');
+      if (history) report(`Preview navigation: ${history.dataset.href}. You remain in the playground.`);
+      return;
+    }
+    if (button.disabled) return;
+    const sample = button.closest<HTMLElement>('[data-sample]');
+    const name = sample?.dataset.name ?? 'Card';
+    if (fail.checked) {report(`Simulated failure: ${button.textContent?.trim() || button.getAttribute('aria-label')}. State unchanged; uncheck failure and retry.`); return;}
+    const action = button.dataset.labAction;
+    if (action === 'left' || action === 'right') {
+      const sibling = action === 'left' ? sample?.previousElementSibling : sample?.nextElementSibling;
+      if (sample && sibling) {if (action==='left') sibling.before(sample); else sibling.after(sample); report(`Moved ${name} ${action}.`);} else report(`${name} is already at the ${action} edge.`);
+    } else if (action === 'search') {
+      const results = sample!.querySelector<HTMLElement>('[data-results]')!;
+      const query = sample!.querySelector<HTMLInputElement>('input[type=search]')!.value.trim();
+      results.replaceChildren();
+      if (!query) {report('Enter a catalogue title to search.'); return;}
+      const match = document.createElement('button'); match.className='button-secondary'; match.dataset.labAction='resolve'; match.textContent=`Match “${query}” (2025)`; results.append(match); report('Dummy catalogue result ready. Select it to resolve the import.');
+    } else if (action === 'resolve') {
+      const rating = sample?.querySelector<HTMLInputElement>('input[type=number]');
+      if (rating && !rating.checkValidity()) {rating.reportValidity();return;}
+      const selected = sample?.querySelector<HTMLSelectElement>('select')?.value;
+      const text = button.textContent?.trim();
+      report(`${name}: ${text}${selected ? ` · ${selected}` : ''}${rating ? ` · ${rating.value}/10` : ''}. Simulated successfully.`);
+      sample!.querySelectorAll<HTMLButtonElement>('button').forEach(control => {control.disabled=true;});
+      const badge = sample!.querySelector('.notice-meta strong'); if (badge) badge.textContent='Resolved';
+      const outcome=document.createElement('p');outcome.className='lab-outcome';outcome.textContent=`${text} — done${selected?` · ${selected}`:''}${rating?` · ${rating.value}/10`:''}`;
+      sample!.querySelector('.notice-content')!.append(outcome);
+    } else if (action === 'remove' || button.matches('.favorite-remove,.dismiss-cw,.delete-history-event')) {
+      sample?.remove(); report(`${name} removed. Reset everything restores it.`);
+    } else if (button.hasAttribute('data-progress-action')) {
+      const card = button.closest<HTMLElement>('[data-progress-card]')!;
+      const current = Number(card.dataset.progress)+1; const total = Number(card.dataset.released);
+      card.dataset.progress=String(current);button.dataset.nextProgress=String(current+1);
+      card.querySelector('[data-progress-count]')!.textContent=String(current);
+      card.querySelector('[data-current-position]')!.textContent=`S1E${current}`;
+      const caughtUp = current>=total;
+      card.querySelector('[data-episodes-behind]')!.textContent=caughtUp?'Caught up':`${total-current} ${total-current===1?'episode':'episodes'} behind`;
+      card.querySelector<HTMLElement>('[data-catchup-bar]')!.dataset.caughtUp=String(caughtUp);
+      button.disabled=caughtUp;button.setAttribute('aria-label',caughtUp?'Series is caught up':'Mark next episode watched');
+      if(caughtUp)card.querySelector('.progress-card-plus')?.remove();report(`Progress: ${current}/${total}${caughtUp?' · Caught up':''}.`);
+    } else if (button.dataset.action) {
+      const active = button.dataset.state !== 'active'; button.dataset.state=active?'active':'inactive';
+      button.classList.remove('bg-green-500/20','text-green-400','bg-sky-500/20','text-sky-400','bg-purple-500/20','text-purple-400');
+      button.classList.toggle('lab-active',active);button.setAttribute('aria-pressed',String(active));
+      const percentage = button.querySelector('span'); if (percentage?.textContent?.includes('%')) percentage.textContent=active?'100%':'0%';
+      if (button.dataset.action==='watched') {button.dataset.watched=String(active);button.dataset.watchPct=active?'100':'0';button.querySelector('circle')?.setAttribute('fill',active?'currentColor':'none');button.title=active?'Mark as unwatched':'Mark as watched';}
+      if (button.dataset.action==='collected') {button.dataset.inLibrary=String(active);button.dataset.collectionPct=active?'100':'0';button.title=active?'Remove from collection':'Add to collection';}
+      if (button.dataset.action==='list') button.dataset.inLists=active?'[1]':'[]';
+      report(`${name}: ${button.dataset.action} ${active?'enabled':'removed'}${button.dataset.action==='list'?' in dummy Weekend watchlist':''}.`);
+    }
+  });
+</script>

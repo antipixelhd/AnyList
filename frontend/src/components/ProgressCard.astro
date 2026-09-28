@@ -1,0 +1,18 @@
+---
+const {entry} = Astro.props;
+---
+<article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
+        <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}`}>
+          {entry.artwork?.src&&<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>}
+          {entry.airing&&<span class="progress-card-airing-label"><strong data-latest-episode>{entry.latest||'Latest episode'}</strong><span data-countdown>Release date unavailable</span></span>}
+          {entry.airing&&<span class="progress-card-catchup" data-catchup-bar data-caught-up={String(entry.caughtUp)} data-known={String(entry.released_episodes!==undefined)} aria-hidden="true"></span>}
+        </a>
+        <button class="progress-card-quick-action" type="button" data-progress-action={entry.id} data-next-progress={entry.progress+1} disabled={!entry.canIncrement} aria-label={entry.canIncrement?`Mark next episode of ${entry.title} watched`:entry.caughtUp?`${entry.title} is caught up`:`Progress unavailable for ${entry.title}`}>
+          <span data-current-position>{entry.season_position||'0'}</span>{entry.canIncrement&&<span class="progress-card-plus" aria-hidden="true">+</span>}
+        </button>
+        <div class="progress-card-details" aria-label={`${entry.title} progress`}>
+          <strong class="progress-card-behind" data-episodes-behind>{entry.canIncrement?`${entry.released_episodes-entry.progress} ${entry.released_episodes-entry.progress===1?'episode':'episodes'} behind`:entry.caughtUp?'Caught up':'Progress unavailable'}</strong>
+          <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}</a>
+          <span class="progress-card-progress-label">Progress: <span data-progress-count>{entry.progress}</span>/<span data-released-count>{entry.released_episodes??'?'}</span></span>
+        </div>
+      </article>
