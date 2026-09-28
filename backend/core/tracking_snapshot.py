@@ -278,7 +278,7 @@ async def observe_stream_snapshot(
     db, conn, library, watched, progress, tmdb_ids, *, complete=True, touched=None,
     removed_library=None, sync_playback=True, sync_watched=True,
     removed_watched_ids=None, fresh_import=False, source_started_at=None,
-    changed_media_ids=None,
+    changed_media_ids=None, cw_visibility=None,
 ):
     if fresh_import and not complete:
         raise ValueError("A full resync requires a complete provider snapshot")
@@ -332,6 +332,59 @@ async def observe_stream_snapshot(
         previous_snapshot = prior.snapshot if prior else {}
         prior_observed_at = prior.observed_at if prior else None
     mappings = {**previous_snapshot.get('mappings', {}), **tmdb_ids}
+    # Nuvio exposes dismissed Continue Watching identities through independent
+    # TV and Mobile settings surfaces. An omitted surface was unavailable; an
+    # empty list is a successful observation that clears its dismissals.
+    previous_visibility = previous_snapshot.get('nuvio_visibility', {})
+    nuvio_visibility = {
+        surface: list(values) for surface, values in previous_visibility.items()
+        if surface in ('tv', 'mobile') and isinstance(values, list)
+    } if isinstance(previous_visibility, dict) else {}
+    observed_visibility = {}
+    if conn.type == 'nuvio' and complete and isinstance(cw_visibility, dict):
+        for surface in ('tv', 'mobile'):
+            if surface not in cw_visibility:
+                continue
+            raw_values = cw_visibility[surface]
+            if not isinstance(raw_values, (list, tuple, set)):
+                continue
+            observed_visibility[surface] = list(dict.fromkeys(
+                str(value).strip() for value in raw_values if str(value).strip()
+            ))
+            nuvio_visibility[surface] = observed_visibility[surface]
+    visibility_echo = previous_snapshot.get('cw_visibility_echo', {})
+    visibility_echo = {
+        surface: dict(markers) for surface, markers in visibility_echo.items()
+        if surface in ('tv', 'mobile') and isinstance(markers, dict)
+    } if isinstance(visibility_echo, dict) else {}
+    visibility_tmdb_ids = set()
+    acknowledged_visibility_echoes = set()
+    if conn.type == 'nuvio':
+        for surface, current_values in observed_visibility.items():
+            current = set(current_values)
+            previous = set(previous_visibility.get(surface, []))
+            markers = visibility_echo.setdefault(surface, {})
+            for raw_key, expected_hidden in list(markers.items()):
+                if (raw_key in current) == bool(expected_hidden):
+                    markers.pop(raw_key, None)
+                    acknowledged_visibility_echoes.add((surface, raw_key))
+            # The first successful read of each surface establishes its own
+            # baseline, including when another platform was already known.
+            if surface not in previous_visibility:
+                continue
+            for raw_key in current - previous:
+                # A matching outbound hide is an acknowledgment, not a new
+                # user decision. Mismatched markers remain for a later pull.
+                if (surface, raw_key) not in acknowledged_visibility_echoes:
+                    base_key = raw_key.split('|', 1)[0] if surface == 'mobile' else raw_key
+                    mapped = mappings.get(base_key)
+                    if mapped is None and base_key.startswith('tmdb:'):
+                        mapped = base_key[5:]
+                    try:
+                        if mapped is not None:
+                            visibility_tmdb_ids.add(int(mapped))
+                    except (TypeError, ValueError):
+                        continue
     await release_rewatched_deletions(db, conn, watched, progress, mappings)
     # Streaming-library membership alone never creates a tracked entry.
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
@@ -370,9 +423,11 @@ async def observe_stream_snapshot(
     inferred_watch_ids = set()
     old_active=previous.get('progress',{})
     outbound = dict(previous.get('outbound', {}))
-    # A pull-only connection cannot be kept current by AnyList writes, so its
-    # missing playback is never authority to drop a local Watching entry.
-    removed=set(old_active)-set(active) if not first and sync_playback and conn.push_playback else set()
+    # Nuvio playback pulls remain authoritative for its own removals even when
+    # progress export is disabled; other pull-only sources do not infer them.
+    removed=set(old_active)-set(active) if not first and sync_playback and (
+        conn.push_playback or conn.type == 'nuvio'
+    ) else set()
     pending_writes = (await db.execute(select(StreamAction.payload).where(
         StreamAction.connection_id == conn.id,
         StreamAction.state == 'pending',
@@ -383,10 +438,25 @@ async def observe_stream_snapshot(
     lookup={(m.tmdb_id,m.media_type.value):m for m in known}
     # Preserve prior mappings for a title absent from this pull.
     mappings={**previous.get('mappings',{}),**{k:int(v) for k,v in tmdb_ids.items() if v is not None}}
-    missing={mappings[key] for key in removed if key in mappings} - {m.tmdb_id for m in known}
+    missing=({mappings[key] for key in removed if key in mappings}
+        | visibility_tmdb_ids) - {m.tmdb_id for m in known}
     if missing:
         rows=(await db.execute(select(Media).where(Media.tmdb_id.in_(missing),Media.media_type.in_([MediaType.movie,MediaType.series])))).scalars()
         lookup.update({(m.tmdb_id,m.media_type.value):m for m in rows})
+    visibility_status_times = {}
+    visibility_media_ids = {
+        media.id for tmdb_id in visibility_tmdb_ids
+        for media in (lookup.get((tmdb_id, 'series')), lookup.get((tmdb_id, 'movie')))
+        if media is not None
+    }
+    if visibility_media_ids:
+        pre_reconcile_entries = (await db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == conn.user_id,
+            TrackedEntry.media_id.in_(visibility_media_ids),
+        ))).scalars().all()
+        visibility_status_times = {
+            entry.media_id: status_changed_at(entry) for entry in pre_reconcile_entries
+        }
     preferences = await db.get(TrackingPreferences, conn.user_id)
     if first:
         # Watched-history rows describe past plays, not current Continue
@@ -422,6 +492,7 @@ async def observe_stream_snapshot(
         if not media:continue
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==conn.user_id,TrackedEntry.media_id==media.id))).scalar_one_or_none()
         if not entry or entry.status=='completed':continue
+        if conn.type == 'nuvio' and entry.status != 'watching':continue
         pending=(await db.execute(select(SyncReview.id).where(SyncReview.user_id==conn.user_id,SyncReview.media_id==media.id,SyncReview.state=='pending',SyncReview.kind.in_(['playback_removed','conflict'])))).first()
         if pending:continue
         # A local edit since the prior source observation has uncertain ordering.
@@ -609,6 +680,64 @@ async def observe_stream_snapshot(
                 await queue_sync_completion_rating(
                     db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
                 )
+    if not first and conn.type == 'nuvio' and (sync_playback or sync_watched):
+        # Watched episode history commonly remains for an unfinished series;
+        # a deliberate Next Up dismissal is independent of that history.
+        for tmdb_id in visibility_tmdb_ids:
+            media = lookup.get((tmdb_id, 'series')) or lookup.get((tmdb_id, 'movie'))
+            if media is None:
+                continue
+            entry = (await db.execute(select(TrackedEntry).where(
+                TrackedEntry.user_id == conn.user_id,
+                TrackedEntry.media_id == media.id,
+            ))).scalar_one_or_none()
+            # Next Up dismissals are a signal only for titles that were being
+            # watched. They do not revise planning, paused, or dropped entries.
+            if not entry or entry.status != 'watching':
+                continue
+            proposed = 'dropped' if media.media_type == MediaType.movie else 'paused'
+            pending = (await db.execute(select(SyncReview.id).where(
+                SyncReview.user_id == conn.user_id,
+                SyncReview.media_id == media.id,
+                SyncReview.state == 'pending',
+                SyncReview.kind.in_(['playback_removed', 'conflict']),
+            ))).first()
+            if pending:
+                continue
+            # Playback rows from this same pull may update status provenance
+            # before dismissal reconciliation. Compare against the local clock
+            # captured before processing this snapshot, so only an edit that
+            # predated the pull can create the newer-local-edit conflict.
+            changed_at = visibility_status_times.get(media.id, status_changed_at(entry))
+            conflict = bool(changed_at and prior_observed_at and changed_at > prior_observed_at)
+            auto_confirm = bool(preferences and preferences.auto_confirm
+                and not conflict and baseline.approved)
+            db.add(SyncReview(
+                user_id=conn.user_id, connection_id=conn.id, media_id=media.id,
+                kind='conflict' if conflict else 'playback_removed',
+                state='confirmed' if auto_confirm else 'pending',
+                previous_status=entry.status, proposed_status=proposed,
+                message=(f'{conn.name}: Continue Watching dismissal disagrees with a newer local edit; '
+                    'the local value was kept for review.' if conflict else
+                    f'{conn.name}: Continue Watching item was dismissed. Marked {proposed}; review the change.'),
+            ))
+            if conflict:
+                continue
+            prior_status = entry.status
+            entry.status = proposed
+            if changed_media_ids is not None:
+                changed_media_ids.add(media.id)
+            if media.media_type == MediaType.movie:
+                entry.progress = 0
+            mark_status_change(entry, f'{conn.type}:{conn.id}')
+            from core.stream_actions import queue_dismissals
+            await queue_dismissals(db, conn, media)
+            if auto_confirm:
+                from core.activity import record_daily_activity
+                await record_daily_activity(db, user_id=conn.user_id, media_id=media.id,
+                    status=proposed,
+                    score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+                    status_changed=True, previous_status=prior_status)
     resume={**previous.get('resume',{})}
     for key in removed:
         if not completed_progress(old_active[key],completed):resume[key]=old_active[key]
@@ -624,6 +753,8 @@ async def observe_stream_snapshot(
     completed=[row for row in completed if str(row.get('content_id')) not in deleted_keys]
     baseline.snapshot={'library':sorted(library_ids),'progress':active,'mappings':mappings,'resume':resume,
         'outbound':outbound if not first else {},
+        'nuvio_visibility':nuvio_visibility,
+        'cw_visibility_echo':visibility_echo,
         'watched': (sorted({watch_key(row) for row in watched_rows}) if sync_watched
                     else previous.get('watched', [])),
         'progress_completed': (sorted({watch_key(row) for row in progress_completed_rows}) if sync_playback

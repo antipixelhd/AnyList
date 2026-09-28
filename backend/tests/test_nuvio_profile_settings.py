@@ -12,6 +12,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/
 
 from core import nuvio
 from core.nuvio_settings import MobileSettings, TVSettings, next_up_seeds
+from core.nuvio_visibility import record_visibility_echo
 from models import MediaServerConnection, Media, MediaType
 
 
@@ -99,6 +100,67 @@ class ProfileSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.calls.clear()
         self.assertFalse(await self.update(hide=['tt1'], seeds={'tt1': {(1, 2), (2, 7)}}))
         self.assertEqual(self.writes(), [])
+
+    async def test_on_written_reports_only_exact_changed_keys_per_platform(self):
+        callback = AsyncMock()
+        self.blobs['tv']['features']['trakt_settings']['dismissed_next_up_keys']['value'].append('old|1|2')
+        await self.update(hide=['tt2'], seeds={'tt2': {(1, 3)}}, on_written=callback)
+        self.assertEqual(callback.await_args_list, [
+            unittest.mock.call({'tv': {'tt2': True}}),
+            unittest.mock.call({'mobile': {'tt2|1|3': True}}),
+        ])
+
+    async def test_on_written_keeps_confirmed_tv_delta_when_mobile_fails(self):
+        self.fail_mobile = True
+        callback = AsyncMock()
+        with self.assertRaisesRegex(nuvio.NuvioAPIError, 'mobile.*temporary'):
+            await self.update(hide=['tt2'], seeds={'tt2': {(1, 3)}}, on_written=callback)
+        callback.assert_awaited_once_with({'tv': {'tt2': True}})
+
+    async def test_confirmed_noop_show_retires_echo_by_title_alias(self):
+        callback = AsyncMock()
+        self.assertFalse(await self.update(show=['not-dismissed'], on_written=callback))
+        self.assertEqual(callback.await_args_list, [
+            unittest.mock.call({'tv': {'not-dismissed': False}}),
+            unittest.mock.call({'mobile': {'not-dismissed': False}}),
+        ])
+        self.assertEqual(self.writes(), [])
+
+    async def test_changed_show_also_retires_markers_for_already_visible_aliases(self):
+        self.blobs = {
+            'tv': {'features': {'trakt_settings': {'dismissed_next_up_keys': {
+                'type': 'string_set', 'value': ['tt2']}}}},
+            'mobile': {'features': {'continue_watching_settings_payload': json.dumps({
+                'dismissedNextUpKeys': ['tt2|1|2']})}},
+        }
+        callback = AsyncMock()
+        await self.update(show=['tt1', 'tt2'], on_written=callback)
+        self.assertEqual(callback.await_args_list, [
+            unittest.mock.call({'tv': {'tt2': False, 'tt1': False}}),
+            unittest.mock.call({'mobile': {'tt2|1|2': False, 'tt2': False, 'tt1': False}}),
+        ])
+
+    async def test_echo_recorder_adds_exact_hides_and_clears_mobile_alias_markers(self):
+        baseline = SimpleNamespace(snapshot={
+            'mappings': {'tt1': 1},
+            'cw_visibility_echo': {
+                'tv': {'unrelated-tv': True},
+                'mobile': {'tt1|1|2': True, 'tt2|3|4': True},
+            },
+        })
+        db = SimpleNamespace(get=AsyncMock(return_value=baseline))
+        conn = SimpleNamespace(id=4)
+
+        await record_visibility_echo(db, conn, {
+            'tv': {'new-tv': True},
+            'mobile': {'tt1': False},
+        })
+
+        self.assertEqual(baseline.snapshot['mappings'], {'tt1': 1})
+        self.assertEqual(baseline.snapshot['cw_visibility_echo'], {
+            'tv': {'unrelated-tv': True, 'new-tv': True},
+            'mobile': {'tt2|3|4': True},
+        })
 
     async def test_empty_visibility_intent_makes_no_remote_calls(self):
         with patch.object(nuvio, '_rpc', AsyncMock()) as rpc:

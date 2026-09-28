@@ -304,6 +304,15 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
                     200,
                     json=[{"content_id": "tmdb:550", "content_type": "movie", "position": 1000, "duration": 2000}],
                 )
+            if request.url.path.endswith("/sync_pull_profile_settings_blob"):
+                platform = payload["p_platform"]
+                if platform == "tv":
+                    blob = {"features": {"trakt_settings": {
+                        "dismissed_next_up_keys": {"type": "string_set", "value": ["tv-id"]}}}}
+                else:
+                    blob = {"features": {"continue_watching_settings_payload": json.dumps({
+                        "dismissedNextUpKeys": ["mobile-id|2|4"]})}}
+                return httpx.Response(200, json=[{"settings_json": blob}])
             return httpx.Response(404, json={"message": "unexpected request"})
 
         transport = httpx.MockTransport(handler)
@@ -323,6 +332,37 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data["library"]), 501)
         self.assertEqual(len(data["watched"]), 1)
         self.assertEqual(len(data["progress"]), 1)
+        self.assertEqual(data["cw_visibility"], {
+            "tv": ["tv-id"],
+            "mobile": ["mobile-id|2|4"],
+        })
+
+    async def test_pull_sync_data_omits_only_invalid_visibility_platform(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/auth/v1/token":
+                return httpx.Response(200, json={
+                    "access_token": "access-token", "refresh_token": "new-refresh", "expires_in": 3600,
+                })
+            payload = json.loads(request.content or b"{}")
+            if request.url.path.endswith("/sync_pull_profiles"):
+                return httpx.Response(200, json=[{"profile_index": 2}])
+            if request.url.path.endswith(("/sync_pull_library", "/sync_pull_watched_items", "/sync_pull_watch_progress")):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/sync_pull_profile_settings_blob"):
+                if payload["p_platform"] == "tv":
+                    return httpx.Response(200, json=[{"settings_json": {"features": {
+                        "trakt_settings": {"dismissed_next_up_keys": {
+                            "type": "string_set", "value": ["kept-tv-key"]}}}}}])
+                return httpx.Response(200, json=[{"settings_json": {"features": {
+                    "continue_watching_settings_payload": "not-json"}}}])
+            return httpx.Response(404, json={"message": "unexpected request"})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
+            _REAL_ASYNC_CLIENT(transport=transport, **kwargs)):
+            _session, data = await nuvio.pull_sync_data("https://api.nuvio.tv/", "old-refresh", 2)
+
+        self.assertEqual(data["cw_visibility"], {"tv": ["kept-tv-key"]})
 
     async def test_on_refresh_fires_before_a_later_pull_call_can_fail_it_away(self) -> None:
         # Regression test: Nuvio's refresh token is single-use. If a pull RPC

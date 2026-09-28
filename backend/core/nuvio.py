@@ -1,4 +1,6 @@
 import asyncio
+import inspect
+import logging
 import os
 import secrets
 import string
@@ -30,6 +32,7 @@ _ORIGIN_CLIENT_ID_MUTATION_RPCS = frozenset({
 })
 _origin_client_id: str | None = None
 _origin_client_id_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 # _rpc retries a transient network/timeout failure this many times (so up to
 # 1 + _RPC_MAX_RETRIES attempts total) before giving up, with a short delay
@@ -145,7 +148,8 @@ async def _pull_profile_settings(client, url, access_token, profile_id, adapter=
     return blob
 
 
-async def update_next_up_dismissals(client, url, access_token, profile_id, *, hide=(), show=(), seeds=None):
+async def update_next_up_dismissals(client, url, access_token, profile_id, *, hide=(), show=(), seeds=None,
+        on_written=None):
     """Merge per-content Next Up visibility without replacing other settings.
 
     Each platform owns a different representation of the same visibility intent.
@@ -169,12 +173,23 @@ async def update_next_up_dismissals(client, url, access_token, profile_id, *, hi
             original = await _pull_profile_settings(client, url, access_token, profile_id, adapter)
             blob, expected = adapter.merge(original, hidden, visible, seeds or {})
             if blob == original:
+                if on_written and visible:
+                    result = on_written({adapter.platform: {key: False for key in visible}})
+                    if inspect.isawaitable(result):
+                        await result
                 continue
+            previous = adapter.dismissals(original)
+            delta = {key: key in expected for key in previous ^ expected}
+            delta.update({key: False for key in visible})
             await _rpc(client, url, access_token, 'sync_push_profile_settings_blob',
                 {'p_profile_id': profile_id, 'p_platform': adapter.platform, 'p_settings_json': blob})
             confirmed = await _pull_profile_settings(client, url, access_token, profile_id, adapter)
             if adapter.dismissals(confirmed) != expected:
                 raise NuvioAPIError('Nuvio did not confirm Next Up visibility')
+            if on_written and delta:
+                result = on_written({adapter.platform: delta})
+                if inspect.isawaitable(result):
+                    await result
             changed = True
         except (NuvioAPIError, ValueError, TypeError, httpx.HTTPError) as exc:
             raise NuvioAPIError(f'Nuvio {adapter.platform} profile settings: {exc}') from exc
@@ -528,7 +543,7 @@ async def pull_sync_data(
     profile_id: int,
     *,
     on_refresh: OnRefresh = None,
-) -> tuple[NuvioSession, dict[str, list[dict[str, Any]]]]:
+) -> tuple[NuvioSession, dict[str, Any]]:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
         if on_refresh:
@@ -541,7 +556,19 @@ async def pull_sync_data(
             _pull_watched_items(client, url, session.access_token, profile_id),
             _pull_watch_progress(client, url, session.access_token, profile_id),
         )
-    return session, {"library": library, "watched": watched, "progress": progress}
+        cw_visibility = {}
+        for adapter in SETTINGS_ADAPTERS:
+            try:
+                blob = await _pull_profile_settings(client, url, session.access_token,
+                    profile_id, adapter)
+                cw_visibility[adapter.platform] = sorted(adapter.dismissals(blob))
+            except (NuvioAPIError, ValueError, TypeError, httpx.HTTPError) as exc:
+                # Settings are an independent observation. Omitting an unreadable
+                # platform lets snapshot reconciliation retain its last known state.
+                logger.warning("Nuvio %s visibility pull unavailable (%s)",
+                    adapter.platform, type(exc).__name__)
+    return session, {"library": library, "watched": watched, "progress": progress,
+        "cw_visibility": cw_visibility}
 
 
 _LIBRARY_PUSH_FIELDS = (

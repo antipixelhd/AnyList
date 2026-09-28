@@ -66,6 +66,25 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         accepted = await changed_watch_rows_from_source(db, SimpleNamespace(id=1, user_id=7), [old, fresh])
         self.assertEqual(accepted, [fresh])
 
+    async def test_progress_snapshot_update_preserves_visibility_echo_markers(self):
+        from core.stream_actions import _clear_nuvio_baseline_progress
+        marker = {'tv': {'tt123': True}, 'mobile': {'tt123|2|8': True}}
+        baseline = SimpleNamespace(snapshot={
+            'progress': {'tt123_s2e8': {'content_id': 'tt123', 'progress_key': 'tt123_s2e8'}},
+            'resume': {'tt123': {'content_id': 'tt123'}},
+            'outbound': {'tt123': {'progress_key': 'tt123_s2e8'}},
+            'records': {'progress': [{'content_id': 'tt123', 'progress_key': 'tt123_s2e8'}]},
+            'cw_visibility_echo': marker,
+        })
+        db = SimpleNamespace(get=AsyncMock(return_value=baseline))
+
+        await _clear_nuvio_baseline_progress(db, 12, [
+            {'content_id': 'tt123', 'progress_key': 'tt123_s2e8'},
+        ])
+
+        self.assertEqual(baseline.snapshot['cw_visibility_echo'], marker)
+        self.assertEqual(baseline.snapshot['progress'], {})
+
     async def test_stremio_progress_creates_temporary_item_for_new_watching_title(self):
         record={'content_id':'tt1234567','content_type':'movie','title':'Runner',
             'position':1000,'duration':120_000,
@@ -206,7 +225,9 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
              patch('core.nuvio._pull_watch_progress',AsyncMock(side_effect=[[],[record]])) as read, \
              patch('core.nuvio._rpc',AsyncMock()) as write:
             await push_nuvio_progress(db,conn,record)
-        self.assertEqual(self.visibility.await_args.kwargs, {'show': ['tt1']})
+        self.assertEqual({key: value for key, value in self.visibility.await_args.kwargs.items()
+            if key != 'on_written'}, {'show': ['tt1']})
+        self.assertTrue(callable(self.visibility.await_args.kwargs['on_written']))
 
         self.assertEqual(write.await_args.args[-2],'sync_push_watch_progress')
         self.assertEqual(write.await_args.args[-1]['p_entries'],[{key:value for key,value in record.items()
@@ -223,7 +244,8 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
              patch('core.nuvio._pull_watched_items',AsyncMock(return_value=[{'content_id':'tt1','content_type':'series','season':1,'episode':1}])) as watched, \
              patch('core.nuvio._rpc',AsyncMock()) as write:
             await dismiss_nuvio(AsyncMock(),conn,record,restore=True)
-            self.assertEqual(self.visibility.await_args.kwargs, {'show': ['tt1']})
+            self.assertEqual({key: value for key, value in self.visibility.await_args.kwargs.items()
+                if key != 'on_written'}, {'show': ['tt1']})
             self.assertEqual(write.await_args.args[-2],'sync_push_watch_progress')
             self.assertEqual(write.await_args.args[-1]['p_entries'],[record])
             watched.assert_not_awaited()
@@ -231,7 +253,8 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
             await dismiss_nuvio(AsyncMock(),conn,record,restore=True)
             write.assert_not_awaited()
             await dismiss_nuvio(AsyncMock(),conn,{'content_id':'tt1','content_type':'series','deleted_at':'2026-09-18T12:00:00+00:00'},reset=True)
-            self.assertEqual(self.visibility.await_args.kwargs, {'hide': ['tt1'], 'seeds': {}})
+            self.assertEqual({key: value for key, value in self.visibility.await_args.kwargs.items()
+                if key != 'on_written'}, {'hide': ['tt1'], 'seeds': {}})
             self.assertEqual([call.args[-2] for call in write.await_args_list],['sync_delete_watch_progress','sync_delete_watched_items'])
             self.assertEqual(write.await_args_list[0].args[-1]['p_keys'],['tt1_s1e2'])
             self.assertEqual(write.await_args_list[1].args[-1]['p_keys'],[{'content_id':'tt1','season':1,'episode':1}])

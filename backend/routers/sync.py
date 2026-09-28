@@ -106,6 +106,13 @@ async def _get_effective_tmdb_key(db: AsyncSession, user_settings: UserSettings 
     gs = gs_result.scalar_one_or_none()
     return gs.tmdb_api_key if gs else None
 
+
+async def _record_full_push_visibility_echo(db, conn, written) -> None:
+    """Persist a confirmed settings echo before later full-push writes run."""
+    from core.nuvio_visibility import record_visibility_echo
+    await record_visibility_echo(db, conn, written)
+    await db.commit()
+
 router = APIRouter()
 
 # Global semaphore — at most one sync running at a time across all users
@@ -5386,6 +5393,7 @@ async def _run_nuvio_sync(
                     fresh_import=full_resync,
                     source_started_at=pull_started_at,
                     changed_media_ids=changed_media_ids,
+                    cw_visibility=data.get("cw_visibility"),
                 )
                 if (propagated_watch_ids or removed_watch_ids) and not full_resync:
                     from core.pull_propagation import propagate_media_server_pull
@@ -7484,7 +7492,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 hidden, visible, seeds = await next_up_visibility(db, user_id, conn.id,
                                     [*remote_watches, *watched_items, *progress_items])
                                 await nuvio.update_next_up_dismissals(client, conn.url,
-                                    session.access_token, profile, hide=hidden, show=visible, seeds=seeds)
+                                    session.access_token, profile, hide=hidden, show=visible, seeds=seeds,
+                                    on_written=lambda written: _record_full_push_visibility_echo(
+                                        db, conn, written))
                             remote_watch_by_key = {watch_identity(row): row for row in remote_watches}
                             watched_to_push = [item for item in watched_items
                                 if watch_identity(item) not in remote_watch_by_key

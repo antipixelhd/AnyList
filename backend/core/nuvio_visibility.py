@@ -3,7 +3,46 @@ from sqlalchemy import select
 from models.media import Media
 from models.base import MediaType
 from models.tracking import TrackedEntry, StreamBaseline
-from core.nuvio_settings import next_up_seeds
+from core.nuvio_settings import content_key, next_up_seeds
+
+
+async def record_visibility_echo(db, conn, written):
+    """Remember only confirmed outbound hide keys for the next provider pull.
+
+    ``written`` is keyed by platform, then by the raw key stored in that
+    platform's profile settings. A true value means the confirmed write added
+    the key; false clears a stale hide marker after a confirmed show.
+    """
+    if not written:
+        return
+    baseline = await db.get(StreamBaseline, conn.id)
+    if not baseline:
+        return
+    snapshot = dict(baseline.snapshot or {})
+    markers = {platform: dict(keys) for platform, keys in
+        (snapshot.get('cw_visibility_echo') or {}).items() if isinstance(keys, dict)}
+    for platform, changes in written.items():
+        if platform not in ('tv', 'mobile') or not isinstance(changes, dict):
+            continue
+        platform_markers = markers.setdefault(platform, {})
+        for raw_key, present in changes.items():
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            if present is True:
+                platform_markers[key] = True
+            else:
+                platform_markers = {marker_key: marker_value
+                    for marker_key, marker_value in platform_markers.items()
+                    if content_key(marker_key) != content_key(key)}
+                markers[platform] = platform_markers
+        if not platform_markers:
+            markers.pop(platform, None)
+    if markers:
+        snapshot['cw_visibility_echo'] = markers
+    else:
+        snapshot.pop('cw_visibility_echo', None)
+    baseline.snapshot = snapshot
 
 
 def _tmdb_key(value):
@@ -163,4 +202,5 @@ async def sync_next_up_visibility(db, conn, records):
             hidden, visible, seeds = await next_up_visibility(db, conn.user_id, conn.id,
                 records, seed_records=watched)
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                profile, hide=hidden, show=visible, seeds=seeds)
+                profile, hide=hidden, show=visible, seeds=seeds,
+                on_written=lambda delta: record_visibility_echo(db, conn, delta))

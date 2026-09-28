@@ -150,7 +150,8 @@ async def push_nuvio_progress(db, conn, record):
                 and row.get('season') == record.get('season') and row.get('episode') == record.get('episode')]
             if len(matches) == 1 and same_progress(matches[0], record):
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, show=_nuvio_action_content_ids(record))
+                    profile, show=_nuvio_action_content_ids(record),
+                    on_written=_nuvio_visibility_echo_writer(db, conn))
                 return
             if matches:
                 if len(matches) != 1:
@@ -173,7 +174,8 @@ async def push_nuvio_progress(db, conn, record):
             if len(confirmed) != 1 or not same_progress(confirmed[0], record):
                 raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                profile, show=_nuvio_action_content_ids(record))
+                profile, show=_nuvio_action_content_ids(record),
+                on_written=_nuvio_visibility_echo_writer(db, conn))
 
 
 async def queue_progress_update(db, source, media, record):
@@ -311,7 +313,8 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
                 watched = await nuvio._pull_watched_items(client, conn.url, session.access_token, profile)
                 content_ids = await _nuvio_visibility_aliases(db, conn, record, watched)
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, hide=content_ids, seeds=nuvio.next_up_seeds(watched, aliases=content_ids))
+                    profile, hide=content_ids, seeds=nuvio.next_up_seeds(watched, aliases=content_ids),
+                    on_written=_nuvio_visibility_echo_writer(db, conn))
                 return
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
             watched_rows = []
@@ -337,14 +340,16 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
                 watched_keys=[{k:r[k] for k in ('content_id','season','episode') if k in r} for r in matching_watched]
                 if watched_keys:await nuvio._rpc(client,conn.url,session.access_token,'sync_delete_watched_items',{'p_profile_id':profile,'p_keys':watched_keys})
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, hide=[record['content_id']], seeds={})
+                    profile, hide=[record['content_id']], seeds={},
+                    on_written=_nuvio_visibility_echo_writer(db, conn))
                 return
             content_ids = _nuvio_action_content_ids(record)
             matches = [r for r in rows if r.get('content_id') == record['content_id']
                 and r.get('season') == record.get('season') and r.get('episode') == record.get('episode')]
             if restore:
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, show=content_ids)
+                    profile, show=content_ids,
+                    on_written=_nuvio_visibility_echo_writer(db, conn))
                 if matches:
                     if len(matches) == 1 and same_progress(matches[0],record):
                         return
@@ -427,7 +432,8 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
             # Keep watched_items intact: only generated Next Up visibility and
             # active Resume/In Progress rows are removed for each known alias.
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                profile, hide=content_ids, seeds=nuvio.next_up_seeds(watched_rows, aliases=content_ids))
+                profile, hide=content_ids, seeds=nuvio.next_up_seeds(watched_rows, aliases=content_ids),
+                on_written=_nuvio_visibility_echo_writer(db, conn))
 
 
 def _nuvio_action_content_ids(record):
@@ -437,6 +443,13 @@ def _nuvio_action_content_ids(record):
         if key and key not in ids:
             ids.append(key)
     return ids
+
+
+def _nuvio_visibility_echo_writer(db, conn):
+    async def record(written):
+        from core.nuvio_visibility import record_visibility_echo
+        await record_visibility_echo(db, conn, written)
+    return record
 
 
 async def _nuvio_visibility_aliases(db, conn, record, records):
@@ -485,7 +498,8 @@ async def show_nuvio_next_up(db, conn, record):
                     raise nuvio.NuvioAPIError('Nuvio synthetic resume removal was not confirmed by readback')
                 await _clear_nuvio_baseline_progress(db, conn.id, cleared_rows)
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                nuvio.parse_profile_id(conn.server_user_id), show=content_ids)
+                nuvio.parse_profile_id(conn.server_user_id), show=content_ids,
+                on_written=_nuvio_visibility_echo_writer(db, conn))
             return cleared_rows
 
 

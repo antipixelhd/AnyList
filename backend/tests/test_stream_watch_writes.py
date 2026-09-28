@@ -110,6 +110,22 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(baseline.snapshot["mappings"], {"existing-id": 99})
 
+    async def test_full_push_persists_confirmed_visibility_echo_before_continuing(self):
+        from routers.sync import _record_full_push_visibility_echo
+        events = []
+        db = SimpleNamespace(commit=AsyncMock(side_effect=lambda: events.append("commit")))
+        conn = SimpleNamespace(id=12)
+        written = {"tv": {"tt42": True}}
+
+        async def record(_db, _conn, _written):
+            events.append("record")
+
+        with patch("core.nuvio_visibility.record_visibility_echo", side_effect=record) as save:
+            await _record_full_push_visibility_echo(db, conn, written)
+
+        save.assert_awaited_once_with(db, conn, written)
+        self.assertEqual(events, ["record", "commit"])
+
 
 if __name__ == "__main__":
     unittest.main()
