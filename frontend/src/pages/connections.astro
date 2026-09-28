@@ -34,7 +34,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
 <TrackerSettings title="Connections">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
-  <div class="max-w-4xl mx-auto min-w-0 w-full">
+  <div data-connections-page class="max-w-4xl mx-auto min-w-0 w-full">
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="space-y-12 grid-cols-1 min-w-0 w-full">
@@ -3211,7 +3211,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
 
   function setupActions() {
-    const btns = document.querySelectorAll('.js-action-btn');
+    const btns = document.querySelectorAll('[data-connections-page] .js-action-btn');
     btns.forEach(btn => {
       // Clean up previous listeners if any (important for Astro View Transitions)
       const newBtn = btn.cloneNode(true);
@@ -3896,6 +3896,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             url = '/api/proxy/mdblist/push';
           }
 
+          if (!url) throw new Error('This connection action is unavailable.');
           const res = await fetch(url, {
             method,
             headers: {

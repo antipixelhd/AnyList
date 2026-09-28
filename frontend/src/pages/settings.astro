@@ -23,7 +23,7 @@ if (me.totp_enabled) {
 
 <TrackerSettings title="Account">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
-  <div class="max-w-4xl mx-auto">
+  <div data-account-settings-page class="max-w-4xl mx-auto">
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="space-y-12">
@@ -1056,7 +1056,7 @@ if (me.totp_enabled) {
   }
 
   function setupActions() {
-    const btns = document.querySelectorAll('.js-action-btn');
+    const btns = document.querySelectorAll('[data-account-settings-page] .js-action-btn');
     btns.forEach(btn => {
       // Clean up previous listeners if any (important for Astro View Transitions)
       const newBtn = btn.cloneNode(true);
@@ -1090,6 +1090,7 @@ if (me.totp_enabled) {
             requestBody = { key: val };
           }
 
+          if (!url) throw new Error('This account action is unavailable.');
           const res = await fetch(url, {
             method,
             headers: {
