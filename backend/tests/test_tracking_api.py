@@ -249,6 +249,28 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def save(self, media, **body):
         return await self.client.patch(f'/tracking/entry/{media.id}',json=body)
 
+    async def _create_clear_job(self, conn, scope):
+        from core.streaming_clear import target_identity
+        job = SyncJob(
+            user_id=self.owner.id,
+            source=CollectionSource.nuvio if conn.type == 'nuvio' else CollectionSource.stremio,
+            status=SyncStatus.pending, connection_id=conn.id, job_type='clear',
+            stats={'clear_scope': scope, 'target_identity': target_identity(conn)},
+        )
+        self.db.add(job)
+        await self.db.commit()
+        return job
+
+    async def _run_clear_job_in_fixture_session(self, connection_id, job_id):
+        from core import streaming_clear
+
+        class _SessionContext:
+            async def __aenter__(_self): return self.db
+            async def __aexit__(_self, *_args): return False
+
+        with patch.object(streaming_clear, 'AsyncSessionLocal', new=lambda: _SessionContext()):
+            await streaming_clear.run_clear_data_job(self.owner.id, connection_id, job_id)
+
     async def test_favorites_can_be_reordered_and_profile_reads_saved_order(self):
         other = Media(title='Second Fixture Film', media_type=MediaType.movie)
         self.db.add(other)
@@ -1744,6 +1766,77 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         write.assert_awaited_once()
         self.assertEqual((await self.client.get(f'/tracking/library/{self.movie.id}')).json()['connections'][0]['state'],'applied')
 
+    async def test_pending_library_delivery_retries_without_another_provider_pull(self):
+        from core import stremio
+        import main
+
+        self.movie.tmdb_data={'external_ids':{'imdb_id':'tt987650031'}}
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Retry Stremio',
+            url='https://example.test',token='fixture',push_collection=True)
+        self.db.add(conn);await self.db.flush()
+        self.db.add(StreamBaseline(connection_id=conn.id,user_id=self.owner.id,snapshot={},approved=True))
+        await self.db.commit()
+
+        with (patch.object(stremio,'datastore_get',AsyncMock(return_value=[])),
+              patch.object(stremio,'datastore_put',AsyncMock(side_effect=[RuntimeError('offline'), None])) as write):
+            saved=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
+            self.assertEqual(saved.status_code,200,saved.text)
+            self.assertTrue(saved.json()['pending'])
+            delivery=(await self.db.execute(select(StreamingLibraryDelivery).where(
+                StreamingLibraryDelivery.connection_id==conn.id))).scalar_one()
+            self.assertEqual((delivery.state,delivery.attempts,delivery.last_error),
+                ('pending',1,'RuntimeError'))
+
+            request_db = self.db
+            class _Context:
+                async def __aenter__(self): return request_db
+                async def __aexit__(self,*_args): return False
+            await main._dispatch_pending_stream_actions_once(lambda: _Context())
+
+        await self.db.refresh(delivery)
+        self.assertEqual((delivery.state,delivery.attempts,delivery.last_error),('applied',2,None))
+        self.assertEqual(write.await_count,2)
+
+    async def test_provider_clear_keeps_pending_library_delivery_dormant_until_new_choice(self):
+        from core.streaming_library import (
+            clear_pending_library_deliveries,
+            dispatch_pending_library_deliveries,
+            retry_pending_library_deliveries,
+            set_library_intent,
+        )
+        from core import stremio
+
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Cleared Stremio',
+            url='https://example.test',token='fixture',push_collection=True)
+        self.db.add(conn);await self.db.flush()
+        intent=StreamingLibraryIntent(user_id=self.owner.id,media_id=self.movie.id,desired=True)
+        self.db.add(intent);await self.db.flush()
+        delivery=StreamingLibraryDelivery(intent_id=intent.id,connection_id=conn.id,desired=True,
+            state='pending',attempts=2,last_error='StremioAPIError')
+        self.db.add(delivery);await self.db.commit()
+        missing_intent = StreamingLibraryIntent(user_id=self.owner.id, media_id=self.show.id, desired=True)
+        self.db.add(missing_intent);await self.db.commit()
+
+        self.assertEqual(await clear_pending_library_deliveries(self.db,self.owner.id,conn.id),2)
+        await self.db.commit()
+        with patch.object(stremio,'datastore_put',AsyncMock()) as write:
+            await retry_pending_library_deliveries(self.db,self.owner.id,conn.id)
+            self.assertEqual(await dispatch_pending_library_deliveries(self.db,self.owner.id),0)
+        await self.db.refresh(delivery)
+        self.assertEqual((delivery.state,delivery.attempts,delivery.last_error),('cleared',2,None))
+        missing_delivery = (await self.db.execute(select(StreamingLibraryDelivery).where(
+            StreamingLibraryDelivery.intent_id == missing_intent.id,
+            StreamingLibraryDelivery.connection_id == conn.id,
+        ))).scalar_one()
+        self.assertEqual(missing_delivery.state, 'cleared')
+        write.assert_not_awaited()
+
+        # A fresh AnyList choice is allowed to reactivate the suppressed row,
+        # even when it confirms the current canonical value.
+        await set_library_intent(self.db,self.owner.id,self.movie.id,True)
+        await self.db.refresh(delivery)
+        self.assertEqual(delivery.state,'pending')
+
     async def test_library_action_tracks_partial_delivery_and_prevents_readding_removed_title(self):
         from routers.sync import _build_nuvio_library_items
         from core import stremio, nuvio
@@ -2006,6 +2099,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_library_fanout_requires_approved_source_and_target(self):
         from routers.sync import _fan_out_streaming_library_changes
+        from core import stremio
 
         source = MediaServerConnection(
             user_id=self.owner.id,
@@ -2025,6 +2119,16 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.db.add_all([source, target])
         await self.db.flush()
+        self.movie.tmdb_data = {'external_ids': {'imdb_id': 'tt1234567'}}
+        collection = Collection(user_id=self.owner.id, media_id=self.movie.id)
+        self.db.add(collection)
+        await self.db.flush()
+        self.db.add(CollectionFile(
+            collection_id=collection.id,
+            connection_id=source.id,
+            source=CollectionSource.nuvio,
+            source_id='tt1234567',
+        ))
         source_baseline = StreamBaseline(
             connection_id=source.id,
             user_id=self.owner.id,
@@ -2040,7 +2144,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.db.add_all([source_baseline, target_baseline])
         await self.db.commit()
 
-        with patch('routers.sync._push_stremio_connection', AsyncMock()) as push:
+        with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
+              patch.object(stremio, 'datastore_put', AsyncMock()) as write):
             await _fan_out_streaming_library_changes(
                 self.db,
                 self.owner.id,
@@ -2049,7 +2154,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 removed_collected_ids=set(),
                 api_key=None,
             )
-            push.assert_not_awaited()
+            write.assert_not_awaited()
+            self.assertIsNone((await self.db.execute(select(StreamingLibraryIntent).where(
+                StreamingLibraryIntent.user_id == self.owner.id,
+                StreamingLibraryIntent.media_id == self.movie.id,
+            ))).scalar_one_or_none())
 
             source_baseline.approved = True
             target_baseline.approved = False
@@ -2062,7 +2171,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 removed_collected_ids=set(),
                 api_key=None,
             )
-            push.assert_not_awaited()
+            write.assert_not_awaited()
+            delivery = (await self.db.execute(select(StreamingLibraryDelivery).where(
+                StreamingLibraryDelivery.connection_id == target.id,
+            ))).scalar_one()
+            self.assertEqual(delivery.state, 'pending')
 
             target_baseline.approved = True
             await self.db.commit()
@@ -2074,7 +2187,151 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 removed_collected_ids=set(),
                 api_key=None,
             )
-            push.assert_awaited_once()
+            write.assert_awaited_once()
+            self.assertEqual(delivery.state, 'applied')
+            rows = (await self.db.execute(select(StreamingLibraryDelivery))).scalars().all()
+            by_connection = {row.connection_id: row for row in rows}
+            self.assertEqual(set(by_connection), {source.id, target.id})
+            self.assertEqual(by_connection[source.id].state, 'observed')
+
+    async def test_provider_library_delta_retries_failed_peer_without_another_pull(self):
+        from routers.sync import _fan_out_streaming_library_changes
+        from core import stremio, nuvio
+        import main
+
+        source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio source',
+            url='https://nuvio.invalid', token='source-token', server_user_id='1')
+        target = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Stremio target',
+            url='https://api.strem.io', token='target-token', push_collection=True)
+        self.movie.tmdb_data = {'external_ids': {'imdb_id': 'tt987650031'}}
+        collection = Collection(user_id=self.owner.id, media_id=self.movie.id)
+        self.db.add_all([source, target, collection])
+        await self.db.flush()
+        self.db.add(CollectionFile(collection_id=collection.id, connection_id=source.id,
+            source=CollectionSource.nuvio, source_id='tt987650031'))
+        observed_at = datetime(2026, 1, 1)
+        self.db.add_all([
+            StreamBaseline(connection_id=source.id, user_id=self.owner.id, approved=True,
+                           snapshot={}, observed_at=observed_at),
+            StreamBaseline(connection_id=target.id, user_id=self.owner.id, approved=True, snapshot={}),
+            StreamingLibraryIntent(user_id=self.owner.id, media_id=self.movie.id, desired=False,
+                                   updated_at=observed_at - timedelta(days=1)),
+        ])
+        await self.db.commit()
+        intent = (await self.db.execute(select(StreamingLibraryIntent).where(
+            StreamingLibraryIntent.user_id == self.owner.id,
+            StreamingLibraryIntent.media_id == self.movie.id,
+        ))).scalar_one()
+        self.db.add(StreamingLibraryDelivery(intent_id=intent.id, connection_id=source.id,
+            desired=False, state='pending', attempts=1, last_error='Stale local write'))
+        await self.db.commit()
+
+        class _Context:
+            def __init__(self, db): self.db = db
+            async def __aenter__(self): return self.db
+            async def __aexit__(self, *_args): return False
+
+        with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
+              patch.object(stremio, 'datastore_put', AsyncMock(side_effect=[RuntimeError('offline'), None])) as write,
+              patch.object(nuvio, 'merge_library', AsyncMock()) as source_write):
+            await _fan_out_streaming_library_changes(
+                self.db, self.owner.id, source.id,
+                new_collected_ids={self.movie.id}, removed_collected_ids=set(), api_key=None,
+            )
+            delivery = (await self.db.execute(select(StreamingLibraryDelivery).where(
+                StreamingLibraryDelivery.connection_id == target.id,
+            ))).scalar_one()
+            self.assertEqual((delivery.state, delivery.attempts), ('pending', 1))
+
+            await main._dispatch_pending_stream_actions_once(lambda: _Context(self.db))
+
+        await self.db.refresh(delivery)
+        self.assertEqual((delivery.state, delivery.attempts, delivery.last_error), ('applied', 2, None))
+        self.assertEqual(write.await_count, 2)
+        source_delivery = (await self.db.execute(select(StreamingLibraryDelivery).where(
+            StreamingLibraryDelivery.connection_id == source.id,
+        ))).scalar_one()
+        self.assertEqual(source_delivery.state, 'observed')
+        source_write.assert_not_awaited()
+
+    async def test_provider_library_delta_preserves_newer_local_choice(self):
+        from routers.sync import _fan_out_streaming_library_changes
+        from core import stremio
+
+        source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio source',
+            url='https://nuvio.invalid', token='source-token', server_user_id='1')
+        target = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Stremio target',
+            url='https://api.strem.io', token='target-token', push_collection=True)
+        self.db.add_all([source, target])
+        await self.db.flush()
+        observed_at = datetime(2026, 1, 1)
+        self.db.add_all([
+            StreamBaseline(connection_id=source.id, user_id=self.owner.id, approved=True,
+                           snapshot={}, observed_at=observed_at),
+            StreamBaseline(connection_id=target.id, user_id=self.owner.id, approved=True, snapshot={}),
+            StreamingLibraryIntent(user_id=self.owner.id, media_id=self.movie.id, desired=False,
+                                   updated_at=observed_at + timedelta(days=1)),
+            Collection(user_id=self.owner.id, media_id=self.movie.id),
+        ])
+        await self.db.commit()
+
+        with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
+              patch.object(stremio, 'datastore_put', AsyncMock()) as write):
+            await _fan_out_streaming_library_changes(
+                self.db, self.owner.id, source.id,
+                new_collected_ids={self.movie.id}, removed_collected_ids=set(), api_key=None,
+            )
+
+        intent = (await self.db.execute(select(StreamingLibraryIntent).where(
+            StreamingLibraryIntent.user_id == self.owner.id,
+            StreamingLibraryIntent.media_id == self.movie.id,
+        ))).scalar_one()
+        self.assertFalse(intent.desired)
+        self.assertEqual((await self.db.execute(select(StreamingLibraryDelivery))).scalars().all(), [])
+        write.assert_not_awaited()
+
+    async def test_bounded_library_retry_rotates_past_a_failing_title(self):
+        from core import stremio
+        from core.streaming_library import dispatch_pending_library_deliveries
+
+        second = Media(title='Second Retry Film', media_type=MediaType.movie,
+                       tmdb_data={'external_ids': {'imdb_id': 'tt987650032'}})
+        self.movie.tmdb_data = {'external_ids': {'imdb_id': 'tt987650031'}}
+        connection = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Stremio',
+            url='https://api.strem.io', token='target-token', push_collection=True)
+        self.db.add_all([second, connection])
+        await self.db.flush()
+        intents = [
+            StreamingLibraryIntent(user_id=self.owner.id, media_id=media.id, desired=True)
+            for media in (self.movie, second)
+        ]
+        self.db.add_all(intents)
+        await self.db.flush()
+        deliveries = [StreamingLibraryDelivery(intent_id=intent.id, connection_id=connection.id,
+            desired=True, state='pending') for intent in intents]
+        self.db.add_all(deliveries)
+        self.db.add(StreamBaseline(connection_id=connection.id, user_id=self.owner.id,
+                                  approved=True, snapshot={}))
+        await self.db.commit()
+
+        with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
+              patch.object(stremio, 'datastore_put', AsyncMock(
+                  side_effect=[RuntimeError('offline'), None, None])) as write):
+            await dispatch_pending_library_deliveries(self.db, self.owner.id, limit=1)
+            await self.db.refresh(deliveries[0])
+            await self.db.refresh(deliveries[1])
+            self.assertEqual((deliveries[0].state, deliveries[0].attempts), ('pending', 1))
+            self.assertEqual((deliveries[1].state, deliveries[1].attempts), ('pending', 0))
+
+            await dispatch_pending_library_deliveries(self.db, self.owner.id, limit=1)
+            await self.db.refresh(deliveries[1])
+            self.assertEqual((deliveries[1].state, deliveries[1].attempts), ('applied', 1))
+
+            await dispatch_pending_library_deliveries(self.db, self.owner.id, limit=1)
+
+        await self.db.refresh(deliveries[0])
+        self.assertEqual((deliveries[0].state, deliveries[0].attempts), ('applied', 2))
+        self.assertEqual(write.await_count, 3)
 
     async def test_title_exposes_available_catalogue_details(self):
         self.movie.original_title = 'Original Fixture Film'
@@ -4277,5 +4534,371 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await self.db.execute(select(WatchEvent.id).where(
             WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
         ))).scalars().all()), 1)
+
+    async def test_clear_success_projects_only_selected_scope_and_preserves_local_and_queued_truth(self):
+        from core import stremio
+        from models.watch_intent import WatchIntent
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='stremio', name='Scoped clear fixture',
+            url='https://example.test', token='fixture', push_collection=True,
+        )
+        self.db.add(conn)
+        await self.db.flush()
+        self.db.add(Collection(user_id=self.owner.id, media_id=self.movie.id))
+        await self.db.flush()
+        collection = (await self.db.execute(select(Collection).where(
+            Collection.user_id == self.owner.id, Collection.media_id == self.movie.id,
+        ))).scalar_one()
+        self.db.add(CollectionFile(
+            collection_id=collection.id, connection_id=conn.id,
+            source=CollectionSource.stremio, source_id='tt-scoped',
+        ))
+        intent = StreamingLibraryIntent(user_id=self.owner.id, media_id=self.movie.id, desired=True)
+        self.db.add(intent)
+        await self.db.flush()
+        delivery = StreamingLibraryDelivery(
+            intent_id=intent.id, connection_id=conn.id, desired=True, state='pending', attempts=2,
+        )
+        watch_intent = WatchIntent(
+            user_id=self.owner.id, connection_id=conn.id, media_id=self.movie.id,
+            desired_watched=True, state='pending',
+        )
+        playback_action = StreamAction(
+            user_id=self.owner.id, connection_id=conn.id, media_id=self.movie.id,
+            action='upsert', payload={'content_id': 'tt-scoped'}, state='pending',
+        )
+        self.db.add_all([delivery, watch_intent, playback_action])
+        previous = {
+            'library': ['tt-scoped'], 'watched': ['tt-watched'],
+            'progress': {'tt-playback': {'content_id': 'tt-playback'}},
+            'resume': {'tt-playback': {'content_id': 'tt-playback'}},
+            'outbound': {'tt-playback': {'position': 10}},
+            'progress_completed': ['tt-done'],
+            'records': {
+                'library': [{'content_id': 'tt-scoped'}],
+                'watched': [{'content_id': 'tt-watched'}],
+                'progress': [{'content_id': 'tt-playback'}],
+            },
+        }
+        baseline = StreamBaseline(
+            connection_id=conn.id, user_id=self.owner.id, snapshot=previous, approved=True,
+        )
+        self.db.add(baseline)
+        job = await self._create_clear_job(conn, {'collection': True, 'watched': False, 'playback': False})
+
+        with patch.object(stremio, 'clear_datastore_data', AsyncMock(return_value={
+            'collection': 1, 'watched': 0, 'playback': 0,
+        })) as clear_remote:
+            await self._run_clear_job_in_fixture_session(conn.id, job.id)
+
+        clear_remote.assert_awaited_once_with(
+            'fixture', collection=True, watched=False, playback=False,
+        )
+        await self.db.refresh(baseline)
+        await self.db.refresh(job)
+        await self.db.refresh(delivery)
+        await self.db.refresh(watch_intent)
+        await self.db.refresh(playback_action)
+        self.assertEqual(job.status, SyncStatus.completed)
+        self.assertTrue(baseline.approved)
+        self.assertEqual(baseline.snapshot['library'], [])
+        self.assertEqual(baseline.snapshot['watched'], previous['watched'])
+        self.assertEqual(baseline.snapshot['progress'], previous['progress'])
+        self.assertEqual(baseline.snapshot['records']['watched'], previous['records']['watched'])
+        self.assertEqual(baseline.snapshot['records']['progress'], previous['records']['progress'])
+        self.assertEqual(delivery.state, 'cleared')
+        self.assertEqual(watch_intent.state, 'pending')
+        self.assertEqual(playback_action.state, 'pending')
+        manual_anchor = (await self.db.execute(select(CollectionFile.id).where(
+            CollectionFile.collection_id == collection.id,
+            CollectionFile.source == CollectionSource.manual,
+        ))).scalars().all()
+        self.assertEqual(len(manual_anchor), 1)
+
+    async def test_partial_clear_failure_retains_guard_and_blocks_pull_and_outbound(self):
+        from core import stremio
+        from core.streaming_clear import assert_pull_snapshot_current
+        from fastapi import HTTPException
+        from core.tracking_snapshot import require_stream_reconciliation
+
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='stremio', name='Failed clear fixture',
+            url='https://example.test', token='fixture', push_collection=True,
+        )
+        self.db.add(conn)
+        await self.db.flush()
+        connection_id = conn.id
+        owner_id = self.owner.id
+        self.db.add(StreamBaseline(
+            connection_id=conn.id, user_id=self.owner.id,
+            snapshot={'library': ['tt-existing'], 'records': {'library': [{'content_id': 'tt-existing'}]}},
+            approved=True,
+        ))
+        job = await self._create_clear_job(conn, {'collection': True, 'watched': False, 'playback': False})
+
+        with patch.object(stremio, 'clear_datastore_data', AsyncMock(side_effect=RuntimeError('readback failed'))):
+            await self._run_clear_job_in_fixture_session(conn.id, job.id)
+
+        baseline = await self.db.get(StreamBaseline, connection_id)
+        await self.db.refresh(job)
+        await self.db.refresh(conn)
+        self.assertEqual(job.status, SyncStatus.failed)
+        self.assertFalse(baseline.approved)
+        self.assertEqual(baseline.snapshot['library'], ['tt-existing'])
+        self.assertEqual(baseline.snapshot['clear_guard']['scope'], {
+            'collection': True, 'watched': False, 'playback': False,
+        })
+        with self.assertRaisesRegex(RuntimeError, 'clear is incomplete'):
+            await assert_pull_snapshot_current(
+                self.db, owner_id, conn, datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        with self.assertRaises(HTTPException) as error:
+            await require_stream_reconciliation(self.db, conn)
+        self.assertEqual(error.exception.status_code, 409)
+
+    async def test_playback_only_clear_suppresses_old_nuvio_next_up_write(self):
+        from core import nuvio
+        from core.nuvio_visibility import sync_next_up_visibility
+        from models.watch_intent import WatchIntent
+        from routers import sync as sync_router
+        from core.watch_intents import dispatch_watch_intents
+
+        self.movie.tmdb_id = 912347
+        self.movie.imdb_id = 'tt0912347'
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='nuvio', name='Playback clear fixture',
+            url='https://example.test', token='fixture', server_user_id='1',
+            push_watched=True, push_playback=True,
+        )
+        self.db.add(conn)
+        await self.db.flush()
+        baseline = StreamBaseline(
+            connection_id=conn.id, user_id=self.owner.id, approved=True,
+            snapshot={'mappings': {'tt0912347': self.movie.tmdb_id}, 'progress': {'tt0912347': {'content_id': 'tt0912347'}},
+                      'records': {'progress': [{'content_id': 'tt0912347'}]}},
+        )
+        watch_intent = WatchIntent(
+            user_id=self.owner.id, connection_id=conn.id, media_id=self.movie.id,
+            desired_watched=True, state='pending',
+        )
+        self.db.add_all([baseline, watch_intent, WatchEvent(
+            user_id=self.owner.id, media_id=self.movie.id, completed=True,
+            watched_at=datetime(2026, 1, 1),
+        )])
+        job = await self._create_clear_job(conn, {'collection': False, 'watched': False, 'playback': True})
+
+        with patch.object(nuvio, 'clear_sync_data', AsyncMock(return_value={
+            'collection': 0, 'watched': 0, 'playback': 1,
+        })) as clear_remote:
+            await self._run_clear_job_in_fixture_session(conn.id, job.id)
+
+        clear_remote.assert_awaited_once()
+        await self.db.refresh(watch_intent)
+        await self.db.refresh(baseline)
+        self.assertEqual(watch_intent.state, 'pending')
+        self.assertEqual(baseline.snapshot['playback_clear_watch_visibility_suppressed'], [self.movie.id])
+
+        with (
+            patch.object(sync_router, '_ensure_nuvio_imdb_ids', AsyncMock()),
+            patch.object(sync_router, '_nuvio_watched_item', return_value={
+                'content_id': 'tt0912347', 'content_type': 'movie',
+            }),
+            patch.object(nuvio, 'push_watched_items', AsyncMock()) as watched_write,
+            patch('core.nuvio_visibility.sync_next_up_visibility', AsyncMock()) as next_up_write,
+        ):
+            await dispatch_watch_intents(self.db, self.owner.id)
+
+        watched_write.assert_awaited_once()
+        next_up_write.assert_not_awaited()
+        await self.db.refresh(watch_intent)
+        self.assertEqual(watch_intent.state, 'applied')
+
+    async def test_stremio_full_resync_rebuilds_empty_baseline_without_removal_and_keeps_local_truth(self):
+        from routers import sync as sync_router
+        from models.tracking import StreamBaseline
+
+        started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='stremio', name='Full-resync fixture',
+            url='https://example.test', token='fixture',
+            sync_collection=True, sync_watched=True, sync_playback=True,
+            push_collection=True, push_watched=True, push_playback=True,
+        )
+        self.movie.tmdb_id = 912345
+        self.db.add(conn)
+        await self.db.flush()
+        self.db.add(Collection(user_id=self.owner.id, media_id=self.movie.id))
+        await self.db.flush()
+        collection = (await self.db.execute(select(Collection).where(
+            Collection.user_id == self.owner.id, Collection.media_id == self.movie.id,
+        ))).scalar_one()
+        self.db.add(CollectionFile(
+            collection_id=collection.id, connection_id=conn.id,
+            source=CollectionSource.stremio, source_id=f'{conn.id}:tt-old',
+        ))
+        local_entry = TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='watching')
+        self.db.add(local_entry)
+        self.db.add(UserSettings(user_id=self.owner.id, tmdb_api_key='fixture-key'))
+        old_observation = started_at - timedelta(days=1)
+        self.db.add(StreamBaseline(
+            connection_id=conn.id, user_id=self.owner.id, approved=True,
+            observed_at=old_observation,
+            snapshot={
+                'library': ['tt-old'], 'progress': {'tt-old': {'content_id': 'tt-old'}},
+                'watched': [], 'mappings': {'tt-old': self.movie.tmdb_id},
+                'records': {'library': [{'content_id': 'tt-old'}], 'watched': [], 'progress': []},
+                'clear_guard': {
+                    'job_id': -1, 'scope': {'collection': True, 'watched': False, 'playback': False},
+                    'identity': {'token_sha256': 'failed-clear'},
+                    'started_at': (started_at - timedelta(hours=1)).isoformat(),
+                },
+                'playback_clear_watch_visibility_suppressed': [self.movie.id],
+            },
+        ))
+        job = SyncJob(
+            user_id=self.owner.id, source=CollectionSource.stremio,
+            status=SyncStatus.pending, connection_id=conn.id, job_type='pull',
+        )
+        self.db.add(job)
+        await self.db.commit()
+
+        class _SessionContext:
+            async def __aenter__(_self): return self.db
+            async def __aexit__(_self, *_args): return False
+
+        async def no_cache():
+            return None
+
+        with (
+            patch.object(sync_router, 'async_sessionmaker', return_value=lambda: _SessionContext()),
+            patch.object(sync_router, '_get_effective_tmdb_key', AsyncMock(return_value='fixture-key')),
+            patch.object(sync_router, '_pull_stremio_items', AsyncMock(return_value=([], True, started_at))),
+            patch.object(sync_router, '_stremio_records', AsyncMock(return_value=([], [], [], set()))),
+            patch.object(sync_router, '_resolve_nuvio_tmdb_ids', AsyncMock(return_value={})),
+            patch.object(sync_router, '_stamp_matched_show_warnings', AsyncMock(side_effect=lambda _db, _uid, warnings: warnings)),
+            patch.object(sync_router, 'pre_cache_all_collected_bg', new=no_cache),
+        ):
+            await sync_router._run_stremio_sync(
+                self.owner.id, job.id, 0, 0, conn.id, full_resync=True,
+            )
+
+        baseline = await self.db.get(StreamBaseline, conn.id)
+        await self.db.refresh(job)
+        self.assertEqual(job.status, SyncStatus.completed)
+        self.assertFalse(baseline.approved)
+        self.assertEqual(baseline.snapshot['library'], [])
+        self.assertNotIn('clear_guard', baseline.snapshot)
+        self.assertNotIn('playback_clear_watch_visibility_suppressed', baseline.snapshot)
+        self.assertIsNotNone(await self.db.get(TrackedEntry, local_entry.id))
+        file_ids = (await self.db.execute(select(CollectionFile.id).where(
+            CollectionFile.collection_id == collection.id,
+            CollectionFile.connection_id == conn.id,
+        ))).scalars().all()
+        self.assertEqual(len(file_ids), 1)
+
+    async def test_fresh_nuvio_import_preserves_existing_local_playback_position(self):
+        from models.playback_progress import PlaybackProgress
+        from models.tracking import StreamBaseline
+        from routers.sync import _apply_nuvio_progress
+
+        self.movie.tmdb_id = 912346
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='nuvio', name='Nuvio fresh-import fixture',
+            url='https://example.test', token='fixture', server_user_id='1',
+            push_playback=True,
+        )
+        local_progress = PlaybackProgress(
+            user_id=self.owner.id, media_id=self.movie.id,
+            progress_percent=0.6, progress_seconds=360,
+            updated_at=datetime(2026, 1, 1),
+        )
+        self.db.add_all([conn, local_progress])
+        await self.db.flush()
+        self.db.add(StreamBaseline(
+            connection_id=conn.id, user_id=self.owner.id,
+            snapshot={'records': {'progress': [{
+                'content_id': 'tt-local', 'position': 10_000, 'duration': 100_000,
+            }]}}, approved=True,
+        ))
+        await self.db.commit()
+
+        await _apply_nuvio_progress(
+            self.db, self.owner.id,
+            [{'content_id': 'tt-local', 'content_type': 'movie',
+              'position': 20_000, 'duration': 100_000, 'last_watched': 1_800_000_000_000}],
+            {}, {'tt-local': self.movie.tmdb_id}, conn, fresh_import=True,
+        )
+
+        await self.db.refresh(local_progress)
+        self.assertEqual((local_progress.progress_percent, local_progress.progress_seconds), (0.6, 360))
+
+    async def test_pull_guard_refreshes_cached_baseline_and_rejects_stale_full_resync(self):
+        from core.streaming_clear import assert_pull_snapshot_current
+        from models.tracking import StreamBaseline
+
+        started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        conn = MediaServerConnection(
+            user_id=self.owner.id, type='stremio', name='Stale snapshot fixture',
+            url='https://example.test', token='fixture',
+        )
+        baseline = StreamBaseline(
+            connection_id=0, user_id=self.owner.id, snapshot={}, approved=True,
+            observed_at=started_at - timedelta(hours=1),
+        )
+        self.db.add(conn)
+        await self.db.flush()
+        baseline.connection_id = conn.id
+        self.db.add(baseline)
+        await self.db.commit()
+        cached = await self.db.get(StreamBaseline, conn.id)
+        self.assertNotIn('clear_guard', cached.snapshot)
+
+        cached.snapshot = {'clear_guard': {
+            'job_id': -1, 'scope': {'collection': True, 'watched': False, 'playback': False},
+            'identity': {}, 'started_at': (started_at + timedelta(minutes=1)).isoformat(),
+        }}
+        cached.observed_at = started_at + timedelta(minutes=1)
+        await self.db.commit()
+
+        with self.assertRaisesRegex(RuntimeError, 'predates it'):
+            await assert_pull_snapshot_current(
+                self.db, self.owner.id, conn, started_at, full_resync=True,
+            )
+
+    async def test_cancel_routes_preserve_running_clear_but_cancel_pending_work(self):
+        from fastapi import HTTPException
+        from routers.sync import abort_sync, cancel_sync_job
+
+        running_clear = SyncJob(user_id=self.owner.id, source=CollectionSource.stremio,
+                                job_type='clear', status=SyncStatus.running)
+        pending_clear = SyncJob(user_id=self.owner.id, source=CollectionSource.stremio,
+                                job_type='clear', status=SyncStatus.pending)
+        running_pull = SyncJob(user_id=self.owner.id, source=CollectionSource.stremio,
+                               job_type='pull', status=SyncStatus.running)
+        other_user_pull = SyncJob(user_id=self.friend.id, source=CollectionSource.stremio,
+                                  job_type='pull', status=SyncStatus.running)
+        self.db.add_all([running_clear, pending_clear, running_pull, other_user_pull])
+        await self.db.commit()
+
+        with self.assertRaises(HTTPException) as rejected:
+            await cancel_sync_job(running_clear.id, db=self.db, current_user=self.owner)
+        self.assertEqual(rejected.exception.status_code, 404)
+        await self.db.refresh(running_clear)
+        self.assertEqual(running_clear.status, SyncStatus.running)
+
+        await cancel_sync_job(pending_clear.id, db=self.db, current_user=self.owner)
+        await self.db.refresh(pending_clear)
+        self.assertEqual(pending_clear.status, SyncStatus.cancelled)
+        pending_clear.status = SyncStatus.pending
+        await self.db.commit()
+
+        await abort_sync(db=self.db, current_user=self.owner)
+        for job in (running_clear, pending_clear, running_pull, other_user_pull):
+            await self.db.refresh(job)
+        self.assertEqual(running_clear.status, SyncStatus.running)
+        self.assertEqual(pending_clear.status, SyncStatus.cancelled)
+        self.assertEqual(running_pull.status, SyncStatus.cancelled)
+        self.assertEqual(other_user_pull.status, SyncStatus.running)
 
 if __name__=='__main__': unittest.main()

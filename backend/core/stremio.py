@@ -1,4 +1,7 @@
 import base64
+import asyncio
+import copy
+from datetime import datetime, timezone
 import zlib
 from typing import Any
 
@@ -11,12 +14,19 @@ LINK_URL = "https://link.stremio.com/api/v2"
 CINEMETA_URL = "https://v3-cinemeta.strem.io"
 LIBRARY_COLLECTION = "libraryItem"
 _TIMEOUT = 30.0
+_WRITE_BATCH_SIZE = 100
+_connection_locks: dict[int, asyncio.Lock] = {}
 
 
 class StremioAPIError(RuntimeError):
     def __init__(self, message: str, *, code: int | None = None):
         super().__init__(message)
         self.code = code
+
+
+def connection_lock(connection_id: int) -> asyncio.Lock:
+    """Serialize provider pulls, pushes, and clear operations per connection."""
+    return _connection_locks.setdefault(connection_id, asyncio.Lock())
 
 
 def _result(payload: Any, operation: str) -> Any:
@@ -160,6 +170,145 @@ async def datastore_put(auth_key: str, changes: list[dict[str, Any]]) -> None:
     )
     if not isinstance(result, dict) or result.get("success") is not True:
         raise StremioAPIError("Stremio library push was not acknowledged")
+
+
+async def clear_datastore_data(
+    auth_key: str,
+    *,
+    collection: bool = False,
+    watched: bool = False,
+    playback: bool = False,
+) -> dict[str, int]:
+    """Clear selected Stremio library-item fields without touching others.
+
+    Stremio stores collection membership and viewing state in the same
+    ``libraryItem`` record. Collection removal is represented by its normal
+    tombstone, while watched and playback state are reset independently.
+    """
+    if not (collection or watched or playback):
+        raise StremioAPIError("Select at least one Stremio data category to clear")
+
+    remote_items = await datastore_get(auth_key, all_items=True)
+    by_id: dict[str, dict[str, Any]] = {}
+    for remote in remote_items:
+        if not isinstance(remote, dict):
+            raise StremioAPIError("Stremio returned a malformed library item; refusing an unverifiable clear")
+        content_id = remote.get("_id")
+        if not isinstance(content_id, str) or not content_id.strip() or content_id in by_id:
+            raise StremioAPIError("Stremio returned a missing or duplicate library id; refusing an unverifiable clear")
+        if remote.get("state") is not None and not isinstance(remote.get("state"), dict):
+            raise StremioAPIError("Stremio returned malformed viewing state; refusing an unsafe clear")
+        by_id[content_id] = remote
+
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    changes: dict[str, dict[str, Any]] = {}
+    if watched or playback:
+        for content_id, remote in by_id.items():
+            candidate = copy.deepcopy(remote)
+            state = dict(candidate.get("state") or {})
+            if watched:
+                state.update({
+                    "lastWatched": None,
+                    "timeWatched": 0,
+                    "overallTimeWatched": 0,
+                    "timesWatched": 0,
+                    "flaggedWatched": 0,
+                    "watched": None,
+                })
+            if playback:
+                state.update({"timeOffset": 0, "video_id": None, "duration": 0})
+            candidate["state"] = state
+            candidate["_mtime"] = now
+            changes[content_id] = candidate
+
+        view_changes = list(changes.values())
+        for offset in range(0, len(view_changes), _WRITE_BATCH_SIZE):
+            await datastore_put(auth_key, view_changes[offset : offset + _WRITE_BATCH_SIZE])
+        for offset in range(0, len(view_changes), _WRITE_BATCH_SIZE):
+            batch = [item["_id"] for item in view_changes[offset : offset + _WRITE_BATCH_SIZE]]
+            confirmed_rows = await datastore_get(auth_key, ids=batch, allow_missing=True)
+            confirmed = {
+                str(item.get("_id")): item for item in confirmed_rows
+                if isinstance(item, dict) and isinstance(item.get("_id"), str)
+            }
+            for content_id in batch:
+                item = confirmed.get(content_id)
+                if item is None:
+                    raise StremioAPIError("Stremio did not confirm cleared viewing data")
+                state = item.get("state")
+                if not isinstance(state, dict):
+                    raise StremioAPIError("Stremio did not confirm cleared viewing data")
+                if watched and any(
+                    state.get(key) not in (None, 0, "0")
+                    for key in ("timesWatched", "flaggedWatched", "timeWatched", "overallTimeWatched")
+                ):
+                    raise StremioAPIError("Stremio did not confirm watched-history removal")
+                if watched and (state.get("lastWatched") is not None or state.get("watched") is not None):
+                    raise StremioAPIError("Stremio did not confirm watched-history removal")
+                if playback and any(
+                    state.get(key) not in (None, 0, "0")
+                    for key in ("timeOffset", "duration")
+                ):
+                    raise StremioAPIError("Stremio did not confirm playback removal")
+                if playback and state.get("video_id") is not None:
+                    raise StremioAPIError("Stremio did not confirm playback removal")
+                changes[content_id] = item
+
+    if collection:
+        collection_changes: list[dict[str, Any]] = []
+        for content_id, remote in changes.items() if changes else by_id.items():
+            candidate = copy.deepcopy(remote)
+            candidate["removed"] = True
+            candidate["temp"] = False
+            candidate["_mtime"] = now
+            collection_changes.append(candidate)
+        for offset in range(0, len(collection_changes), _WRITE_BATCH_SIZE):
+            await datastore_put(auth_key, collection_changes[offset : offset + _WRITE_BATCH_SIZE])
+        for offset in range(0, len(collection_changes), _WRITE_BATCH_SIZE):
+            batch = [item["_id"] for item in collection_changes[offset : offset + _WRITE_BATCH_SIZE]]
+            confirmed_rows = await datastore_get(auth_key, ids=batch, allow_missing=True)
+            confirmed = {
+                str(item.get("_id")): item for item in confirmed_rows
+                if isinstance(item, dict) and isinstance(item.get("_id"), str)
+            }
+            for content_id in batch:
+                item = confirmed.get(content_id)
+                # Stremio may remove a tombstoned record from later reads. The
+                # viewing fields were confirmed above before issuing tombstones.
+                if item is not None and (not item.get("removed") or item.get("temp")):
+                    raise StremioAPIError("Stremio did not confirm collection removal")
+
+    # Catch items introduced while the destructive writes were in flight. The
+    # result is an error (and the caller retains its clear guard), never a false
+    # claim that an incomplete point-in-time set was emptied.
+    remaining = await datastore_get(auth_key, all_items=True)
+    for item in remaining:
+        if not isinstance(item, dict) or not isinstance(item.get("_id"), str) or not item.get("_id").strip():
+            raise StremioAPIError("Stremio returned malformed data during clear verification")
+        if collection and not item.get("removed"):
+            raise StremioAPIError("Stremio did not confirm collection removal")
+        if (watched or playback) and item.get("state") is not None and not isinstance(item.get("state"), dict):
+            raise StremioAPIError("Stremio returned malformed viewing state during clear verification")
+        state = item.get("state") if isinstance(item.get("state"), dict) else {}
+        if watched and (
+            state.get("lastWatched") is not None
+            or state.get("watched") is not None
+            or any(state.get(key) not in (None, 0, "0") for key in (
+                "timesWatched", "flaggedWatched", "timeWatched", "overallTimeWatched",
+            ))
+        ):
+            raise StremioAPIError("Stremio did not confirm watched-history removal")
+        if playback and (
+            state.get("video_id") is not None
+            or any(state.get(key) not in (None, 0, "0") for key in ("timeOffset", "duration"))
+        ):
+            raise StremioAPIError("Stremio did not confirm playback removal")
+
+    return {
+        "collection": len(remote_items) if collection else 0,
+        "watched": len(remote_items) if watched else 0,
+        "playback": len(remote_items) if playback else 0,
+    }
 
 
 async def logout(auth_key: str) -> None:

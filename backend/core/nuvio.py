@@ -23,6 +23,7 @@ _ORIGIN_CLIENT_ID_LENGTH = 32
 _ORIGIN_CLIENT_ID_ALPHABET = string.ascii_lowercase + string.digits
 _ORIGIN_CLIENT_ID_MUTATION_RPCS = frozenset({
     "sync_push_watched_items",
+    "sync_delete_watched_items",
     "sync_push_watch_progress",
     "sync_delete_watch_progress",
     "sync_push_profile_settings_blob",
@@ -780,3 +781,147 @@ async def delete_watched_items(
                 expected_absent=keys,
             )
     return session
+
+
+async def clear_sync_data(
+    url: str,
+    refresh_token: str,
+    profile_id: int,
+    *,
+    collection: bool = False,
+    watched: bool = False,
+    playback: bool = False,
+    on_refresh: OnRefresh = None,
+) -> dict[str, int]:
+    """Clear only the selected Nuvio data buckets and confirm each mutation.
+
+    Nuvio's library RPC is a full replacement, watched history has key-based
+    delete RPCs, and playback has separate progress-key deletes. The Next Up
+    preference is updated after playback is removed because the app can derive
+    that surface from retained watched history.
+    """
+    if not (collection or watched or playback):
+        raise NuvioAPIError("Select at least one Nuvio data category to clear")
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
+
+        # Read every selected bucket before the first write. In particular,
+        # playback has a bounded pull, so refuse to start a multi-bucket clear
+        # when the endpoint may have truncated the key set.
+        library_rows = (
+            await _pull_library(client, url, session.access_token, profile_id)
+            if collection else []
+        )
+        watched_rows = (
+            await _pull_watched_items(client, url, session.access_token, profile_id)
+            if watched or playback else []
+        )
+        progress_rows = (
+            await _pull_watch_progress(client, url, session.access_token, profile_id)
+            if playback else []
+        )
+        if playback and len(progress_rows) >= 200:
+            raise NuvioAPIError(
+                "Nuvio returned the maximum watch-progress page; refusing an incomplete clear"
+            )
+
+        watched_keys: list[dict[str, Any]] = []
+        for row in watched_rows if watched else []:
+            content_id, season, episode = _watched_history_key(row)
+            key: dict[str, Any] = {"content_id": content_id}
+            if season is not None:
+                key["season"] = season
+            if episode is not None:
+                key["episode"] = episode
+            watched_keys.append(key)
+        watched_keys = list({
+            (key["content_id"], key.get("season"), key.get("episode")): key
+            for key in watched_keys
+        }.values())
+
+        progress_keys: list[str] = []
+        for row in progress_rows:
+            key = str(row.get("progress_key") or "").strip()
+            if not key:
+                raise NuvioAPIError(
+                    "Nuvio progress row has no progress_key; refusing an unsafe clear"
+                )
+            progress_keys.append(key)
+        progress_keys = list(dict.fromkeys(progress_keys))
+
+        if collection:
+            await _rpc(
+                client,
+                url,
+                session.access_token,
+                "sync_push_library",
+                {"p_profile_id": profile_id, "p_items": []},
+            )
+            if await _pull_library(client, url, session.access_token, profile_id):
+                raise NuvioAPIError("Nuvio did not confirm library removal")
+
+        if watched:
+            for offset in range(0, len(watched_keys), _PAGE_SIZE):
+                await _rpc(
+                    client,
+                    url,
+                    session.access_token,
+                    "sync_delete_watched_items",
+                    {
+                        "p_profile_id": profile_id,
+                        "p_keys": watched_keys[offset : offset + _PAGE_SIZE],
+                    },
+                )
+            if await _pull_watched_items(client, url, session.access_token, profile_id):
+                raise NuvioAPIError("Nuvio did not confirm watched-history removal")
+            await _confirm_watched_history(
+                client,
+                url,
+                session.access_token,
+                profile_id,
+                expected_absent=watched_keys,
+            )
+
+        if playback:
+            for offset in range(0, len(progress_keys), _PAGE_SIZE):
+                await _rpc(
+                    client,
+                    url,
+                    session.access_token,
+                    "sync_delete_watch_progress",
+                    {
+                        "p_profile_id": profile_id,
+                        "p_keys": progress_keys[offset : offset + _PAGE_SIZE],
+                    },
+                )
+            remaining = await _pull_watch_progress(
+                client, url, session.access_token, profile_id,
+            )
+            if remaining:
+                raise NuvioAPIError("Nuvio did not confirm playback progress removal")
+
+        if playback:
+            retained_history = [] if watched else watched_rows
+            retained_progress = []  # Playback was selected and has been removed.
+            hidden_content_ids = {
+                str(row.get("content_id") or "").strip()
+                for row in [*retained_history, *retained_progress]
+                if str(row.get("content_type") or "").strip().lower() in {"series", "tv"}
+                and str(row.get("content_id") or "").strip()
+            }
+            await update_next_up_dismissals(
+                client,
+                url,
+                session.access_token,
+                profile_id,
+                hide=hidden_content_ids,
+            )
+
+        return {
+            "collection": len(library_rows) if collection else 0,
+            "watched": len(watched_keys) if watched else 0,
+            "playback": len(progress_keys) if playback else 0,
+        }

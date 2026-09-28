@@ -875,10 +875,14 @@ async def dispatch_stream_actions(db, user_id):
                 payload['tmdb_id'] = media.tmdb_id
                 payload['imdb_id'] = _nuvio_imdb_id(media)
             if conn.type == 'stremio':
-                if action.action == 'reset':await dismiss_stremio(conn.token, payload, reset=True)
-                elif action.action == 'restore':await dismiss_stremio(conn.token, payload, restore=True)
-                elif action.action == 'upsert':await push_stremio_progress(conn.token, payload)
-                else:await dismiss_stremio(conn.token, payload)
+                # Share one per-connection lock with library pushes, provider
+                # pulls, and clear operations so datastore read/modify/write
+                # actions cannot race those snapshots.
+                async with stremio.connection_lock(conn.id):
+                    if action.action == 'reset':await dismiss_stremio(conn.token, payload, reset=True)
+                    elif action.action == 'restore':await dismiss_stremio(conn.token, payload, restore=True)
+                    elif action.action == 'upsert':await push_stremio_progress(conn.token, payload)
+                    else:await dismiss_stremio(conn.token, payload)
             elif conn.type == 'nuvio':
                 if action.action == 'reset':await dismiss_nuvio(db, conn, payload, reset=True)
                 elif action.action == 'restore':await dismiss_nuvio(db, conn, payload, restore=True)

@@ -8,6 +8,7 @@ from sqlalchemy import delete, or_, select
 from models import Media, User, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingDeletion
+from models.sync import SyncJob, SyncStatus
 from core.tracking_rules import effective_score, observed_status, default_dates
 from core.tracking_import import import_tracking_history
 from core.status_provenance import mark_status_change, provider_changed_at, status_changed_at
@@ -210,7 +211,24 @@ async def require_stream_reconciliation(db, conn):
     """Shared by HTTP and background entry points; no first-write bypass."""
     if conn.type not in ('stremio', 'nuvio', 'jellyfin', 'emby', 'plex'):
         return
-    baseline = await db.get(StreamBaseline, conn.id)
+    # Outbound dispatchers use the User row as their serialization gate. Read
+    # the baseline again after acquiring it so a committed clear guard cannot
+    # be hidden by this session's identity map.
+    (await db.execute(select(User.id).where(User.id == conn.user_id).with_for_update())).scalar_one()
+    active_clear = (await db.execute(select(SyncJob.id).where(
+        SyncJob.connection_id == conn.id,
+        SyncJob.job_type == 'clear',
+        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
+    ).limit(1))).scalar_one_or_none()
+    if active_clear is not None:
+        from fastapi import HTTPException
+        raise HTTPException(409, 'A provider clear is in progress; retry this write after it completes')
+    baseline = (await db.execute(select(StreamBaseline).where(
+        StreamBaseline.connection_id == conn.id,
+    ).execution_options(populate_existing=True))).scalar_one_or_none()
+    if baseline and isinstance(baseline.snapshot, dict) and baseline.snapshot.get('clear_guard'):
+        from fastapi import HTTPException
+        raise HTTPException(409, 'A provider clear is incomplete; retry Clear data or run a full resync before pushing')
     if not baseline or not baseline.approved:
         from fastapi import HTTPException
         raise HTTPException(409, 'Run a full import and confirm its summary in Notifications before pushing to this connection')
@@ -257,8 +275,10 @@ async def apply_series_observation(db, user_id, media, entry, row, finished, new
 async def observe_stream_snapshot(
     db, conn, library, watched, progress, tmdb_ids, *, complete=True, touched=None,
     removed_library=None, sync_playback=True, sync_watched=True,
-    removed_watched_ids=None,
+    removed_watched_ids=None, fresh_import=False, source_started_at=None,
 ):
+    if fresh_import and not complete:
+        raise ValueError("A full resync requires a complete provider snapshot")
     # Partial/failed pulls cannot establish or advance a trusted baseline.
     # A provider's verified incremental feed must first be materialized into
     # a complete snapshot by its adapter; touched rows alone prove no removal.
@@ -276,17 +296,46 @@ async def observe_stream_snapshot(
         tmdb_ids = {**baseline.snapshot.get('mappings', {}), **tmdb_ids}
     # Import is additive. A tombstone is released only by a fresh viewing
     # observation after all outbound deletion acknowledgments have arrived.
-    await db.execute(select(User.id).where(User.id==conn.user_id).with_for_update())
-    prior = await db.get(StreamBaseline,conn.id)
-    mappings = {**(prior.snapshot.get('mappings', {}) if prior else {}), **tmdb_ids}
+    (await db.execute(select(User.id).where(User.id==conn.user_id).with_for_update())).scalar_one()
+    prior = (await db.execute(select(StreamBaseline).where(
+        StreamBaseline.connection_id == conn.id,
+    ).execution_options(populate_existing=True))).scalar_one_or_none()
+    current_snapshot = prior.snapshot if prior and isinstance(prior.snapshot, dict) else {}
+    guard = current_snapshot.get('clear_guard')
+    if guard:
+        clear_started_at = guard.get('started_at') if isinstance(guard, dict) else None
+        try:
+            clear_started_at = datetime.fromisoformat(str(clear_started_at).replace('Z', '+00:00'))
+            if clear_started_at.tzinfo is not None:
+                clear_started_at = clear_started_at.astimezone(timezone.utc).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            clear_started_at = None
+        if not fresh_import or (
+            clear_started_at is not None
+            and source_started_at is not None
+            and source_started_at < clear_started_at
+        ):
+            raise RuntimeError('A provider clear is incomplete or this snapshot predates it; retry after the concurrent operation')
+    if (prior and prior.observed_at is not None and source_started_at is not None
+            and prior.observed_at > source_started_at):
+        raise RuntimeError('This provider snapshot became stale during sync; retry after the concurrent operation')
+    if fresh_import:
+        # A full resync is a new import gate, not evidence that everything in
+        # the former provider snapshot was removed. Keep the stored baseline
+        # intact until this complete observation reaches its commit below.
+        previous_snapshot = {}
+        prior_observed_at = None
+    else:
+        previous_snapshot = prior.snapshot if prior else {}
+        prior_observed_at = prior.observed_at if prior else None
+    mappings = {**previous_snapshot.get('mappings', {}), **tmdb_ids}
     await release_rewatched_deletions(db, conn, watched, progress, mappings)
     # Streaming-library membership alone never creates a tracked entry.
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
-    baseline=await db.get(StreamBaseline,conn.id)
-    first=baseline is None
+    baseline=prior
+    first=fresh_import or baseline is None
     imported = await import_tracking_history(db,conn.user_id,initial_import=first)
-    previous=baseline.snapshot if baseline else {}
-    prior_observed_at = baseline.observed_at if baseline else None
+    previous=previous_snapshot if first else (baseline.snapshot if baseline else {})
     active = _active(progress) if sync_playback else previous.get('progress', {})
     watched_rows = watched if sync_watched else []
     progress_completed_rows = completed_rows(progress) if sync_playback else []
@@ -296,8 +345,19 @@ async def observe_stream_snapshot(
     ]
     library_ids={str(row.get('content_id')) for row in library}
     if first:
-        baseline=StreamBaseline(connection_id=conn.id,user_id=conn.user_id,approved=False)
-        db.add(baseline)
+        if baseline is None:
+            baseline=StreamBaseline(connection_id=conn.id,user_id=conn.user_id,approved=False)
+            db.add(baseline)
+        else:
+            baseline.snapshot={}
+            baseline.approved=False
+        if fresh_import:
+            await db.execute(delete(SyncReview).where(
+                SyncReview.user_id == conn.user_id,
+                SyncReview.connection_id == conn.id,
+                SyncReview.kind == 'initial_import',
+                SyncReview.state == 'pending',
+            ))
         db.add(SyncReview(user_id=conn.user_id,connection_id=conn.id,kind='initial_import',message=f'{conn.name}: imported {imported} tracked entries, observed {len(library)} library items and {len(watched)} watch records. Review your lists and any conflicts before approving outbound synchronization. An empty first snapshot removes nothing.'))
     can_propagate_watches = bool(not first and baseline.approved)
     accepted_watch_rows = []

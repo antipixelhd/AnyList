@@ -11,6 +11,7 @@ import asyncio
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import AsyncIterator
 
 from models.base import CollectionSource
@@ -30,7 +31,9 @@ class PullCycleState:
     library_new_ids: set[int] = field(default_factory=set)
     library_removed_ids: set[int] = field(default_factory=set)
     library_source_ids: set[int] = field(default_factory=set)
+    library_source_ids_by_media: dict[int, set[int]] = field(default_factory=dict)
     library_api_key: str | None = None
+    library_observed_at_by_media: dict[int, datetime] = field(default_factory=dict)
     watched_exclusions: dict[int, tuple[set[int], set[CollectionSource]]] = field(default_factory=dict)
     removed_watch_exclusions: dict[int, set[int]] = field(default_factory=dict)
 
@@ -118,6 +121,7 @@ def defer_library_fan_out(
     new_collected_ids: set[int],
     removed_collected_ids: set[int],
     api_key: str | None,
+    source_observed_at: datetime | None = None,
 ) -> bool:
     state = _states.get(user_id)
     if state is None or not is_active(user_id):
@@ -125,6 +129,12 @@ def defer_library_fan_out(
     state.library_new_ids.update(new_collected_ids)
     state.library_removed_ids.update(removed_collected_ids)
     state.library_source_ids.add(source_connection_id)
+    for media_id in new_collected_ids | removed_collected_ids:
+        state.library_source_ids_by_media.setdefault(media_id, set()).add(source_connection_id)
+        if source_observed_at is not None:
+            previous = state.library_observed_at_by_media.get(media_id)
+            if previous is None or source_observed_at > previous:
+                state.library_observed_at_by_media[media_id] = source_observed_at
     if state.library_api_key is None:
         state.library_api_key = api_key
     return True

@@ -67,6 +67,19 @@ async def queue_watch_intents(
 
     queued = 0
     for conn in connections:
+        baseline = (await db.execute(select(StreamBaseline).where(
+            StreamBaseline.connection_id == conn.id,
+        ).execution_options(populate_existing=True))).scalar_one_or_none()
+        if baseline:
+            snapshot = dict(baseline.snapshot or {})
+            suppressed = {
+                int(media_id)
+                for media_id in snapshot.get("playback_clear_watch_visibility_suppressed", [])
+                if str(media_id).isdigit()
+            }
+            if suppressed & ids:
+                snapshot["playback_clear_watch_visibility_suppressed"] = sorted(suppressed - ids)
+                baseline.snapshot = snapshot
         for media_id in ids:
             intent = (await db.execute(select(WatchIntent).where(
                 WatchIntent.connection_id == conn.id,
@@ -237,6 +250,7 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
     ).limit(100).with_for_update(skip_locked=True))).scalars().all()
     processed = set()
     nuvio_visibility_batches = {}
+    visibility_suppressed_by_connection: dict[int, set[int]] = {}
     for intent in intents:
         if intent.id in processed:
             continue
@@ -311,7 +325,21 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         if succeeded:
             intent.state = "applied"
             if writer is None and conn.type == 'nuvio' and conn.push_playback:
-                nuvio_visibility_batches.setdefault(conn.id, []).append(intent)
+                suppressed = visibility_suppressed_by_connection.get(conn.id)
+                if suppressed is None:
+                    baseline = (await db.execute(select(StreamBaseline).where(
+                        StreamBaseline.connection_id == conn.id,
+                    ).execution_options(populate_existing=True))).scalar_one_or_none()
+                    suppressed = {
+                        int(media_id)
+                        for media_id in ((baseline.snapshot or {}) if baseline else {}).get(
+                            'playback_clear_watch_visibility_suppressed', [],
+                        )
+                        if str(media_id).isdigit()
+                    }
+                    visibility_suppressed_by_connection[conn.id] = suppressed
+                if intent.media_id not in suppressed:
+                    nuvio_visibility_batches.setdefault(conn.id, []).append(intent)
         else:
             logger.info("Watch intent remains pending for connection %s media %s after %s", conn.id, media.id, intent.last_error)
     for connection_id, batch in nuvio_visibility_batches.items():

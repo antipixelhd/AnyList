@@ -1176,8 +1176,13 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         from models.media import Media, MediaType
         from models.sync import SyncJob, SyncStatus
         from models.tracking import StreamBaseline
+        from models.users import User
 
         async with self.Session() as db:
+            db.add(User(
+                id=1, email="full-push@example.test", username="full-push",
+                api_key="full-push-test-key",
+            ))
             conn = MediaServerConnection(
                 user_id=1, type="jellyfin", name="Jellyfin", url="http://jf", token="tok",
                 server_user_id="jf-user", push_watched=True,
@@ -1265,8 +1270,13 @@ class FullPushEchoTokenTimingTests(_PartialWatchDB):
         from models.media import Media, MediaType
         from models.sync import SyncJob, SyncStatus
         from models.tracking import StreamBaseline
+        from models.users import User
 
         async with self.Session() as db:
+            db.add(User(
+                id=1, email="full-push@example.test", username="full-push",
+                api_key="full-push-test-key",
+            ))
             conn = MediaServerConnection(
                 user_id=1, type="jellyfin", name="Jellyfin", url="http://jf", token="tok",
                 server_user_id="jf-user", push_watched=True,

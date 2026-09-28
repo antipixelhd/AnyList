@@ -110,7 +110,9 @@ router = APIRouter()
 
 # Global semaphore — at most one sync running at a time across all users
 _sync_semaphore = asyncio.Semaphore(1)
-_stremio_push_locks: dict[int, asyncio.Lock] = {}
+# Keep the legacy router-level lock map as an alias for any in-process callers
+# that still import it. All Stremio writers and pulls now share the adapter map.
+_stremio_push_locks = stremio._connection_locks
 # One reconcile at a time per Plex connection - the pull job, the scheduled
 # push and manual pushes all run independently and share no other lock.
 _plex_watchlist_locks: dict[int, asyncio.Lock] = {}
@@ -940,12 +942,15 @@ async def _fan_out_streaming_library_changes(
     removed_collected_ids: set[int],
     api_key: str | None,
     exclude_connection_ids: set[int] | None = None,
+    source_observed_at_by_media: dict[int, datetime] | None = None,
+    source_connection_ids_by_media: dict[int, set[int]] | None = None,
 ) -> None:
-    """Mirror an observed library delta to the user's other streaming accounts.
+    """Persist and deliver an observed library delta to peer streaming accounts.
 
     Library membership is deliberately separate from tracked-list state. Only
     Stremio/Nuvio destinations with collection push enabled participate, and
-    every destination must already have an approved first reconciliation.
+    each destination must already have an approved first reconciliation before
+    its durable delivery can be applied.
     """
     changed_media_ids = set(new_collected_ids) | set(removed_collected_ids)
     if not changed_media_ids:
@@ -954,9 +959,23 @@ async def _fan_out_streaming_library_changes(
     excluded_ids = set(exclude_connection_ids or ())
     if exclude_connection_id is not None:
         excluded_ids.add(exclude_connection_id)
+    source_observations = dict(source_observed_at_by_media or {})
+    source_ids_by_media = {
+        media_id: set(connection_ids)
+        for media_id, connection_ids in (source_connection_ids_by_media or {}).items()
+    }
+    if exclude_connection_id is not None:
+        for media_id in changed_media_ids:
+            source_ids_by_media.setdefault(media_id, set()).add(exclude_connection_id)
+    elif source_connection_ids_by_media is None:
+        # Compatibility for callers that still supply only a global exclusion
+        # set. Scheduled pull cycles pass precise per-title source identities.
+        for media_id in changed_media_ids:
+            source_ids_by_media.setdefault(media_id, set()).update(excluded_ids)
 
     if exclude_connection_id is not None:
         from core.tracking_snapshot import require_stream_reconciliation
+        from models.tracking import StreamBaseline
 
         source_connection = await db.get(MediaServerConnection, exclude_connection_id)
         if source_connection is None:
@@ -969,6 +988,11 @@ async def _fan_out_streaming_library_changes(
                 exclude_connection_id,
             )
             return
+        source_baseline = await db.get(StreamBaseline, exclude_connection_id)
+        if source_baseline is None or not source_baseline.approved:
+            return
+        for media_id in changed_media_ids:
+            source_observations.setdefault(media_id, source_baseline.observed_at)
         from core.pull_cycle import defer_library_fan_out
         if defer_library_fan_out(
             user_id,
@@ -976,110 +1000,29 @@ async def _fan_out_streaming_library_changes(
             new_collected_ids=new_collected_ids,
             removed_collected_ids=removed_collected_ids,
             api_key=api_key,
+            source_observed_at=source_baseline.observed_at,
         ):
             return
-
-    filters = [
-        MediaServerConnection.user_id == user_id,
-        MediaServerConnection.type.in_(("stremio", "nuvio")),
-        MediaServerConnection.push_collection.is_(True),
-    ]
-    if excluded_ids:
-        filters.append(MediaServerConnection.id.not_in(excluded_ids))
-    result = await db.execute(
-        select(MediaServerConnection).where(
-            *filters,
-        )
-    )
-    targets = result.scalars().all()
-    if not targets:
+    if not source_observations:
         return
 
-    from core.tracking_snapshot import require_stream_reconciliation
+    from core.streaming_library import (
+        dispatch_pending_library_deliveries,
+        queue_provider_library_changes,
+    )
 
-    nuvio_items: list[dict] | None = None
-    media_by_id = {
-        media.id: media
-        for media in await _select_in_chunks(
-            db,
-            lambda chunk: select(Media).where(Media.id.in_(chunk)),
-            list(changed_media_ids),
-        )
-    }
-    shows_by_tmdb: dict[int, Show] = {}
-    if any(target.type == "nuvio" for target in targets):
-        series_tmdb_ids = {
-            media.tmdb_id
-            for media in media_by_id.values()
-            if media.media_type == MediaType.series and media.tmdb_id is not None
-        }
-        if series_tmdb_ids:
-            shows = await _select_in_chunks(
-                db,
-                lambda chunk: select(Show).where(Show.tmdb_id.in_(chunk)),
-                list(series_tmdb_ids),
-            )
-            shows_by_tmdb = {
-                show.tmdb_id: show
-                for show in shows
-                if show.tmdb_id is not None
-            }
-        await _ensure_nuvio_imdb_ids(
-            list(media_by_id.values()),
-            {},
-            api_key,
-            shows_by_tmdb,
-        )
-    for target in targets:
-        try:
-            await require_stream_reconciliation(db, target)
-        except HTTPException:
-            logger.info(
-                "Streaming library mirror held for reconciliation: connection %s",
-                target.id,
-            )
-            continue
-
-        try:
-            if target.type == "stremio":
-                await _push_stremio_connection(
-                    db,
-                    target,
-                    user_id,
-                    api_key=api_key,
-                    changed_media_ids=changed_media_ids,
-                )
-                continue
-
-            if nuvio_items is None:
-                nuvio_items = await _build_nuvio_library_items(
-                    db,
-                    user_id,
-                    api_key=api_key,
-                )
-            changed_content_ids = {
-                content_id
-                for media_id in changed_media_ids
-                if (media := media_by_id.get(media_id)) is not None
-                if (
-                    content_id := _nuvio_library_content_id(
-                        media,
-                        shows_by_tmdb.get(media.tmdb_id),
-                    )
-                )
-            }
-            if changed_content_ids:
-                await _push_nuvio_library_delta(
-                    db,
-                    target,
-                    nuvio_items,
-                    changed_content_ids,
-                )
-        except Exception:
-            logger.exception(
-                "Streaming library mirror failed for connection %s",
-                target.id,
-            )
+    await queue_provider_library_changes(
+        db,
+        user_id,
+        changed_media_ids,
+        exclude_connection_ids=excluded_ids,
+        source_observed_at_by_media=source_observations,
+        source_connection_ids_by_media=source_ids_by_media,
+    )
+    # The queue is durable before any provider request starts. Failures remain
+    # pending for the independent delivery retry worker.
+    await db.commit()
+    await dispatch_pending_library_deliveries(db, user_id)
 
 
 
@@ -2495,6 +2438,8 @@ async def sync_items(
     ratingkey_to_media_id: dict[str, int] | None = None,  # accumulated across calls; mutated in-place
     seen_source_ids: set[str] | None = None,  # accumulated across calls; every source_id encountered this run, used to prune deletions afterward
     push_back: dict[int, str] | None = None,  # accumulated across calls; media_id → source_id of newly collected items Scrob has watched but the server reports unwatched (#420)
+    snapshot_started_at: datetime | None = None,
+    full_resync: bool = False,
 ) -> list[dict]:  # returns warnings
     items = _expand_multi_episode_items(items, media_type, source)
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
@@ -2651,6 +2596,17 @@ async def sync_items(
         collection_heals.clear()
 
     for i, item in enumerate(items):
+        if (
+            i % BATCH_SIZE == 0
+            and snapshot_started_at is not None
+            and connection_id is not None
+            and source in (CollectionSource.nuvio, CollectionSource.stremio)
+        ):
+            from core.streaming_clear import assert_pull_snapshot_current
+            await assert_pull_snapshot_current(
+                db, user_id, SimpleNamespace(id=connection_id), snapshot_started_at,
+                full_resync=full_resync,
+            )
         new_media: Media | None = None
         rating_observation: tuple[RatingKey, float] | None = None
         try:
@@ -4976,6 +4932,8 @@ async def _apply_nuvio_progress(
     show_map: dict[str, int],
     tmdb_ids: dict[str, int],
     conn: MediaServerConnection | None = None,
+    *,
+    fresh_import: bool = False,
 ) -> None:
     from models.tracking import StreamBaseline
     baseline = await db.get(StreamBaseline, conn.id) if conn else None
@@ -5064,9 +5022,9 @@ async def _apply_nuvio_progress(
         progress = existing.get(media.id)
         provider_at = _nuvio_datetime(row.get('last_watched'))
         if progress:
-            if baseline is None:
+            if baseline is None or fresh_import:
                 # A new connection can fill gaps, but cannot replace local
-                # Continue Watching data during its first import.
+                # Continue Watching data during its first or full re-import.
                 continue
             if conn and not conn.push_playback and progress_percent <= progress.progress_percent:
                 continue
@@ -5102,9 +5060,10 @@ async def run_nuvio_sync(
     movie_limit: int,
     show_limit: int,
     connection_id: int | None = None,
+    full_resync: bool = False,
 ):
     async with _sync_semaphore:
-        await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id)
+        await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id, full_resync)
 
 
 async def _run_nuvio_sync(
@@ -5113,6 +5072,7 @@ async def _run_nuvio_sync(
     movie_limit: int,
     show_limit: int,
     connection_id: int | None = None,
+    full_resync: bool = False,
 ):
     logger.info("Starting Nuvio sync for user %s, job %s", user_id, job_id)
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -5141,6 +5101,9 @@ async def _run_nuvio_sync(
             if not conn or not tmdb_api_key:
                 raise RuntimeError("Missing Nuvio connection or TMDB API key")
 
+            if full_resync and (movie_limit or show_limit):
+                raise RuntimeError("A full Nuvio resync requires an unbounded complete provider snapshot")
+
             try:
                 profile_id = int(conn.server_user_id or "")
             except ValueError:
@@ -5148,14 +5111,32 @@ async def _run_nuvio_sync(
             if profile_id < 1 or profile_id > 6:
                 raise RuntimeError("Invalid Nuvio profile index")
 
+            from core.streaming_clear import pull_blocked_by_clear
+            if not full_resync and await pull_blocked_by_clear(db, conn):
+                raise RuntimeError("A provider clear is incomplete; retry Clear data or run a full resync before syncing")
+
             # Supabase refresh tokens rotate; on_refresh persists the replacement
             # the moment it's issued, inside pull_sync_data, before the pull RPCs
             # run — a failed pull can no longer strand the connection on a
             # refresh token that's already been redeemed and rejected.
             async def _persist_refresh(refreshed: nuvio.NuvioSession) -> None:
-                conn.token = refreshed.refresh_token
-                await db.commit()
+                from db import AsyncSessionLocal
+                from sqlalchemy import update
+                from sqlalchemy.orm.attributes import set_committed_value
+                async with AsyncSessionLocal() as token_db:
+                    result = await token_db.execute(update(MediaServerConnection).where(
+                        MediaServerConnection.id == conn.id,
+                        MediaServerConnection.user_id == user_id,
+                        MediaServerConnection.url == conn.url,
+                        MediaServerConnection.server_user_id == conn.server_user_id,
+                        MediaServerConnection.token == conn.token,
+                    ).values(token=refreshed.refresh_token))
+                    if result.rowcount != 1:
+                        raise RuntimeError("Nuvio connection profile changed during sync")
+                    await token_db.commit()
+                set_committed_value(conn, "token", refreshed.refresh_token)
 
+            pull_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
             async with nuvio.connection_lock(conn.id):
                 # See core/nuvio.py's connection_lock docstring - conn may
                 # have been loaded before another request already rotated
@@ -5168,6 +5149,9 @@ async def _run_nuvio_sync(
             library_records = data["library"] if conn.sync_collection else []
             watched_records = data["watched"] if conn.sync_watched else []
             progress_records = data["progress"] if conn.sync_playback else []
+            complete_snapshot = len(data["progress"]) < 200
+            if full_resync and not complete_snapshot:
+                raise RuntimeError("Nuvio returned the maximum watch-progress page; refusing an incomplete full resync")
             logger.info(
                 "Nuvio profile %s (index #%s): pulled %s library, %s watched, "
                 "and %s progress records; enabled for this sync: %s library, "
@@ -5295,6 +5279,8 @@ async def _run_nuvio_sync(
                     new_watched_ids=new_watched_ids,
                     new_collected_ids=new_collected_ids,
                     connection_id=conn.id,
+                    snapshot_started_at=pull_started_at,
+                    full_resync=full_resync,
                 )
                 warnings.extend(group_warnings)
 
@@ -5321,12 +5307,19 @@ async def _run_nuvio_sync(
                 )
 
             if conn.sync_watched and watched_records:
+                from core.streaming_clear import assert_pull_snapshot_current
+                await assert_pull_snapshot_current(
+                    db, user_id, conn, pull_started_at, full_resync=full_resync,
+                )
                 from core.tracking_snapshot import changed_watch_rows_from_source
+                history_rows = watched_records if full_resync else await changed_watch_rows_from_source(
+                    db, conn, watched_records,
+                )
                 new_watched_ids.update(
                     await _apply_nuvio_watch_history(
                         db,
                         user_id,
-                        await changed_watch_rows_from_source(db, conn, watched_records),
+                        history_rows,
                         show_map,
                         tmdb_ids,
                         include_unknown_dates=True,
@@ -5334,7 +5327,14 @@ async def _run_nuvio_sync(
                 )
 
             if progress_records:
-                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids, conn)
+                from core.streaming_clear import assert_pull_snapshot_current
+                await assert_pull_snapshot_current(
+                    db, user_id, conn, pull_started_at, full_resync=full_resync,
+                )
+                await _apply_nuvio_progress(
+                    db, user_id, progress_records, show_map, tmdb_ids, conn,
+                    fresh_import=full_resync,
+                )
 
             complete_library_source_ids = (
                 {str(item["Id"]) for _, item in normalized_library}
@@ -5342,7 +5342,12 @@ async def _run_nuvio_sync(
                 and not unresolved_library_records
                 and not movie_limit
                 and not show_limit
+                and not full_resync
                 else None
+            )
+            from core.streaming_clear import assert_pull_snapshot_current
+            await assert_pull_snapshot_current(
+                db, user_id, conn, pull_started_at, full_resync=full_resync,
             )
             removed_collected_ids = await _remove_stream_collection_sources(
                 db,
@@ -5352,8 +5357,11 @@ async def _run_nuvio_sync(
                 removed_ids=set(),
                 complete_snapshot_source_ids=complete_library_source_ids,
             )
+            # Release the user-row gate only after the source-specific removals
+            # commit. Clear jobs acquire this lock before taking a provider lock.
+            await db.commit()
 
-            if new_collected_ids or removed_collected_ids:
+            if (new_collected_ids or removed_collected_ids) and not full_resync:
                 # Commit local truth before attempting any external write.
                 await db.commit()
                 await _fan_out_streaming_library_changes(
@@ -5365,26 +5373,30 @@ async def _run_nuvio_sync(
                     api_key=tmdb_api_key,
                 )
 
-            if (conn.sync_playback or conn.sync_watched) and not stats['errors']:
+            if (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 removed_watch_ids = set()
                 propagated_watch_ids = await observe_stream_snapshot(
                     db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                    complete=len(progress_records) < 200,
+                    complete=complete_snapshot,
                     sync_playback=conn.sync_playback,
                     sync_watched=conn.sync_watched,
                     removed_watched_ids=removed_watch_ids,
+                    fresh_import=full_resync,
+                    source_started_at=pull_started_at,
                 )
-                if propagated_watch_ids or removed_watch_ids:
+                if (propagated_watch_ids or removed_watch_ids) and not full_resync:
                     from core.pull_propagation import propagate_media_server_pull
                     await propagate_media_server_pull(
                         db, conn=conn, watched_ids=propagated_watch_ids, ratings={},
                         removed_watched_ids=removed_watch_ids,
                     )
-                from core.stream_actions import dispatch_stream_actions
-                await dispatch_stream_actions(db, user_id)
-            from core.streaming_library import retry_pending_library_deliveries
-            await retry_pending_library_deliveries(db, user_id, conn.id)
+                if not full_resync:
+                    from core.stream_actions import dispatch_stream_actions
+                    await dispatch_stream_actions(db, user_id)
+            if not full_resync:
+                from core.streaming_library import retry_pending_library_deliveries
+                await retry_pending_library_deliveries(db, user_id, conn.id)
 
             # Tracking/watch changes remain local until their own confirmation rules
             # allow export. Verified streaming-library deltas are mirrored separately.
@@ -5759,11 +5771,21 @@ async def _run_stremio_sync(
             if not conn or not tmdb_api_key:
                 raise RuntimeError("Missing Stremio connection or TMDB API key")
 
-            items, complete_snapshot, pull_started_at = await _pull_stremio_items(
-                conn,
-                full_resync=full_resync,
-            )
+            if full_resync and (movie_limit or show_limit):
+                raise RuntimeError("A full Stremio resync requires an unbounded complete provider snapshot")
+
+            from core.streaming_clear import pull_blocked_by_clear
+            if not full_resync and await pull_blocked_by_clear(db, conn):
+                raise RuntimeError("A provider clear is incomplete; retry Clear data or run a full resync before syncing")
+
+            async with stremio.connection_lock(conn.id):
+                items, complete_snapshot, pull_started_at = await _pull_stremio_items(
+                    conn,
+                    full_resync=full_resync,
+                )
             library_records, watched_records, progress_records, removed_ids = await _stremio_records(items)
+            if full_resync:
+                removed_ids = set()
             if not conn.sync_collection:
                 library_records = []
                 removed_ids = set()
@@ -5874,6 +5896,8 @@ async def _run_stremio_sync(
                         new_watched_ids=new_watched_ids,
                         new_collected_ids=new_collected_ids,
                         connection_id=conn.id,
+                        snapshot_started_at=pull_started_at,
+                        full_resync=full_resync,
                     )
                 )
 
@@ -5884,12 +5908,19 @@ async def _run_stremio_sync(
                 await sync_group(normalized_progress, media_type, sync_collection=False)
 
             if conn.sync_watched and watched_records:
+                from core.streaming_clear import assert_pull_snapshot_current
+                await assert_pull_snapshot_current(
+                    db, user_id, conn, pull_started_at, full_resync=full_resync,
+                )
                 from core.tracking_snapshot import changed_watch_rows_from_source
+                history_rows = watched_records if full_resync else await changed_watch_rows_from_source(
+                    db, conn, watched_records,
+                )
                 new_watched_ids.update(
                     await _apply_nuvio_watch_history(
                         db,
                         user_id,
-                        await changed_watch_rows_from_source(db, conn, watched_records),
+                        history_rows,
                         show_map,
                         tmdb_ids,
                         include_unknown_dates=True,
@@ -5897,12 +5928,23 @@ async def _run_stremio_sync(
                     )
                 )
             if progress_records:
-                await _apply_nuvio_progress(db, user_id, progress_records, show_map, tmdb_ids, conn)
+                from core.streaming_clear import assert_pull_snapshot_current
+                await assert_pull_snapshot_current(
+                    db, user_id, conn, pull_started_at, full_resync=full_resync,
+                )
+                await _apply_nuvio_progress(
+                    db, user_id, progress_records, show_map, tmdb_ids, conn,
+                    fresh_import=full_resync,
+                )
 
             complete_snapshot_ids = (
                 {str(record["content_id"]) for record in library_records}
-                if complete_snapshot and conn.sync_collection
+                if complete_snapshot and conn.sync_collection and not full_resync
                 else None
+            )
+            from core.streaming_clear import assert_pull_snapshot_current
+            await assert_pull_snapshot_current(
+                db, user_id, conn, pull_started_at, full_resync=full_resync,
             )
             removed_collected_ids = await _remove_stremio_collection_sources(
                 db,
@@ -5911,7 +5953,8 @@ async def _run_stremio_sync(
                 removed_ids=removed_ids,
                 complete_snapshot_ids=complete_snapshot_ids,
             )
-            if new_collected_ids or removed_collected_ids:
+            await db.commit()
+            if (new_collected_ids or removed_collected_ids) and not full_resync:
                 # Commit local truth before attempting any external write.
                 await db.commit()
                 await _fan_out_streaming_library_changes(
@@ -5922,7 +5965,7 @@ async def _run_stremio_sync(
                     removed_collected_ids=removed_collected_ids,
                     api_key=tmdb_api_key,
                 )
-            if (conn.sync_playback or conn.sync_watched) and not stats['errors']:
+            if (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 removed_watch_ids = set()
                 propagated_watch_ids = await observe_stream_snapshot(
@@ -5931,17 +5974,21 @@ async def _run_stremio_sync(
                     sync_playback=conn.sync_playback,
                     sync_watched=conn.sync_watched,
                     removed_watched_ids=removed_watch_ids,
+                    fresh_import=full_resync,
+                    source_started_at=pull_started_at,
                 )
-                if propagated_watch_ids or removed_watch_ids:
+                if (propagated_watch_ids or removed_watch_ids) and not full_resync:
                     from core.pull_propagation import propagate_media_server_pull
                     await propagate_media_server_pull(
                         db, conn=conn, watched_ids=propagated_watch_ids, ratings={},
                         removed_watched_ids=removed_watch_ids,
                     )
-                from core.stream_actions import dispatch_stream_actions
-                await dispatch_stream_actions(db, user_id)
-            from core.streaming_library import retry_pending_library_deliveries
-            await retry_pending_library_deliveries(db, user_id, conn.id)
+                if not full_resync:
+                    from core.stream_actions import dispatch_stream_actions
+                    await dispatch_stream_actions(db, user_id)
+            if not full_resync:
+                from core.streaming_library import retry_pending_library_deliveries
+                await retry_pending_library_deliveries(db, user_id, conn.id)
             # Tracking/watch changes remain local until their own confirmation rules
             # allow export. Verified streaming-library deltas are mirrored separately.
             conn.stremio_pull_cursor_at = pull_started_at
@@ -6736,6 +6783,18 @@ async def sync_connection(
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
 
+    if conn.type in ("stremio", "nuvio"):
+        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        active_clear = (await db.execute(select(SyncJob.id).where(
+            SyncJob.connection_id == connection_id,
+            SyncJob.job_type == "clear",
+            SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
+        ).limit(1))).scalar_one_or_none()
+        if active_clear is not None:
+            raise HTTPException(status_code=409, detail="A provider clear is in progress; retry sync after it completes")
+        if full and (movie_limit or show_limit):
+            raise HTTPException(status_code=400, detail="A full Stremio or Nuvio resync must fetch the complete provider snapshot")
+
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
     if not await _get_effective_tmdb_key(db, settings):
@@ -6768,7 +6827,7 @@ async def sync_connection(
         "arvio": run_arvio_sync,
     }
     runner_args = (current_user.id, job.id, movie_limit, show_limit, connection_id)
-    if conn.type == "stremio":
+    if conn.type in ("stremio", "nuvio"):
         runner_args = (*runner_args, full)
     background_tasks.add_task(runner_map[conn.type], *runner_args)
     return {"status": "started", "job_id": job.id, "message": f"{conn.type.capitalize()} sync is running in the background"}
@@ -7005,7 +7064,7 @@ async def _push_stremio_connection(
     if target_ids is not None:
         removed_library_ids &= target_ids
 
-    lock = _stremio_push_locks.setdefault(conn.id, asyncio.Lock())
+    lock = stremio.connection_lock(conn.id)
     async with lock:
         remote_items = await stremio.datastore_get(conn.token, all_items=True)
         remote_by_id = {
@@ -8102,6 +8161,65 @@ async def push_upstream(
     return {"status": "started", "job_id": job.id, "message": "Full upstream push is running in the background"}
 
 
+@router.post("/connection/{connection_id}/clear-data")
+async def clear_connection_data(
+    connection_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conn = await _get_connection_or_404(db, connection_id, current_user.id)
+    if conn.type not in ("stremio", "nuvio"):
+        raise HTTPException(status_code=400, detail="Clear data is supported only for Stremio and Nuvio")
+
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    await db.refresh(conn)
+
+    from core.streaming_clear import run_clear_data_job, selected_scope, target_identity
+    scope = selected_scope(conn)
+    if not any(scope.values()):
+        raise HTTPException(status_code=400, detail="Enable at least one outbound collection, watched, or playback flag first")
+    try:
+        identity = target_identity(conn)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    active = (await db.execute(select(SyncJob.id).where(
+        SyncJob.user_id == current_user.id,
+        SyncJob.connection_id == connection_id,
+        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
+    ).limit(1))).scalar_one_or_none()
+    if active:
+        raise HTTPException(status_code=409, detail="Another sync or push is already running for this connection")
+
+    from models.tracking import StreamBaseline
+    baseline = (await db.execute(select(StreamBaseline).where(
+        StreamBaseline.connection_id == connection_id,
+    ).execution_options(populate_existing=True))).scalar_one_or_none()
+    existing_guard = (baseline.snapshot or {}).get("clear_guard") if baseline else None
+    if existing_guard:
+        if not isinstance(existing_guard, dict) or existing_guard.get("scope") != scope or existing_guard.get("identity") != identity:
+            raise HTTPException(
+                status_code=409,
+                detail="A previous clear did not complete for the same scope and account. Run a full resync before starting a different clear.",
+            )
+
+    source = CollectionSource.nuvio if conn.type == "nuvio" else CollectionSource.stremio
+    job = SyncJob(
+        user_id=current_user.id,
+        source=source,
+        status=SyncStatus.pending,
+        connection_id=connection_id,
+        job_type="clear",
+        stats={"clear_scope": scope, "target_identity": identity},
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    background_tasks.add_task(run_clear_data_job, current_user.id, connection_id, job.id)
+    return {"status": "started", "job_id": job.id, "message": "Selected provider data is being cleared in the background"}
+
+
 @router.post("/jellyfin")
 async def sync_jellyfin(
     background_tasks: BackgroundTasks,
@@ -8365,15 +8483,16 @@ async def abort_sync(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Aborts any pending or running sync jobs for the current user."""
+    """Cancel active sync jobs, preserving destructive clears already running."""
     await db.execute(
         update(SyncJob)
         .where(SyncJob.user_id == current_user.id)
         .where(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]))
+        .where(~((SyncJob.job_type == "clear") & (SyncJob.status == SyncStatus.running)))
         .values(status=SyncStatus.cancelled, error_message="Cancelled by user", updated_at=func.now())
     )
     await db.commit()
-    return {"status": "ok", "message": "All active sync jobs have been cancelled"}
+    return {"status": "ok", "message": "Cancellable sync jobs have been cancelled"}
 
 
 @router.post("/{job_id}/cancel")
@@ -8386,18 +8505,20 @@ async def cancel_sync_job(
 
     The background loop only notices on its next cooperative checkpoint (see
     _raise_if_cancelled), so the job may keep running briefly after this returns.
+    A destructive clear that has started must finish its verification instead.
     """
     result = await db.execute(
         update(SyncJob)
         .where(SyncJob.id == job_id, SyncJob.user_id == current_user.id)
         .where(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]))
+        .where(~((SyncJob.job_type == "clear") & (SyncJob.status == SyncStatus.running)))
         .values(status=SyncStatus.cancelled, error_message="Cancelled by user", updated_at=func.now())
         .returning(SyncJob.id)
     )
     cancelled_id = result.scalar_one_or_none()
     await db.commit()
     if cancelled_id is None:
-        raise HTTPException(status_code=404, detail="No active sync job with that id")
+        raise HTTPException(status_code=404, detail="No cancellable sync job with that id")
     return {"status": "ok", "job_id": job_id}
 
 

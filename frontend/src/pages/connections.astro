@@ -33,29 +33,32 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
 <TrackerSettings title="Connections">
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
-  <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto min-w-0 w-full">
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
-    <div class="space-y-12">
+    <div class="space-y-12 grid-cols-1 min-w-0 w-full">
       <section>
-        <form id="connections-form" class="space-y-6">
+        <form id="connections-form" class="space-y-6 min-w-0 w-full">
           <!-- ======== SYNC SECTION ======== -->
           <div class="space-y-3">
             <h2 class="section-headline border-b border-zinc-800 pb-2">Media Players</h2>
 
             <!-- Connections list (server-side rendered, managed client-side) -->
-            <div id="connections-list" class="space-y-3">
+            <div id="connections-list" class="space-y-3 min-w-0 w-full">
             {connections.map((conn) => {
               const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : conn.type === "stremio" ? "Stremio" : conn.type === "arvio" ? "ARVIO" : "Nuvio";
+              const isStreamProvider = conn.type === "nuvio" || conn.type === "stremio";
+              const hasPullSelection = conn.sync_collection !== false || conn.sync_watched !== false || conn.sync_playback !== false;
+              const hasPushSelection = !!(conn.push_collection || conn.push_watched || conn.push_playback);
               return (
-              <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden" data-connection-id={conn.id}>
-                <div class="collapsible-header flex items-center justify-between px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`conn-body-${conn.id}`}>
-                  <div class="flex items-center gap-4 pointer-events-none">
+              <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden min-w-0 max-w-full" data-connection-id={conn.id}>
+                <div class="collapsible-header flex items-center justify-between min-w-0 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors select-none" data-target={`conn-body-${conn.id}`}>
+                  <div class="flex min-w-0 items-center gap-4 pointer-events-none">
                     <Fragment set:html={connectionIconHtml(conn.type)} />
-                    <div class="flex flex-col gap-0.5">
+                    <div class="flex min-w-0 flex-col gap-0.5">
                       <span class="font-medium text-zinc-200">{conn.name}</span>
                       <span id={`conn-status-${conn.id}`} class="conn-status-badge hidden text-xs font-normal px-1.5 py-0.5 rounded pointer-events-auto"></span>
-                      <span class="text-xs text-zinc-500">{typeLabel} · {conn.url}</span>
+                      <span class="break-all text-xs text-zinc-500">{typeLabel} · {conn.url}</span>
                     </div>
                   </div>
                   <div class="flex items-center gap-2">
@@ -88,9 +91,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 </div>
                 <div id={`conn-warnings-${conn.id}`} class="hidden px-4 pb-3 pt-0"></div>
                 <div id={`conn-body-${conn.id}`} class="border-t border-zinc-800 hidden">
-                  <div class="grid md:grid-cols-2 gap-8 px-6 py-6">
+                  <div class="grid min-w-0 grid-cols-1 md:grid-cols-2 gap-8 px-6 py-6">
                     <!-- Left: Connection details -->
-                    <div class="space-y-4">
+                    <div class="min-w-0 space-y-4">
                       <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
                         <label class="block text-sm font-medium text-zinc-400">{conn.type === "nuvio" || conn.type === "arvio" ? "Cloud API URL" : "Server URL"}</label>
                         <input type="url" class="conn-url-input w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all disabled:opacity-70" value={conn.url} data-conn-id={conn.id} disabled={conn.type === "arvio"} />
@@ -190,7 +193,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                       )}
                     </div>
                     <!-- Right: Sync Preferences -->
-                    <div class="space-y-4">
+                    <div class="min-w-0 space-y-4">
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                         <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">{typeLabel} → AnyList</p>
                         {[
@@ -201,19 +204,22 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           ...(conn.type === "plex" ? [{ key: "plex_sync_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
-                            <input type="checkbox" class="conn-pref-checkbox w-4 h-4 rounded cursor-pointer" data-conn-id={conn.id} data-pref={key} checked={conn[key as keyof typeof conn] !== false} />
+                            <input type="checkbox" class="conn-pref-checkbox w-4 h-4 rounded cursor-pointer" data-conn-id={conn.id} data-pref={key} data-saved-checked={String(conn[key as keyof typeof conn] !== false)} checked={conn[key as keyof typeof conn] !== false} />
                             <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                           </label>
                         ))}
-                        <div class="flex items-center gap-3">
+                        <div class="flex flex-wrap items-center gap-3">
                           <button type="button" data-action="sync_connection" data-conn-id={conn.id} data-conn-type={conn.type} data-conn-name={conn.name}
+                            data-connection-job-control data-connection-action-kind="pull" data-config-disabled={String(!hasTmdbKey)}
                             disabled={!hasTmdbKey}
                             title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? `Sync ${typeLabel} library, watched status, and playback progress` : `Pull from ${conn.name}`}
                             class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
                           >{conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? "Sync now" : "Pull"}</button>
-                          {conn.type === "stremio" && (
+                          {isStreamProvider && (
                             <button type="button" data-action="full_resync_connection" data-conn-id={conn.id} data-conn-name={conn.name}
-                              disabled={!hasTmdbKey}
+                              data-connection-job-control data-connection-action-kind="full-resync" data-config-disabled={String(!hasTmdbKey)}
+                              disabled={!hasTmdbKey || !hasPullSelection}
+                              title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : !hasPullSelection ? "Enable and save at least one pull option first" : `Discard ${conn.name}'s saved snapshot and start a fresh import`}
                               class="js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
                             >Full resync</button>
                           )}
@@ -231,14 +237,26 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                           ...(conn.type === "plex" ? [{ key: "plex_push_watchlist", label: "Watchlist" }] : []),
                         ].map(({ key, label }) => (
                           <label class="flex items-center gap-3 cursor-pointer group">
-                            <input type="checkbox" class="conn-pref-checkbox w-4 h-4 rounded cursor-pointer" data-conn-id={conn.id} data-pref={key} checked={!!conn[key as keyof typeof conn]} />
+                            <input type="checkbox" class="conn-pref-checkbox w-4 h-4 rounded cursor-pointer" data-conn-id={conn.id} data-pref={key} data-saved-checked={String(!!conn[key as keyof typeof conn])} checked={!!conn[key as keyof typeof conn]} />
                             <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">{label}</span>
                           </label>
                         ))}
+                        <p class="text-xs text-zinc-500">Changes sync automatically; {isStreamProvider ? "Push and Clear data are manual repair tools." : "Push is available for manual repair."}</p>
+                        <div class="flex flex-wrap items-center gap-3">
                         <button type="button" data-action="push_upstream" data-conn-id={conn.id} data-conn-name={conn.name}
+                          data-connection-job-control data-connection-action-kind="push"
                           title={`Push enabled data from AnyList to ${conn.name}`}
                           class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                         >Push</button>
+                        {isStreamProvider && (
+                          <button type="button" data-action="clear_connection_data" data-conn-id={conn.id} data-conn-name={conn.name}
+                            data-connection-job-control data-connection-action-kind="clear"
+                            disabled={!hasPushSelection}
+                            title={!hasPushSelection ? "Enable and save at least one outbound option first" : `Clear selected AnyList data from ${conn.name}`}
+                            class="js-action-btn text-sm bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >Clear data</button>
+                        )}
+                        </div>
                       </div>
                       )}
                       <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
@@ -1790,6 +1808,117 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   const appData = document.getElementById('app-data');
   const token = appData?.dataset.token ?? '';
 
+  const streamPullPreferences = [
+    { key: 'sync_collection', label: 'Collection status' },
+    { key: 'sync_watched', label: 'Watched status' },
+    { key: 'sync_playback', label: 'Playback progress' },
+  ];
+  const streamPushPreferences = [
+    { key: 'push_collection', label: 'Collection status' },
+    { key: 'push_watched', label: 'Watched status' },
+    { key: 'push_playback', label: 'Playback progress' },
+  ];
+  const activeConnectionJobs = new Set<string>();
+  const connectionSaveWaiters = new Map<string, Set<() => void>>();
+
+  function connectionCard(connId: string): HTMLElement | null {
+    return document.querySelector<HTMLElement>(`[data-connection-id="${CSS.escape(connId)}"]`);
+  }
+
+  function selectedConnectionPreferences(card: HTMLElement | null, preferences: { key: string; label: string }[], saved = false): string[] {
+    if (!card) return [];
+    return preferences
+      .filter(({ key }) => {
+        const input = card.querySelector<HTMLInputElement>(`.conn-pref-checkbox[data-pref="${key}"]`);
+        return saved ? input?.dataset.savedChecked === 'true' : !!input?.checked;
+      })
+      .map(({ label }) => label);
+  }
+
+  function connectionPreferencesChanged(card: HTMLElement | null, preferences: { key: string; label: string }[]): boolean {
+    if (!card) return false;
+    return preferences.some(({ key }) => {
+      const input = card.querySelector<HTMLInputElement>(`.conn-pref-checkbox[data-pref="${key}"]`);
+      return !!input && String(input.checked) !== input.dataset.savedChecked;
+    });
+  }
+
+  function updateConnectionActionControls(connId: string) {
+    const card = connectionCard(connId);
+    if (!card) return;
+    const busy = activeConnectionJobs.has(connId)
+      || card.dataset.connectionOperationPending === 'true'
+      || card.dataset.connectionSavePending === 'true';
+    const pushSelection = selectedConnectionPreferences(card, streamPushPreferences);
+    const pullSelection = selectedConnectionPreferences(card, streamPullPreferences);
+    const hasUnsavedPush = connectionPreferencesChanged(card, streamPushPreferences);
+    const hasUnsavedPull = connectionPreferencesChanged(card, streamPullPreferences);
+
+    card.querySelectorAll<HTMLButtonElement>('[data-connection-job-control]').forEach(button => {
+      const kind = button.dataset.connectionActionKind;
+      const unavailable = button.dataset.configDisabled === 'true'
+        || (kind === 'clear' && (pushSelection.length === 0 || hasUnsavedPush))
+        || (kind === 'full-resync' && (pullSelection.length === 0 || hasUnsavedPull));
+      button.disabled = busy || unavailable;
+      button.classList.toggle('opacity-50', button.disabled);
+      if (kind === 'clear') {
+        button.title = pushSelection.length === 0
+          ? 'Enable and save at least one outbound option first'
+          : hasUnsavedPush
+            ? 'Save outbound changes before clearing data so the selected fields match'
+            : `Clear ${formatList(selectedConnectionPreferences(card, streamPushPreferences, true))} from ${button.dataset.connName || 'this connection'}`;
+      } else if (kind === 'full-resync') {
+        button.title = button.dataset.configDisabled === 'true'
+          ? 'TMDB Read Access Token is required for sync'
+          : pullSelection.length === 0
+            ? 'Enable and save at least one pull option first'
+            : hasUnsavedPull
+              ? 'Save pull changes before starting a full resync'
+              : `Discard the saved snapshot and start a fresh import from ${button.dataset.connName || 'this connection'}`;
+      }
+    });
+
+    card.querySelectorAll<HTMLInputElement>('.conn-pref-checkbox').forEach(input => {
+      input.disabled = busy;
+    });
+  }
+
+  function setConnectionJobActive(connId: string, active: boolean) {
+    if (active) activeConnectionJobs.add(connId);
+    else activeConnectionJobs.delete(connId);
+    updateConnectionActionControls(connId);
+  }
+
+  function setConnectionSavePending(connId: string, pending: boolean) {
+    const card = connectionCard(connId);
+    if (card) {
+      card.dataset.connectionSavePending = String(pending);
+      updateConnectionActionControls(connId);
+    }
+    if (!pending) {
+      const waiters = connectionSaveWaiters.get(connId);
+      waiters?.forEach(resolve => resolve());
+      connectionSaveWaiters.delete(connId);
+    }
+  }
+
+  function setConnectionOperationPending(connId: string, pending: boolean) {
+    const card = connectionCard(connId);
+    if (!card) return;
+    card.dataset.connectionOperationPending = String(pending);
+    updateConnectionActionControls(connId);
+  }
+
+  async function waitForConnectionSave(connId: string) {
+    while (connectionCard(connId)?.dataset.connectionSavePending === 'true') {
+      await new Promise<void>(resolve => {
+        const waiters = connectionSaveWaiters.get(connId) ?? new Set<() => void>();
+        waiters.add(resolve);
+        connectionSaveWaiters.set(connId, waiters);
+      });
+    }
+  }
+
   function esc(s) {
     if (s == null) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1853,6 +1982,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
   function wireCancelButton(btn: HTMLButtonElement | null, job: any) {
     if (!btn) return;
+    if (job.job_type === 'clear') {
+      btn.classList.add('hidden');
+      btn.onclick = null;
+      return;
+    }
     btn.classList.remove('hidden');
     btn.disabled = false;
     btn.textContent = 'Cancel';
@@ -1876,6 +2010,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     strip.classList.remove('hidden');
 
+    const isClear = job.job_type === 'clear';
     const isPush = job.job_type === 'push';
     const isFailed = job.status === 'failed';
     const isCancelled = job.status === 'cancelled';
@@ -1885,7 +2020,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     if (isFailed || isCancelled) {
       if (cancelBtn) cancelBtn.classList.add('hidden');
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
+      if (label) label.textContent = isCancelled
+        ? (isClear ? 'Clear cancelled' : isPush ? 'Push cancelled' : 'Pull cancelled')
+        : (isClear ? 'Clear failed' : isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
       if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
       if (statusEl) statusEl.textContent = '';
@@ -1894,11 +2031,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     if (isCompleted) {
       if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = `h-1.5 rounded-full transition-all duration-500 ${isPush ? 'bg-amber-500' : 'bg-blue-600'}`; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
+      if (bar) { bar.className = `h-1.5 rounded-full transition-all duration-500 ${isClear ? 'bg-red-500' : isPush ? 'bg-amber-500' : 'bg-blue-600'}`; bar.style.width = '100%'; }
+      if (label) label.textContent = isClear ? 'Clear complete' : isPush ? 'Push complete' : 'Pull complete';
       if (pctEl) pctEl.textContent = '100%';
       const s = job.stats;
-      if (items) items.textContent = s ? `${s.succeeded ?? 0} ok, ${s.failed ?? 0} failed` : `${job.processed_items} items`;
+      if (items) items.textContent = isClear
+        ? `${job.processed_items ?? 0} items cleared`
+        : s ? `${s.succeeded ?? 0} ok, ${s.failed ?? 0} failed` : `${job.processed_items} items`;
       if (statusEl) statusEl.textContent = '';
       return;
     }
@@ -1908,15 +2047,15 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const pct = job.total_items > 0
       ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100))
       : 0;
-    const barColor = isPush ? 'bg-amber-500' : 'bg-blue-600';
+    const barColor = isClear ? 'bg-red-500' : isPush ? 'bg-amber-500' : 'bg-blue-600';
 
     if (bar) {
       bar.className = `h-1.5 rounded-full transition-all duration-500 ${barColor}${isPending || job.total_items === 0 ? ' animate-pulse' : ''}`;
       bar.style.width = isPending || job.total_items === 0 ? '100%' : `${pct}%`;
     }
     if (label) label.textContent = isPending
-      ? (isPush ? 'Push queued…' : 'Pull queued…')
-      : (job.current_step || (isPush ? 'Pushing…' : 'Pulling…'));
+      ? (isClear ? 'Clear queued…' : isPush ? 'Push queued…' : 'Pull queued…')
+      : (job.current_step || (isClear ? 'Clearing…' : isPush ? 'Pushing…' : 'Pulling…'));
     if (pctEl) pctEl.textContent = job.total_items > 0 ? `${pct}%` : '';
     if (items) items.textContent = job.total_items > 0
       ? `${job.processed_items} / ${job.total_items} items`
@@ -1929,20 +2068,23 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const res = await fetch('/api/proxy/sync/status', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('Connection job status is unavailable');
       const jobs: any[] = await res.json();
 
-      // Most-recent job for this connection
-      const job = jobs.find(j => String(j.connection_id) === connId);
+      // Prefer any active job so a newer terminal record cannot hide it.
+      const connectionJobs = jobs.filter(j => String(j.connection_id) === connId);
+      const activeJob = connectionJobs.find(j => j.status === 'pending' || j.status === 'running');
+      const job = activeJob || connectionJobs[0];
       const parseUtc = (ts: string | undefined) => {
         if (!ts) return 0;
         return new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime();
       };
 
-      const isActive = job && (job.status === 'pending' || job.status === 'running');
+      const isActive = !!activeJob;
       const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
         && parseUtc(job.updated_at) > Date.now() - 30000;
 
+      setConnectionJobActive(connId, isActive);
       renderConnProgress(connId, (isActive || isRecentDone) ? job : null);
 
       if (isActive) {
@@ -1960,7 +2102,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         connPollers.delete(connId);
       }
     } catch {
-      connPollers.delete(connId);
+      // Preserve the active-job lock until a successful poll proves that
+      // remote work ended. A transient status outage must not strand the
+      // controls or allow another destructive operation to overlap it.
+      const statusEl = document.getElementById(`conn-job-status-${connId}`);
+      if (statusEl) statusEl.textContent = 'Status unavailable; retrying…';
+      connPollers.set(connId, setTimeout(() => pollConnJob(connId), 5000));
     }
   }
 
@@ -3072,6 +3219,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       
       newBtn.addEventListener('click', async () => {
         const action = newBtn.getAttribute('data-action');
+        const actionConnId = newBtn.getAttribute('data-conn-id');
+        const isConnectionSave = action === 'save_connection' && !!actionConnId;
+        let connectionSaveSucceeded = false;
+        let lockedConnectionId: string | null = null;
+        if (isConnectionSave && actionConnId) setConnectionSavePending(actionConnId, true);
         newBtn.disabled = true;
         const originalHTML = newBtn.innerHTML;
         newBtn.textContent = '...';
@@ -3144,7 +3296,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             return;
           } else if (action === 'save_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
-            const card = document.querySelector(`[data-connection-id="${connId}"]`);
+            const card = connId ? connectionCard(connId) : null;
             const body: Record<string, any> = {
               url: (card?.querySelector('.conn-url-input') as HTMLInputElement)?.value || undefined,
               token: (card?.querySelector('.conn-token-input') as HTMLInputElement)?.value || undefined,
@@ -3176,6 +3328,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const savedConnection = await saveRes.json();
             const savedTokenInput = card?.querySelector('.conn-token-input') as HTMLInputElement | null;
             if (savedTokenInput && savedConnection.token) savedTokenInput.value = savedConnection.token;
+            card?.querySelectorAll<HTMLInputElement>('.conn-pref-checkbox[data-saved-checked]').forEach(input => {
+              input.dataset.savedChecked = String(input.checked);
+            });
             // Save libraries if they've been loaded
             const libList = card?.querySelector('.conn-libraries-list');
             if (libList && libList.querySelector('.library-checkbox')) {
@@ -3189,6 +3344,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 body: JSON.stringify(libPayload),
               });
             }
+            connectionSaveSucceeded = true;
             showMessage('Connection saved!');
             return;
           } else if (action === 'save_scrobble_connection') {
@@ -3413,9 +3569,24 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           } else if (action === 'full_resync_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connName = newBtn.getAttribute('data-conn-name') || 'Stremio';
+            if (!connId) throw new Error('Connection ID is missing');
+            await waitForConnectionSave(connId);
+            const card = connectionCard(connId);
+            const pulling = selectedConnectionPreferences(card, streamPullPreferences, true);
+            if (pulling.length === 0 || connectionPreferencesChanged(card, streamPullPreferences)) {
+              await showConfirmModal(
+                'Save pull settings first',
+                'Full resync uses the saved pull options. Enable at least one pull option and save the connection before starting it.',
+                'Got it',
+                true,
+              );
+              return;
+            }
+            lockedConnectionId = connId;
+            setConnectionOperationPending(connId, true);
             const ok = await showConfirmModal(
-              `Full resync from ${connName}?`,
-              'This reads the complete Stremio library and safely reconciles provider-specific removals. Other collection sources are preserved.',
+              `Start a fresh import from ${connName}?`,
+              `This discards ${connName}'s saved snapshot and imports a complete provider snapshot using ${formatList(pulling)}. Existing AnyList data stays in place, and the new reconciliation must be reviewed before outbound writes. No provider data is changed.`,
               'Full resync',
             );
             if (!ok) return;
@@ -3479,6 +3650,33 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             );
             if (!ok) return;
             url = `/api/proxy/sync/connection/${connId}/push`;
+            syncConnId = connId;
+          } else if (action === 'clear_connection_data') {
+            const connId = newBtn.getAttribute('data-conn-id');
+            const connName = newBtn.getAttribute('data-conn-name') || 'this connection';
+            if (!connId) throw new Error('Connection ID is missing');
+            await waitForConnectionSave(connId);
+            const card = connectionCard(connId);
+            const selected = selectedConnectionPreferences(card, streamPushPreferences, true);
+            if (selected.length === 0 || connectionPreferencesChanged(card, streamPushPreferences)) {
+              await showConfirmModal(
+                'Save outbound settings first',
+                'Clear data uses the saved outbound options. Enable at least one outbound option and save the connection so the fields in this confirmation match what will be cleared.',
+                'Got it',
+                true,
+              );
+              return;
+            }
+            lockedConnectionId = connId;
+            setConnectionOperationPending(connId, true);
+            const ok = await showConfirmModal(
+              `Clear selected data from ${connName}?`,
+              `This clears ${formatList(selected)} from ${connName}. Your AnyList data and library state stay intact. A later Push restores the selected data from AnyList.`,
+              'Clear data',
+            );
+            if (!ok) return;
+            renderConnProgress(connId, { status: 'pending', job_type: 'clear', processed_items: 0, total_items: 0, updated_at: new Date().toISOString() });
+            url = `/api/proxy/sync/connection/${connId}/clear-data`;
             syncConnId = connId;
           } else if (action === 'test_radarr') {
             const u = document.getElementById('radarr_url').value;
@@ -3711,7 +3909,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               'sync_trakt', 'full_sync_trakt', 'push_trakt', 'sync_simkl', 'push_simkl', 'sync_mdblist', 'push_mdblist',
             ].includes(action);
             showMessage(data.message || 'Action successful!', 'success', { scroll: !showsProgressBar });
-            if (syncConnId) startConnPoller(syncConnId);
+            if (syncConnId) {
+              setConnectionJobActive(syncConnId, true);
+              startConnPoller(syncConnId);
+            }
             if (action === 'sync_simkl' || action === 'push_simkl') startSimklPoller();
             if (action === 'sync_trakt' || action === 'full_sync_trakt' || action === 'push_trakt') startTraktPoller();
             if (action === 'sync_mdblist' || action === 'push_mdblist') startMdblistPoller();
@@ -3720,12 +3921,35 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             throw new Error(data.detail || 'Action failed');
           }
         } catch (e) {
+          if (actionConnId && action === 'clear_connection_data') renderConnProgress(actionConnId, null);
+          if (actionConnId && action === 'full_resync_connection') renderConnProgress(actionConnId, null);
           showMessage(e.message, 'error');
         } finally {
-          newBtn.disabled = false;
           newBtn.innerHTML = originalHTML;
+          if (lockedConnectionId) setConnectionOperationPending(lockedConnectionId, false);
+          if (isConnectionSave && actionConnId) {
+            if (connectionSaveSucceeded) updateConnectionActionControls(actionConnId);
+            setConnectionSavePending(actionConnId, false);
+          }
+          if (newBtn.hasAttribute('data-connection-job-control') && actionConnId) {
+            updateConnectionActionControls(actionConnId);
+          } else {
+            newBtn.disabled = false;
+          }
         }
       });
+    });
+
+    document.querySelectorAll<HTMLInputElement>('.conn-pref-checkbox[data-conn-id]').forEach(input => {
+      if (input.dataset.connectionActionBound !== 'true') {
+        input.dataset.connectionActionBound = 'true';
+        input.addEventListener('change', () => {
+          const connId = input.dataset.connId;
+          if (connId) updateConnectionActionControls(connId);
+        });
+      }
+      const connId = input.dataset.connId;
+      if (connId) updateConnectionActionControls(connId);
     });
 
     // Trakt Device Auth
@@ -6129,3 +6353,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 <script>
   import "../scripts/netflix-import";
 </script>
+
+<style is:global>
+  .connections-settings-page #settings-content > .max-w-4xl > .space-y-12 > section {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+</style>

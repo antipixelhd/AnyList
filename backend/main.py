@@ -114,7 +114,8 @@ async def _flush_pull_cycle(state) -> None:
                 new_collected_ids=state.library_new_ids,
                 removed_collected_ids=state.library_removed_ids,
                 api_key=state.library_api_key,
-                exclude_connection_ids=state.library_source_ids,
+                source_observed_at_by_media=state.library_observed_at_by_media,
+                source_connection_ids_by_media=state.library_source_ids_by_media,
             )
         await _fan_out_changes_to_other_connections(
             db,
@@ -457,9 +458,11 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
     from db import async_sessionmaker
     from models.tracking import StreamAction, CloudAction
     from models.watch_intent import WatchIntent
+    from models.streaming_library import StreamingLibraryDelivery, StreamingLibraryIntent
     from core.stream_actions import dispatch_stream_actions
     from core.cloud_actions import dispatch_cloud_actions
     from core.watch_intents import dispatch_watch_intents
+    from core.streaming_library import dispatch_pending_library_deliveries
 
     factory = session_factory or async_sessionmaker(
         engine,
@@ -470,6 +473,9 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
         pending_users = select(StreamAction.user_id).where(StreamAction.state == "pending").union(
             select(CloudAction.user_id).where(CloudAction.state == "pending"),
             select(WatchIntent.user_id).where(WatchIntent.state == "pending"),
+            select(StreamingLibraryIntent.user_id)
+                .join(StreamingLibraryDelivery, StreamingLibraryDelivery.intent_id == StreamingLibraryIntent.id)
+                .where(StreamingLibraryDelivery.state == "pending"),
         ).subquery()
         result = await db.execute(select(pending_users.c.user_id).order_by(pending_users.c.user_id))
         user_ids = list(result.scalars().all())
@@ -486,6 +492,12 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
                     stream_ok = False
                     print(f"Stream action retry failed for user {user_id}: {type(error).__name__}")
                 await dispatch_watch_intents(db, user_id)
+                try:
+                    await dispatch_pending_library_deliveries(db, user_id)
+                except Exception as error:
+                    # A collection destination failure must not block unrelated
+                    # watched-state or cloud deletion retries for this user.
+                    print(f"Library delivery retry failed for user {user_id}: {type(error).__name__}")
                 if stream_ok:
                     await dispatch_cloud_actions(db, user_id)
         except Exception as error:

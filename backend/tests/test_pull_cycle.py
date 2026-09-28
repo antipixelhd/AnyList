@@ -1,6 +1,7 @@
 import asyncio
 import os
 import unittest
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 
@@ -122,6 +123,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
                 new_collected_ids={10},
                 removed_collected_ids=set(),
                 api_key="key",
+                source_observed_at=datetime(2026, 1, 1),
             ))
             self.assertTrue(defer_library_fan_out(
                 41,
@@ -129,6 +131,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
                 new_collected_ids=set(),
                 removed_collected_ids={12},
                 api_key=None,
+                source_observed_at=datetime(2026, 1, 2),
             ))
 
         self.assertFalse(is_active(41))
@@ -140,6 +143,78 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.library_source_ids, {7, 8})
         self.assertEqual(state.library_new_ids, {10})
         self.assertEqual(state.library_removed_ids, {12})
+        self.assertEqual(state.library_observed_at_by_media, {
+            10: datetime(2026, 1, 1), 12: datetime(2026, 1, 2),
+        })
+        self.assertEqual(state.library_source_ids_by_media, {10: {7}, 12: {8}})
+
+    async def test_provider_library_queue_excludes_only_each_titles_source(self):
+        from core.streaming_library import queue_provider_library_changes
+        from models.streaming_library import StreamingLibraryDelivery, StreamingLibraryIntent
+
+        class _Scalars:
+            def __init__(self, values=()):
+                self.values = list(values)
+
+            def all(self):
+                return self.values
+
+        class _Result:
+            def __init__(self, values=()):
+                self.values = list(values)
+
+            def scalars(self):
+                return _Scalars(self.values)
+
+        class _Database:
+            def __init__(self):
+                self.calls = 0
+                self.added = []
+                self.next_intent_id = 1
+                self.target_query = None
+
+            async def execute(self, query):
+                self.calls += 1
+                if self.calls == 2:
+                    self.target_query = str(query)
+                    return _Result([
+                        SimpleNamespace(id=7, user_id=41, type='nuvio', push_collection=True),
+                        SimpleNamespace(id=8, user_id=41, type='stremio', push_collection=True),
+                        SimpleNamespace(id=9, user_id=41, type='stremio', push_collection=True),
+                    ])
+                if self.calls == 4:
+                    return _Result([10, 20])
+                return _Result()
+
+            def add(self, value):
+                if isinstance(value, StreamingLibraryIntent):
+                    value.id = self.next_intent_id
+                    self.next_intent_id += 1
+                self.added.append(value)
+
+            async def flush(self):
+                return None
+
+        db = _Database()
+        observed_at = datetime(2026, 1, 1)
+        await queue_provider_library_changes(
+            db, 41, {10, 20},
+            exclude_connection_ids={7, 8},
+            source_observed_at_by_media={10: observed_at, 20: observed_at},
+            source_connection_ids_by_media={10: {7}, 20: {8}},
+        )
+
+        intents = {row.media_id: row for row in db.added if isinstance(row, StreamingLibraryIntent)}
+        deliveries = {
+            (media_id, row.connection_id): row.state
+            for row in db.added if isinstance(row, StreamingLibraryDelivery)
+            for media_id, intent in intents.items() if row.intent_id == intent.id
+        }
+        self.assertEqual(deliveries, {
+            (10, 7): 'observed', (10, 8): 'pending', (10, 9): 'pending',
+            (20, 7): 'pending', (20, 8): 'observed', (20, 9): 'pending',
+        })
+        self.assertNotIn('NOT IN', db.target_query)
 
     async def test_cycle_flush_groups_watch_ids_by_their_own_source_exclusions(self):
         import main

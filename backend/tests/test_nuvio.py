@@ -57,6 +57,21 @@ class _Result:
     def scalar_one_or_none(self):
         return self._scalars[0] if self._scalars else None
 
+    def scalar_one(self):
+        if len(self._scalars) != 1:
+            raise AssertionError(f"expected one scalar result, got {len(self._scalars)}")
+        return self._scalars[0]
+
+
+def _approved_stream_gate_results(user_id: int) -> list[_Result]:
+    """Model an existing user, no active clear, an approved baseline, and no reviews."""
+    return [
+        _Result(scalars=[user_id]),
+        _Result(),
+        _Result(scalars=[SimpleNamespace(approved=True, snapshot={})]),
+        _Result(rows=[]),
+    ]
+
 
 class _SessionCM:
     """Fakes the `async with async_sessionmaker(...)() as db:` pattern used by
@@ -1663,14 +1678,14 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             execute=AsyncMock(side_effect=[
                 _Result(scalars=[99]),  # SyncJob status=running update
                 _Result(scalars=[conn]),
-                _Result(scalars=[]),
+                *_approved_stream_gate_results(7),
                 _Result(scalars=[user_settings]),
                 None,  # SyncJob totals update
                 None,  # SyncJob completed update
             ]),
             commit=AsyncMock(),
             refresh=AsyncMock(),
-            get=AsyncMock(return_value=SimpleNamespace(approved=True)),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={})),
         )
         created_at = datetime(2026, 9, 1, 12, 30, tzinfo=timezone.utc)
         watched_record = {
@@ -1717,10 +1732,10 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             token="old-refresh", server_user_id="1", push_collection=False,
             push_watched=True, push_playback=False, stremio_pushed_library_ids=None)
         db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(scalars=[99]), _Result(scalars=[conn]), _Result(scalars=[]),
+            _Result(scalars=[99]), _Result(scalars=[conn]), *_approved_stream_gate_results(7),
             _Result(scalars=[SimpleNamespace(tmdb_api_key="tmdb-key")]), None, None,
         ]), commit=AsyncMock(), refresh=AsyncMock(),
-            get=AsyncMock(return_value=SimpleNamespace(approved=True)))
+            get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={})))
         already_watched = {
             "content_id": "tt0000001", "content_type": "movie", "watched_at": 1700000000000,
         }
@@ -1759,11 +1774,11 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             token="old-refresh", server_user_id="1", push_collection=False,
             push_watched=True, push_playback=False, stremio_pushed_library_ids=None)
         db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(scalars=[99]), _Result(scalars=[conn]), _Result(scalars=[]),
+            _Result(scalars=[99]), _Result(scalars=[conn]), *_approved_stream_gate_results(7),
             _Result(scalars=[SimpleNamespace(tmdb_api_key="tmdb-key")]),
             None, None,
         ]), commit=AsyncMock(), refresh=AsyncMock(),
-            get=AsyncMock(return_value=SimpleNamespace(approved=True)))
+            get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={})))
         watched_record = {"content_id": "tt1234567", "content_type": "series",
             "title": "The Rescue", "season": 1, "episode": 2, "watched_at": None}
 
@@ -1813,7 +1828,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[
                     _Result(scalars=[99]),  # SyncJob status=running update (job was pending)
                     _Result(scalars=[conn]),  # conn_result
-                    _Result(rows=[]),  # no unresolved tracking conflicts
+                    *_approved_stream_gate_results(7),
                     _Result(scalars=[user_settings]),  # settings_result
                     None,  # SyncJob total_items update
                     None,  # SyncJob status=completed update
@@ -1821,7 +1836,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             ),
             commit=AsyncMock(),
             refresh=AsyncMock(),
-            get=AsyncMock(return_value=SimpleNamespace(approved=True)),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={})),
         )
 
         pushed_items: list[dict] = []
@@ -1898,7 +1913,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[
                     _Result(scalars=[99]),
                     _Result(scalars=[conn]),
-                    _Result(rows=[]),
+                    *_approved_stream_gate_results(7),
                     _Result(scalars=[user_settings]),
                     None,
                     None,
@@ -1906,7 +1921,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             ),
             commit=AsyncMock(),
             refresh=AsyncMock(),
-            get=AsyncMock(return_value=SimpleNamespace(approved=True)),
+            get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={})),
         )
         pushed_items: list[dict] = []
 
