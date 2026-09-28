@@ -532,7 +532,7 @@ button:disabled {
   color:var(--muted)
 }
 .detail-banner {
-  height:260px;
+  height:440px;
   background-size:cover;
   background-position:center;
   position:relative
@@ -766,7 +766,7 @@ button:disabled {
     font-weight:var(--type-page-weight)
   }
   .detail-banner {
-    height:180px
+    height:210px
   }
   .detail-sidebar .button-primary {
     padding:10px 4px;
