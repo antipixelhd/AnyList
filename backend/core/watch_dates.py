@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timezone
 from sqlalchemy import select
 
 from models import WatchEvent
+from core.timestamps import milliseconds
 
 
 def normalize_watch_datetime(value: date | datetime | int | float | str | None) -> datetime | None:
@@ -34,12 +35,12 @@ def normalize_watch_datetime(value: date | datetime | int | float | str | None) 
         return None
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    return milliseconds(parsed)
 
 
 def inferred_watch_datetime(fallback: date | datetime | int | float | str | None = None) -> datetime:
     """Return an inferred timestamp from evidence, or the current UTC time."""
-    return normalize_watch_datetime(fallback) or datetime.now(timezone.utc).replace(tzinfo=None)
+    return normalize_watch_datetime(fallback or datetime.now(timezone.utc))
 
 
 def replace_inferred_watch_date(event: WatchEvent, watched_at: datetime | None, *, inferred: bool = False) -> bool:

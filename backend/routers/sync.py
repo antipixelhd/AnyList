@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 from typing import Any
+from core.timestamps import milliseconds
 from types import SimpleNamespace
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
@@ -7094,7 +7095,7 @@ async def _push_stremio_connection(
             for item in remote_items
             if isinstance(item, dict) and item.get("_id")
         }
-        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        now = milliseconds(datetime.now(timezone.utc)).isoformat(timespec='milliseconds').replace("+00:00", "Z")
         candidates: dict[str, dict] = {}
         clear_progress_ids: set[str] = set()
         if conn.push_playback and not watch_only:

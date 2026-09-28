@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timezone
 import zlib
 from typing import Any
+from core.timestamps import milliseconds
 
 import httpx
 
@@ -200,7 +201,7 @@ async def clear_datastore_data(
             raise StremioAPIError("Stremio returned malformed viewing state; refusing an unsafe clear")
         by_id[content_id] = remote
 
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    now = milliseconds(datetime.now(timezone.utc)).isoformat(timespec='milliseconds').replace("+00:00", "Z")
     changes: dict[str, dict[str, Any]] = {}
     if watched or playback:
         for content_id, remote in by_id.items():

@@ -1,14 +1,15 @@
 """Status-specific provenance used by reconciliation ordering."""
 
 from datetime import datetime, timezone
+from core.timestamps import milliseconds
 
 
 def naive_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is not None:
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
-    return value
+        return milliseconds(value.astimezone(timezone.utc).replace(tzinfo=None))
+    return milliseconds(value)
 
 
 def status_changed_at(entry) -> datetime | None:
@@ -18,7 +19,7 @@ def status_changed_at(entry) -> datetime | None:
 
 def mark_status_change(entry, source: str, changed_at: datetime | None = None) -> None:
     entry.status_source = source[:64]
-    entry.status_changed_at = naive_utc(changed_at) or datetime.now(timezone.utc).replace(tzinfo=None)
+    entry.status_changed_at = naive_utc(changed_at or datetime.now(timezone.utc))
 
 
 def provider_changed_at(row: dict | None) -> datetime | None:
@@ -36,7 +37,7 @@ def provider_changed_at(row: dict | None) -> datetime | None:
             return naive_utc(value)
         if isinstance(value, (int, float)):
             seconds = float(value) / 1000 if float(value) > 10_000_000_000 else float(value)
-            return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(tzinfo=None)
+            return naive_utc(datetime.fromtimestamp(seconds, tz=timezone.utc))
         try:
             return naive_utc(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
         except ValueError:

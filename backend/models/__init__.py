@@ -35,6 +35,9 @@ from .streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from .netflix_import import NetflixImportSession
 from .watch_intent import WatchIntent
 
+from .timestamps import configure_millisecond_timestamps
+configure_millisecond_timestamps(Base)
+
 __all__ = [
     "Base",
     "UserRole", "MediaType", "CollectionSource",

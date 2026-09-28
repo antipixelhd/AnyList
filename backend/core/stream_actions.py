@@ -10,6 +10,7 @@ from models.playback_progress import PlaybackProgress
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingDeletion
 from core import stremio, nuvio
 from core.status_provenance import provider_changed_at, status_changed_at
+from core.timestamps import milliseconds
 from core.deletion_markers import settle_marker_target
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,8 @@ def _iso_utc(value):
         return None
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+    value = milliseconds(value.astimezone(timezone.utc))
+    return value.isoformat(timespec='milliseconds' if value.microsecond else 'seconds').replace('+00:00', 'Z')
 
 
 def _stream_action_enabled(conn, action):
@@ -273,11 +275,13 @@ async def dismiss_stremio(token, record, *, restore=False, reset=False):
         modified=item.get('_mtime')
         if modified and record.get('deleted_at'):
             try:
-                if datetime.fromisoformat(str(modified).replace('Z','+00:00')) > datetime.fromisoformat(record['deleted_at']):
+                modified_at = provider_changed_at({'modified_at': modified})
+                deleted_at = provider_changed_at({'modified_at': record['deleted_at']})
+                if modified_at and deleted_at and modified_at > deleted_at:
                     raise RemotePlaybackChanged()
             except ValueError:
                 raise RemotePlaybackChanged()
-        await stremio.datastore_put(token,[{**item,'state':cleared,'_mtime':datetime.now(timezone.utc).isoformat().replace('+00:00','Z')}])
+        await stremio.datastore_put(token,[{**item,'state':cleared,'_mtime':_iso_utc(datetime.now(timezone.utc))}])
         return
     if restore:
         if state.get('timeOffset'):
@@ -289,7 +293,7 @@ async def dismiss_stremio(token, record, *, restore=False, reset=False):
         state['duration'] = record['duration']
         if record.get('season') is not None:
             state['video_id'] = record.get('video_id') or f"{record['content_id']}:{record['season']}:{record['episode']}"
-        candidate = {**item, 'state':state, '_mtime':datetime.now(timezone.utc).isoformat().replace('+00:00','Z')}
+        candidate = {**item, 'state':state, '_mtime':_iso_utc(datetime.now(timezone.utc))}
         # Make a restored resume visible in Continue Watching without turning
         # a temporary progress record into permanent library membership.
         if candidate.get('removed'):
@@ -305,7 +309,7 @@ async def dismiss_stremio(token, record, *, restore=False, reset=False):
         if not str(state.get('video_id') or '').endswith(f":{record['season']}:{record['episode']}"):
             raise RemotePlaybackChanged()
     state['timeOffset'] = 0
-    candidate = {**item, 'state': state, '_mtime': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    candidate = {**item, 'state': state, '_mtime': _iso_utc(datetime.now(timezone.utc))}
     await stremio.datastore_put(token, [candidate])
 
 
@@ -334,7 +338,7 @@ async def _dismiss_stremio_title_rows(token, record, rows):
         candidates.append({
             **item,
             'state': cleared,
-            '_mtime': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+            '_mtime': _iso_utc(datetime.now(timezone.utc)),
         })
     if not candidates:
         return

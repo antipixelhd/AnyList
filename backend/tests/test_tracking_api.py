@@ -8,6 +8,8 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 from datetime import date, datetime, timedelta, timezone
+from core.timestamps import milliseconds
+from core.status_provenance import provider_changed_at
 from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
@@ -3491,7 +3493,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions[0].connection_id,target.id)
         self.assertEqual(actions[0].payload['content_id'],'tt-target-resume')
         self.assertEqual(actions[0].payload['position'],70)
-        self.assertEqual(actions[0].payload['observed_at'],base.isoformat()+'Z')
+        self.assertEqual(provider_changed_at({'updated_at':actions[0].payload['observed_at']}),milliseconds(base))
 
         # A trustworthy newer correction may move the position backwards and
         # replaces the still-pending destination write instead of duplicating it.
@@ -3557,7 +3559,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         entry=(await self.db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))).scalar_one()
         self.assertEqual(entry.status_source,f'stremio:{source_b.id}')
-        self.assertEqual(entry.status_changed_at,base+timedelta(minutes=1))
+        self.assertEqual(entry.status_changed_at,milliseconds(base+timedelta(minutes=1)))
         actions=(await self.db.execute(select(StreamAction).where(
             StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
             StreamAction.action=='upsert'))).scalars().all()
@@ -3625,7 +3627,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.db.add(baseline);await self.db.commit()
         await observe_stream_snapshot(self.db,conn,[],[],[{**old,'position':20}],{'tt-uncertain':self.movie.tmdb_id})
         self.assertEqual(entry.status_source,'local')
-        self.assertEqual(entry.status_changed_at,base)
+        self.assertEqual(entry.status_changed_at,milliseconds(base))
         self.assertEqual((await self.db.execute(select(SyncReview).where(SyncReview.media_id==self.movie.id,SyncReview.kind=='conflict'))).scalars().all(),[])
         entry.status='paused';baseline.observed_at=base-timedelta(minutes=1)
         await self.db.commit()
@@ -3634,8 +3636,21 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry.status,'paused')
         self.assertEqual((review.previous_status,review.proposed_status),('paused','watching'))
         self.assertEqual(review.payload['changes'],[{'field':'position','previous':20,'proposed':30}])
-        self.assertEqual(review.payload['local_changed_at'],base.isoformat()+'Z')
+        self.assertEqual(provider_changed_at({'updated_at':review.payload['local_changed_at']}),milliseconds(base))
         self.assertIsNone(review.payload['provider_changed_at'])
+
+    async def test_database_generated_and_bound_dates_have_millisecond_precision(self):
+        from sqlalchemy import update, text
+        value=datetime(2026,9,29,12,0,0,931995)
+        event=WatchEvent(user_id=self.owner.id,media_id=self.movie.id,completed=True,watched_at=value)
+        self.db.add(event);await self.db.commit();await self.db.refresh(event)
+        self.assertEqual(event.watched_at,datetime(2026,9,29,12,0,0,931000))
+        self.assertEqual(event.created_at.microsecond % 1000,0)
+        await self.db.execute(update(WatchEvent).where(WatchEvent.id==event.id).values(watched_at=value))
+        await self.db.commit();await self.db.refresh(event)
+        self.assertEqual(event.watched_at.microsecond,931000)
+        precision=(await self.db.execute(text("SELECT DISTINCT datetime_precision FROM information_schema.columns WHERE table_schema=current_schema() AND data_type LIKE 'timestamp%'") )).scalars().all()
+        self.assertEqual(precision,[3])
 
     async def test_shared_watch_dates_rank_below_estimates_and_episode_evidence(self):
         from routers.sync import _apply_nuvio_watch_history
@@ -3702,7 +3717,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             await observe_stream_snapshot(self.db,conn,[],history,[resume],{'tt-atomic':self.show.tmdb_id})
             self.assertEqual(mark.call_count,1)
         self.assertEqual(entry.progress,2)
-        self.assertEqual(entry.status_changed_at,base)
+        self.assertEqual(entry.status_changed_at,milliseconds(base))
         self.assertEqual(entry.status_source,f'stremio:{conn.id}')
         self.assertEqual((await self.db.execute(select(SyncReview).where(SyncReview.connection_id==conn.id,
             SyncReview.kind=='conflict'))).scalars().all(),[])
@@ -3735,7 +3750,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             action=(await self.db.execute(select(StreamAction).where(StreamAction.connection_id==peer.id,
                 StreamAction.action=='upsert'))).scalar_one()
             self.assertEqual(action.payload['last_watched'],updated['last_watched'])
-            self.assertEqual(action.payload['observed_at'],datetime.fromtimestamp(updated['last_watched']/1000,timezone.utc).isoformat().replace('+00:00','Z'))
+            self.assertEqual(provider_changed_at({'updated_at':action.payload['observed_at']}),datetime.fromtimestamp(updated['last_watched']/1000,timezone.utc).replace(tzinfo=None))
             self.assertEqual(action.payload['position'],10)
 
     async def test_nuvio_last_watched_alone_does_not_order_resume_fanout(self):
