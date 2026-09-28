@@ -1,25 +1,27 @@
-# Media Tracker handoff
+# Media Tracker
 
-This is the authorized working copy of Scrob. Preserve the reference repositories in ../reference Repos/.
+Work within this repository. Sibling projects have separate instructions and checks.
+Preserve ../reference Repos/. The origin remote points to a local reference copy;
+do not push to origin. Check the intended remote before publishing.
 
-Before implementing, read these canonical project documents:
+## Start with the task
 
-1. docs/media-tracker/PLAN.md — accepted product specification and current approval status.
-2. docs/media-tracker/IMPLEMENTATION.md — stages, engineering defaults, acceptance checks, backlog.
-3. docs/media-tracker/DECISIONS.md — accepted decisions and superseded proposals.
-4. docs/media-tracker/GLOSSARY.md — domain terminology.
-5. docs/media-tracker/UI-REFERENCE.md and its screenshots — visual/interaction reference.
+Read only the source files and documentation needed for the requested change.
+No phase or historical document is mandatory reading.
 
-These canonical documents live in this repository under docs/media-tracker/. Keep them current. Do not treat earlier superseded conversation suggestions as requirements. In particular: zero is unrated; show ratings do not inherit to seasons; Completed does not automatically resume Watching in release one; streaming-library membership is separate from tracked entries and survives tracked-entry deletion.
+Optional references:
+- docs/agents/BACKEND.md: backend structure and important behavior.
+- docs/agents/FRONTEND-STYLES.md: shared styles and layout conventions.
+- docs/agents/HANDOFF.md: how to continue unfinished work.
 
-The repository was cloned from local reference commit 3d75f172fc054ed90c39af9d336d5f5feda40d54. Its origin points to the reference repository: do not push to it. The user confirmed the specification and authorized implementation on 2026-09-18. Continue implementation without requesting that approval again. Read docs/media-tracker/STATUS.md for progress.
+Treat docs/media-tracker/ as historical specifications and implementation records.
+Search a relevant section only when a requirement or past decision is unclear.
+Do not read the entire STATUS.md or phase plans by default.
 
-## Frontend shared styles
+## Working rules
 
-For frontend work, check these shared CSS sources before adding or changing variables:
-
-- [typography.css](frontend/src/styles/typography.css) defines the font families, semantic font-size and font-weight tokens, the base line height, and the 62.5% root size.
-- [global-theme.css](frontend/src/styles/global-theme.css) defines shared palette, surface, border, and text color variables.
-- [tracker-profile-list.css](frontend/src/styles/tracker-profile-list.css) defines the shared profile content gap and profile-list spacing.
-
-Use these shared variables in feature styles where they apply; keep component-specific rules in the focused stylesheet for that feature.
+- Check the current diff and preserve other work in progress.
+- Follow existing patterns and keep changes limited to the task.
+- Check the affected behavior; use focused checks before broader checks.
+- Update the short references only when a durable fact changes.
+- Keep handoffs short and limited to unfinished work.

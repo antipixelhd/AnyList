@@ -70,6 +70,8 @@ frontend/frontend.log
 *.sqlite3
 
 # --- Common AI files ---
+.agents/
+.codex/
 backend/data/avatars/
 backend/data/image_cache/
 backend/data/*.pem
