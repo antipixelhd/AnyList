@@ -10,6 +10,7 @@ A self-hosted movie and TV tracker for personal lists and shared discoveries.
 - Rate titles from 0.5 to 10 in half-point steps. Rate seasons individually and choose a calculated show average or a separate show score.
 - Browse and search a shared catalog with title, season, and episode details. Metadata comes from TMDB and TheTVDB; MDBList can provide IMDb and Rotten Tomatoes scores.
 - Keep Favorites and a streaming Library alongside tracked lists. Library membership is separate from watch status and can mirror across Stremio and Nuvio connections.
+- Keep Nuvio TV's Next Up aligned with your Watching list while preserving watched episodes for paused and dropped shows.
 - Share public or private profiles with lists, favorites, statistics, and activity. Follow people to compare lists and see their activity.
 - See series progress and upcoming season dates, with a notification inbox for new releases and connection changes that need review.
 - Connect media services and trackers including Stremio, Nuvio, ARVIO, Plex, Emby, Jellyfin, Kodi, Trakt, Simkl, MDBList, and Bingebase. Import Netflix viewing-history CSVs or exports from AnyList/Scrob, Trakt, and Yamtrack/Floppy. Available sync fields depend on the connected service.

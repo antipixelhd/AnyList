@@ -45,6 +45,11 @@ class _QueueDB:
 
 
 class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        visibility = patch('core.nuvio.update_next_up_dismissals', AsyncMock())
+        self.visibility = visibility.start()
+        self.addCleanup(visibility.stop)
+
     async def test_late_history_preserves_newer_progress_correction(self):
         from datetime import datetime
         from core.tracking_snapshot import changed_watch_rows_from_source
@@ -175,6 +180,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
              patch('core.nuvio._pull_watch_progress',AsyncMock(side_effect=[[],[record]])) as read, \
              patch('core.nuvio._rpc',AsyncMock()) as write:
             await push_nuvio_progress(db,conn,record)
+        self.assertEqual(self.visibility.await_args.kwargs, {'show': ['tt1']})
 
         self.assertEqual(write.await_args.args[-2],'sync_push_watch_progress')
         self.assertEqual(write.await_args.args[-1]['p_entries'],[{key:value for key,value in record.items()
@@ -191,6 +197,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
              patch('core.nuvio._pull_watched_items',AsyncMock(return_value=[{'content_id':'tt1','content_type':'series','season':1,'episode':1}])) as watched, \
              patch('core.nuvio._rpc',AsyncMock()) as write:
             await dismiss_nuvio(AsyncMock(),conn,record,restore=True)
+            self.assertEqual(self.visibility.await_args.kwargs, {'show': ['tt1']})
             self.assertEqual(write.await_args.args[-2],'sync_push_watch_progress')
             self.assertEqual(write.await_args.args[-1]['p_entries'],[record])
             watched.assert_not_awaited()
@@ -198,6 +205,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
             await dismiss_nuvio(AsyncMock(),conn,record,restore=True)
             write.assert_not_awaited()
             await dismiss_nuvio(AsyncMock(),conn,{'content_id':'tt1','content_type':'series','deleted_at':'2026-09-18T12:00:00+00:00'},reset=True)
+            self.assertEqual(self.visibility.await_args.kwargs, {'hide': ['tt1']})
             self.assertEqual([call.args[-2] for call in write.await_args_list],['sync_delete_watch_progress','sync_delete_watched_items'])
             self.assertEqual(write.await_args_list[0].args[-1]['p_keys'],['tt1_s1e2'])
             self.assertEqual(write.await_args_list[1].args[-1]['p_keys'],[{'content_id':'tt1','season':1,'episode':1}])

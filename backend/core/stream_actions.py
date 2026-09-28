@@ -130,6 +130,8 @@ async def push_nuvio_progress(db, conn, record):
             matches = [row for row in rows if row.get('content_id') == record['content_id']
                 and row.get('season') == record.get('season') and row.get('episode') == record.get('episode')]
             if len(matches) == 1 and same_progress(matches[0], record):
+                await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                    profile, show=[record['content_id']])
                 return
             if matches:
                 if len(matches) != 1:
@@ -151,6 +153,8 @@ async def push_nuvio_progress(db, conn, record):
             confirmed = [row for row in confirmed_rows if row.get('progress_key') == payload['progress_key']]
             if len(confirmed) != 1 or not same_progress(confirmed[0], record):
                 raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
+            await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                profile, show=[record['content_id']])
 
 
 async def queue_progress_update(db, source, media, record):
@@ -296,10 +300,19 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
                 if progress_keys:await nuvio._rpc(client,conn.url,session.access_token,'sync_delete_watch_progress',{'p_profile_id':profile,'p_keys':progress_keys})
                 watched_keys=[{k:r[k] for k in ('content_id','season','episode') if k in r} for r in matching_watched]
                 if watched_keys:await nuvio._rpc(client,conn.url,session.access_token,'sync_delete_watched_items',{'p_profile_id':profile,'p_keys':watched_keys})
+                await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                    profile, hide=[record['content_id']])
                 return
+            if not restore:
+                await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                    profile, hide=[record['content_id']])
+                if record.get('next_up_only'):
+                    return
             matches = [r for r in rows if r.get('content_id') == record['content_id']
                 and r.get('season') == record.get('season') and r.get('episode') == record.get('episode')]
             if restore:
+                await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                    profile, show=[record['content_id']])
                 if matches:
                     if len(matches) == 1 and same_progress(matches[0],record):
                         return
@@ -337,6 +350,23 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
         baseline = await db.get(StreamBaseline, conn.id)
         if not baseline:
             continue  # a newly attached empty account has no playback to dismiss
+        has_resume = any(baseline.snapshot.get('mappings', {}).get(key) == media.tmdb_id
+            and row.get('content_type') == media.media_type.value
+            for key, row in baseline.snapshot.get('progress', {}).items())
+        if conn.type == 'nuvio' and media.media_type == MediaType.series and not has_resume:
+            from routers.sync import _nuvio_imdb_id
+            key = _nuvio_imdb_id(media)
+            if not key:
+                key = next((key for key, value in baseline.snapshot.get('mappings', {}).items()
+                    if value == media.tmdb_id), None)
+            if key:
+                pending = (await db.execute(select(StreamAction.id).where(
+                    StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
+                    StreamAction.state == 'pending', StreamAction.action == 'dismiss'))).first()
+                if not pending:
+                    db.add(StreamAction(user_id=user_id, connection_id=conn.id, media_id=media.id,
+                        action='dismiss', payload={'content_id': key, 'content_type': 'series',
+                            'next_up_only': True}))
         for key, record in baseline.snapshot.get('progress', {}).items():
             if baseline.snapshot.get('mappings', {}).get(key) != media.tmdb_id or record.get('content_type') != media.media_type.value:
                 continue

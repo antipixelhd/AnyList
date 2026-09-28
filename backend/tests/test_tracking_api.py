@@ -3740,6 +3740,23 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(row.state, row.attempts, row.last_error) for row in intents],
             [('applied', 1, None), ('applied', 1, None)])
 
+    async def test_nuvio_pause_queues_next_up_dismissal_without_active_resume(self):
+        from core.stream_actions import queue_local_dismissals
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', push_playback=True)
+        self.db.add(conn);await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={'mappings': {'tt-fixture': self.show.tmdb_id}, 'progress': {}}))
+        await self.db.commit()
+        await queue_local_dismissals(self.db, self.owner.id, self.show)
+        await self.db.flush()
+        actions = (await self.db.execute(select(StreamAction).where(
+            StreamAction.user_id == self.owner.id))).scalars().all()
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action, 'dismiss')
+        self.assertEqual(actions[0].payload,
+            {'content_id': 'tt-fixture', 'content_type': 'series', 'next_up_only': True})
+
     async def test_watch_intent_retries_current_state_after_failed_write_and_rapid_rewatch(self):
         from core.watch_intents import queue_watch_intents, dispatch_watch_intents
         from models.watch_intent import WatchIntent

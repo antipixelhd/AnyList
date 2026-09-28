@@ -236,6 +236,7 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         WatchIntent.id.desc(),
     ).limit(100).with_for_update(skip_locked=True))).scalars().all()
     processed = set()
+    nuvio_visibility_batches = {}
     for intent in intents:
         if intent.id in processed:
             continue
@@ -309,6 +310,26 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         )
         if succeeded:
             intent.state = "applied"
+            if writer is None and conn.type == 'nuvio' and conn.push_playback:
+                nuvio_visibility_batches.setdefault(conn.id, []).append(intent)
         else:
             logger.info("Watch intent remains pending for connection %s media %s after %s", conn.id, media.id, intent.last_error)
+    for connection_id, batch in nuvio_visibility_batches.items():
+        conn = await db.get(MediaServerConnection, connection_id)
+        records = []
+        from routers.sync import _nuvio_imdb_id
+        from core.nuvio_visibility import sync_next_up_visibility
+        for intent in batch:
+            media = await db.get(Media, intent.media_id)
+            show = await db.get(Show, media.show_id) if media.show_id else None
+            key = _nuvio_imdb_id(show or media)
+            if key:
+                records.append({'content_id': key,
+                    'content_type': 'series' if show else media.media_type.value})
+        try:
+            await sync_next_up_visibility(db, conn, records)
+        except Exception as error:
+            for intent in batch:
+                intent.state = 'pending'
+                intent.last_error = type(error).__name__
     await db.commit()
