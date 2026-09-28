@@ -50,14 +50,16 @@ async def changed_watch_rows_from_source(db, conn, rows):
     return await current_watch_rows(db, conn, changed)
 
 
-async def current_watch_rows(db, conn, rows):
+async def current_watch_rows(db, conn, rows, *, imported_media_ids=None):
     """Late history must not undo a newer tracking/progress correction."""
     entries = (await db.execute(select(TrackedEntry, Media).join(
         Media, Media.id == TrackedEntry.media_id,
     ).where(TrackedEntry.user_id == conn.user_id))).all()
     clocks = {}
     for entry, media in entries:
-        if media.tmdb_id is not None:
+        # Entries created from this pull have an import timestamp, not a
+        # competing edit. Their own watch must still reach reconciliation.
+        if media.tmdb_id is not None and (not imported_media_ids or media.id not in imported_media_ids):
             clocks[(media.tmdb_id, media.media_type.value)] = status_changed_at(entry)
     baseline = await db.get(StreamBaseline, conn.id)
     mappings = dict((baseline.snapshot or {}).get('mappings', {})) if baseline else {}
@@ -276,6 +278,7 @@ async def observe_stream_snapshot(
     db, conn, library, watched, progress, tmdb_ids, *, complete=True, touched=None,
     removed_library=None, sync_playback=True, sync_watched=True,
     removed_watched_ids=None, fresh_import=False, source_started_at=None,
+    changed_media_ids=None,
 ):
     if fresh_import and not complete:
         raise ValueError("A full resync requires a complete provider snapshot")
@@ -334,7 +337,10 @@ async def observe_stream_snapshot(
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
     baseline=prior
     first=fresh_import or baseline is None
-    imported = await import_tracking_history(db,conn.user_id,initial_import=first)
+    imported_ids = set()
+    imported = await import_tracking_history(db,conn.user_id,imported_ids,initial_import=first)
+    if changed_media_ids is not None:
+        changed_media_ids.update(imported_ids)
     previous=previous_snapshot if first else (baseline.snapshot if baseline else {})
     active = _active(progress) if sync_playback else previous.get('progress', {})
     watched_rows = watched if sync_watched else []
@@ -429,6 +435,8 @@ async def observe_stream_snapshot(
         if not conflict:
             prior_status = entry.status
             entry.status=proposed
+            if changed_media_ids is not None:
+                changed_media_ids.add(media.id)
             if media.media_type==MediaType.movie:
                 entry.progress=0
             mark_status_change(entry,f'{conn.type}:{conn.id}')
@@ -458,7 +466,8 @@ async def observe_stream_snapshot(
                 watch_key(row) in dated_watch_keys
                 and (watch_key(row), str(row.get('watched_at'))) not in old_watch_observations
             )]
-        new_watched_rows = await current_watch_rows(db, conn, new_watched_rows)
+        new_watched_rows = await current_watch_rows(db, conn, new_watched_rows,
+                                                  imported_media_ids=imported_ids)
         new_progress_completed_rows = [row for row in progress_completed_rows
             if watch_key(row) not in old_progress_completed]
         new_completed_by_key = {watch_key(row): row for row in new_progress_completed_rows}
@@ -502,7 +511,7 @@ async def observe_stream_snapshot(
             provider_at=provider_changed_at(row)
             competing=bool(media.id in existing_ids and changed_at and baseline.observed_at and changed_at>baseline.observed_at)
             ordering='apply'
-            if provider_at and changed_at and provider_at < changed_at:
+            if not newly_tracked and provider_at and changed_at and provider_at < changed_at:
                 ordering='stale'
             elif competing:
                 if provider_at and provider_at > changed_at:
@@ -529,6 +538,8 @@ async def observe_stream_snapshot(
                 continue
             if sync_watched and row in new_watched_rows:
                 accepted_watch_rows.append(row)
+                if changed_media_ids is not None:
+                    changed_media_ids.add(media.id)
             entry.status = proposed
             if media.media_type == MediaType.movie:
                 entry.progress = 1 if proposed == 'completed' else 0
@@ -545,6 +556,8 @@ async def observe_stream_snapshot(
                 if entry.status=='watching' and entry.start_date is None:entry.start_date=date.today()
                 if entry.status=='completed' and entry.finish_date is None:entry.finish_date=date.today()
             progress_changed = entry.progress != previous_progress
+            if changed_media_ids is not None and (entry.status != previous_status or progress_changed or newly_tracked):
+                changed_media_ids.add(media.id)
             if entry.status != previous_status or progress_changed or newly_tracked:
                 from core.activity import record_daily_activity, record_progress_activity
                 activity_score = effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
@@ -621,6 +634,8 @@ async def observe_stream_snapshot(
                 for event in events:
                     await db.delete(event)
                 removed_watched_ids.add(media_id)
+                if changed_media_ids is not None:
+                    changed_media_ids.add(media_id)
             if removed_watched_ids:
                 await db.flush()
                 affected_shows = set()

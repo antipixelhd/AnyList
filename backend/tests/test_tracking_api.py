@@ -2757,6 +2757,90 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             SyncReview.user_id == self.owner.id, SyncReview.kind == 'conflict'))).scalars().all()
         self.assertEqual(reviews, [])
 
+    async def _assert_new_stream_completion_follows_through(self, provider):
+        from contextlib import asynccontextmanager, ExitStack
+        from routers import sync
+        from models.watch_intent import WatchIntent
+
+        self.movie.tmdb_id = 987654397
+        source = MediaServerConnection(user_id=self.owner.id, type=provider, name='Source',
+            url='https://example.test', token='fixture', server_user_id='1',
+            sync_watched=True, sync_playback=False, sync_collection=False)
+        target = MediaServerConnection(user_id=self.owner.id,
+            type='stremio' if provider == 'nuvio' else 'nuvio', name='Destination',
+            url='https://example.test', token='fixture', push_watched=True)
+        self.db.add_all([source, target]); await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=source.id,
+            approved=True, observed_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1), snapshot={}))
+        job = SyncJob(user_id=self.owner.id, connection_id=source.id,
+            source=CollectionSource(provider), status=SyncStatus.pending, job_type='pull')
+        self.db.add(job); await self.db.commit()
+        row = {'content_id': 'tt-new-completion', 'content_type': 'movie',
+               'title': self.movie.title,
+               'watched_at': (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)).isoformat()}
+        data = {'library': [], 'watched': [row], 'progress': []}
+
+        @asynccontextmanager
+        async def session():
+            yield self.db
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sync, 'async_sessionmaker', return_value=session))
+            stack.enter_context(patch.object(sync, '_get_effective_tmdb_key', AsyncMock(return_value='fixture')))
+            stack.enter_context(patch.object(sync, '_resolve_nuvio_tmdb_ids',
+                AsyncMock(return_value={'tt-new-completion': self.movie.tmdb_id})))
+            # Metadata is already in the fixture; exercise the real history,
+            # reconciliation, notification and durable outbound queue together.
+            stack.enter_context(patch.object(sync, 'sync_items', AsyncMock(return_value=[])))
+            stack.enter_context(patch('core.stream_actions.dispatch_stream_actions', AsyncMock()))
+            dispatch = stack.enter_context(patch('core.watch_intents.dispatch_watch_intents', AsyncMock()))
+            fanout = stack.enter_context(patch.object(sync, '_fan_out_changes_to_other_connections', AsyncMock()))
+            stack.enter_context(patch('core.streaming_library.retry_pending_library_deliveries', AsyncMock()))
+            stack.enter_context(patch.object(sync, 'pre_cache_all_collected_bg', AsyncMock()))
+            if provider == 'nuvio':
+                stack.enter_context(patch.object(sync.nuvio, 'pull_sync_data', AsyncMock(return_value=(None, data))))
+                run = sync._run_nuvio_sync
+            else:
+                stack.enter_context(patch.object(sync, '_pull_stremio_items',
+                    AsyncMock(side_effect=lambda *a, **k: ([{'_id': row['content_id']}], True, datetime.now(timezone.utc).replace(tzinfo=None)))))
+                stack.enter_context(patch.object(sync, '_stremio_records',
+                    AsyncMock(return_value=([], [row], [], set()))))
+                run = sync._run_stremio_sync
+            await run(self.owner.id, job.id, 0, 0, connection_id=source.id)
+            await self.db.refresh(job)
+            self.assertEqual(job.status, SyncStatus.completed, job.error_message)
+            self.assertEqual((job.stats['succeeded'], job.stats['failed']), (1, 0))
+            entry = (await self.db.execute(select(TrackedEntry).where(
+                TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.movie.id))).scalar_one()
+            self.assertEqual((entry.status, entry.progress, entry.status_source),
+                ('completed', 1, f'{provider}:{source.id}'))
+            prompts = (await self.db.execute(select(SyncReview).where(
+                SyncReview.user_id == self.owner.id, SyncReview.kind == 'rating_needed'))).scalars().all()
+            self.assertEqual([(p.media_id, p.provider, p.payload['push_state']) for p in prompts],
+                [(self.movie.id, provider, 'pending')])
+            intents = (await self.db.execute(select(WatchIntent).where(
+                WatchIntent.user_id == self.owner.id))).scalars().all()
+            self.assertEqual([(i.connection_id, i.media_id, i.desired_watched, i.state) for i in intents],
+                [(target.id, self.movie.id, True, 'pending')])
+            dispatch.assert_awaited_once()
+            self.assertEqual(fanout.await_args.args[3], {self.movie.id})
+            dispatch.reset_mock(); fanout.reset_mock()
+            job = SyncJob(user_id=self.owner.id, connection_id=source.id,
+                source=CollectionSource(provider), status=SyncStatus.pending, job_type='pull')
+            self.db.add(job); await self.db.commit()
+            await run(self.owner.id, job.id, 0, 0, connection_id=source.id)
+            await self.db.refresh(job)
+            self.assertEqual((job.stats['succeeded'], job.stats['failed']), (0, 0))
+            dispatch.assert_not_awaited(); fanout.assert_not_awaited()
+            self.assertEqual(len((await self.db.execute(select(SyncReview).where(
+                SyncReview.user_id == self.owner.id, SyncReview.kind == 'rating_needed'))).scalars().all()), 1)
+
+    async def test_new_nuvio_completion_counts_notifies_and_queues_stremio(self):
+        await self._assert_new_stream_completion_follows_through('nuvio')
+
+    async def test_new_stremio_completion_counts_notifies_and_queues_nuvio(self):
+        await self._assert_new_stream_completion_follows_through('stremio')
+
     async def test_regular_nuvio_sync_accepts_changed_watch_date(self):
         await self._assert_regular_sync_accepts_changed_watch_date('nuvio')
 

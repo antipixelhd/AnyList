@@ -5373,6 +5373,7 @@ async def _run_nuvio_sync(
                     api_key=tmdb_api_key,
                 )
 
+            changed_media_ids = set(new_collected_ids) | set(removed_collected_ids)
             if (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 removed_watch_ids = set()
@@ -5384,6 +5385,7 @@ async def _run_nuvio_sync(
                     removed_watched_ids=removed_watch_ids,
                     fresh_import=full_resync,
                     source_started_at=pull_started_at,
+                    changed_media_ids=changed_media_ids,
                 )
                 if (propagated_watch_ids or removed_watch_ids) and not full_resync:
                     from core.pull_propagation import propagate_media_server_pull
@@ -5400,6 +5402,8 @@ async def _run_nuvio_sync(
 
             # Tracking/watch changes remain local until their own confirmation rules
             # allow export. Verified streaming-library deltas are mirrored separately.
+            stats["succeeded"] = len(changed_media_ids)
+            stats["failed"] = stats["errors"]
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
@@ -5965,6 +5969,7 @@ async def _run_stremio_sync(
                     removed_collected_ids=removed_collected_ids,
                     api_key=tmdb_api_key,
                 )
+            changed_media_ids = set(new_collected_ids) | set(removed_collected_ids)
             if (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 removed_watch_ids = set()
@@ -5976,6 +5981,7 @@ async def _run_stremio_sync(
                     removed_watched_ids=removed_watch_ids,
                     fresh_import=full_resync,
                     source_started_at=pull_started_at,
+                    changed_media_ids=changed_media_ids,
                 )
                 if (propagated_watch_ids or removed_watch_ids) and not full_resync:
                     from core.pull_propagation import propagate_media_server_pull
@@ -5993,6 +5999,8 @@ async def _run_stremio_sync(
             # allow export. Verified streaming-library deltas are mirrored separately.
             conn.stremio_pull_cursor_at = pull_started_at
             conn.stremio_full_sync_done = True
+            stats["succeeded"] = len(changed_media_ids)
+            stats["failed"] = stats["errors"]
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
