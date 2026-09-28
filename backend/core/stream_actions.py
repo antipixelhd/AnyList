@@ -1,4 +1,5 @@
 """Retryable playback actions; never mutates streaming library membership."""
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from sqlalchemy import select, update
@@ -10,6 +11,8 @@ from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEnt
 from core import stremio, nuvio
 from core.status_provenance import provider_changed_at, status_changed_at
 from core.deletion_markers import settle_marker_target
+
+logger = logging.getLogger(__name__)
 
 
 class RemotePlaybackChanged(Exception):
@@ -26,6 +29,21 @@ def _iso_utc(value):
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def _stream_action_enabled(conn, action):
+    if action.action == 'reset':
+        return conn.push_watched or conn.push_playback
+    payload = action.payload or {}
+    visibility_only = conn.type == 'nuvio' and (
+        action.action == 'dismiss' and (
+            payload.get('visibility_only') is True or not conn.push_playback
+        )
+        or action.action == 'upsert' and payload.get('next_up_only') is True
+    )
+    if visibility_only:
+        return conn.push_watched or conn.push_playback
+    return conn.push_playback
 
 
 def _stremio_last_watched(value):
@@ -517,12 +535,15 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
     filters = [
         MediaServerConnection.user_id == user_id,
         MediaServerConnection.type.in_(['stremio', 'nuvio']),
-        MediaServerConnection.push_playback.is_(True),
     ]
     if exclude_connection_id is not None:
         filters.append(MediaServerConnection.id != exclude_connection_id)
     targets = (await db.execute(select(MediaServerConnection).where(*filters))).scalars().all()
     for conn in targets:
+        if conn.type == 'stremio' and not conn.push_playback:
+            continue
+        if conn.type == 'nuvio' and not (conn.push_watched or conn.push_playback):
+            continue
         baseline = await db.get(StreamBaseline, conn.id)
         if not baseline:
             continue  # a newly attached empty account has no playback to dismiss
@@ -553,7 +574,7 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
                 'imdb_id': _nuvio_imdb_id(media),
                 'observed_at': _iso_utc(changed_at),
             }
-            if conn.id == source_visibility_connection_id:
+            if conn.id == source_visibility_connection_id or not conn.push_playback:
                 payload['visibility_only'] = True
             pending = (await db.execute(select(StreamAction).where(
                 StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
@@ -654,7 +675,9 @@ async def queue_restorations(db, user_id, media):
         return
 
     targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
-        MediaServerConnection.type.in_(['stremio','nuvio']),MediaServerConnection.push_playback.is_(True)))).scalars().all()
+        MediaServerConnection.type.in_(['stremio','nuvio'])))).scalars().all()
+    targets = [conn for conn in targets if conn.push_playback
+        or conn.type == 'nuvio' and conn.push_watched]
     # A local return to Watching supersedes stale hidden-state work even if the
     # catalogue cannot currently supply a safe resume position.
     stale_dismissals=(await db.execute(select(StreamAction).where(
@@ -678,6 +701,9 @@ async def queue_restorations(db, user_id, media):
     await _ensure_nuvio_imdb_ids([record['episode_media']], {show.id: show} if show else {}, api_key)
     resolved_imdb_id = _nuvio_imdb_id(show or media)
     for conn in targets:
+        if conn.type == 'nuvio' and not conn.push_playback:
+            await _queue_nuvio_next_up_show(db, user_id, media, [conn])
+            continue
         baseline=await db.get(StreamBaseline,conn.id)
         if not baseline or not baseline.approved:
             continue
@@ -843,8 +869,7 @@ async def dispatch_stream_actions(db, user_id):
         conn = await db.get(MediaServerConnection, action.connection_id)
         if not conn or action.action not in ('dismiss','restore','reset','upsert'):
             continue
-        enabled = ((conn.push_watched or conn.push_playback) if action.action == 'reset'
-            else conn.push_playback)
+        enabled = _stream_action_enabled(conn, action)
         if not enabled:
             action.state = 'cancelled'
             action.payload = {}
@@ -872,7 +897,9 @@ async def dispatch_stream_actions(db, user_id):
         try:
             payload = dict(action.payload or {})
             visibility_only = (conn.type == 'nuvio' and (
-                action.action == 'dismiss' and payload.get('visibility_only') is True
+                action.action == 'dismiss' and (
+                    payload.get('visibility_only') is True or not conn.push_playback
+                )
                 or action.action == 'upsert' and payload.get('next_up_only') is True
             ))
             if conn.type == 'nuvio' and action.action != 'reset':
@@ -965,6 +992,10 @@ async def dispatch_stream_actions(db, user_id):
                     if action.action=='reset' else 'Playback changed on a connected account. The queued action was not applied; review the newer activity.')))
         except Exception as error:
             action.last_error = type(error).__name__  # never persist tokens/remote bodies
+            logger.warning(
+                'Stream action delivery failed connection=%s media=%s action=%s error=%s attempt=%s',
+                conn.id, action.media_id, action.action, action.last_error, action.attempts,
+            )
     await db.commit()
 
 
@@ -990,8 +1021,7 @@ async def cleanup_disabled_stream_actions(db, user_id):
         conn = by_id.get(action.connection_id)
         if not conn:
             continue
-        enabled = ((conn.push_watched or conn.push_playback) if action.action == 'reset'
-            else conn.push_playback)
+        enabled = _stream_action_enabled(conn, action)
         if enabled:
             continue
         action.state = 'cancelled'

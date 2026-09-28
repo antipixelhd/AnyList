@@ -1,6 +1,7 @@
 """Durable, truthful status for outbound work caused by an AnyList entry edit."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -43,11 +44,36 @@ async def finish_tracking_delivery_job(job_id: int, *, error: str | None = None)
             return
         if error is None:
             stream_action_ids = [row.get("id") for row in (job.changes or {}).get("stream_actions", []) if row.get("id")]
+            failed_stream_errors: set[str] = set()
             if stream_action_ids:
-                pending = (await db.execute(select(StreamAction.id).where(
-                    StreamAction.id.in_(stream_action_ids), StreamAction.state == "pending",
-                ))).scalars().all()
-                if pending:
+                stream_actions = (await db.execute(select(
+                    StreamAction.state, StreamAction.last_error,
+                ).where(
+                    StreamAction.id.in_(stream_action_ids),
+                ))).all()
+                failed_stream_errors = {
+                    # StreamAction.last_error stores exception class names. Keep
+                    # that safe, useful metadata constrained even if an older
+                    # row contains an unexpected value.
+                    value if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", value)
+                    else "ProviderError"
+                    for state, value in stream_actions
+                    if state == "pending" and value
+                }
+                if failed_stream_errors:
+                    errors = ", ".join(sorted(failed_stream_errors))
+                    job.state = "failed"
+                    job.detail = f"One or more connected provider actions failed ({errors})."
+                    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    await db.commit()
+                    return
+                if any(state == "conflict" for state, _ in stream_actions):
+                    job.state = "failed"
+                    job.detail = "One or more connected provider actions need review before they can complete."
+                    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    await db.commit()
+                    return
+                if any(state == "pending" for state, _ in stream_actions):
                     job.state = "queued"
                     job.detail = "Provider work remains queued and has not been acknowledged."
                     await db.commit()

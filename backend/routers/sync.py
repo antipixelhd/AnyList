@@ -7479,7 +7479,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 await nuvio._pull_watched_items(client, conn.url, session.access_token, profile)
                                 if conn.push_watched or conn.push_playback else []
                             )
-                            if conn.push_playback:
+                            if conn.push_watched or conn.push_playback:
                                 from core.nuvio_visibility import next_up_visibility
                                 hidden, visible, seeds = await next_up_visibility(db, user_id, conn.id,
                                     [*remote_watches, *watched_items, *progress_items])
@@ -7499,7 +7499,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 await _nuvio_progress_keys_to_clear(db, user_id, conn.id, remote_progress)
                                 if conn.push_playback else []
                             )
-                            if progress_items:
+                            if conn.push_playback and progress_items:
                                 clear_keys = list(dict.fromkeys([
                                     *clear_keys,
                                     *_nuvio_obsolete_progress_keys(remote_progress, progress_items),

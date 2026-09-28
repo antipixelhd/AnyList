@@ -1701,8 +1701,10 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             "watched_at": int(created_at.timestamp() * 1000),
         }
         pushed_items: list[dict] = []
+        rpc_paths: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
+            rpc_paths.append(request.url.path)
             if request.url.path == "/auth/v1/token":
                 return httpx.Response(200, json={
                     "access_token": "access-token",
@@ -1717,9 +1719,13 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(404, json={"message": "unexpected request"})
 
         transport = httpx.MockTransport(handler)
+        visibility = AsyncMock(return_value=([], [], {}))
+        update_visibility = AsyncMock()
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[watched_record])),
+            patch("core.nuvio_visibility.next_up_visibility", visibility),
+            patch.object(nuvio, "update_next_up_dismissals", update_visibility),
             patch.object(
                 nuvio.httpx,
                 "AsyncClient",
@@ -1730,6 +1736,10 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(pushed_items, [watched_record])
         self.assertEqual(pushed_items[0]["watched_at"], int(created_at.timestamp() * 1000))
+        visibility.assert_awaited_once()
+        update_visibility.assert_awaited_once()
+        self.assertFalse(any(path.endswith(("/sync_pull_watch_progress", "/sync_delete_watch_progress"))
+            for path in rpc_paths))
 
     async def test_full_push_skips_existing_watches_and_pushes_new_numeric_date(self) -> None:
         conn = SimpleNamespace(id=4, user_id=7, type="nuvio", url="https://api.nuvio.tv",
@@ -1748,8 +1758,10 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         }
         remote_rows = [already_watched]
         pushed_items: list[dict] = []
+        rpc_paths: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
+            rpc_paths.append(request.url.path)
             if request.url.path == "/auth/v1/token":
                 return httpx.Response(200, json={"access_token": "access-token",
                     "refresh_token": "rotated-refresh", "expires_in": 3600})
@@ -1762,16 +1774,24 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json=remote_rows)
             return httpx.Response(404)
 
+        visibility = AsyncMock(return_value=([], [], {}))
+        update_visibility = AsyncMock()
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("routers.sync._build_nuvio_watched_items",
                   AsyncMock(return_value=[already_watched, newly_watched])),
+            patch("core.nuvio_visibility.next_up_visibility", visibility),
+            patch.object(nuvio, "update_next_up_dismissals", update_visibility),
             patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
                 _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)),
         ):
             await _run_full_push(user_id=7, connection_id=4, job_id=99)
 
         self.assertEqual(pushed_items, [newly_watched])
+        visibility.assert_awaited_once()
+        update_visibility.assert_awaited_once()
+        self.assertFalse(any(path.endswith(("/sync_pull_watch_progress", "/sync_delete_watch_progress"))
+            for path in rpc_paths))
 
     async def test_full_push_fails_when_nuvio_does_not_store_watched_episodes(self) -> None:
         conn = SimpleNamespace(id=4, user_id=7, type="nuvio", url="https://api.nuvio.tv",
@@ -1785,8 +1805,10 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={})))
         watched_record = {"content_id": "tt1234567", "content_type": "series",
             "title": "The Rescue", "season": 1, "episode": 2, "watched_at": None}
+        rpc_paths: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
+            rpc_paths.append(request.url.path)
             if request.url.path == "/auth/v1/token":
                 return httpx.Response(200, json={"access_token": "access-token",
                     "refresh_token": "rotated-refresh", "expires_in": 3600})
@@ -1796,9 +1818,13 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json=[])
             return httpx.Response(404)
 
+        visibility = AsyncMock(return_value=([], [], {}))
+        update_visibility = AsyncMock()
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[watched_record])),
+            patch("core.nuvio_visibility.next_up_visibility", visibility),
+            patch.object(nuvio, "update_next_up_dismissals", update_visibility),
             patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
                 _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)),
         ):
@@ -1809,6 +1835,10 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             for call in db.execute.await_args_list
             for value in getattr(call.args[0], "_values", {}).values()
         ))
+        visibility.assert_awaited_once()
+        update_visibility.assert_awaited_once()
+        self.assertFalse(any(path.endswith(("/sync_pull_watch_progress", "/sync_delete_watch_progress"))
+            for path in rpc_paths))
 
     async def test_full_push_merges_instead_of_replacing_remote_library(self) -> None:
         """A first full push must merge the local library without dropping

@@ -216,6 +216,20 @@ async def _write_provider_watch_state(
                 [key], on_refresh=persist_refresh, verify=True,
             )
 
+    # Keep the exact provider identity used by the successful write. A later
+    # pull and the visibility update both resolve provider rows through this
+    # baseline mapping, including when the identity came from Nuvio's payload
+    # builder rather than an existing mapping.
+    target_tmdb_id = getattr(show if media.media_type.value == "episode" else media, "tmdb_id", None)
+    content_id = payload.get("content_id")
+    if target_tmdb_id is not None and content_id:
+        snapshot = dict(baseline.snapshot or {}) if baseline else {}
+        mappings = dict(snapshot.get("mappings") or {})
+        mappings[str(content_id)] = target_tmdb_id
+        snapshot["mappings"] = mappings
+        if baseline:
+            baseline.snapshot = snapshot
+
 
 async def _attempt_watch_write(intent: WatchIntent, watched: bool, watched_at: datetime | None, writer: WatchWriter) -> bool:
     intent.attempts += 1
@@ -324,7 +338,7 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         )
         if succeeded:
             intent.state = "applied"
-            if writer is None and conn.type == 'nuvio' and conn.push_playback:
+            if writer is None and conn.type == 'nuvio':
                 suppressed = visibility_suppressed_by_connection.get(conn.id)
                 if suppressed is None:
                     baseline = (await db.execute(select(StreamBaseline).where(
