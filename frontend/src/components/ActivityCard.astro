@@ -9,19 +9,19 @@ const profileHref=showUser?`/user/${encodeURIComponent(activity.username)}`:'';
 const initial=(activity.display_name||activity.username||'?').trim().charAt(0).toUpperCase();
 const rating=activityRating(activity);
 ---
-<article class="visual-event" data-activity-card data-activity-key={activity.key} data-created-at={activity.created_at}>
+<article class:list={['visual-event', {'following-event': showUser}]} data-activity-card data-activity-key={activity.key} data-created-at={activity.created_at}>
   <ActivityCover media={activity.media}/>
   <div class="event-body">
     <div class="event-meta">
-      {showUser&&<div class="event-actor">
+      <time datetime={time.datetime} title={time.exact} data-relative-time>{time.label}</time>
+    </div>
+    {showUser ? <div class="event-content">
+        <a class="event-user" href={profileHref}>{activity.display_name}</a>
+        <p class="event-action"><span>{activityAction(activity)}</span> <a href={`/title/${activity.media.id}`}>{activity.media.title}</a></p>
         <a class="event-avatar" href={profileHref} aria-label={`View ${activity.display_name}'s profile`}>
           {activity.has_avatar?<img src={`/api/proxy/profile/avatar/${activity.user_id}`} alt="" loading="lazy"/>:<span aria-hidden="true">{initial}</span>}
         </a>
-        <a class="event-user" href={profileHref}>{activity.display_name}</a>
-      </div>}
-      <time datetime={time.datetime} title={time.exact} data-relative-time>{time.label}</time>
-    </div>
-    <p class="event-action"><span>{activityAction(activity)}</span> <a href={`/title/${activity.media.id}`}>{activity.media.title}</a></p>
+      </div> : <p class="event-action"><span>{activityAction(activity)}</span> <a href={`/title/${activity.media.id}`}>{activity.media.title}</a></p>}
     {rating&&<div class="event-footer"><span class="score-pill" aria-label={rating.label}><Icon name="star"/> {rating.previous!=null&&<>{scoreLabel(rating.previous)}<span class="score-transition" aria-hidden="true">→</span></>}{scoreLabel(rating.current)}<small>/10</small></span></div>}
   </div>
 </article>

@@ -63,10 +63,10 @@ const formatReleaseDate=(value:string)=>{
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
   </section></div>
 </div>
-<template id="activity-card-template"><article class="visual-event" data-activity-card>
+<template id="activity-card-template"><article class="visual-event following-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
-  <div class="event-body"><div class="event-meta"><div class="event-actor"><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a><a class="event-user"></a></div><time data-relative-time></time></div>
-  <p class="event-action"><span></span> <a></a></p><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
+  <div class="event-body"><div class="event-meta"><time data-relative-time></time></div>
+  <div class="event-content"><a class="event-user"></a><p class="event-action"><span></span> <a></a></p><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a></div><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
 </article></template>
 <template id="activity-empty-template"><div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div></template>
 </Tracker>

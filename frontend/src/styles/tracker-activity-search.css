@@ -33,6 +33,51 @@
     margin:25px 62px 25px 0
   }
 }
+/* Following updates stack the author, message, and avatar as one centered block. */
+.activity-stream .following-event .event-body {
+  /* The card's two 1px borders bring the standard outer height to 100px. */
+  min-height:98px;
+  padding:14px;
+}
+.activity-stream .following-event .event-content {
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:3px;
+}
+.activity-stream .following-event .event-user {
+  max-width:calc(100% - 100px);
+  color:var(--blue);
+  font-size:var(--type-row-size);
+  line-height:18px;
+  font-weight:var(--type-action-weight);
+}
+.activity-stream .following-event .event-action {
+  margin:0;
+  padding-right:72px;
+}
+.activity-stream .following-event .event-avatar {
+  width:27px;
+  height:27px;
+}
+.activity-stream .following-event .event-meta {
+  top:14px;
+  left:14px;
+  right:14px;
+  min-height:18px;
+  pointer-events:none;
+}
+.activity-stream .following-event .event-cover {
+  position:relative;
+  width:65px;
+  min-height:98px;
+}
+.activity-stream .following-event .event-cover img {
+  position:absolute;
+  inset:0;
+  height:100%;
+  min-height:100%;
+}
 /* Fast search starts as a compact input; result cards appear together after a response. */
 .quick-search-dialog {
   position:fixed;
