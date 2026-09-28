@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete, func, or_, and_
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Annotated, Optional
 from jose import jwt, JWTError
 
 from db import get_db
@@ -879,6 +879,20 @@ async def test_tmdb(
     if not success:
         raise HTTPException(status_code=400, detail="Invalid TMDB API Key")
     return {"status": "ok", "message": "TMDB API key is valid."}
+
+@router.post("/test-mdblist")
+async def test_mdblist(
+    body: schemas.ApiKeyTestRequest,
+    response: Response,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    from core import mdblist
+
+    _prevent_sensitive_response_caching(response)
+    if not await mdblist.validate_api_key(body.key.get_secret_value()):
+        raise HTTPException(status_code=400, detail="Invalid MDBList API key")
+    return {"status": "ok", "message": "MDBList API key is valid."}
+
 
 @router.post("/test-rpdb")
 async def test_rpdb(

@@ -34,113 +34,6 @@ if (me.totp_enabled) {
         </div>
         <form id="settings-form" class="space-y-6">
           <div class="space-y-6 max-w-xl">
-          <!-- TMDB Read Access Token -->
-          <div class="space-y-2">
-            <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">TMDB Read Access Token</label>
-            <p class="text-xs"><a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Open TMDB API settings</a></p>
-            <div class="flex gap-2">
-              <div class="relative flex-1 group/field">
-                <input
-                  type="password"
-                  name="tmdb_api_key"
-                  id="tmdb_api_key"
-                  value={settings.tmdb_api_key || ""}
-                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  <Icon name="eye" class="w-5 h-5 eye-icon" />
-                  <Icon name="eye-slash" class="w-5 h-5 eye-slash-icon hidden" />
-                </button>
-              </div>
-              <button
-                type="button"
-                data-action="test_tmdb"
-                title="Test TMDB token"
-                class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <Icon name="play" class="w-5 h-5" />
-              </button>
-            </div>
-            {settings.has_global_tmdb_key && !settings.tmdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TMDB token is configured by your admin. You can leave this blank to use it, or enter your own token to override it.</p>
-            ) : settings.has_global_tmdb_key && settings.tmdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TMDB token is configured, but you are using your own token. Clear this field to fall back to the server token.</p>
-            ) : (
-              <p class="text-xs text-zinc-500">Paste the API Read Access Token (v4) from TMDB Settings → API. Required for metadata and posters; validated before saving.</p>
-            )}
-          </div>
-
-          <!-- TVDB API Key -->
-          <div class="space-y-2">
-            <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">TVDB API Key</label>
-            <p class="text-xs"><a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Open TVDB API keys</a></p>
-            <div class="flex gap-2">
-              <div class="relative flex-1 group/field">
-                <input
-                  type="password"
-                  name="tvdb_api_key"
-                  id="tvdb_api_key"
-                  value={settings.tvdb_api_key || ""}
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  <Icon name="eye" class="w-5 h-5 eye-icon" />
-                  <Icon name="eye-slash" class="w-5 h-5 eye-slash-icon hidden" />
-                </button>
-              </div>
-              <button
-                type="button"
-                data-action="test_tvdb"
-                title="Test TVDB key"
-                class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <Icon name="play" class="w-5 h-5" />
-              </button>
-            </div>
-            {settings.has_global_tvdb_key && !settings.tvdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TVDB key is configured by your admin.</p>
-            ) : settings.has_global_tvdb_key && settings.tvdb_api_key ? (
-              <p class="text-xs text-blue-400">A server-wide TVDB key is configured, but you are using your own key.</p>
-            ) : null}
-
-            <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-2">TVDB Subscriber PIN <span class="text-zinc-600">(optional)</span></label>
-            <div class="relative group/field">
-              <input
-                type="password"
-                name="tvdb_subscriber_pin"
-                id="tvdb_subscriber_pin"
-                value={settings.tvdb_subscriber_pin || ""}
-                placeholder="Only for a subscriber-supported key"
-                class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-              />
-              <button
-                type="button"
-                class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                aria-label="Toggle password visibility"
-              >
-                <Icon name="eye" class="w-5 h-5 eye-icon" />
-                <Icon name="eye-slash" class="w-5 h-5 eye-slash-icon hidden" />
-              </button>
-            </div>
-
-            <div class="text-xs text-zinc-500 space-y-1 pt-1">
-              <p>Powers shows and episodes not on TMDB, TVDB-ordered (absolute / anime) episode mapping, and matching unmatched local episodes. Without a key those fall back to TMDB only.</p>
-              <p>
-                Create a free <span class="text-zinc-400">project</span> key at
-                <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">thetvdb.com/api-information</a>
-                (key only, no PIN; requires attribution, which AnyList shows on TVDB pages). A <span class="text-zinc-400">subscriber-supported</span> key also needs your account's subscriber PIN above.
-              </p>
-            </div>
-          </div>
           <!-- RPDB API Key -->
           <div class="space-y-2">
             <label for="rpdb_api_key" class="block text-sm font-medium text-zinc-400">RPDB API Key</label>
@@ -1443,14 +1336,14 @@ if (me.totp_enabled) {
   function setupSettingsForm() {
     const form = document.getElementById('settings-form');
     const saveBtn = document.getElementById('save-settings-btn');
-    if (!form || !saveBtn) return;
-    const fields = ['tmdb_api_key', 'tvdb_api_key', 'tvdb_subscriber_pin', 'rpdb_api_key'];
+    if (!form || !saveBtn || form.dataset.initialized) return;
+    form.dataset.initialized = 'true';
+    const fields = ['rpdb_api_key'];
     const fieldValue = (data: FormData, field: string) => {
       const value = String(data.get(field) || '');
       return (field === 'rpdb_api_key' ? value.trim() : value) || null;
     };
-    const initialData = new FormData(form as HTMLFormElement);
-    const savedValues = Object.fromEntries(fields.map(field => [field, fieldValue(initialData, field)]));
+    const savedValues = Object.fromEntries(fields.map(field => [field, (document.getElementById(field) as HTMLInputElement).defaultValue.trim() || null]));
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
