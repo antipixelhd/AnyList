@@ -1,5 +1,6 @@
 """Retryable playback actions; never mutates streaming library membership."""
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from sqlalchemy import select, update
 from fastapi import HTTPException
 from models import MediaServerConnection, Media, MediaType, Show
@@ -7,7 +8,7 @@ from models.events import WatchEvent
 from models.playback_progress import PlaybackProgress
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingDeletion
 from core import stremio, nuvio
-from core.status_provenance import provider_changed_at
+from core.status_provenance import provider_changed_at, status_changed_at
 from core.deletion_markers import settle_marker_target
 
 
@@ -279,6 +280,7 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
             await refreshed(session)
             profile = nuvio.parse_profile_id(conn.server_user_id)
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
+            watched_rows = []
             if reset:
                 if len(rows)>=200:raise RemotePlaybackChanged()
                 watched=await nuvio._pull_watched_items(client,conn.url,session.access_token,profile)
@@ -303,11 +305,7 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
                     profile, hide=[record['content_id']])
                 return
-            if not restore:
-                await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, hide=[record['content_id']])
-                if record.get('next_up_only'):
-                    return
+            content_ids = _nuvio_action_content_ids(record)
             matches = [r for r in rows if r.get('content_id') == record['content_id']
                 and r.get('season') == record.get('season') and r.get('episode') == record.get('episode')]
             if restore:
@@ -324,17 +322,168 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
                 await nuvio._rpc(client,conn.url,session.access_token,'sync_push_watch_progress',
                     {'p_profile_id':profile,'p_entries':[payload]})
                 return
-            if not matches:
-                if len(rows) >= 200:
+
+            if record.get('content_ids') and record.get('tmdb_id') is not None:
+                # A remote watched/progress row can expose an identity that
+                # was absent from the original snapshot. Resolve those rows
+                # against the title and baseline before selecting deletions.
+                watched_rows = await nuvio._pull_watched_items(
+                    client, conn.url, session.access_token, profile,
+                )
+                baseline = await db.get(StreamBaseline, conn.id)
+                media = SimpleNamespace(
+                    tmdb_id=record.get('tmdb_id'),
+                    imdb_id=record.get('imdb_id'),
+                    tmdb_data={'external_ids': {'imdb_id': record.get('imdb_id')}}
+                        if record.get('imdb_id') else {},
+                    media_type=record.get('content_type'),
+                )
+                from core.nuvio_visibility import provider_content_ids
+                resolved = provider_content_ids(media, baseline,
+                    records=[*rows, *watched_rows])
+                content_ids = list(dict.fromkeys([*content_ids, *resolved]))
+            if not content_ids:
+                raise RemotePlaybackChanged()
+            if len(rows) >= 200:
+                # A full progress page can hide a second alias for this title.
+                # Do not mark visibility dismissed until the resume snapshot is
+                # known to be complete.
+                raise RemotePlaybackChanged()
+
+            # A canonical Paused/Dropped decision removes current cloud resume
+            # rows, even when the local baseline is missing or stale. Baseline
+            # position mismatches alone are not conflicts: only a provider
+            # timestamp newer than the local status action proves a real race.
+            action_at = provider_changed_at({
+                'updated_at': record.get('observed_at') or record.get('status_changed_at'),
+            })
+            progress_matches = [row for row in rows
+                if str(row.get('content_id') or '') in content_ids]
+            for row in progress_matches:
+                remote_at = provider_changed_at({
+                    'updated_at': row.get('updated_at') or row.get('modified_at'),
+                    'last_watched': row.get('last_watched') or row.get('watched_at'),
+                })
+                if action_at and remote_at and remote_at > action_at:
                     raise RemotePlaybackChanged()
-                return
-            if len(matches) != 1 or not same_progress(matches[0], record):
+            watched_matches = [row for row in watched_rows
+                if str(row.get('content_id') or '') in content_ids]
+            for row in watched_matches:
+                remote_at = provider_changed_at({
+                    'updated_at': row.get('updated_at') or row.get('modified_at'),
+                    'last_watched': row.get('last_watched') or row.get('watched_at'),
+                })
+                if action_at and remote_at and remote_at > action_at:
+                    raise RemotePlaybackChanged()
+
+            progress_keys = [row.get('progress_key') for row in progress_matches]
+            if any(not key for key in progress_keys):
                 raise RemotePlaybackChanged()
-            key = matches[0].get('progress_key')
-            if not key:
-                raise RemotePlaybackChanged()
-            await nuvio._rpc(client, conn.url, session.access_token, 'sync_delete_watch_progress',
-                {'p_profile_id': profile, 'p_keys': [key]})
+            if progress_keys:
+                await nuvio._rpc(client, conn.url, session.access_token, 'sync_delete_watch_progress',
+                    {'p_profile_id': profile, 'p_keys': progress_keys})
+                confirmed_rows = await nuvio._pull_watch_progress(
+                    client, conn.url, session.access_token, profile,
+                )
+                if any(str(row.get('content_id') or '') in content_ids for row in confirmed_rows):
+                    raise nuvio.NuvioAPIError('Nuvio progress deletion was not confirmed by readback')
+            await _clear_nuvio_baseline_progress(db, conn.id,
+                [{'content_id': content_id} for content_id in content_ids], all_for_ids=True)
+
+            # Keep watched_items intact: only generated Next Up visibility and
+            # active Resume/In Progress rows are removed for each known alias.
+            await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                profile, hide=content_ids)
+
+
+def _nuvio_action_content_ids(record):
+    ids = []
+    for value in [*(record.get('content_ids') or []), record.get('content_id')]:
+        key = str(value or '').strip()
+        if key and key not in ids:
+            ids.append(key)
+    return ids
+
+
+async def show_nuvio_next_up(db, conn, record):
+    """Clear Next Up dismissals for a Watching show without inventing a resume."""
+    async def refreshed(session):
+        from db import AsyncSessionLocal
+        from sqlalchemy.orm.attributes import set_committed_value
+        async with AsyncSessionLocal() as token_db:
+            await token_db.execute(update(MediaServerConnection).where(
+                MediaServerConnection.id == conn.id).values(token=session.refresh_token))
+            await token_db.commit()
+        set_committed_value(conn, 'token', session.refresh_token)
+
+    content_ids = _nuvio_action_content_ids(record)
+    if not content_ids:
+        raise ValueError('Nuvio visibility action has no content IDs')
+    async with nuvio.connection_lock(conn.id):
+        await db.refresh(conn)
+        async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+            session = await nuvio.refresh_session(conn.url, conn.token, client=client)
+            await refreshed(session)
+            rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token,
+                nuvio.parse_profile_id(conn.server_user_id))
+            matching = [row for row in rows if str(row.get('content_id') or '') in content_ids]
+            from routers.sync import _nuvio_progress_keys_to_clear
+            clear_keys = await _nuvio_progress_keys_to_clear(db, conn.user_id, conn.id, matching)
+            cleared_rows = [row for row in matching
+                if str(row.get('progress_key') or '') in set(clear_keys)]
+            if clear_keys:
+                profile = nuvio.parse_profile_id(conn.server_user_id)
+                await nuvio._rpc(client, conn.url, session.access_token,
+                    'sync_delete_watch_progress', {'p_profile_id': profile, 'p_keys': clear_keys})
+                confirmed_rows = await nuvio._pull_watch_progress(client, conn.url,
+                    session.access_token, profile)
+                if any(str(row.get('progress_key') or '') in set(clear_keys) for row in confirmed_rows):
+                    raise nuvio.NuvioAPIError('Nuvio synthetic resume removal was not confirmed by readback')
+                await _clear_nuvio_baseline_progress(db, conn.id, cleared_rows)
+            await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                nuvio.parse_profile_id(conn.server_user_id), show=content_ids)
+            return cleared_rows
+
+
+async def _clear_nuvio_baseline_progress(db, connection_id, removed_rows, *, all_for_ids=False):
+    """Forget only Nuvio resumes confirmed absent from the remote profile."""
+    removed_ids = {str(row.get('content_id') or '') for row in removed_rows
+        if row.get('content_id')}
+    removed_keys = {str(row.get('progress_key') or '') for row in removed_rows
+        if row.get('progress_key')}
+    if not removed_ids and not removed_keys:
+        return
+    baseline = await db.get(StreamBaseline, connection_id)
+    if not baseline:
+        return
+    snapshot = dict(baseline.snapshot or {})
+    progress = dict(snapshot.get('progress', {}))
+    for key, value in list(progress.items()):
+        content_id = str(value.get('content_id') or key)
+        if ((all_for_ids and content_id in removed_ids)
+                or str(value.get('progress_key') or '') in removed_keys):
+            progress.pop(key, None)
+    snapshot['progress'] = progress
+    resume = dict(snapshot.get('resume', {}))
+    if all_for_ids:
+        for key in removed_ids:
+            resume.pop(key, None)
+    else:
+        for key, value in list(resume.items()):
+            if str(value.get('progress_key') or '') in removed_keys:
+                resume.pop(key, None)
+    snapshot['resume'] = resume
+    outbound = dict(snapshot.get('outbound', {}))
+    for key in removed_ids:
+        if all_for_ids or str(outbound.get(key, {}).get('progress_key') or '') in removed_keys:
+            outbound.pop(key, None)
+    snapshot['outbound'] = outbound
+    records = dict(snapshot.get('records', {}))
+    records['progress'] = [row for row in records.get('progress', [])
+        if not ((all_for_ids and str(row.get('content_id') or '') in removed_ids)
+            or str(row.get('progress_key') or '') in removed_keys)]
+    snapshot['records'] = records
+    baseline.snapshot = snapshot
 
 
 async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
@@ -350,23 +499,48 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
         baseline = await db.get(StreamBaseline, conn.id)
         if not baseline:
             continue  # a newly attached empty account has no playback to dismiss
+        if conn.type == 'nuvio':
+            from core.nuvio_visibility import provider_content_ids
+            from routers.sync import _nuvio_imdb_id
+            snapshot = baseline.snapshot or {}
+            cached_records = [
+                *snapshot.get('records', {}).get('progress', []),
+                *snapshot.get('records', {}).get('watched', []),
+            ]
+            content_ids = provider_content_ids(media, baseline, records=cached_records)
+            if not content_ids:
+                continue
+            from core.watch_intents import _content_id_for_connection
+            primary = _content_id_for_connection(conn, baseline, media, None)
+            if primary not in content_ids:
+                primary = content_ids[0]
+            entry = (await db.execute(select(TrackedEntry).where(
+                TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id,
+            ))).scalar_one_or_none()
+            changed_at = status_changed_at(entry) if entry else None
+            payload = {
+                'content_id': primary,
+                'content_ids': content_ids,
+                'content_type': media.media_type.value,
+                'tmdb_id': media.tmdb_id,
+                'imdb_id': _nuvio_imdb_id(media),
+                'observed_at': _iso_utc(changed_at),
+            }
+            pending = (await db.execute(select(StreamAction).where(
+                StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
+                StreamAction.state == 'pending', StreamAction.action == 'dismiss',
+            ))).scalar_one_or_none()
+            if pending:
+                pending.payload = payload
+                pending.attempts = 0
+                pending.last_error = None
+            else:
+                db.add(StreamAction(user_id=user_id, connection_id=conn.id, media_id=media.id,
+                    action='dismiss', payload=payload))
+            continue
         has_resume = any(baseline.snapshot.get('mappings', {}).get(key) == media.tmdb_id
             and row.get('content_type') == media.media_type.value
             for key, row in baseline.snapshot.get('progress', {}).items())
-        if conn.type == 'nuvio' and media.media_type == MediaType.series and not has_resume:
-            from routers.sync import _nuvio_imdb_id
-            key = _nuvio_imdb_id(media)
-            if not key:
-                key = next((key for key, value in baseline.snapshot.get('mappings', {}).items()
-                    if value == media.tmdb_id), None)
-            if key:
-                pending = (await db.execute(select(StreamAction.id).where(
-                    StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
-                    StreamAction.state == 'pending', StreamAction.action == 'dismiss'))).first()
-                if not pending:
-                    db.add(StreamAction(user_id=user_id, connection_id=conn.id, media_id=media.id,
-                        action='dismiss', payload={'content_id': key, 'content_type': 'series',
-                            'next_up_only': True}))
         for key, record in baseline.snapshot.get('progress', {}).items():
             if baseline.snapshot.get('mappings', {}).get(key) != media.tmdb_id or record.get('content_type') != media.media_type.value:
                 continue
@@ -448,6 +622,18 @@ async def queue_restorations(db, user_id, media):
                 else int(provider_time.timestamp()*1000)),
             'progress_key':progress_key,
         }
+        if conn.type == 'nuvio' and record.get('synthetic_resume'):
+            action_record['synthetic_resume'] = True
+        if (conn.type == 'nuvio' and media.media_type == MediaType.series
+                and record.get('has_watched_history') and record.get('synthetic_resume')):
+            # Nuvio can surface a watched series through Next Up without a
+            # fabricated episode position. Keep this as a durable upsert
+            # action so failed visibility writes are retried by the worker.
+            action_record = {
+                'content_id': content_id,
+                'content_type': 'series',
+                'next_up_only': True,
+            }
         # A progress row should replace an older dismissal for the same title.
         stale_dismissals=(await db.execute(select(StreamAction).where(
             StreamAction.user_id==user_id,StreamAction.connection_id==conn.id,
@@ -475,8 +661,9 @@ async def queue_restorations(db, user_id, media):
 
 
 async def _local_resume_record(db, user_id, media, entry, observed_at):
-    """Build local playback in provider units, synthesizing a one-second resume when needed."""
+    """Build local playback in provider units, marking a synthetic fallback."""
     target=media
+    has_watched_history=False
     if media.media_type==MediaType.series:
         show_ids=(await db.execute(select(Show.id).where(Show.tmdb_id==media.tmdb_id))).scalars().all()
         if not show_ids:
@@ -493,6 +680,7 @@ async def _local_resume_record(db, user_id, media, entry, observed_at):
             WatchEvent.media_id.in_([episode.id for episode in released]),
         ))).scalars().all()
         watched_ids=set(watched)
+        has_watched_history=bool(watched_ids)
         target=next((episode for episode in released if episode.id not in watched_ids),released[0])
 
     progress=(await db.execute(select(PlaybackProgress).where(
@@ -511,22 +699,25 @@ async def _local_resume_record(db, user_id, media, entry, observed_at):
 
     if fresh and progress:
         try:
-            position_ms=max(0,int(progress.progress_seconds))*1000
+            position_ms=round(max(0.0,float(progress.progress_seconds))*1000)
             percent=float(progress.progress_percent)
         except (TypeError,ValueError):
             position_ms=0;percent=0
     else:
         position_ms=1000
         percent=0.01
+    synthetic_resume = not (fresh and progress and position_ms > 0 and percent > 0)
     if position_ms<=0 or percent<=0:
         position_ms=1000
         percent=0.01
+        synthetic_resume=True
     if target.runtime and target.runtime>0:
         duration_ms=int(target.runtime)*60_000
     else:
         duration_ms=round(position_ms/max(min(percent,1.0),0.01))
     duration_ms=max(position_ms,duration_ms)
-    return {'position':position_ms,'duration':duration_ms,'episode_media':target}
+    return {'position':position_ms,'duration':duration_ms,'episode_media':target,
+        'synthetic_resume':synthetic_resume,'has_watched_history':has_watched_history}
 
 
 async def queue_resets(db,user_id,media,deleted_at):
@@ -591,41 +782,74 @@ async def dispatch_stream_actions(db, user_id):
             continue
         action.attempts += 1
         try:
+            payload = dict(action.payload or {})
+            visibility_only = (conn.type == 'nuvio' and action.action == 'upsert'
+                and payload.get('next_up_only') is True)
+            if conn.type == 'nuvio' and (action.action == 'dismiss' or visibility_only):
+                baseline_for_aliases = await db.get(StreamBaseline, conn.id)
+                from core.nuvio_visibility import provider_content_ids
+                from routers.sync import _nuvio_imdb_id
+                aliases = provider_content_ids(media, baseline_for_aliases,
+                    records=(baseline_for_aliases.snapshot or {}).get('records', {}).get('progress', [])
+                        + (baseline_for_aliases.snapshot or {}).get('records', {}).get('watched', [])
+                        if baseline_for_aliases else [])
+                payload['content_ids'] = list(dict.fromkeys([
+                    *(payload.get('content_ids') or []), *aliases, payload.get('content_id'),
+                ]))
+                payload['tmdb_id'] = media.tmdb_id
+                payload['imdb_id'] = _nuvio_imdb_id(media)
             if conn.type == 'stremio':
-                if action.action == 'reset':await dismiss_stremio(conn.token, action.payload, reset=True)
-                elif action.action == 'restore':await dismiss_stremio(conn.token, action.payload, restore=True)
-                elif action.action == 'upsert':await push_stremio_progress(conn.token, action.payload)
-                else:await dismiss_stremio(conn.token, action.payload)
+                if action.action == 'reset':await dismiss_stremio(conn.token, payload, reset=True)
+                elif action.action == 'restore':await dismiss_stremio(conn.token, payload, restore=True)
+                elif action.action == 'upsert':await push_stremio_progress(conn.token, payload)
+                else:await dismiss_stremio(conn.token, payload)
             elif conn.type == 'nuvio':
-                if action.action == 'reset':await dismiss_nuvio(db, conn, action.payload, reset=True)
-                elif action.action == 'restore':await dismiss_nuvio(db, conn, action.payload, restore=True)
-                elif action.action == 'upsert':await push_nuvio_progress(db, conn, action.payload)
-                else:await dismiss_nuvio(db, conn, action.payload)
+                if action.action == 'reset':await dismiss_nuvio(db, conn, payload, reset=True)
+                elif action.action == 'restore':await dismiss_nuvio(db, conn, payload, restore=True)
+                elif action.action == 'upsert' and visibility_only:
+                    await show_nuvio_next_up(db, conn, payload)
+                elif action.action == 'upsert':await push_nuvio_progress(db, conn, payload)
+                else:await dismiss_nuvio(db, conn, payload)
             else:
                 continue
             action.state = 'applied'; action.last_error = None
-            # Update the baseline to recognize our write on the next pull.
-            baseline = await db.get(StreamBaseline, conn.id)
-            snapshot = dict(baseline.snapshot)
-            key = action.payload['content_id']
-            snapshot['progress'] = {k:v for k,v in snapshot.get('progress', {}).items() if k != key}
-            snapshot['resume'] = {**snapshot.get('resume',{})}
-            if action.action in ('dismiss','reset'):snapshot['resume'].pop(key,None)
-            if action.action in ('restore','upsert'):
-                snapshot['progress'][key]=dict(action.payload)
-                snapshot['resume'].pop(key,None)
-            snapshot['outbound'] = {**snapshot.get('outbound', {})}
-            if action.action in ('restore', 'upsert'):
-                snapshot['outbound'][key] = {field: action.payload.get(field)
-                    for field in ('position','duration','season','episode','observed_at')}
-                snapshot['outbound'][key]['action'] = action.action
-            elif action.action in ('dismiss','reset'):
-                snapshot['outbound'].pop(key, None)
-            records = dict(snapshot.get('records', {}))
-            records['progress'] = [r for r in records.get('progress', []) if r.get('content_id') != key]
-            if action.action in ('restore','upsert'):records['progress'].append(dict(action.payload))
-            snapshot['records'] = records
-            baseline.snapshot = snapshot
+            # Visibility-only Watching actions do not represent watch progress.
+            # show_nuvio_next_up updates only the exact synthetic row it proves
+            # absent; leave every genuine current resume in the baseline.
+            if not visibility_only:
+                baseline = await db.get(StreamBaseline, conn.id)
+                snapshot = dict(baseline.snapshot)
+                content_ids = (_nuvio_action_content_ids(payload)
+                    if conn.type == 'nuvio' and action.action in ('dismiss', 'reset')
+                    else [payload['content_id']])
+                key = payload['content_id']
+                snapshot['progress'] = {k:v for k,v in snapshot.get('progress', {}).items()
+                    if str(k) not in content_ids and str(v.get('content_id') or '') not in content_ids}
+                snapshot['resume'] = {**snapshot.get('resume',{})}
+                if action.action in ('dismiss','reset'):
+                    for content_id in content_ids:
+                        snapshot['resume'].pop(content_id,None)
+                if action.action in ('restore','upsert'):
+                    snapshot['progress'][key]=dict(action.payload)
+                    snapshot['resume'].pop(key,None)
+                snapshot['outbound'] = {**snapshot.get('outbound', {})}
+                if action.action in ('restore', 'upsert'):
+                    snapshot['outbound'][key] = {field: payload.get(field)
+                        for field in ('position','duration','season','episode','progress_key',
+                            'observed_at','last_watched')}
+                    snapshot['outbound'][key]['action'] = action.action
+                    if payload.get('synthetic_resume') is True:
+                        snapshot['outbound'][key]['synthetic_resume'] = True
+                elif action.action in ('dismiss','reset'):
+                    for content_id in content_ids:
+                        snapshot['outbound'].pop(content_id, None)
+                records = dict(snapshot.get('records', {}))
+                records['progress'] = [r for r in records.get('progress', [])
+                    if str(r.get('content_id') or '') not in content_ids]
+                if action.action in ('restore','upsert'):
+                    records['progress'].append(dict(payload))
+                snapshot['records'] = records
+                baseline.snapshot = snapshot
             action.payload = {}
             if action.action=='reset' and deleted:
                 await db.flush()

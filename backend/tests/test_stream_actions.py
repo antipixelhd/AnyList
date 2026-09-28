@@ -167,6 +167,32 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((action.payload['position'],action.payload['duration']),(1000,100_000))
         self.assertTrue(action.payload['last_watched'].endswith('Z'))
 
+    async def test_nuvio_watching_series_with_history_queues_durable_next_up_visibility(self):
+        series=Media(id=20,tmdb_id=123,imdb_id='tt-show',media_type=MediaType.series,title='Fixture Show')
+        entry=TrackedEntry(user_id=1,media_id=series.id,status='watching',progress=3)
+        episodes=[Media(id=100+i,media_type=MediaType.episode,title=f'Episode {i+1}',
+            show_id=77,season_number=1,episode_number=i+1,release_date='2020-01-01') for i in range(3)]
+        connection=MediaServerConnection(id=6,user_id=1,type='nuvio',name='Approved',
+            url='https://example.test',token='fixture',push_playback=True)
+        baseline=StreamBaseline(user_id=1,connection_id=connection.id,approved=True,
+            snapshot={'mappings':{'tt-show':123},'progress':{},'resume':{}})
+        db=_QueueDB([
+            [],[entry],[77],episodes,[100],[],[],[connection],[],[],
+        ],baseline)
+
+        with patch('routers.sync._get_effective_tmdb_key',AsyncMock(return_value=None)), \
+             patch('routers.sync._ensure_nuvio_imdb_ids',AsyncMock()), \
+             patch('routers.sync._nuvio_imdb_id',return_value='tt1234567'):
+            await queue_restorations(db,1,series)
+
+        self.assertEqual(len(db.added),1)
+        action=db.added[0]
+        self.assertEqual(action.action,'upsert')
+        self.assertEqual(action.connection_id,connection.id)
+        self.assertEqual(action.payload,{
+            'content_id':'tt-show','content_type':'series','next_up_only':True,
+        })
+
     async def test_nuvio_progress_upsert_uses_progress_key_and_confirms_readback(self):
         conn=MediaServerConnection(id=988,user_id=1,type='nuvio',name='Fixture',url='https://example.test',token='old',server_user_id='1')
         record={'content_id':'tt1','content_type':'series','video_id':'tt1:1:2','position':30,'duration':100,

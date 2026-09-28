@@ -3742,6 +3742,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_nuvio_pause_queues_next_up_dismissal_without_active_resume(self):
         from core.stream_actions import queue_local_dismissals
+        self.show.tmdb_id = 987650018
         conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
             url='https://example.test', token='fixture', push_playback=True)
         self.db.add(conn);await self.db.flush()
@@ -3754,8 +3755,64 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             StreamAction.user_id == self.owner.id))).scalars().all()
         self.assertEqual(len(actions), 1)
         self.assertEqual(actions[0].action, 'dismiss')
-        self.assertEqual(actions[0].payload,
-            {'content_id': 'tt-fixture', 'content_type': 'series', 'next_up_only': True})
+        self.assertEqual(actions[0].payload['content_type'], 'series')
+        self.assertIn('tt-fixture', actions[0].payload['content_ids'])
+
+    async def test_nuvio_watch_delivery_visibility_includes_observed_provider_aliases(self):
+        from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+        self.show.tmdb_id = 987650019
+        self.show.imdb_id = 'tt987650019'
+        canonical = Show(title='Alias fixture', tmdb_id=self.show.tmdb_id,
+            tmdb_data={'external_ids': {'imdb_id': self.show.imdb_id}})
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', push_watched=True, push_playback=True)
+        self.db.add_all([canonical, conn]);await self.db.flush()
+        episode = Media(title='Episode', media_type=MediaType.episode, show_id=canonical.id,
+            season_number=1, episode_number=1)
+        self.db.add(episode);await self.db.flush()
+        self.db.add_all([WatchEvent(user_id=self.owner.id, media_id=episode.id, completed=True),
+            StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+                snapshot={'mappings': {'tmdb:987650019': '987650019'}})])
+        await self.db.commit()
+        await queue_watch_intents(self.db, self.owner.id, {episode.id});await self.db.commit()
+        visibility = AsyncMock()
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
+             patch('core.watch_intents._write_provider_watch_state', AsyncMock()), \
+             patch('core.nuvio_visibility.sync_next_up_visibility', visibility):
+            await dispatch_watch_intents(self.db, self.owner.id)
+        self.assertEqual(visibility.await_count, 1)
+        self.assertEqual({row['content_id'] for row in visibility.await_args.args[2]},
+            {'tmdb:987650019', 'tt987650019'})
+
+    async def test_nuvio_seed_cleanup_uses_show_identity_and_keeps_newer_playback(self):
+        from routers.sync import _nuvio_progress_keys_to_clear
+        self.show.tmdb_id = 987650020
+        self.show.imdb_id = 'tt987650020'
+        canonical = Show(title='Cleanup fixture', tmdb_id=self.show.tmdb_id)
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', push_playback=True)
+        self.db.add_all([canonical, conn]);await self.db.flush()
+        self.assertNotEqual(canonical.id, self.show.id)
+        episode = Media(title='Episode', media_type=MediaType.episode, show_id=canonical.id,
+            season_number=1, episode_number=1, release_date='2020-01-01')
+        self.db.add(episode);await self.db.flush()
+        row = {'content_id': self.show.imdb_id, 'content_type': 'tv', 'position': 1000,
+            'duration': 100000, 'season': 1, 'episode': 2,
+            'progress_key': f'{self.show.imdb_id}_s1e2', 'last_watched': 1790000000000}
+        prior = {**row, 'action': 'upsert', 'synthetic_resume': True,
+            'observed_at': datetime.fromtimestamp(row['last_watched']/1000, timezone.utc).isoformat()}
+        self.db.add_all([TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='watching', progress=1),
+            WatchEvent(user_id=self.owner.id, media_id=episode.id, completed=True),
+            StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+                snapshot={'mappings': {self.show.imdb_id: str(self.show.tmdb_id)},
+                    'outbound': {self.show.imdb_id: prior}})])
+        await self.db.commit()
+        self.assertEqual(await _nuvio_progress_keys_to_clear(self.db, self.owner.id, conn.id, [row]),
+            [row['progress_key']])
+        self.assertEqual(await _nuvio_progress_keys_to_clear(self.db, self.owner.id, conn.id,
+            [{**row, 'position': 18000, 'last_watched': row['last_watched']+10000}]), [])
+        self.assertEqual(await _nuvio_progress_keys_to_clear(self.db, self.owner.id, conn.id,
+            [{**row, 'last_watched': row['last_watched']+10000}]), [])
 
     async def test_watch_intent_retries_current_state_after_failed_write_and_rapid_rewatch(self):
         from core.watch_intents import queue_watch_intents, dispatch_watch_intents

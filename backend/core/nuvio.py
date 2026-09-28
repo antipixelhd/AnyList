@@ -280,6 +280,13 @@ async def validate_connection(
     return session, profiles
 
 
+def _canonical_content_type(row: dict[str, Any]) -> dict[str, Any]:
+    """Nuvio clients use both TV labels; downstream tracking uses series."""
+    if str(row.get('content_type') or '').strip().lower() == 'tv':
+        return {**row, 'content_type': 'series'}
+    return row
+
+
 async def _pull_library(
     client: httpx.AsyncClient,
     url: str,
@@ -298,7 +305,7 @@ async def _pull_library(
         )
         if not isinstance(page, list) or any(not isinstance(row, dict) for row in page):
             raise NuvioAPIError('Nuvio library pull returned an incomplete collection')
-        items.extend(page)
+        items.extend(_canonical_content_type(row) for row in page)
         if len(page) < _PAGE_SIZE:
             return items
         offset += _PAGE_SIZE
@@ -322,7 +329,7 @@ async def _pull_watched_items(
         )
         if not isinstance(page, list) or any(not isinstance(row, dict) for row in page):
             raise NuvioAPIError('Nuvio history pull returned an incomplete collection')
-        items.extend(page)
+        items.extend(_canonical_content_type(row) for row in page)
         if len(page) < _PAGE_SIZE:
             return items
         page_number += 1
@@ -401,7 +408,7 @@ async def _pull_watch_progress(
     )
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise NuvioAPIError('Nuvio progress pull returned an incomplete collection')
-    return rows
+    return [_canonical_content_type(row) for row in rows]
 
 
 async def pull_sync_data(

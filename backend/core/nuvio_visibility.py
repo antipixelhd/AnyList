@@ -5,26 +5,113 @@ from models.base import MediaType
 from models.tracking import TrackedEntry, StreamBaseline
 
 
+def _tmdb_key(value):
+    """Normalize TMDB identifiers that may be stored as integers or strings."""
+    if value is None:
+        return None
+    key = str(value).strip()
+    if key.startswith('tmdb:'):
+        key = key[5:]
+    return key or None
+
+
+def _content_ids_for_record(record, mappings, local_media):
+    content_id = str(record.get('content_id') or '').strip()
+    if not content_id:
+        return set()
+
+    tmdb_id = _tmdb_key(mappings.get(content_id))
+    if tmdb_id is None and content_id.startswith('tmdb:'):
+        tmdb_id = _tmdb_key(content_id)
+
+    ids = {content_id}
+    if tmdb_id is None:
+        return ids
+
+    # Nuvio profiles can retain several provider identities for one title.
+    # Apply visibility to the full alias set so stale watched history cannot
+    # seed another Next Up card under an older ID.
+    ids.update(str(key) for key, value in mappings.items()
+        if _tmdb_key(value) == tmdb_id and str(key).strip())
+    ids.update(_nuvio_imdb_id(media) for media in local_media
+        if _tmdb_key(media.tmdb_id) == tmdb_id and _nuvio_imdb_id(media))
+    ids.add(f'tmdb:{tmdb_id}')
+    return ids
+
+
+def _nuvio_imdb_id(media):
+    data = media.tmdb_data or {}
+    external = data.get('external_ids') if isinstance(data, dict) else None
+    value = (data.get('imdb_id') if isinstance(data, dict) else None) or (
+        external.get('imdb_id') if isinstance(external, dict) else None
+    ) or getattr(media, 'imdb_id', None)
+    value = str(value or '').strip()
+    return value if value.startswith('tt') and value[2:].isdigit() else None
+
+
+def provider_content_ids(media, baseline=None, *, records=()):
+    """Return every known Nuvio identity for one local title.
+
+    Baseline mappings may hold TMDB IDs as either JSON strings or integers.
+    Current remote rows can add aliases when they expose a TMDB/IMDb field.
+    """
+    tmdb_id = _tmdb_key(getattr(media, 'tmdb_id', None))
+    mappings = (baseline.snapshot or {}).get('mappings', {}) if baseline else {}
+    ids = {str(key).strip() for key, value in mappings.items()
+        if tmdb_id is not None and _tmdb_key(value) == tmdb_id and str(key).strip()}
+    imdb_id = _nuvio_imdb_id(media)
+    if imdb_id:
+        ids.add(imdb_id)
+    if tmdb_id:
+        ids.add(f'tmdb:{tmdb_id}')
+
+    expected_type = str(getattr(getattr(media, 'media_type', None), 'value',
+        getattr(media, 'media_type', '')) or '').lower()
+    for row in records:
+        row_type = str(row.get('content_type') or '').lower()
+        if expected_type in ('series', 'tv') and row_type not in ('', 'series', 'tv'):
+            continue
+        if expected_type == 'movie' and row_type not in ('', 'movie'):
+            continue
+        content_id = str(row.get('content_id') or '').strip()
+        if not content_id:
+            continue
+        row_tmdb = _tmdb_key(row.get('tmdb_id') or row.get('tmdb'))
+        row_imdb = str(row.get('imdb_id') or row.get('imdb') or '').strip()
+        if (content_id in ids or (tmdb_id and row_tmdb == tmdb_id)
+                or (imdb_id and row_imdb == imdb_id)):
+            ids.add(content_id)
+    return sorted(ids)
+
+
 async def next_up_visibility(db, user_id, connection_id, records):
-    from routers.sync import _nuvio_imdb_id
     rows = (await db.execute(select(Media, TrackedEntry.status).join(
         TrackedEntry, TrackedEntry.media_id == Media.id,
     ).where(TrackedEntry.user_id == user_id, Media.media_type == MediaType.series))).all()
-    by_tmdb = {media.tmdb_id: status for media, status in rows if media.tmdb_id}
-    by_external = {_nuvio_imdb_id(media): status for media, status in rows if _nuvio_imdb_id(media)}
     baseline = await db.get(StreamBaseline, connection_id)
     mappings = (baseline.snapshot or {}).get('mappings', {}) if baseline else {}
-    ids = {str(row['content_id']) for row in records
-           if row.get('content_type') == 'series' and row.get('content_id')}
+
+    by_tmdb = {_tmdb_key(media.tmdb_id): status for media, status in rows if media.tmdb_id}
+    by_external = {_nuvio_imdb_id(media): status for media, status in rows if _nuvio_imdb_id(media)}
+    local_media = [media for media, _status in rows]
+
+    candidates = {}
+    for row in records:
+        content_type = str(row.get('content_type') or '').lower()
+        if content_type not in ('series', 'tv') or not row.get('content_id'):
+            continue
+        tmdb_id = _tmdb_key(mappings.get(str(row['content_id'])))
+        if tmdb_id is None:
+            tmdb_id = _tmdb_key(row['content_id']) if str(row['content_id']).startswith('tmdb:') else None
+        aliases = _content_ids_for_record(row, mappings, local_media)
+        for key in aliases:
+            status = by_external.get(key)
+            if status is None and tmdb_id is not None:
+                status = by_tmdb.get(tmdb_id)
+            candidates[key] = status
+
     hidden, visible = set(), set()
-    for key in ids:
-        tmdb_id = mappings.get(key)
-        if tmdb_id is None and key.startswith('tmdb:'):
-            try:
-                tmdb_id = int(key[5:])
-            except ValueError:
-                pass
-        status = by_external.get(key, by_tmdb.get(tmdb_id))
+    for key, status in candidates.items():
         (visible if status == 'watching' else hidden).add(key)
     return hidden, visible
 

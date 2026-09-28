@@ -1228,7 +1228,9 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
         ]))
 
         with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(db, user_id=7)
+            items = await _build_nuvio_progress_items(
+                db, user_id=7, next_up_for_watched_series=True,
+            )
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["content_id"], "tt0137523")
@@ -1255,18 +1257,78 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[show]),
             _Result(scalars=episodes),
             _Result(rows=[]),
+            _Result(scalars=[]),
+            _Result(scalars=[show]),
+        ]))
+
+        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
+            items = await _build_nuvio_progress_items(
+                db, user_id=7, next_up_for_watched_series=True,
+            )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["season"], 1)
+        self.assertEqual(items[0]["episode"], 1)
+        self.assertEqual(items[0]["position"], 1000)
+        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e1")
+
+    async def test_watching_series_with_episode_history_uses_next_up_without_synthetic_resume(self) -> None:
+        changed_at = datetime(2026, 9, 20, 12, 0)
+        entry = SimpleNamespace(status="watching", status_changed_at=changed_at, updated_at=changed_at)
+        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
+        show = Show(id=5, tmdb_id=1396, title="Breaking Bad",
+            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
+        episodes = [
+            Media(id=21, media_type=MediaType.episode, title="Watched", show_id=5,
+                season_number=1, episode_number=1, runtime=45, release_date="2008-01-20"),
+            Media(id=22, media_type=MediaType.episode, title="Next", show_id=5,
+                season_number=1, episode_number=2, runtime=45, release_date="2008-01-27"),
+        ]
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(rows=[(entry, series)]),
+            _Result(scalars=[show]),
+            _Result(scalars=episodes),
+            _Result(rows=[]),
+            _Result(scalars=[21]),
+        ]))
+
+        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
+            items = await _build_nuvio_progress_items(
+                db, user_id=7, next_up_for_watched_series=True,
+            )
+
+        self.assertEqual(items, [])
+
+    async def test_watching_series_with_history_preserves_real_fractional_playback_position(self) -> None:
+        changed_at = datetime(2026, 9, 20, 12, 0)
+        entry = SimpleNamespace(status="watching", status_changed_at=changed_at, updated_at=changed_at)
+        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
+        show = Show(id=5, tmdb_id=1396, title="Breaking Bad",
+            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
+        watched_episode = Media(id=21, media_type=MediaType.episode, title="Watched", show_id=5,
+            season_number=1, episode_number=1, runtime=45, release_date="2008-01-20")
+        active_episode = Media(id=22, media_type=MediaType.episode, title="Current", show_id=5,
+            season_number=1, episode_number=2, runtime=45, release_date="2008-01-27")
+        progress = SimpleNamespace(progress_seconds=12.75, progress_percent=0.25,
+            updated_at=datetime(2026, 9, 21, 12, 0))
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            _Result(rows=[(entry, series)]),
+            _Result(scalars=[show]),
+            _Result(scalars=[watched_episode, active_episode]),
+            _Result(rows=[(progress, active_episode)]),
             _Result(scalars=[21]),
             _Result(scalars=[show]),
         ]))
 
         with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(db, user_id=7)
+            items = await _build_nuvio_progress_items(
+                db, user_id=7, next_up_for_watched_series=True,
+            )
 
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["season"], 1)
-        self.assertEqual(items[0]["episode"], 3)
-        self.assertEqual(items[0]["position"], 1000)
-        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e3")
+        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e2")
+        self.assertEqual(items[0]["position"], 12_750)
+        self.assertNotIn("synthetic_resume", items[0])
 
     async def test_completed_episode_progress_does_not_hide_next_episode(self) -> None:
         changed_at = datetime(2026, 9, 20, 12, 0)
@@ -1329,6 +1391,45 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
         keys = await _nuvio_progress_keys_to_clear(db, user_id=7, connection_id=44, remote_rows=remote)
 
         self.assertEqual(keys, ["tt0137523"])
+
+    async def test_legacy_synthetic_series_resume_cleanup_normalizes_tv_and_checks_echo_time(self) -> None:
+        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series,
+            title="Breaking Bad", imdb_id="tt0903747")
+        episode = Media(id=21, media_type=MediaType.episode, title="Next",
+            show_id=5, season_number=1, episode_number=2)
+        progress_key = "tt0903747_s1e2"
+        outbound = {
+            "action": "upsert", "synthetic_resume": True,
+            "progress_key": progress_key, "position": 1000, "duration": 2_700_000,
+            "season": 1, "episode": 2, "last_watched": 1_790_000_000_000,
+        }
+        baseline = SimpleNamespace(snapshot={
+            "mappings": {"tt0903747": "1396"},
+            "outbound": {"tt0903747": outbound},
+        })
+
+        async def clear_keys(remote_row):
+            db = SimpleNamespace(
+                get=AsyncMock(return_value=baseline),
+                execute=AsyncMock(side_effect=[
+                    _Result(rows=[(series, "watching")]),
+                    _Result(rows=[]),
+                    _Result(scalars=[Show(id=5, tmdb_id=1396)]),
+                    _Result(scalars=[5]),
+                ]),
+            )
+            return await _nuvio_progress_keys_to_clear(
+                db, user_id=7, connection_id=44, remote_rows=[remote_row],
+            )
+
+        echoed = {
+            "content_id": "tt0903747", "content_type": "tv", "progress_key": progress_key,
+            "position": 1000, "duration": 2_700_000, "season": 1, "episode": 2,
+            "last_watched": 1_790_000_000_000,
+        }
+        self.assertEqual(await clear_keys(echoed), [progress_key])
+        self.assertEqual(await clear_keys({**echoed, "last_watched": 1_790_000_000_001}), [])
+        self.assertEqual(await clear_keys({**echoed, "position": 1500}), [])
 
 
 class NuvioWatchedStateProjectionTests(unittest.IsolatedAsyncioTestCase):

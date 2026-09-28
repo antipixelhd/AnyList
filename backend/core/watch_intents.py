@@ -319,11 +319,18 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         records = []
         from routers.sync import _nuvio_imdb_id
         from core.nuvio_visibility import sync_next_up_visibility
+        baseline = await db.get(StreamBaseline, conn.id)
+        mappings = (baseline.snapshot or {}).get('mappings', {}) if baseline else {}
         for intent in batch:
             media = await db.get(Media, intent.media_id)
             show = await db.get(Show, media.show_id) if media.show_id else None
-            key = _nuvio_imdb_id(show or media)
-            if key:
+            entity = show or media
+            keys = {str(key) for key, value in mappings.items()
+                if entity.tmdb_id is not None and str(value) == str(entity.tmdb_id)}
+            for key in (_content_id_for_connection(conn, baseline, media, show), _nuvio_imdb_id(entity)):
+                if key:
+                    keys.add(key)
+            for key in keys:
                 records.append({'content_id': key,
                     'content_type': 'series' if show else media.media_type.value})
         try:
