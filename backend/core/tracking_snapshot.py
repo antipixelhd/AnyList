@@ -450,6 +450,17 @@ async def observe_stream_snapshot(
     # Only changed observations advance an existing tracked entry. Repeated
     # polling must not restore cleared dates or reinterpret the same playback.
     if not first:
+        # Retire legacy status reviews that offer no actual choice, even when
+        # the next snapshot has no playback delta to process.
+        redundant = (await db.execute(select(SyncReview).join(TrackedEntry,
+            (TrackedEntry.user_id == SyncReview.user_id) & (TrackedEntry.media_id == SyncReview.media_id)).where(
+                SyncReview.connection_id == conn.id, SyncReview.state == 'pending', SyncReview.kind == 'conflict',
+                SyncReview.previous_status == SyncReview.proposed_status,
+                SyncReview.proposed_status == TrackedEntry.status,
+                SyncReview.message.contains('playback timing cannot be ordered')))).scalars().all()
+        for review in redundant:
+            review.state = 'corrected'
+            review.dismissed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         old_watched = set(previous.get('watched', []))
         old_watch_observations = {
             (watch_key(row), str(row.get('watched_at')))
@@ -518,6 +529,11 @@ async def observe_stream_snapshot(
                     ordering='apply'
                 elif provider_at and provider_at < changed_at:
                     ordering='stale'
+                elif provider_at and provider_at == changed_at and entry.status_source == f'{conn.type}:{conn.id}':
+                    # One provider record can yield resume and several watched
+                    # rows with the same mutation time. These are one observation,
+                    # not competing edits (Stremio stores history on the title).
+                    ordering='apply'
                 elif provider_at and provider_at == changed_at and entry.status_source != 'local':
                     previous_row=await previous_source_playback(db,entry,media)
                     ordering='apply' if previous_row and playback_rank(row)>playback_rank(previous_row) else 'stale' if previous_row else 'conflict'
@@ -532,9 +548,22 @@ async def observe_stream_snapshot(
                 )
             proposed = observed_status(previous_status, is_complete, True)
             if ordering=='conflict':
+                # An unordered observation must not overwrite progress or fan
+                # out to peers, but agreeing statuses need no status decision.
+                if proposed == previous_status:
+                    continue
+                old_row = old_active.get(str(row.get('content_id'))) or {}
+                changes = [dict(field=field, previous=old_row.get(field), proposed=row.get(field))
+                    for field in ('season', 'episode', 'position', 'duration')
+                    if old_row.get(field) != row.get(field)]
                 db.add(SyncReview(user_id=conn.user_id,connection_id=conn.id,media_id=media.id,kind='conflict',
                     previous_status=previous_status,proposed_status=proposed,
-                    message=f'{conn.name}: playback timing cannot be ordered against another recent change. Your current value was preserved.'))
+                    payload={'changes': changes, 'local_changed_at': changed_at.isoformat()+'Z' if changed_at else None,
+                        'provider_changed_at': provider_at.isoformat()+'Z' if provider_at else None,
+                        'previous_observed_at': baseline.observed_at.isoformat()+'Z' if baseline.observed_at else None},
+                    message=f'{conn.name}: proposes {previous_status} → {proposed}. Playback timing cannot be ordered against another recent change. '
+                        f'Current change: {changed_at.isoformat()+"Z" if changed_at else "unknown"}; '
+                        f'provider change: {provider_at.isoformat()+"Z" if provider_at else "unknown"}. Your current value was preserved.'))
                 continue
             if sync_watched and row in new_watched_rows:
                 accepted_watch_rows.append(row)

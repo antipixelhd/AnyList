@@ -57,7 +57,7 @@ export const eventMessage = (event: any) => isNewSeasonReleaseDate(event)
 export const seasonArtworkFallback = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.season_artwork_fallback);
 export const seasonArtworkRetry = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.artwork_retry);
 export const historyChanges = (event: any) => (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
-export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress' } as Record<string, string>)[field] || field;
+export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress', season: 'Season', episode: 'Episode', position: 'Playback position (ms)', duration: 'Duration (ms)' } as Record<string, string>)[field] || field;
 export const historyValue = (value: any) => value == null || value === '' ? 'Not set' : String(value);
 export const statusLabel = (value: string | null | undefined) => statuses.find(([status]) => status === value)?.[1] || value || 'Unknown';
 

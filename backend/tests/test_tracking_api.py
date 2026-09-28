@@ -3585,6 +3585,58 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             StreamAction.user_id==self.owner.id,StreamAction.state=='pending',
             StreamAction.action=='upsert'))).scalars().all(),[])
 
+    async def test_same_source_timestamp_accepts_playback_and_retires_noop_review(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        await self.save(self.movie,status='watching')
+        self.movie.tmdb_id=987654390
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Stremio',url='https://example.test',token='fixture')
+        self.db.add(conn);await self.db.flush()
+        base=datetime.now(timezone.utc).replace(tzinfo=None)
+        entry=(await self.db.execute(select(TrackedEntry).where(TrackedEntry.media_id==self.movie.id))).scalar_one()
+        entry.status_source=f'stremio:{conn.id}'
+        entry.status_changed_at=base
+        old={'content_id':'tt-tie','content_type':'movie','position':10,'duration':100}
+        self.db.add(StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            observed_at=base-timedelta(minutes=1),snapshot={'progress':{'tt-tie':old},'mappings':{'tt-tie':self.movie.tmdb_id},'library':[]}))
+        review=SyncReview(user_id=self.owner.id,media_id=self.movie.id,connection_id=conn.id,kind='conflict',
+            previous_status='watching',proposed_status='watching',message='Stremio: playback timing cannot be ordered')
+        self.db.add(review);await self.db.commit()
+        row={**old,'position':95,'modified_at':base.isoformat()+'Z'}
+        await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-tie':self.movie.tmdb_id})
+        self.assertEqual(entry.status,'completed')
+        self.assertEqual(entry.progress,1)
+        self.assertEqual(review.state,'corrected')
+        self.assertIsNotNone(review.dismissed_at)
+        pending=(await self.db.execute(select(SyncReview).where(SyncReview.media_id==self.movie.id,SyncReview.kind=='conflict',SyncReview.state=='pending'))).scalars().all()
+        self.assertEqual(pending,[])
+
+    async def test_unordered_status_agreement_is_quiet_but_real_conflict_has_details(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        await self.save(self.movie,status='watching')
+        self.movie.tmdb_id=987654391
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Stremio',url='https://example.test',token='fixture')
+        self.db.add(conn);await self.db.flush()
+        entry=(await self.db.execute(select(TrackedEntry).where(TrackedEntry.media_id==self.movie.id))).scalar_one()
+        base=datetime.now(timezone.utc).replace(tzinfo=None)
+        entry.status_source='local';entry.status_changed_at=base
+        old={'content_id':'tt-uncertain','content_type':'movie','position':10,'duration':100}
+        baseline=StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            observed_at=base-timedelta(minutes=1),snapshot={'progress':{'tt-uncertain':old},'mappings':{'tt-uncertain':self.movie.tmdb_id},'library':[]})
+        self.db.add(baseline);await self.db.commit()
+        await observe_stream_snapshot(self.db,conn,[],[],[{**old,'position':20}],{'tt-uncertain':self.movie.tmdb_id})
+        self.assertEqual(entry.status_source,'local')
+        self.assertEqual(entry.status_changed_at,base)
+        self.assertEqual((await self.db.execute(select(SyncReview).where(SyncReview.media_id==self.movie.id,SyncReview.kind=='conflict'))).scalars().all(),[])
+        entry.status='paused';baseline.observed_at=base-timedelta(minutes=1)
+        await self.db.commit()
+        await observe_stream_snapshot(self.db,conn,[],[],[{**old,'position':30}],{'tt-uncertain':self.movie.tmdb_id})
+        review=(await self.db.execute(select(SyncReview).where(SyncReview.media_id==self.movie.id,SyncReview.kind=='conflict'))).scalar_one()
+        self.assertEqual(entry.status,'paused')
+        self.assertEqual((review.previous_status,review.proposed_status),('paused','watching'))
+        self.assertEqual(review.payload['changes'],[{'field':'position','previous':20,'proposed':30}])
+        self.assertEqual(review.payload['local_changed_at'],base.isoformat()+'Z')
+        self.assertIsNone(review.payload['provider_changed_at'])
+
     async def test_nuvio_last_watched_alone_does_not_order_resume_fanout(self):
         from core.stream_actions import queue_progress_update
 
