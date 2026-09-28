@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import os
 import secrets
 import string
@@ -12,6 +11,7 @@ from typing import Any, Awaitable, Callable, Iterator
 import httpx
 
 from core.config import settings
+from core.nuvio_settings import SETTINGS_ADAPTERS, TVSettings, content_key, next_up_seeds
 
 
 DEFAULT_URL = "https://api.nuvio.tv"
@@ -128,58 +128,57 @@ def _get_origin_client_id() -> str:
         return generated
 
 
-async def _pull_profile_settings(client, url, access_token, profile_id):
+async def _pull_profile_settings(client, url, access_token, profile_id, adapter=TVSettings):
     rows = await _rpc(client, url, access_token, 'sync_pull_profile_settings_blob',
-        {'p_profile_id': profile_id, 'p_platform': 'tv'})
+        {'p_profile_id': profile_id, 'p_platform': adapter.platform})
     if not isinstance(rows, list) or len(rows) > 1:
         raise NuvioAPIError('Nuvio returned invalid profile settings')
     if not rows:
-        return {'version': 1, 'features': {}}
+        return {'version': adapter.version, 'features': {}}
     if not isinstance(rows[0], dict):
         raise NuvioAPIError('Nuvio returned invalid profile settings')
     blob = rows[0].get('settings_json')
     if blob == {}:
-        return {'version': 1, 'features': {}}
+        return {'version': adapter.version, 'features': {}}
     if not isinstance(blob, dict) or not isinstance(blob.get('features'), dict):
         raise NuvioAPIError('Nuvio returned invalid profile settings')
     return blob
 
 
-async def update_next_up_dismissals(client, url, access_token, profile_id, *, hide=(), show=()):
+async def update_next_up_dismissals(client, url, access_token, profile_id, *, hide=(), show=(), seeds=None):
     """Merge per-content Next Up visibility without replacing other settings.
 
-    Uses the TV settings blob shared by Nuvio Sync and external tracking.
+    Each platform owns a different representation of the same visibility intent.
     The caller holds the connection lock and supplies a refreshed session.
     """
-    hidden = {str(key).strip().split('|', 1)[0] for key in hide if str(key).strip()}
-    visible = {str(key).strip().split('|', 1)[0] for key in show if str(key).strip()}
+    hidden = {content_key(key) for key in hide if str(key).strip()}
+    visible = {content_key(key) for key in show if str(key).strip()}
     if not hidden and not visible:
         return False
-    original = await _pull_profile_settings(client, url, access_token, profile_id)
-    blob = copy.deepcopy(original)
-    settings = blob['features'].setdefault('trakt_settings', {})
-    if not isinstance(settings, dict):
-        raise NuvioAPIError('Nuvio returned invalid tracking settings')
-    encoded = settings.get('dismissed_next_up_keys', {'type': 'string_set', 'value': []})
-    if (not isinstance(encoded, dict) or encoded.get('type') != 'string_set'
-            or not isinstance(encoded.get('value'), list)
-            or any(not isinstance(key, str) for key in encoded['value'])):
-        raise NuvioAPIError('Nuvio returned invalid Next Up dismissals')
-    keys = set(encoded['value'])
-    # Remove legacy episode-specific keys only for the content being changed.
-    touched = hidden | visible
-    keys = {key for key in keys if key.strip().split('|', 1)[0] not in touched}
-    keys.update(hidden - visible)
-    settings['dismissed_next_up_keys'] = {**encoded, 'value': sorted(keys)}
-    if blob == original:
-        return False
-    await _rpc(client, url, access_token, 'sync_push_profile_settings_blob',
-        {'p_profile_id': profile_id, 'p_platform': 'tv', 'p_settings_json': blob})
-    confirmed = await _pull_profile_settings(client, url, access_token, profile_id)
-    actual = confirmed.get('features', {}).get('trakt_settings', {}).get('dismissed_next_up_keys', {})
-    if actual != settings['dismissed_next_up_keys']:
-        raise NuvioAPIError('Nuvio did not confirm Next Up visibility')
-    return True
+    # Generic callers may not have fetched history. Explicit projections pass
+    # seeds (including {}) to avoid redundant pulls or resurrecting cleared data.
+    if seeds is None and hidden - visible:
+        records = await _pull_watched_items(client, url, access_token, profile_id)
+        try:
+            seeds = next_up_seeds(records)
+        except ValueError as exc:
+            raise NuvioAPIError(f'Nuvio mobile profile settings: {exc}') from exc
+    changed = False
+    for adapter in SETTINGS_ADAPTERS:
+        try:
+            original = await _pull_profile_settings(client, url, access_token, profile_id, adapter)
+            blob, expected = adapter.merge(original, hidden, visible, seeds or {})
+            if blob == original:
+                continue
+            await _rpc(client, url, access_token, 'sync_push_profile_settings_blob',
+                {'p_profile_id': profile_id, 'p_platform': adapter.platform, 'p_settings_json': blob})
+            confirmed = await _pull_profile_settings(client, url, access_token, profile_id, adapter)
+            if adapter.dismissals(confirmed) != expected:
+                raise NuvioAPIError('Nuvio did not confirm Next Up visibility')
+            changed = True
+        except (NuvioAPIError, ValueError, TypeError, httpx.HTTPError) as exc:
+            raise NuvioAPIError(f'Nuvio {adapter.platform} profile settings: {exc}') from exc
+    return changed
 
 
 # Nuvio (Supabase auth) rotates the refresh token on every use — each one is
@@ -918,6 +917,7 @@ async def clear_sync_data(
                 session.access_token,
                 profile_id,
                 hide=hidden_content_ids,
+                seeds=next_up_seeds(retained_history),
             )
 
         return {

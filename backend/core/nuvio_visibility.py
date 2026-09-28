@@ -3,6 +3,7 @@ from sqlalchemy import select
 from models.media import Media
 from models.base import MediaType
 from models.tracking import TrackedEntry, StreamBaseline
+from core.nuvio_settings import next_up_seeds
 
 
 def _tmdb_key(value):
@@ -23,6 +24,11 @@ def _content_ids_for_record(record, mappings, local_media):
     tmdb_id = _tmdb_key(mappings.get(content_id))
     if tmdb_id is None and content_id.startswith('tmdb:'):
         tmdb_id = _tmdb_key(content_id)
+    if tmdb_id is None:
+        tmdb_id = _tmdb_key(record.get('tmdb_id') or record.get('tmdb'))
+    if tmdb_id is None:
+        tmdb_id = next((_tmdb_key(media.tmdb_id) for media in local_media
+            if _nuvio_imdb_id(media) == content_id), None)
 
     ids = {content_id}
     if tmdb_id is None:
@@ -84,12 +90,18 @@ def provider_content_ids(media, baseline=None, *, records=()):
     return sorted(ids)
 
 
-async def next_up_visibility(db, user_id, connection_id, records):
+async def next_up_visibility(db, user_id, connection_id, records, *, seed_records=None):
     rows = (await db.execute(select(Media, TrackedEntry.status).join(
         TrackedEntry, TrackedEntry.media_id == Media.id,
     ).where(TrackedEntry.user_id == user_id, Media.media_type == MediaType.series))).all()
     baseline = await db.get(StreamBaseline, connection_id)
-    mappings = (baseline.snapshot or {}).get('mappings', {}) if baseline else {}
+    mappings = dict((baseline.snapshot or {}).get('mappings', {})) if baseline else {}
+    # Fresh history may expose aliases not present in the approved baseline.
+    for row in [*records, *(seed_records or [])]:
+        key = str(row.get('content_id') or '').strip()
+        tmdb_id = _tmdb_key(row.get('tmdb_id') or row.get('tmdb'))
+        if key and tmdb_id:
+            mappings[key] = tmdb_id
 
     by_tmdb = {_tmdb_key(media.tmdb_id): status for media, status in rows if media.tmdb_id}
     by_external = {_nuvio_imdb_id(media): status for media, status in rows if _nuvio_imdb_id(media)}
@@ -103,17 +115,30 @@ async def next_up_visibility(db, user_id, connection_id, records):
         tmdb_id = _tmdb_key(mappings.get(str(row['content_id'])))
         if tmdb_id is None:
             tmdb_id = _tmdb_key(row['content_id']) if str(row['content_id']).startswith('tmdb:') else None
+        if tmdb_id is None:
+            tmdb_id = _tmdb_key(row.get('tmdb_id') or row.get('tmdb'))
         aliases = _content_ids_for_record(row, mappings, local_media)
+        if tmdb_id is None:
+            tmdb_id = next((_tmdb_key(key) for key in aliases if key.startswith('tmdb:')), None)
         for key in aliases:
             status = by_external.get(key)
             if status is None and tmdb_id is not None:
                 status = by_tmdb.get(tmdb_id)
-            candidates[key] = status
+            if candidates.get(key) != 'watching':
+                candidates[key] = status
 
     hidden, visible = set(), set()
     for key, status in candidates.items():
         (visible if status == 'watching' else hidden).add(key)
-    return hidden, visible
+    seeds = {}
+    for row in records if seed_records is None else seed_records:
+        if str(row.get('content_type') or '').lower() not in ('series', 'tv'):
+            continue
+        aliases = _content_ids_for_record(row, mappings, local_media)
+        for coordinates in next_up_seeds([row]).values():
+            for alias in aliases:
+                seeds.setdefault(alias, set()).update(coordinates)
+    return hidden, visible, seeds
 
 
 async def sync_next_up_visibility(db, conn, records):
@@ -122,8 +147,7 @@ async def sync_next_up_visibility(db, conn, records):
     from sqlalchemy import update
     from sqlalchemy.orm.attributes import set_committed_value
     from models.connections import MediaServerConnection
-    hidden, visible = await next_up_visibility(db, conn.user_id, conn.id, records)
-    if not hidden and not visible:
+    if not records:
         return
     async with nuvio.connection_lock(conn.id):
         await db.refresh(conn)
@@ -134,5 +158,9 @@ async def sync_next_up_visibility(db, conn, records):
                     MediaServerConnection.id == conn.id).values(token=session.refresh_token))
                 await token_db.commit()
             set_committed_value(conn, 'token', session.refresh_token)
+            profile = nuvio.parse_profile_id(conn.server_user_id)
+            watched = await nuvio._pull_watched_items(client, conn.url, session.access_token, profile)
+            hidden, visible, seeds = await next_up_visibility(db, conn.user_id, conn.id,
+                records, seed_records=watched)
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                nuvio.parse_profile_id(conn.server_user_id), hide=hidden, show=visible)
+                profile, hide=hidden, show=visible, seeds=seeds)

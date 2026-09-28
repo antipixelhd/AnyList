@@ -7473,10 +7473,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             )
                             if conn.push_playback:
                                 from core.nuvio_visibility import next_up_visibility
-                                hidden, visible = await next_up_visibility(db, user_id, conn.id,
+                                hidden, visible, seeds = await next_up_visibility(db, user_id, conn.id,
                                     [*remote_watches, *watched_items, *progress_items])
                                 await nuvio.update_next_up_dismissals(client, conn.url,
-                                    session.access_token, profile, hide=hidden, show=visible)
+                                    session.access_token, profile, hide=hidden, show=visible, seeds=seeds)
                             remote_watch_by_key = {watch_identity(row): row for row in remote_watches}
                             watched_to_push = [item for item in watched_items
                                 if watch_identity(item) not in remote_watch_by_key

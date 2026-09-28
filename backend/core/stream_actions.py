@@ -132,7 +132,7 @@ async def push_nuvio_progress(db, conn, record):
                 and row.get('season') == record.get('season') and row.get('episode') == record.get('episode')]
             if len(matches) == 1 and same_progress(matches[0], record):
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, show=[record['content_id']])
+                    profile, show=_nuvio_action_content_ids(record))
                 return
             if matches:
                 if len(matches) != 1:
@@ -155,7 +155,7 @@ async def push_nuvio_progress(db, conn, record):
             if len(confirmed) != 1 or not same_progress(confirmed[0], record):
                 raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                profile, show=[record['content_id']])
+                profile, show=_nuvio_action_content_ids(record))
 
 
 async def queue_progress_update(db, source, media, record):
@@ -166,6 +166,10 @@ async def queue_progress_update(db, source, media, record):
     changed_at = provider_changed_at(evidence)
     if changed_at is None:
         return
+    # Playback accepted from either Nuvio client must clear the other client's
+    # presentation state too, without echoing watch progress back to its source.
+    if source.type == 'nuvio' and source.push_playback:
+        await _queue_nuvio_next_up_show(db, source.user_id, media, [source])
     targets = (await db.execute(select(MediaServerConnection).where(
         MediaServerConnection.user_id == source.user_id,
         MediaServerConnection.id != source.id,
@@ -286,8 +290,10 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
                 # A removal inferred from this connection already happened on
                 # the provider. Persist only the Next Up decision; do not echo
                 # the removed resume back through watch-progress RPCs.
+                watched = await nuvio._pull_watched_items(client, conn.url, session.access_token, profile)
+                content_ids = await _nuvio_visibility_aliases(db, conn, record, watched)
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, hide=content_ids)
+                    profile, hide=content_ids, seeds=nuvio.next_up_seeds(watched, aliases=content_ids))
                 return
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
             watched_rows = []
@@ -313,14 +319,14 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
                 watched_keys=[{k:r[k] for k in ('content_id','season','episode') if k in r} for r in matching_watched]
                 if watched_keys:await nuvio._rpc(client,conn.url,session.access_token,'sync_delete_watched_items',{'p_profile_id':profile,'p_keys':watched_keys})
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, hide=[record['content_id']])
+                    profile, hide=[record['content_id']], seeds={})
                 return
             content_ids = _nuvio_action_content_ids(record)
             matches = [r for r in rows if r.get('content_id') == record['content_id']
                 and r.get('season') == record.get('season') and r.get('episode') == record.get('episode')]
             if restore:
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                    profile, show=[record['content_id']])
+                    profile, show=content_ids)
                 if matches:
                     if len(matches) == 1 and same_progress(matches[0],record):
                         return
@@ -333,13 +339,13 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
                     {'p_profile_id':profile,'p_entries':[payload]})
                 return
 
+            watched_rows = await nuvio._pull_watched_items(
+                client, conn.url, session.access_token, profile,
+            )
             if record.get('content_ids') and record.get('tmdb_id') is not None:
                 # A remote watched/progress row can expose an identity that
                 # was absent from the original snapshot. Resolve those rows
                 # against the title and baseline before selecting deletions.
-                watched_rows = await nuvio._pull_watched_items(
-                    client, conn.url, session.access_token, profile,
-                )
                 baseline = await db.get(StreamBaseline, conn.id)
                 media = SimpleNamespace(
                     tmdb_id=record.get('tmdb_id'),
@@ -403,7 +409,7 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
             # Keep watched_items intact: only generated Next Up visibility and
             # active Resume/In Progress rows are removed for each known alias.
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                profile, hide=content_ids)
+                profile, hide=content_ids, seeds=nuvio.next_up_seeds(watched_rows, aliases=content_ids))
 
 
 def _nuvio_action_content_ids(record):
@@ -413,6 +419,15 @@ def _nuvio_action_content_ids(record):
         if key and key not in ids:
             ids.append(key)
     return ids
+
+
+async def _nuvio_visibility_aliases(db, conn, record, records):
+    from core.nuvio_visibility import provider_content_ids
+    baseline = await db.get(StreamBaseline, conn.id)
+    media = SimpleNamespace(tmdb_id=record.get('tmdb_id'), imdb_id=record.get('imdb_id'),
+        tmdb_data={}, media_type=record.get('content_type'))
+    return list(dict.fromkeys([*_nuvio_action_content_ids(record),
+        *provider_content_ids(media, baseline, records=records)]))
 
 
 async def show_nuvio_next_up(db, conn, record):
@@ -436,6 +451,7 @@ async def show_nuvio_next_up(db, conn, record):
             await refreshed(session)
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token,
                 nuvio.parse_profile_id(conn.server_user_id))
+            content_ids = await _nuvio_visibility_aliases(db, conn, record, rows)
             matching = [row for row in rows if str(row.get('content_id') or '') in content_ids]
             from routers.sync import _nuvio_progress_keys_to_clear
             clear_keys = await _nuvio_progress_keys_to_clear(db, conn.user_id, conn.id, matching)
@@ -859,7 +875,7 @@ async def dispatch_stream_actions(db, user_id):
                 action.action == 'dismiss' and payload.get('visibility_only') is True
                 or action.action == 'upsert' and payload.get('next_up_only') is True
             ))
-            if conn.type == 'nuvio' and (action.action == 'dismiss' or visibility_only):
+            if conn.type == 'nuvio' and action.action != 'reset':
                 if not media:
                     raise RemotePlaybackChanged()
                 baseline_for_aliases = await db.get(StreamBaseline, conn.id)

@@ -3,6 +3,8 @@
 Set TRACKING_TEST_DATABASE_URL to the disposable local database; never production.
 """
 import os
+import copy
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 from datetime import date, datetime, timedelta, timezone
@@ -4103,6 +4105,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
              patch('core.nuvio.refresh_session', AsyncMock(return_value=SimpleNamespace(
                  refresh_token='rotated', access_token='fixture'))), \
              patch('core.nuvio.update_next_up_dismissals', visibility), \
+             patch('core.nuvio._pull_watched_items', AsyncMock(return_value=baseline_snapshot['records']['watched'])), \
              patch('core.nuvio._pull_watch_progress', AsyncMock(return_value=[])) as pull, \
              patch('core.nuvio._rpc', AsyncMock()) as rpc:
             await dispatch_stream_actions(self.db, self.owner.id)
@@ -4113,6 +4116,110 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         pull.assert_not_awaited()
         rpc.assert_not_awaited()
         self.assertEqual(baseline.snapshot, baseline_snapshot)
+
+    async def test_nuvio_resumption_clears_both_platforms_without_rehiding(self):
+        from core import nuvio
+        from core.nuvio_settings import TVSettings, MobileSettings
+        from core.nuvio_visibility import sync_next_up_visibility
+        from core.stream_actions import dispatch_stream_actions, queue_local_dismissals
+        from core.tracking_snapshot import observe_stream_snapshot
+
+        self.show.tmdb_id = 987650025
+        self.show.imdb_id = 'tt987650025'
+        key = self.show.imdb_id
+        old_alias = 'old-show-alias'
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', server_user_id='3',
+            push_playback=True, sync_playback=True, sync_watched=True)
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='paused',
+            rating_mode='manual', season_scores={}, progress=1, favorite=False, rewatch_count=0)
+        self.db.add_all([conn, entry]); await self.db.flush()
+        base = datetime(2026, 9, 20, 12)
+        history = [{'content_id': key, 'content_type': 'series', 'season': 1, 'episode': 1,
+            'watched_at': int(base.timestamp() * 1000)}]
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={})
+        self.db.add(baseline); await self.db.commit()
+        token_context = AsyncMock()
+        token_context.__aenter__.return_value = AsyncMock()
+        client_context = AsyncMock()
+        client_context.__aenter__.return_value = object()
+        blobs = {}
+        current_progress = []
+        operations = []
+
+        async def rpc(_client, _url, _token, operation, params):
+            operations.append(operation)
+            platform = params['p_platform']
+            if operation == 'sync_pull_profile_settings_blob':
+                return [{'settings_json': copy.deepcopy(blobs[platform])}]
+            self.assertEqual(operation, 'sync_push_profile_settings_blob')
+            blobs[platform] = copy.deepcopy(params['p_settings_json'])
+
+        with patch('db.AsyncSessionLocal', return_value=token_context), \
+                patch.object(nuvio.httpx, 'AsyncClient', return_value=client_context), \
+                patch.object(nuvio, 'refresh_session', AsyncMock(return_value=SimpleNamespace(
+                    refresh_token='rotated', access_token='fixture'))), \
+                patch.object(nuvio, '_pull_watched_items', AsyncMock(return_value=history)), \
+                patch.object(nuvio, '_pull_watch_progress', AsyncMock(side_effect=lambda *args: current_progress)), \
+                patch.object(nuvio, '_rpc', AsyncMock(side_effect=rpc)), \
+                patch('core.tracking_snapshot.apply_series_observation', AsyncMock(return_value=False)):
+            for initial_status in ('paused', 'dropped'):
+                for origin in ('anylist', 'tv', 'mobile'):
+                    with self.subTest(status=initial_status, origin=origin):
+                        await self.db.execute(delete(StreamAction).where(StreamAction.connection_id == conn.id))
+                        entry.status = initial_status
+                        entry.status_source = 'local'
+                        entry.status_changed_at = base + timedelta(minutes=1)
+                        baseline.observed_at = base
+                        baseline.snapshot = {'mappings': {key: self.show.tmdb_id, old_alias: self.show.tmdb_id},
+                            'library': [], 'progress': {}, 'watched': [key + ':1:1'],
+                            'records': {'watched': history, 'progress': []}, 'outbound': {}}
+                        blobs.clear()
+                        blobs.update({'tv': {'version': 1, 'features': {}},
+                            'mobile': {'version': 4, 'features': {}}})
+                        current_progress = []
+                        await self.db.commit()
+                        await queue_local_dismissals(self.db, self.owner.id, self.show)
+                        await dispatch_stream_actions(self.db, self.owner.id)
+                        aliases = {key, old_alias, f'tmdb:{self.show.tmdb_id}'}
+                        self.assertEqual(TVSettings.dismissals(blobs['tv']), aliases)
+                        self.assertEqual(MobileSettings.dismissals(blobs['mobile']),
+                            {alias + '|1|1' for alias in aliases})
+
+                        await observe_stream_snapshot(self.db, conn, [], history, [],
+                            {key: self.show.tmdb_id, old_alias: self.show.tmdb_id})
+                        self.assertEqual(entry.status, initial_status)
+                        self.assertEqual(MobileSettings.dismissals(blobs['mobile']),
+                            {alias + '|1|1' for alias in aliases})
+
+                        if origin == 'anylist':
+                            response = await self.save(self.show, status='watching')
+                            self.assertEqual(response.status_code, 200, response.text)
+                        else:
+                            # The cloud progress feed is shared; presentation
+                            # platform does not change inbound playback evidence.
+                            current_progress = [{'content_id': key, 'content_type': 'series',
+                                'season': 1, 'episode': 2, 'progress_key': key + '_s1e2',
+                                'position': 30000, 'duration': 90000,
+                                'updated_at': (base + timedelta(minutes=2)).isoformat() + 'Z'}]
+                            await observe_stream_snapshot(self.db, conn, [], history, current_progress,
+                                {key: self.show.tmdb_id, old_alias: self.show.tmdb_id})
+                        self.assertEqual(entry.status, 'watching')
+                        queued = (await self.db.execute(select(StreamAction).where(
+                            StreamAction.connection_id == conn.id, StreamAction.state == 'pending',
+                            StreamAction.action == 'upsert'))).scalars().all()
+                        self.assertEqual(len(queued), 1)
+                        self.assertTrue(queued[0].payload['next_up_only'])
+                        operations.clear()
+                        await dispatch_stream_actions(self.db, self.owner.id)
+                        self.assertEqual(queued[0].state, 'applied')
+                        self.assertEqual(TVSettings.dismissals(blobs['tv']), set())
+                        self.assertEqual(MobileSettings.dismissals(blobs['mobile']), set())
+                        self.assertNotIn('sync_push_watch_progress', operations)
+                        await sync_next_up_visibility(self.db, conn, history)
+                        self.assertEqual(TVSettings.dismissals(blobs['tv']), set())
+                        self.assertEqual(MobileSettings.dismissals(blobs['mobile']), set())
 
     async def test_confirming_inferred_nuvio_removal_requeues_source_visibility(self):
         self.show.tmdb_id = 987650024
@@ -4283,7 +4390,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(queued[0].payload['next_up_only'])
         self.assertIn('tt-watching-again', queued[0].payload['content_ids'])
 
-    async def test_nuvio_watch_delivery_visibility_includes_observed_provider_aliases(self):
+    async def test_nuvio_watch_delivery_visibility_retries_failure_and_includes_observed_provider_aliases(self):
+        from core.nuvio import NuvioAPIError
+        from models.watch_intent import WatchIntent
         from core.watch_intents import queue_watch_intents, dispatch_watch_intents
         self.show.tmdb_id = 987650019
         self.show.imdb_id = 'tt987650019'
@@ -4300,12 +4409,17 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 snapshot={'mappings': {'tmdb:987650019': '987650019'}})])
         await self.db.commit()
         await queue_watch_intents(self.db, self.owner.id, {episode.id});await self.db.commit()
-        visibility = AsyncMock()
+        visibility = AsyncMock(side_effect=[NuvioAPIError('mobile settings unavailable'), None])
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
              patch('core.watch_intents._write_provider_watch_state', AsyncMock()), \
              patch('core.nuvio_visibility.sync_next_up_visibility', visibility):
             await dispatch_watch_intents(self.db, self.owner.id)
-        self.assertEqual(visibility.await_count, 1)
+            intent = (await self.db.execute(select(WatchIntent).where(
+                WatchIntent.connection_id == conn.id))).scalar_one()
+            self.assertEqual((intent.state, intent.attempts, intent.last_error), ('pending', 1, 'NuvioAPIError'))
+            await dispatch_watch_intents(self.db, self.owner.id)
+        self.assertEqual((intent.state, intent.attempts, intent.last_error), ('applied', 2, None))
+        self.assertEqual(visibility.await_count, 2)
         self.assertEqual({row['content_id'] for row in visibility.await_args.args[2]},
             {'tmdb:987650019', 'tt987650019'})
 

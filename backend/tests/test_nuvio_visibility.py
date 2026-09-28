@@ -72,9 +72,36 @@ class NuvioVisibilityTests(unittest.IsolatedAsyncioTestCase):
             execute=AsyncMock(return_value=_Result([(watching, 'watching'), (paused, 'paused')])),
             get=AsyncMock(return_value=baseline),
         )
-        hidden, visible = await next_up_visibility(db, 7, 1, records)
+        hidden, visible, seeds = await next_up_visibility(db, 7, 1, records)
         self.assertEqual(visible, {'nuvio-old', 'nuvio-new', 'tt42', 'tmdb:42'})
         self.assertEqual(hidden, {'tmdb:84', 'nuvio-paused', 'tt84'})
+
+    async def test_episode_seeds_expand_across_aliases_without_mixing_shows(self):
+        paused = Media(id=1, title='Paused', media_type=MediaType.series,
+            tmdb_id=42, imdb_id='tt42', tmdb_data={})
+        watching = Media(id=2, title='Watching', media_type=MediaType.series,
+            tmdb_id=84, imdb_id='tt84', tmdb_data={})
+        baseline = SimpleNamespace(snapshot={'mappings': {'old42': '42', 'alias84': 84}})
+        records = [
+            {'content_id': 'old42', 'content_type': 'series'},
+            {'content_id': 'alias84', 'content_type': 'series'},
+        ]
+        history = [
+            {'content_id': 'old42', 'content_type': 'series', 'season': 1, 'episode': 8},
+            {'content_id': 'new42', 'content_type': 'tv', 'tmdb_id': 42, 'season': 2, 'episode': 1},
+            {'content_id': 'alias84', 'content_type': 'series', 'season': 3, 'episode': None},
+        ]
+        db = SimpleNamespace(execute=AsyncMock(return_value=_Result([(paused, 'paused'), (watching, 'watching')])),
+            get=AsyncMock(return_value=baseline))
+        hidden, visible, seeds = await next_up_visibility(db, 7, 1, records, seed_records=history)
+        self.assertEqual(hidden, {'old42', 'new42', 'tt42', 'tmdb:42'})
+        self.assertEqual(visible, {'alias84', 'tt84', 'tmdb:84'})
+        self.assertEqual(seeds, {
+            'old42': {(1, 8), (2, 1)}, 'new42': {(1, 8), (2, 1)},
+            'tt42': {(1, 8), (2, 1)}, 'tmdb:42': {(1, 8), (2, 1)},
+            'alias84': {(3, -1)}, 'tt84': {(3, -1)}, 'tmdb:84': {(3, -1)},
+        })
+        self.assertEqual(baseline.snapshot['mappings'], {'old42': '42', 'alias84': 84})
 
     async def test_dismiss_reads_current_resume_deletes_all_aliases_and_preserves_watched_history(self):
         remote_progress = [
@@ -121,6 +148,8 @@ class NuvioVisibilityTests(unittest.IsolatedAsyncioTestCase):
         visibility = started[7]
         hidden = set(visibility.await_args.kwargs['hide'])
         self.assertTrue({'nuvio-old', 'tt42', 'tmdb:42', 'remote-progress', 'remote-history'} <= hidden)
+        self.assertEqual(visibility.await_args.kwargs['seeds'], {
+            key: {(1, 1)} for key in hidden})
         self.assertEqual(baseline.snapshot['progress'], {})
         self.assertEqual(baseline.snapshot['records']['progress'], [])
         self.assertEqual(baseline.snapshot['outbound'], {})
@@ -167,6 +196,28 @@ class NuvioVisibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(started[6].await_args.args[-2], 'sync_delete_watch_progress')
         self.assertEqual(started[6].await_args.args[-1]['p_keys'], ['tt1_s1e3'])
         self.assertEqual(started[7].await_args.kwargs['hide'], ['tt1'])
+        self.assertEqual(started[7].await_args.kwargs['seeds'], {})
+
+    async def test_source_visibility_only_dismiss_fetches_retained_episode_history(self):
+        watched = [{'content_id': 'tt42', 'content_type': 'series', 'season': 2, 'episode': 7}]
+        baseline = SimpleNamespace(snapshot={'mappings': {'old42': 42}})
+        db = AsyncMock()
+        db.get.return_value = baseline
+        conn = MediaServerConnection(id=5, user_id=7, type='nuvio', name='Fixture',
+            url='https://example.test', token='old', server_user_id='1')
+        patches, started = _nuvio_call_patches(progress_rows=[], watched_rows=watched)
+        try:
+            await dismiss_nuvio(db, conn, {'content_id': 'tt42', 'content_ids': ['tt42'],
+                'content_type': 'series', 'tmdb_id': 42, 'imdb_id': 'tt42'}, visibility_only=True)
+        finally:
+            for item in reversed(patches):
+                item.stop()
+        started[4].assert_not_awaited()
+        started[5].assert_awaited_once()
+        started[6].assert_not_awaited()
+        self.assertEqual(set(started[7].await_args.kwargs['hide']), {'old42', 'tt42', 'tmdb:42'})
+        self.assertEqual(started[7].await_args.kwargs['seeds'], {
+            key: {(2, 7)} for key in ('old42', 'tt42', 'tmdb:42')})
 
     async def test_visibility_only_watching_clears_only_confirmed_synthetic_seed(self):
         synthetic = {'content_id': 'tt1', 'content_type': 'series', 'progress_key': 'tt1_s1e1',

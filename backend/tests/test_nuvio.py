@@ -169,9 +169,10 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         records.append({'content_id': 'tt6', 'content_type': 'series'})
         db = SimpleNamespace(execute=AsyncMock(return_value=_Result(rows=rows)),
             get=AsyncMock(return_value=None))
-        hidden, visible = await next_up_visibility(db, 7, 1, records)
-        self.assertEqual(hidden, {'tt2', 'tt3', 'tt4', 'tt5', 'tt6'})
-        self.assertEqual(visible, {'tt1'})
+        hidden, visible, seeds = await next_up_visibility(db, 7, 1, records)
+        self.assertEqual(hidden, {'tt2', 'tt3', 'tt4', 'tt5', 'tt6',
+            'tmdb:2', 'tmdb:3', 'tmdb:4', 'tmdb:5'})
+        self.assertEqual(visible, {'tt1', 'tmdb:1'})
 
     async def test_next_up_merge_preserves_settings_and_unrelated_dismissals(self):
         import copy
@@ -181,6 +182,9 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
         stored = copy.deepcopy(original)
         async def rpc(_client, _url, _token, operation, params):
             nonlocal stored
+            if params['p_platform'] == 'mobile':
+                self.assertEqual(operation, 'sync_pull_profile_settings_blob')
+                return []
             self.assertEqual(params['p_platform'], 'tv')
             self.assertEqual(params['p_profile_id'], 3)
             if operation == 'sync_pull_profile_settings_blob':
@@ -189,7 +193,7 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
             stored = copy.deepcopy(params['p_settings_json'])
         with patch.object(nuvio, '_rpc', AsyncMock(side_effect=rpc)) as calls:
             changed = await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3,
-                hide=['tt4'], show=['tt1'])
+                hide=['tt4'], show=['tt1'], seeds={})
             self.assertTrue(changed)
             self.assertEqual(stored['features']['trakt_settings']['dismissed_next_up_keys']['value'],
                 ['tt2', 'tt3|2|1', 'tt4'])
@@ -199,26 +203,26 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
                 ['tt1|1|2', 'tt2', 'tt3|2|1'])
             calls.reset_mock()
             self.assertFalse(await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3,
-                hide=['tt4'], show=['tt1']))
-            self.assertEqual(calls.await_count, 1)
+                hide=['tt4'], show=['tt1'], seeds={}))
+            self.assertEqual(calls.await_count, 2)
 
     async def test_next_up_rejects_malformed_blob_without_overwriting_it(self):
         rpc = AsyncMock(return_value=[{'settings_json': {'features': []}}])
         with patch.object(nuvio, '_rpc', rpc), self.assertRaises(nuvio.NuvioAPIError):
-            await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3, hide=['tt1'])
+            await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3, hide=['tt1'], seeds={})
         self.assertEqual(rpc.await_count, 1)
 
     async def test_next_up_rejects_unconfirmed_write(self):
         rpc = AsyncMock(side_effect=[[], None, []])
         with patch.object(nuvio, '_rpc', rpc), self.assertRaises(nuvio.NuvioAPIError):
-            await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3, hide=['tt1'])
+            await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3, hide=['tt1'], seeds={})
 
     async def test_next_up_initializes_empty_profile_settings(self):
         desired = {'version': 1, 'features': {'trakt_settings': {
             'dismissed_next_up_keys': {'type': 'string_set', 'value': ['tt1']}}}}
-        rpc = AsyncMock(side_effect=[[{'settings_json': {}}], None, [{'settings_json': desired}]])
+        rpc = AsyncMock(side_effect=[[{'settings_json': {}}], None, [{'settings_json': desired}], []])
         with patch.object(nuvio, '_rpc', rpc):
-            self.assertTrue(await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3, hide=['tt1']))
+            self.assertTrue(await nuvio.update_next_up_dismissals(None, 'https://example.test', 'fixture', 3, hide=['tt1'], seeds={}))
         self.assertEqual(rpc.await_args_list[1].args[-1]['p_settings_json'], desired)
 
     async def test_connection_response_redacts_refresh_token(self) -> None:

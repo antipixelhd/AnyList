@@ -231,7 +231,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
             await dismiss_nuvio(AsyncMock(),conn,record,restore=True)
             write.assert_not_awaited()
             await dismiss_nuvio(AsyncMock(),conn,{'content_id':'tt1','content_type':'series','deleted_at':'2026-09-18T12:00:00+00:00'},reset=True)
-            self.assertEqual(self.visibility.await_args.kwargs, {'hide': ['tt1']})
+            self.assertEqual(self.visibility.await_args.kwargs, {'hide': ['tt1'], 'seeds': {}})
             self.assertEqual([call.args[-2] for call in write.await_args_list],['sync_delete_watch_progress','sync_delete_watched_items'])
             self.assertEqual(write.await_args_list[0].args[-1]['p_keys'],['tt1_s1e2'])
             self.assertEqual(write.await_args_list[1].args[-1]['p_keys'],[{'content_id':'tt1','season':1,'episode':1}])
@@ -312,6 +312,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch('db.AsyncSessionLocal',return_value=context), \
              patch('core.nuvio.refresh_session',AsyncMock(return_value=SimpleNamespace(refresh_token='rotated',access_token='fixture'))), \
              patch('core.nuvio._pull_watch_progress',AsyncMock(return_value=[record])), \
+             patch('core.nuvio._pull_watched_items',AsyncMock(return_value=[])), \
              patch('core.nuvio._rpc',AsyncMock(side_effect=reject)):
             with self.assertRaises(TimeoutError):
                 await dismiss_nuvio(AsyncMock(),conn,record)
