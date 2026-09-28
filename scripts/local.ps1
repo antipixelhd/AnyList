@@ -69,7 +69,7 @@ if (Test-Path -LiteralPath $pidFile) {
     }
 }
 foreach ($service in @(
-    @{ port=7341; name='backend'; exe=(Join-Path $runtimeRoot 'Scripts\python.exe'); args='-m uvicorn main:app --host 127.0.0.1 --port 7341'; cwd=(Join-Path $projectRoot 'backend') },
+    @{ port=7341; name='backend'; exe=(Join-Path $runtimeRoot 'Scripts\python.exe'); args='-m uvicorn main:app --host 127.0.0.1 --port 7341 --reload'; cwd=(Join-Path $projectRoot 'backend') },
     @{ port=7340; name='frontend'; exe=(Get-Command node).Source; args='node_modules/astro/bin/astro.mjs dev --host 127.0.0.1 --port 7340'; cwd=(Join-Path $projectRoot 'frontend') }
 )) {
     $listener = Get-NetTCPConnection -LocalPort $service.port -State Listen -ErrorAction SilentlyContinue
