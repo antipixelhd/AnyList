@@ -813,6 +813,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     favorite_entries.sort(key=lambda row: (order_index.get(row[0].media_id, len(order_index)), row[2]))
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
+        "background_url": user.profile.background_url if user.profile else None,
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),
         "follows_you":bool(viewer and not owner and viewer.id in following_ids),
         "has_avatar":bool(user.profile and user.profile.avatar_path),
@@ -1302,7 +1303,8 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
     prefs = await db.get(TrackingPreferences, user.id)
     return {"profile":{"id":user.id,"username":user.username,"display_name":user.display_name,
                        "bio":user.profile.bio if user.profile else None,"profile_color":user.profile.profile_color if user.profile else "#3db4f2",
-                       "has_avatar":bool(user.profile and user.profile.avatar_path)},
+                       "has_avatar":bool(user.profile and user.profile.avatar_path),
+                       "background_url":user.profile.background_url if user.profile else None},
             "owner":owner,"following":following,"follows_you":follows_you,
             "combine_lists":True if prefs is None else prefs.combine_lists,"media_type":media_type,"year":year,
             "current":{"total":len(entries),"statuses":statuses},

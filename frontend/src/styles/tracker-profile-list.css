@@ -15,12 +15,15 @@
 }
 
 .profile-hero {
-  height:258px;
-  background:linear-gradient(115deg,#26384d 0%,#1d3047 53%,#17283d 100%)
+  height:330px;
+  position:relative;
+  background:#242538
 }
 .profile-identity {
   max-width:1340px;
-  padding:98px 24px 0;
+  padding:170px 24px 0;
+  position:relative;
+  z-index:1;
   gap:26px
 }
 .profile-avatar {
@@ -355,10 +358,10 @@
 }
 @media(max-width:900px) {
   .profile-hero {
-    height:230px
+    height:330px
   }
   .profile-identity {
-    padding-top:90px
+    padding-top:190px
   }
   .profile-avatar {
     width:140px;
@@ -380,10 +383,10 @@
     margin-top:5px
   }
   .profile-hero {
-    height:180px
+    height:330px
   }
   .profile-identity {
-    padding:45px 20px 0;
+    padding:225px 20px 0;
     gap:18px
   }
   .profile-avatar {
@@ -609,3 +612,7 @@
     transition:none
   }
 }
+
+.profile-background,.profile-shadow { position:absolute; inset:0; width:100%; height:100%; }
+.profile-background { object-fit:cover; object-position:center; }
+.profile-shadow { background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6)); pointer-events:none; }

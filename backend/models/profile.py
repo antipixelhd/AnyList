@@ -14,6 +14,7 @@ class UserProfileData(Base):
     user_id             : Mapped[int]                  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     display_name        : Mapped[Optional[str]]        = mapped_column(String(64))
     bio                 : Mapped[Optional[str]]        = mapped_column(String(5000))
+    background_url      : Mapped[Optional[str]]        = mapped_column(String(2048))
     country             : Mapped[Optional[str]]        = mapped_column(String(2))
     movie_genres        : Mapped[Optional[list[str]]]  = mapped_column(JSONB)
     show_genres         : Mapped[Optional[list[str]]]  = mapped_column(JSONB)

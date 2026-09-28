@@ -433,6 +433,20 @@ class AccountNameResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
+    background_url: Optional[str] = Field(default=None, max_length=2048)
+
+    @field_validator("background_url")
+    @classmethod
+    def validate_background_url(cls, value: Optional[str]) -> Optional[str]:
+        if not value or not value.strip():
+            return None
+        from urllib.parse import urlsplit
+        value = value.strip()
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Use an HTTP or HTTPS image URL without credentials")
+        return value
+
     bio: Optional[str] = Field(default=None, max_length=5000)
     country: Optional[str] = None
     movie_genres: Optional[list[str]] = None
@@ -453,6 +467,7 @@ class UserProfileUpdate(BaseModel):
         return value.lower()
 
 class UserProfileResponse(BaseModel):
+    background_url: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None
     movie_genres: list[str] = []

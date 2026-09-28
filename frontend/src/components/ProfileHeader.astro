@@ -4,7 +4,7 @@ const base=`/user/${encodeURIComponent(profile.username)}`;
 import {hasStreamingLibraryConnection} from '../lib/streaming-library-availability';
 const showLibrary=profile.owner&&await hasStreamingLibraryConnection(Astro.locals.token);
 ---
-<section class="profile-hero"><div class="profile-identity">
+<section class="profile-hero">{profile.background_url && <img class="profile-background" src={profile.background_url} alt="" referrerpolicy="no-referrer" />}<div class="profile-shadow" aria-hidden="true"></div><div class="profile-identity">
 {profile.has_avatar?<img class="profile-avatar" src={`/api/proxy/profile/avatar/${profile.id}`} alt=""/>:<div class="profile-avatar" aria-hidden="true">{profile.display_name.slice(0,1).toUpperCase()}</div>}
 <div class="profile-heading"><h1>{profile.display_name}</h1>{profile.follows_you&&<span class="follows-you-tag">Follows You</span>}</div>
 {!profile.owner&&Astro.locals.user&&<div class="profile-follow-action"><button type="button" class="button-primary profile-follow-button" id="follow-profile" data-username={profile.username} data-display-name={profile.display_name} data-following={profile.following?'yes':'no'} aria-label={`${profile.following?'Unfollow':'Follow'} ${profile.display_name}`}><span class="follow-label">Follow</span><span class="following-label">Following</span><span class="unfollow-label">Unfollow</span></button><span class="profile-follow-error" id="profile-follow-error" role="status" aria-live="polite"></span></div>}

@@ -205,6 +205,21 @@ const COUNTRIES = [
         </div>
       </section>
 
+      <section class="mb-8" aria-labelledby="background-heading">
+        <h2 id="background-heading" class="section-headline mb-4">Profile Background</h2>
+        <form id="background-form" class="space-y-3">
+          <label for="background-url" class="block text-sm text-zinc-400">Background image URL</label>
+          <input id="background-url" type="url" maxlength="2048" value={prefs.background_url ?? ''} placeholder="https://example.com/banner.jpg" class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100" />
+          <p class="text-xs text-zinc-400">Use a wide image for your profile banner. Clear the URL to restore the default background.</p>
+          <div class="relative h-40 overflow-hidden rounded-lg" style="background:#242538">
+            <img id="background-preview" src={prefs.background_url || undefined} hidden={!prefs.background_url} alt="Background preview" referrerpolicy="no-referrer" class="w-full h-full object-cover" />
+            <div class="absolute inset-0" style="background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6))"></div>
+          </div>
+          <button type="submit" id="save-background" class="button-primary px-4 py-2 text-sm">Save background</button>
+          <span class="setting-save-state" data-save-state="background" role="status" aria-live="polite"></span>
+        </form>
+      </section>
+
       <!-- Profile color -->
       <section class="profile-color-settings" aria-labelledby="profile-color-heading">
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -634,6 +649,30 @@ const COUNTRIES = [
         throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save this setting.');
       }
     }
+    const backgroundForm = document.getElementById('background-form') as HTMLFormElement | null;
+    const backgroundInput = document.getElementById('background-url') as HTMLInputElement | null;
+    const backgroundPreview = document.getElementById('background-preview') as HTMLImageElement | null;
+    backgroundInput?.addEventListener('input', () => {
+      if (!backgroundPreview) return;
+      const value = backgroundInput.value.trim();
+      const valid = /^https?:\/\//i.test(value) && backgroundInput.validity.valid;
+      backgroundPreview.hidden = !valid;
+      if (valid) backgroundPreview.src = value;
+      else backgroundPreview.removeAttribute('src');
+    });
+    backgroundForm?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = document.getElementById('save-background') as HTMLButtonElement;
+      if (button.disabled || !backgroundInput) return;
+      button.disabled = true;
+      setStatus('background', 'Saving…', 'saving');
+      try {
+        await patchProfile({ background_url: backgroundInput.value.trim() || null });
+        setStatus('background', 'Saved');
+      } catch (error) {
+        setStatus('background', error instanceof Error ? error.message : 'Could not save background.', 'error');
+      } finally { button.disabled = false; }
+    });
     const bio = document.getElementById('bio') as HTMLTextAreaElement | null;
     const bioCount = document.getElementById('bio-count');
     const saveBio = document.getElementById('save-bio') as HTMLButtonElement | null;
