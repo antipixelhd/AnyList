@@ -532,7 +532,7 @@ button:disabled {
   color:var(--muted)
 }
 .detail-banner {
-  height:440px;
+  height:400px;
   background-size:cover;
   background-position:center;
   position:relative
