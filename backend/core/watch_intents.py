@@ -235,7 +235,10 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         WatchIntent.updated_at.desc(),
         WatchIntent.id.desc(),
     ).limit(100).with_for_update(skip_locked=True))).scalars().all()
+    processed = set()
     for intent in intents:
+        if intent.id in processed:
+            continue
         conn = await db.get(MediaServerConnection, intent.connection_id)
         if not conn or conn.type not in ("nuvio", "stremio") or not conn.push_watched:
             intent.state = "cancelled"
@@ -255,6 +258,41 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
             await require_stream_reconciliation(db, conn)
         except HTTPException:
             # Keep the intent queued until the initial merge/conflicts are resolved.
+            continue
+
+        if writer is None and conn.type == 'stremio':
+            # Episodes share one remote library row/bitfield. Write the whole
+            # pending delta together so successive reads cannot overwrite an
+            # earlier episode write with an older provider snapshot.
+            batch = [row for row in intents if row.connection_id == conn.id]
+            overrides = {}
+            for row in batch:
+                processed.add(row.id)
+                target = await db.get(Media, row.media_id)
+                if target is None:
+                    row.state = 'cancelled'
+                    row.last_error = None
+                    continue
+                row.desired_watched = await _current_watch_event(db, user_id, row.media_id) is not None
+                overrides[row.media_id] = row.desired_watched
+                row.attempts += 1
+            try:
+                from models.users import UserSettings
+                from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
+                settings = (await db.execute(select(UserSettings).where(
+                    UserSettings.user_id == user_id))).scalar_one_or_none()
+                await _push_stremio_connection(db, conn, user_id,
+                    api_key=await _get_effective_tmdb_key(db, settings),
+                    watch_overrides=overrides, watch_only=True)
+            except Exception as error:
+                for row in batch:
+                    if row.media_id in overrides:
+                        row.last_error = type(error).__name__
+            else:
+                for row in batch:
+                    if row.media_id in overrides:
+                        row.state = 'applied'
+                        row.last_error = None
             continue
 
         if writer is None:

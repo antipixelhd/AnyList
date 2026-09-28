@@ -3717,6 +3717,29 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         first_baseline = await self.db.get(StreamBaseline, first_connection.id)
         self.assertFalse(first_baseline.approved)
 
+    async def test_stremio_pending_watches_share_one_provider_write(self):
+        from core.watch_intents import queue_watch_intents, dispatch_watch_intents
+        from models.watch_intent import WatchIntent
+        conn = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Fixture',
+            url='https://example.test', token='fixture', push_watched=True)
+        self.db.add_all([conn, WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+            completed=True, watched_at=datetime.now())])
+        await self.db.flush()
+        await queue_watch_intents(self.db, self.owner.id, {self.movie.id, self.show.id})
+        await self.db.commit()
+        push = AsyncMock(return_value=1)
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
+             patch('routers.sync._get_effective_tmdb_key', AsyncMock(return_value='fixture')), \
+             patch('routers.sync._push_stremio_connection', push):
+            await dispatch_watch_intents(self.db, self.owner.id)
+        self.assertEqual(push.await_count, 1)
+        self.assertEqual(push.await_args.kwargs['watch_overrides'],
+            {self.movie.id: True, self.show.id: False})
+        intents = (await self.db.execute(select(WatchIntent).where(
+            WatchIntent.user_id == self.owner.id))).scalars().all()
+        self.assertEqual([(row.state, row.attempts, row.last_error) for row in intents],
+            [('applied', 1, None), ('applied', 1, None)])
+
     async def test_watch_intent_retries_current_state_after_failed_write_and_rapid_rewatch(self):
         from core.watch_intents import queue_watch_intents, dispatch_watch_intents
         from models.watch_intent import WatchIntent

@@ -45,6 +45,22 @@ class _QueueDB:
 
 
 class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_late_history_preserves_newer_progress_correction(self):
+        from datetime import datetime
+        from core.tracking_snapshot import changed_watch_rows_from_source
+        clock = datetime(2026, 9, 27, 12)
+        entry = SimpleNamespace(status_changed_at=clock, updated_at=clock)
+        media = SimpleNamespace(tmdb_id=123, media_type=MediaType.series, tmdb_data={})
+        baseline = SimpleNamespace(approved=True, snapshot={
+            'mappings': {'tt123': 123}, 'records': {'watched': []},
+        })
+        db = _QueueDB([[(entry, media)]], baseline)
+        old = {'content_id': 'tt123', 'content_type': 'series', 'season': 2,
+               'episode': 8, 'watched_at': '2026-09-04T12:00:00Z'}
+        fresh = {**old, 'episode': 2, 'watched_at': '2026-09-28T12:00:00Z'}
+        accepted = await changed_watch_rows_from_source(db, SimpleNamespace(id=1, user_id=7), [old, fresh])
+        self.assertEqual(accepted, [fresh])
+
     async def test_stremio_progress_creates_temporary_item_for_new_watching_title(self):
         record={'content_id':'tt1234567','content_type':'movie','title':'Runner',
             'position':1000,'duration':120_000,

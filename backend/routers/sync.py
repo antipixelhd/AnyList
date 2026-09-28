@@ -6868,10 +6868,15 @@ async def _push_stremio_connection(
             record = override_media.get(media_id)
             if record is None:
                 continue
+            watched_at = watched_at_by_media.get(media_id)
+            if watched_at is not None:
+                if watched_at.tzinfo is None:
+                    watched_at = watched_at.replace(tzinfo=timezone.utc)
+                watched_at = int(watched_at.timestamp() * 1000)
             watched_by_key[watch_key(record)] = {
                 **record,
                 "watched": watched,
-                "watched_at": watched_at_by_media.get(media_id),
+                "watched_at": watched_at,
             }
         watched_records = list(watched_by_key.values())
     progress_records = (

@@ -473,6 +473,12 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(connection.stremio_pushed_library_ids, [])
 
     async def test_unknown_watch_creates_temporary_item_without_fabricating_date(self) -> None:
+        await self._assert_watch_override(None)
+
+    async def test_dated_watch_override_serializes_datetime_as_epoch_milliseconds(self) -> None:
+        await self._assert_watch_override(datetime(2026, 9, 27, 12, tzinfo=timezone.utc))
+
+    async def _assert_watch_override(self, watched_at) -> None:
         connection = SimpleNamespace(
             id=46,
             token="auth-key",
@@ -499,7 +505,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 "routers.sync._latest_watched_at",
-                AsyncMock(return_value={10: None}),
+                AsyncMock(return_value={10: watched_at}),
             ),
             patch.object(stremio, "datastore_get", AsyncMock(return_value=[])),
             patch.object(stremio, "datastore_put", datastore_put),
@@ -526,7 +532,10 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(pushed["removed"])
         self.assertTrue(pushed["temp"])
         self.assertEqual(pushed["state"]["timesWatched"], 1)
-        self.assertIsNone(pushed["state"]["lastWatched"])
+        if watched_at is None:
+            self.assertIsNone(pushed["state"]["lastWatched"])
+        else:
+            self.assertEqual(pushed["state"]["lastWatched"], '2026-09-27T12:00:00Z')
 
     async def test_unwatch_clears_state_without_erasing_last_known_date(self) -> None:
         connection = SimpleNamespace(

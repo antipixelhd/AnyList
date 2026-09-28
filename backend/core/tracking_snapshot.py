@@ -38,12 +38,49 @@ def watch_key(row):
 async def changed_watch_rows_from_source(db, conn, rows):
     """Import only a provider's new watches or changed play dates after approval."""
     baseline = await db.get(StreamBaseline, conn.id)
-    if not baseline or not baseline.approved:
+    if not baseline:
         return rows
+    if not baseline.approved:
+        return await current_watch_rows(db, conn, rows)
     previous_rows = (baseline.snapshot or {}).get('records', {}).get('watched', [])
     previous = {(watch_key(row), str(row.get('watched_at'))) for row in previous_rows}
-    return [row for row in rows
-            if (watch_key(row), str(row.get('watched_at'))) not in previous]
+    changed = [row for row in rows
+               if (watch_key(row), str(row.get('watched_at'))) not in previous]
+    return await current_watch_rows(db, conn, changed)
+
+
+async def current_watch_rows(db, conn, rows):
+    """Late history must not undo a newer tracking/progress correction."""
+    entries = (await db.execute(select(TrackedEntry, Media).join(
+        Media, Media.id == TrackedEntry.media_id,
+    ).where(TrackedEntry.user_id == conn.user_id))).all()
+    clocks = {}
+    for entry, media in entries:
+        if media.tmdb_id is not None:
+            clocks[(media.tmdb_id, media.media_type.value)] = status_changed_at(entry)
+    baseline = await db.get(StreamBaseline, conn.id)
+    mappings = dict((baseline.snapshot or {}).get('mappings', {})) if baseline else {}
+    # The caller may have just resolved a new identifier. Fall back to media
+    # external IDs rather than treating an unmapped historical row as current.
+    for entry, media in entries:
+        imdb = (media.tmdb_data or {}).get('external_ids', {}).get('imdb_id')
+        if imdb and media.tmdb_id:
+            mappings.setdefault(imdb, media.tmdb_id)
+    result = []
+    for row in rows:
+        key = str(row.get('content_id'))
+        tmdb_id = mappings.get(key)
+        if tmdb_id is None and key.startswith('tmdb:'):
+            try:
+                tmdb_id = int(key[5:])
+            except ValueError:
+                pass
+        clock = clocks.get((tmdb_id, row.get('content_type')))
+        observed = provider_changed_at(row)
+        if clock and observed and observed < clock:
+            continue
+        result.append(row)
+    return result
 
 
 async def media_ids_for_watch_rows(db, mappings, rows):
@@ -348,6 +385,7 @@ async def observe_stream_snapshot(
         old_watched = set(previous.get('watched', []))
         old_progress_completed = set(previous.get('progress_completed', []))
         new_watched_rows = [row for row in watched_rows if watch_key(row) not in old_watched]
+        new_watched_rows = await current_watch_rows(db, conn, new_watched_rows)
         new_progress_completed_rows = [row for row in progress_completed_rows
             if watch_key(row) not in old_progress_completed]
         new_completed_by_key = {watch_key(row): row for row in new_progress_completed_rows}
@@ -391,7 +429,9 @@ async def observe_stream_snapshot(
             provider_at=provider_changed_at(row)
             competing=bool(media.id in existing_ids and changed_at and baseline.observed_at and changed_at>baseline.observed_at)
             ordering='apply'
-            if competing:
+            if provider_at and changed_at and provider_at < changed_at:
+                ordering='stale'
+            elif competing:
                 if provider_at and provider_at > changed_at:
                     ordering='apply'
                 elif provider_at and provider_at < changed_at:
