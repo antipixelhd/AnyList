@@ -1592,6 +1592,14 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         from core.watch_dates import inferred_watch_datetime
         completion_evidence_date = entry.finish_date if entry.status == 'completed' else None
         inferred_watched_at = inferred_watch_datetime(completion_evidence_date)
+        # A user's explicit progress edit is better date evidence than an
+        # unrelated episode's title-wide Stremio clock.
+        from core.watch_dates import replace_inferred_watch_date
+        shared_events = (await db.execute(select(WatchEvent).where(
+            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[:target]),
+            WatchEvent.completed.is_(True), WatchEvent.date_shared.is_(True)))).scalars().all()
+        for event in shared_events:
+            replace_inferred_watch_date(event, inferred_watched_at, inferred=True)
         # Watch events are canonical. A cached aggregate can lag after a
         # catalogue refresh, so only later watched events make this a rollback.
         # Status alone changes the movie's current 0/1 progress, not its past

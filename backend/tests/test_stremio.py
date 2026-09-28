@@ -184,6 +184,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((progress[0]["season"], progress[0]["episode"]), (1, 2))
         self.assertEqual(progress[0]["position"], 120_000)
+        self.assertTrue(all(row['date_shared'] for row in watched_records))
         self.assertEqual(removed, set())
 
     async def test_series_stale_resume_offset_is_ignored_when_current_episode_is_watched(self) -> None:
@@ -203,6 +204,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(watched_records), 1)
         self.assertEqual((watched_records[0]["season"], watched_records[0]["episode"]), (1, 2))
+        self.assertFalse(watched_records[0]['date_shared'])
         self.assertEqual(progress, [])
         self.assertEqual(removed, set())
 

@@ -101,6 +101,23 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored[0]['state']['video_id'],'tt1234567')
         self.assertTrue(read.await_args_list[0].kwargs['allow_missing'])
 
+    async def test_matching_stremio_resume_still_receives_newer_watch_timestamp(self):
+        for kind in ('movie','series'):
+            with self.subTest(kind=kind):
+                record={'content_id':'tt1234567','content_type':kind,'position':1000,'duration':120000,
+                    'observed_at':'2026-09-20T12:00:00Z','last_watched':1789905600000}
+                if kind=='series':record.update(season=1,episode=2)
+                video='tt1234567:1:2' if kind=='series' else 'tt1234567'
+                remote={'_id':'tt1234567','type':kind,'removed':False,
+                    'state':{'video_id':video,'timeOffset':1000,'duration':120000,'lastWatched':'2026-09-19T12:00:00Z'}}
+                saved=[]
+                async def save(_token,items):saved.extend(items)
+                with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[remote],saved])), \
+                     patch('core.stremio.datastore_put',AsyncMock(side_effect=save)) as write:
+                    await push_stremio_progress('fixture',record)
+                write.assert_awaited_once()
+                self.assertEqual(saved[0]['state']['lastWatched'],'2026-09-20T12:00:00Z')
+
     async def test_stremio_progress_repairs_hidden_same_position_movie(self):
         record={'content_id':'tt1234567','content_type':'movie','position':1000,
             'duration':120_000,'observed_at':'2026-09-20T12:00:00Z'}
@@ -135,7 +152,8 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         record={'content_id':'tt1','content_type':'movie','position':30_000,'duration':100_000,
             'last_watched':last_watched_ms,'observed_at':'2026-09-20T12:00:00Z'}
         before={'_id':'tt1','type':'movie','state':{'timeOffset':0,'duration':0}}
-        after={'_id':'tt1','type':'movie','state':{'timeOffset':30_000,'duration':100_000,'video_id':'tt1'}}
+        after={'_id':'tt1','type':'movie','state':{'timeOffset':30_000,'duration':100_000,'video_id':'tt1',
+            'lastWatched':'2026-09-20T12:00:00Z'}}
         with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[before],[after]])) as read, \
              patch('core.stremio.datastore_put',AsyncMock()) as write:
             await push_stremio_progress('fixture',record)
@@ -145,6 +163,11 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         candidate=write.await_args.args[1][0]
         self.assertEqual(candidate['state']['timeOffset'],30_000)
         self.assertEqual(candidate['state']['lastWatched'],'2026-09-20T12:00:00Z')
+        stale={**after,'state':{**after['state'],'lastWatched':'2026-09-19T12:00:00Z'}}
+        with patch('core.stremio.datastore_get',AsyncMock(side_effect=[[before],[stale]])), \
+             patch('core.stremio.datastore_put',AsyncMock()):
+            with self.assertRaisesRegex(stremio.StremioAPIError,'timestamp did not persist'):
+                await push_stremio_progress('fixture',record)
 
     async def test_stremio_upsert_rejects_a_content_type_mismatch(self):
         with patch('core.stremio.datastore_get',AsyncMock(return_value=[{
@@ -215,14 +238,15 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_nuvio_progress_upsert_uses_progress_key_and_confirms_readback(self):
         conn=MediaServerConnection(id=988,user_id=1,type='nuvio',name='Fixture',url='https://example.test',token='old',server_user_id='1')
         record={'content_id':'tt1','content_type':'series','video_id':'tt1:1:2','position':30,'duration':100,
-            'season':1,'episode':2,'progress_key':'tt1_s1e2','observed_at':'2026-09-20T12:00:00Z'}
+            'season':1,'episode':2,'progress_key':'tt1_s1e2','observed_at':'2026-09-20T12:00:00Z',
+            'last_watched':1789905600000}
         token_db=AsyncMock();context=AsyncMock();context.__aenter__.return_value=token_db
         client=object();client_context=AsyncMock();client_context.__aenter__.return_value=client
         db=SimpleNamespace(refresh=AsyncMock())
         with patch('db.AsyncSessionLocal',return_value=context), \
              patch('core.nuvio.httpx.AsyncClient',return_value=client_context), \
              patch('core.nuvio.refresh_session',AsyncMock(return_value=SimpleNamespace(refresh_token='rotated',access_token='fixture'))), \
-             patch('core.nuvio._pull_watch_progress',AsyncMock(side_effect=[[],[record]])) as read, \
+             patch('core.nuvio._pull_watch_progress',AsyncMock(side_effect=[[{**record,'last_watched':1789819200000}],[record]])) as read, \
              patch('core.nuvio._rpc',AsyncMock()) as write:
             await push_nuvio_progress(db,conn,record)
         self.assertEqual({key: value for key, value in self.visibility.await_args.kwargs.items()

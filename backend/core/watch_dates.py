@@ -43,24 +43,26 @@ def inferred_watch_datetime(fallback: date | datetime | int | float | str | None
 
 
 def replace_inferred_watch_date(event: WatchEvent, watched_at: datetime | None, *, inferred: bool = False) -> bool:
-    """Update an event date only when its current value is missing or inferred.
+    """Update dates without downgrading episode evidence or local estimates.
 
     A reliable timestamp can replace a prior estimate and clears its inferred
-    marker. An inferred timestamp never overwrites an existing date.
+    marker. An inferred timestamp can replace only missing or shared evidence.
     """
     normalized = normalize_watch_datetime(watched_at)
     if normalized is None:
         return False
-    if event.watched_at is not None and not event.date_inferred:
+    shared = bool(getattr(event, 'date_shared', False))
+    if event.watched_at is not None and not event.date_inferred and not shared:
         return False
-    if inferred and event.watched_at is not None:
+    if inferred and event.watched_at is not None and not shared:
         return False
     event.watched_at = normalized
     event.date_inferred = inferred
+    event.date_shared = False
     return True
 
 
-async def reconcile_inferred_watch_date(db, user_id: int, media_id: int, watched_at: datetime) -> bool:
+async def reconcile_inferred_watch_date(db, user_id: int, media_id: int, watched_at: datetime, *, authoritative: bool = False) -> bool:
     """Replace the sole inferred completed watch for a media item, if safe.
 
     Several inferred rows may represent separate rewatches, so they remain
@@ -83,13 +85,18 @@ async def reconcile_inferred_watch_date(db, user_id: int, media_id: int, watched
         WatchEvent.user_id == user_id,
         WatchEvent.media_id == media_id,
         WatchEvent.completed.is_(True),
-        WatchEvent.date_inferred.is_(True),
+        (WatchEvent.date_inferred.is_(True) | WatchEvent.date_shared.is_(True)),
     ))).scalars().all()
     if len(candidates) != 1:
         return False
     current = normalize_watch_datetime(candidates[0].watched_at)
+    # An exact echo of our exported estimate is not new date evidence, even
+    # when the receiving provider normally supplies precise episode dates.
+    if current == normalized:
+        return True
     # Providers often round outbound echoes to date-only precision. Keep a
     # same-day estimate inferred so an echoed value is not treated as proof.
-    if current is not None and current.date() == normalized.date():
+    if (not candidates[0].date_shared and current is not None and current.date() == normalized.date()
+            and (not authoritative or current == normalized or normalized.time() == time.min)):
         return True
     return replace_inferred_watch_date(candidates[0], normalized, inferred=False)

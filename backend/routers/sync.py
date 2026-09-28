@@ -2936,12 +2936,14 @@ async def sync_items(
                     watch_state = extract_watch_state(item, source)
                     if sync_watched and (watch_state["completed"] or watch_state["play_count"] > 0):
                         from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
-                        if watch_state["completed"] and watch_state["last_played"] is not None:
+                        shared_date = bool((item.get('UserData') or {}).get('SharedWatchDate'))
+                        if not shared_date and watch_state["completed"] and watch_state["last_played"] is not None:
                             await reconcile_inferred_watch_date(
                                 db, user_id, media_id_for_watch, watch_state["last_played"],
+                                authoritative=source in (CollectionSource.stremio, CollectionSource.nuvio),
                             )
                         already_recorded = media_id_for_watch in existing_watched
-                        rewatch_eligible = is_fresh_rewatch_play(
+                        rewatch_eligible = not shared_date and is_fresh_rewatch_play(
                             already_recorded,
                             media_type,
                             show_id,
@@ -2964,7 +2966,8 @@ async def sync_items(
                                 user_id=user_id,
                                 media_id=media_id_for_watch,
                                 watched_at=watch_state["last_played"] or inferred_watch_datetime(),
-                                date_inferred=watch_state["last_played"] is None,
+                                date_inferred=watch_state["last_played"] is None or shared_date,
+                                date_shared=shared_date,
                                 completed=watch_state["completed"],
                                 play_count=max(1, watch_state["play_count"]),
                                 progress_percent=1.0 if watch_state["completed"] else 0.0,
@@ -4785,6 +4788,7 @@ def _normalize_nuvio_item(
             "Played": watched,
             "PlayCount": 1 if watched else 0,
             "LastPlayedDate": last_played.isoformat() if last_played else None,
+            "SharedWatchDate": bool(record.get('date_shared')),
         },
     }
     return media_type, item
@@ -4844,7 +4848,7 @@ async def _apply_nuvio_watch_history(
             and media.episode_number is not None
         }
 
-    candidates: list[tuple[Media, datetime | None]] = []
+    candidates: list[tuple[Media, datetime | None, bool]] = []
     for row in rows:
         content_id = str(row.get("content_id") or "")
         tmdb_id = tmdb_ids.get(content_id)
@@ -4870,11 +4874,11 @@ async def _apply_nuvio_watch_history(
                 else None
             )
         if media is not None:
-            candidates.append((media, watched_at))
+            candidates.append((media, watched_at, bool(row.get('date_shared'))))
 
     if not candidates:
         return set()
-    media_ids = {media.id for media, _ in candidates}
+    media_ids = {media.id for media, _, _ in candidates}
     from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
     existing_by_media: dict[int, list[datetime | None]] = {}
     media_id_list = list(media_ids)
@@ -4892,10 +4896,10 @@ async def _apply_nuvio_watch_history(
     window_minutes = await get_dedup_window_minutes(db, user_id)
     added_media_ids: set[int] = set()
     new_events: list[WatchEvent] = []
-    for media, watched_at in candidates:
+    for media, watched_at, shared_date in candidates:
         times = existing_by_media.get(media.id, [])
-        if watched_at is not None and await reconcile_inferred_watch_date(
-            db, user_id, media.id, watched_at,
+        if not shared_date and watched_at is not None and await reconcile_inferred_watch_date(
+            db, user_id, media.id, watched_at, authoritative=True,
         ):
             existing_by_media.setdefault(media.id, []).append(watched_at)
             continue
@@ -4913,7 +4917,8 @@ async def _apply_nuvio_watch_history(
             user_id=user_id,
             media_id=media.id,
             watched_at=watched_at or inferred_watch_datetime(),
-            date_inferred=watched_at is None,
+            date_inferred=watched_at is None or shared_date,
+            date_shared=shared_date,
             completed=True,
             play_count=1,
             progress_percent=1.0,
@@ -5593,6 +5598,7 @@ async def _stremio_records(
         videos = _stremio_sorted_videos(metas.get(series_imdb_ids.get(content_id, content_id), {}))
         video_ids = [str(video["id"]) for video in videos]
         watched_ids = stremio.decode_watched_bitfield(state.get("watched"), video_ids)
+        current_video_id = str(state.get("video_id") or "")
         for video in videos:
             video_id = str(video["id"])
             if video_id not in watched_ids:
@@ -5608,10 +5614,10 @@ async def _stremio_records(
                     "season": season,
                     "episode": episode,
                     "watched_at": last_watched,
+                    "date_shared": video_id != current_video_id,
                 }
             )
 
-        current_video_id = str(state.get("video_id") or "")
         current_video = next(
             (video for video in videos if str(video.get("id")) == current_video_id),
             {"id": current_video_id},

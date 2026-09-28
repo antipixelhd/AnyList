@@ -3637,6 +3637,107 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review.payload['local_changed_at'],base.isoformat()+'Z')
         self.assertIsNone(review.payload['provider_changed_at'])
 
+    async def test_shared_watch_dates_rank_below_estimates_and_episode_evidence(self):
+        from routers.sync import _apply_nuvio_watch_history
+        self.show.tmdb_id=987654392
+        self.show.tmdb_data={'tracking_catalogue_refreshed_at':'2026-01-01'}
+        canonical=Show(title='Date hierarchy',tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical);await self.db.flush()
+        episodes=[Media(title=f'E{i}',media_type=MediaType.episode,show_id=canonical.id,
+            season_number=1,episode_number=i,release_date='2020-01-01') for i in range(1,4)]
+        self.db.add_all(episodes);await self.db.flush()
+        estimate=datetime(2026,1,2,12)
+        precise=datetime(2026,1,2,13)
+        self.db.add_all([WatchEvent(user_id=self.owner.id,media_id=episodes[0].id,completed=True,
+            watched_at=estimate,date_inferred=True),WatchEvent(user_id=self.owner.id,media_id=episodes[1].id,
+            completed=True,watched_at=precise)])
+        await self.db.commit()
+        shared=datetime(2026,1,1,10)
+        rows=[{'content_id':'tt-hierarchy','content_type':'series','season':1,'episode':i,
+            'watched_at':shared.isoformat(),'date_shared':True} for i in range(1,4)]
+        added=await _apply_nuvio_watch_history(self.db,self.owner.id,rows,{'tt-hierarchy':canonical.id},
+            {'tt-hierarchy':self.show.tmdb_id},dedupe_by_media_id_only=True)
+        self.assertEqual(added,{episodes[2].id})
+        events=(await self.db.execute(select(WatchEvent).where(WatchEvent.user_id==self.owner.id,
+            WatchEvent.media_id.in_([e.id for e in episodes])).order_by(WatchEvent.media_id))).scalars().all()
+        self.assertEqual([e.watched_at for e in events],[estimate,precise,shared])
+        self.assertEqual([e.date_shared for e in events],[False,False,True])
+        # A Nuvio echo of the shared timestamp we pushed is still shared.
+        await _apply_nuvio_watch_history(self.db,self.owner.id,[{**rows[2],'date_shared':False}],
+            {'tt-hierarchy':canonical.id},{'tt-hierarchy':self.show.tmdb_id},dedupe_by_media_id_only=True)
+        self.assertTrue(events[2].date_shared)
+        self.assertTrue(events[2].date_inferred)
+        exact=datetime(2026,1,2,14,30)
+        await _apply_nuvio_watch_history(self.db,self.owner.id,[{**rows[0],'date_shared':False,'watched_at':exact.isoformat()}],
+            {'tt-hierarchy':canonical.id},{'tt-hierarchy':self.show.tmdb_id},dedupe_by_media_id_only=True)
+        self.assertEqual(events[0].watched_at,exact)
+        self.assertFalse(events[0].date_inferred)
+        result=await self.save(self.show,status='watching',progress=3)
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertFalse(events[2].date_shared)
+        self.assertTrue(events[2].date_inferred)
+        self.assertGreater(events[2].watched_at,shared)
+        self.assertEqual(events[1].watched_at,precise)
+
+    async def test_series_snapshot_makes_one_decision_with_resume_and_history(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        from core.status_provenance import mark_status_change
+        self.show.tmdb_id=987654393
+        canonical=Show(title='Atomic series',tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical);await self.db.flush()
+        self.db.add_all([Media(title=f'E{i}',media_type=MediaType.episode,show_id=canonical.id,
+            season_number=1,episode_number=i,release_date='2020-01-01') for i in range(1,4)])
+        conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Atomic',url='https://example.test',token='fixture')
+        self.db.add(conn);await self.db.flush()
+        base=datetime.now(timezone.utc).replace(tzinfo=None)
+        entry=TrackedEntry(user_id=self.owner.id,media_id=self.show.id,status='watching',progress=0,
+            status_source='local',status_changed_at=base-timedelta(minutes=2))
+        self.db.add_all([entry,StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+            observed_at=base-timedelta(minutes=1),snapshot={'progress':{},'mappings':{'tt-atomic':self.show.tmdb_id}})])
+        await self.db.commit()
+        resume={'content_id':'tt-atomic','content_type':'series','season':1,'episode':3,'position':1000,
+            'duration':100000,'modified_at':base.isoformat()+'Z','last_watched':int(base.replace(tzinfo=timezone.utc).timestamp()*1000)}
+        history=[{**resume,'episode':i,'watched_at':resume['last_watched'],'date_shared':True} for i in (1,2)]
+        with patch('core.tracking_snapshot.mark_status_change',wraps=mark_status_change) as mark:
+            await observe_stream_snapshot(self.db,conn,[],history,[resume],{'tt-atomic':self.show.tmdb_id})
+            self.assertEqual(mark.call_count,1)
+        self.assertEqual(entry.progress,2)
+        self.assertEqual(entry.status_changed_at,base)
+        self.assertEqual(entry.status_source,f'stremio:{conn.id}')
+        self.assertEqual((await self.db.execute(select(SyncReview).where(SyncReview.connection_id==conn.id,
+            SyncReview.kind=='conflict'))).scalars().all(),[])
+
+    async def test_nuvio_fresh_resume_clock_propagates_for_movie_and_show(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        base=datetime.now(timezone.utc).replace(tzinfo=None)
+        for index,media in enumerate((self.movie,self.show)):
+            media.tmdb_id=987654394+index
+            source=MediaServerConnection(user_id=self.owner.id,type='nuvio',name='Nuvio',url='https://example.test',token='fixture')
+            peer=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Peer',url='https://example.test',token='fixture',push_playback=True)
+            self.db.add_all([source,peer]);await self.db.flush()
+            key=f'tt-clock-{index}'
+            old={'content_id':key,'content_type':media.media_type.value,'position':10,'duration':100,
+                'last_watched':int((base-timedelta(minutes=2)).replace(tzinfo=timezone.utc).timestamp()*1000)}
+            if index:old.update(season=1,episode=1)
+            entry=TrackedEntry(user_id=self.owner.id,media_id=media.id,status='watching',progress=0,
+                status_source=f'nuvio:{source.id}',status_changed_at=base-timedelta(minutes=2))
+            self.db.add(entry)
+            for conn in (source,peer):
+                self.db.add(StreamBaseline(user_id=self.owner.id,connection_id=conn.id,approved=True,
+                    observed_at=base-timedelta(minutes=1),snapshot={'progress':{key:old},'mappings':{key:media.tmdb_id}}))
+            await self.db.commit()
+            # Timestamp-only resume updates still reach the peer.
+            updated={**old,'last_watched':int(base.replace(tzinfo=timezone.utc).timestamp()*1000)}
+            from core.stream_actions import queue_progress_update
+            with patch('core.stream_actions.queue_progress_update',wraps=queue_progress_update) as queue:
+                await observe_stream_snapshot(self.db,source,[],[],[updated],{key:media.tmdb_id})
+                self.assertEqual(queue.call_count,1, f'{media.media_type}: {entry.status_source}, {entry.status_changed_at}')
+            action=(await self.db.execute(select(StreamAction).where(StreamAction.connection_id==peer.id,
+                StreamAction.action=='upsert'))).scalar_one()
+            self.assertEqual(action.payload['last_watched'],updated['last_watched'])
+            self.assertEqual(action.payload['observed_at'],datetime.fromtimestamp(updated['last_watched']/1000,timezone.utc).isoformat().replace('+00:00','Z'))
+            self.assertEqual(action.payload['position'],10)
+
     async def test_nuvio_last_watched_alone_does_not_order_resume_fanout(self):
         from core.stream_actions import queue_progress_update
 

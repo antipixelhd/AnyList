@@ -23,6 +23,19 @@ def same_progress(left, right):
     return all(left.get(key) == right.get(key) for key in ('position', 'duration', 'season', 'episode'))
 
 
+def newer_playback_date(incoming, existing):
+    incoming_at = provider_changed_at({'last_watched': incoming.get('last_watched')})
+    existing_at = provider_changed_at({'last_watched': existing.get('last_watched')})
+    return bool(incoming_at and (existing_at is None or incoming_at > existing_at))
+
+
+def playback_date_confirmed(expected, actual):
+    expected_at = provider_changed_at({'last_watched': expected.get('last_watched')})
+    actual_at = provider_changed_at({'last_watched': actual.get('last_watched')})
+    # Providers can round microseconds to milliseconds during a write.
+    return expected_at is None or bool(actual_at and (expected_at-actual_at).total_seconds() < 0.001)
+
+
 def _iso_utc(value):
     if value is None:
         return None
@@ -91,7 +104,7 @@ async def push_stremio_progress(token, record):
     # temporary marker keeps this resume out of the permanent collection, but
     # `removed` must be false for the client to include it in that view.
     eligible = not item.get('removed')
-    if matching_progress and eligible:
+    if matching_progress and eligible and not newer_playback_date(record, {'last_watched': state.get('lastWatched')}):
         return
     observed_at = provider_changed_at({'modified_at': record.get('observed_at')})
     remote_at = provider_changed_at({'modified_at': item.get('_mtime')}) if rows else None
@@ -128,6 +141,8 @@ async def push_stremio_progress(token, record):
         raise stremio.StremioAPIError('Stremio progress write did not match the requested movie')
     if confirmed_state.get('timeOffset') != record['position'] or confirmed_state.get('duration') != record['duration']:
         raise stremio.StremioAPIError('Stremio progress write did not persist')
+    if not playback_date_confirmed(record,{'last_watched':confirmed_state.get('lastWatched')}):
+        raise stremio.StremioAPIError('Stremio playback timestamp did not persist')
 
 
 async def push_nuvio_progress(db, conn, record):
@@ -148,12 +163,12 @@ async def push_nuvio_progress(db, conn, record):
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
             matches = [row for row in rows if row.get('content_id') == record['content_id']
                 and row.get('season') == record.get('season') and row.get('episode') == record.get('episode')]
-            if len(matches) == 1 and same_progress(matches[0], record):
+            if len(matches) == 1 and same_progress(matches[0], record) and not newer_playback_date(record,matches[0]):
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
                     profile, show=_nuvio_action_content_ids(record),
                     on_written=_nuvio_visibility_echo_writer(db, conn))
                 return
-            if matches:
+            if matches and not (len(matches) == 1 and same_progress(matches[0],record)):
                 if len(matches) != 1:
                     raise RemotePlaybackChanged()
                 # Nuvio last_watched is viewing evidence, not a universal row
@@ -171,7 +186,7 @@ async def push_nuvio_progress(db, conn, record):
                 {'p_profile_id': profile, 'p_entries': [payload]})
             confirmed_rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
             confirmed = [row for row in confirmed_rows if row.get('progress_key') == payload['progress_key']]
-            if len(confirmed) != 1 or not same_progress(confirmed[0], record):
+            if len(confirmed) != 1 or not same_progress(confirmed[0], record) or not playback_date_confirmed(record,confirmed[0]):
                 raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
                 profile, show=_nuvio_action_content_ids(record),

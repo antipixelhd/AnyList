@@ -41,6 +41,9 @@ class WatchEvent(Base):
     # Estimated watch date. Kept separate from ``provisional``, which marks
     # webhook events awaiting reconciliation.
     date_inferred    : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    # Lowest-quality date: Stremio's title clock copied onto another episode.
+    # Separate from inferred dates so later local estimates can supersede it.
+    date_shared      : Mapped[bool]            = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     user  : Mapped["User"]  = relationship(back_populates="watch_events")
     media : Mapped["Media"] = relationship(back_populates="watch_events")

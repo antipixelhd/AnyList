@@ -44,9 +44,9 @@ async def changed_watch_rows_from_source(db, conn, rows):
     if not baseline.approved:
         return await current_watch_rows(db, conn, rows)
     previous_rows = (baseline.snapshot or {}).get('records', {}).get('watched', [])
-    previous = {(watch_key(row), str(row.get('watched_at'))) for row in previous_rows}
+    previous = {(watch_key(row), str(row.get('watched_at')), bool(row.get('date_shared'))) for row in previous_rows}
     changed = [row for row in rows
-               if (watch_key(row), str(row.get('watched_at'))) not in previous]
+               if (watch_key(row), str(row.get('watched_at')), bool(row.get('date_shared'))) not in previous]
     return await current_watch_rows(db, conn, changed)
 
 
@@ -266,7 +266,8 @@ async def apply_series_observation(db, user_id, media, entry, row, finished, new
         if episode.id not in watched:
             db.add(WatchEvent(user_id=user_id,media_id=episode.id,completed=True,
                 watched_at=evidence_watch_at,
-                date_inferred=(source_watch_at is None or not (finished and episode.id==episodes[index].id))))
+                date_inferred=(source_watch_at is None or bool(row.get('date_shared')) or not (finished and episode.id==episodes[index].id)),
+                date_shared=bool(row.get('date_shared'))))
             watched.add(episode.id)
             if newly_watched_ids is not None:
                 newly_watched_ids.add(episode.id)
@@ -528,16 +529,17 @@ async def observe_stream_snapshot(
                 SyncReview.connection_id == conn.id, SyncReview.state == 'pending', SyncReview.kind == 'conflict',
                 SyncReview.previous_status == SyncReview.proposed_status,
                 SyncReview.proposed_status == TrackedEntry.status,
+                SyncReview.payload == {},
                 SyncReview.message.contains('playback timing cannot be ordered')))).scalars().all()
         for review in redundant:
             review.state = 'corrected'
             review.dismissed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         old_watched = set(previous.get('watched', []))
         old_watch_observations = {
-            (watch_key(row), str(row.get('watched_at')))
+            (watch_key(row), str(row.get('watched_at')), bool(row.get('date_shared')))
             for row in previous.get('records', {}).get('watched', [])
         }
-        dated_watch_keys = {key for key, _ in old_watch_observations}
+        dated_watch_keys = {key for key, _, _ in old_watch_observations}
         old_progress_completed = set(previous.get('progress_completed', []))
         # A watch can change without changing its movie/episode identity (for
         # example, marking an already known title watched again). Use the same
@@ -546,7 +548,7 @@ async def observe_stream_snapshot(
         new_watched_rows = [row for row in watched_rows
             if watch_key(row) not in old_watched or (
                 watch_key(row) in dated_watch_keys
-                and (watch_key(row), str(row.get('watched_at'))) not in old_watch_observations
+                and (watch_key(row), str(row.get('watched_at')), bool(row.get('date_shared'))) not in old_watch_observations
             )]
         new_watched_rows = await current_watch_rows(db, conn, new_watched_rows,
                                                   imported_media_ids=imported_ids)
@@ -570,9 +572,33 @@ async def observe_stream_snapshot(
         for key in acknowledged:
             outbound.pop(key, None)
         changed_active = [row for key, row in active.items()
-            if sync_playback and key not in acknowledged and not (old_active.get(key) and same_playback(old_active[key], row))]
+            if sync_playback and key not in acknowledged and not (old_active.get(key) and same_playback(old_active[key], row)
+                and old_active[key].get('last_watched') == row.get('last_watched'))]
+        if conn.type == 'nuvio':
+            for row in changed_active:
+                if provider_changed_at({field: row.get(field) for field in ('updated_at','modified_at')}):
+                    continue
+                # Nuvio clients can expose only last_watched on resume rows.
+                # An advancing clock on a changed resume is fresh playback
+                # evidence; an unchanged history clock cannot order a rewind.
+                previous_row = old_active.get(str(row.get('content_id'))) or {}
+                current_time = provider_changed_at({'last_watched': row.get('last_watched')})
+                previous_time = provider_changed_at({'last_watched': previous_row.get('last_watched')})
+                if current_time and (not previous_time or current_time > previous_time):
+                    row['updated_at'] = current_time.isoformat()+'Z'
         deleted = set((await db.execute(select(TrackingDeletion.media_id).where(TrackingDeletion.user_id == conn.user_id))).scalars())
-        for row in [*changed_active, *new_completed]:
+        observations = {}
+        for item in [*new_completed, *changed_active]:
+            media = lookup.get((mappings.get(str(item.get('content_id'))), item.get('content_type')))
+            if media:
+                observations.setdefault(media.id, []).append(item)
+        for observation_rows in observations.values():
+            # Resume is the current title decision. Historical episodes from
+            # the same pull update history without each changing its clock.
+            resume_rows = [item for item in changed_active if any(
+                item.get('content_id') == candidate.get('content_id') for candidate in observation_rows)]
+            row = max(resume_rows or observation_rows, key=lambda item: (
+                provider_changed_at(item) or datetime.min, playback_rank(item)))
             media = lookup.get((mappings.get(str(row.get('content_id'))), row.get('content_type')))
             if not media or media.id in deleted:
                 continue
@@ -613,17 +639,18 @@ async def observe_stream_snapshot(
             if ordering=='stale':
                 continue
             if media.media_type==MediaType.series and ordering=='apply':
-                is_complete=await apply_series_observation(
-                    db,conn.user_id,media,entry,row,row in new_completed,
-                    newly_watched_ids=inferred_watch_ids if sync_watched else None,
-                )
+                for episode_row in [item for item in observation_rows if item in new_completed] + [row]:
+                    is_complete=await apply_series_observation(
+                        db,conn.user_id,media,entry,episode_row,episode_row in new_completed,
+                        newly_watched_ids=inferred_watch_ids if sync_watched else None,
+                    )
             proposed = observed_status(previous_status, is_complete, True)
             if ordering=='conflict':
                 # An unordered observation must not overwrite progress or fan
                 # out to peers, but agreeing statuses need no status decision.
-                if proposed == previous_status:
-                    continue
                 old_row = old_active.get(str(row.get('content_id'))) or {}
+                if proposed == previous_status and (entry.status_source == 'local' or not old_row or same_playback(old_row,row)):
+                    continue
                 changes = [dict(field=field, previous=old_row.get(field), proposed=row.get(field))
                     for field in ('season', 'episode', 'position', 'duration')
                     if old_row.get(field) != row.get(field)]
@@ -636,8 +663,8 @@ async def observe_stream_snapshot(
                         f'Current change: {changed_at.isoformat()+"Z" if changed_at else "unknown"}; '
                         f'provider change: {provider_at.isoformat()+"Z" if provider_at else "unknown"}. Your current value was preserved.'))
                 continue
-            if sync_watched and row in new_watched_rows:
-                accepted_watch_rows.append(row)
+            if sync_watched and any(item in new_watched_rows for item in observation_rows):
+                accepted_watch_rows.extend(item for item in observation_rows if item in new_watched_rows)
                 if changed_media_ids is not None:
                     changed_media_ids.add(media.id)
             entry.status = proposed
