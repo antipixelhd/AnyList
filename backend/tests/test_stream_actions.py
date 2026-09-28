@@ -148,7 +148,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         baseline=StreamBaseline(user_id=1,connection_id=connection.id,approved=True,
             snapshot={'mappings':{'tt-show':123},'progress':{},'resume':{}})
         db=_QueueDB([
-            [],[entry],[77],episodes,[100,101,102],[],[],[connection],[],[],
+            [],[entry],[connection],[],[77],episodes,[100,101,102],[],[],[],
         ],baseline)
 
         with patch('routers.sync._get_effective_tmdb_key',AsyncMock(return_value=None)), \
@@ -177,7 +177,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         baseline=StreamBaseline(user_id=1,connection_id=connection.id,approved=True,
             snapshot={'mappings':{'tt-show':123},'progress':{},'resume':{}})
         db=_QueueDB([
-            [],[entry],[77],episodes,[100],[],[],[connection],[],[],
+            [],[entry],[connection],[],[77],episodes,[100],[],[],[],
         ],baseline)
 
         with patch('routers.sync._get_effective_tmdb_key',AsyncMock(return_value=None)), \

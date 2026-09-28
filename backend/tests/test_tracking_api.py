@@ -227,6 +227,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'core.local_outbound.dispatch_local_tracking_delta', self.local_outbound,
         )
         self.local_outbound_patch.start()
+        self.queued_tracking_dispatch = AsyncMock()
+        self.queued_tracking_dispatch_patch = patch(
+            'core.local_outbound.dispatch_queued_tracking_actions', self.queued_tracking_dispatch,
+        )
+        self.queued_tracking_dispatch_patch.start()
         self.local_rollback = AsyncMock()
         self.local_rollback_patch = patch(
             'core.local_outbound.dispatch_local_watch_rollback', self.local_rollback,
@@ -236,6 +241,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.delivery_patch.stop()
         self.local_outbound_patch.stop()
+        self.queued_tracking_dispatch_patch.stop()
         self.local_rollback_patch.stop()
         await self.client.aclose(); await self.db.close()
         await self.transaction.rollback(); await self.connection.close(); await self.engine.dispose()
@@ -3757,6 +3763,240 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions[0].action, 'dismiss')
         self.assertEqual(actions[0].payload['content_type'], 'series')
         self.assertIn('tt-fixture', actions[0].payload['content_ids'])
+
+    async def test_direct_hidden_status_edits_queue_nuvio_next_up_cleanup(self):
+        self.movie.tmdb_id = 987650020
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add(conn); await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={'mappings': {'tt-fixture-movie': self.movie.tmdb_id}, 'progress': {}}))
+        await self.db.commit()
+
+        for status in ('planning', 'paused', 'dropped', 'completed'):
+            with self.subTest(status=status):
+                response = await self.save(self.movie, status=status)
+                self.assertEqual(response.status_code, 200, response.text)
+                actions = (await self.db.execute(select(StreamAction).where(
+                    StreamAction.connection_id == conn.id,
+                    StreamAction.media_id == self.movie.id,
+                    StreamAction.action == 'dismiss',
+                    StreamAction.state == 'pending',
+                ))).scalars().all()
+                self.assertEqual(len(actions), 1)
+                self.assertIn('tt-fixture-movie', actions[0].payload['content_ids'])
+
+    async def test_nuvio_inferred_removal_dispatches_source_visibility_without_progress_echo(self):
+        from core.stream_actions import dispatch_stream_actions, queue_dismissals
+        self.show.tmdb_id = 987650021
+        self.show.imdb_id = 'tt987650021'
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='paused',
+            rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([entry, source]); await self.db.flush()
+        baseline_snapshot = {'mappings': {'tt-source-show': self.show.tmdb_id},
+            'progress': {}, 'records': {'watched': [{'content_id': 'tt-source-show', 'content_type': 'series'}]}}
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=source.id, approved=True,
+            snapshot=baseline_snapshot)
+        self.db.add(baseline); await self.db.commit()
+        await queue_dismissals(self.db, source, self.show)
+        await self.db.commit()
+        action = (await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id == source.id, StreamAction.media_id == self.show.id,
+        ))).scalar_one()
+        self.assertTrue(action.payload['visibility_only'])
+
+        token_db = AsyncMock(); token_context = AsyncMock()
+        token_context.__aenter__.return_value = token_db
+        client = object(); client_context = AsyncMock()
+        client_context.__aenter__.return_value = client
+        visibility = AsyncMock()
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
+             patch('db.AsyncSessionLocal', return_value=token_context), \
+             patch('core.nuvio.httpx.AsyncClient', return_value=client_context), \
+             patch('core.nuvio.refresh_session', AsyncMock(return_value=SimpleNamespace(
+                 refresh_token='rotated', access_token='fixture'))), \
+             patch('core.nuvio.update_next_up_dismissals', visibility), \
+             patch('core.nuvio._pull_watch_progress', AsyncMock(return_value=[])) as pull, \
+             patch('core.nuvio._rpc', AsyncMock()) as rpc:
+            await dispatch_stream_actions(self.db, self.owner.id)
+
+        self.assertEqual(action.state, 'applied')
+        visibility.assert_awaited_once()
+        self.assertIn('tt-source-show', visibility.await_args.kwargs['hide'])
+        pull.assert_not_awaited()
+        rpc.assert_not_awaited()
+        self.assertEqual(baseline.snapshot, baseline_snapshot)
+
+    async def test_confirming_inferred_nuvio_removal_requeues_source_visibility(self):
+        self.show.tmdb_id = 987650024
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='paused',
+            rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([entry, source]); await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=source.id, approved=True,
+            snapshot={'mappings': {'tt-review-source': self.show.tmdb_id}, 'progress': {}}))
+        review = SyncReview(user_id=self.owner.id, connection_id=source.id, media_id=self.show.id,
+            kind='playback_removed', state='pending', previous_status='watching',
+            proposed_status='paused', message='Nuvio: playback disappeared.')
+        self.db.add(review); await self.db.commit()
+
+        dispatch = AsyncMock()
+        with patch('core.local_outbound.dispatch_queued_tracking_actions', dispatch):
+            response = await self.client.post(f'/tracking/recent-events/{review.id}', json={'action': 'confirm'})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        dispatch.assert_awaited_once_with(self.owner.id)
+        action = (await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id == source.id, StreamAction.media_id == self.show.id,
+            StreamAction.action == 'dismiss', StreamAction.state == 'pending'))).scalar_one()
+        self.assertTrue(action.payload['visibility_only'])
+
+    async def test_changing_playback_removed_to_hidden_uses_regular_source_dismissal(self):
+        self.show.tmdb_id = 987650027
+        self.show.imdb_id = 'tt987650027'
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='watching',
+            rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([entry, source]); await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=source.id, approved=True,
+            snapshot={'mappings': {'tt-explicit-source': self.show.tmdb_id}, 'progress': {}}))
+        review = SyncReview(user_id=self.owner.id, connection_id=source.id, media_id=self.show.id,
+            kind='playback_removed', state='pending', previous_status='watching',
+            proposed_status='paused', message='Nuvio: playback disappeared.')
+        self.db.add(review); await self.db.commit()
+
+        response = await self.client.post(
+            f'/tracking/recent-events/{review.id}', json={'action': 'change', 'status': 'dropped'},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.queued_tracking_dispatch.assert_awaited_once_with(self.owner.id)
+        await self.db.refresh(entry)
+        self.assertEqual(entry.status, 'dropped')
+        action = (await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id == source.id, StreamAction.media_id == self.show.id,
+            StreamAction.action == 'dismiss', StreamAction.state == 'pending'))).scalar_one()
+        self.assertIn('tt-explicit-source', action.payload['content_ids'])
+        self.assertNotIn('visibility_only', action.payload)
+
+    async def test_keeping_hidden_status_from_conflict_queues_regular_source_cleanup(self):
+        self.show.tmdb_id = 987650026
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='paused',
+            rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([entry, source]); await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=source.id, approved=True,
+            snapshot={'mappings': {'tt-conflict-source': self.show.tmdb_id}, 'progress': {}}))
+        review = SyncReview(user_id=self.owner.id, connection_id=source.id, media_id=self.show.id,
+            kind='conflict', state='pending', previous_status='paused', proposed_status='watching',
+            message='Nuvio: imported playback disagrees with local status.')
+        self.db.add(review); await self.db.commit()
+
+        dispatch = AsyncMock()
+        with patch('core.local_outbound.dispatch_queued_tracking_actions', dispatch):
+            response = await self.client.post(f'/tracking/recent-events/{review.id}', json={'action': 'keep'})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        dispatch.assert_awaited_once_with(self.owner.id)
+        action = (await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id == source.id, StreamAction.media_id == self.show.id,
+            StreamAction.action == 'dismiss', StreamAction.state == 'pending'))).scalar_one()
+        self.assertNotIn('visibility_only', action.payload)
+
+    async def test_cloud_imported_completion_queues_nuvio_cleanup(self):
+        from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+        await self.save(self.movie, status='planning')
+        self.movie.tmdb_id = 987650025
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([conn, CloudBaseline(user_id=self.owner.id, provider='trakt', approved=True,
+            snapshot={})]); await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={'mappings': {'tt-cloud-movie': self.movie.tmdb_id}, 'progress': {}}))
+        watched_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+            completed=True, watched_at=watched_at))
+        await self.db.commit()
+
+        stats = await reconcile_cloud_watch_events(self.db, user_id=self.owner.id,
+            provider='trakt', new_media_ids={self.movie.id})
+
+        self.assertEqual(stats['applied'], 1)
+        action = (await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id == conn.id, StreamAction.media_id == self.movie.id,
+            StreamAction.action == 'dismiss', StreamAction.state == 'pending'))).scalar_one()
+        self.assertNotIn('visibility_only', action.payload)
+        self.assertIn('tt-cloud-movie', action.payload['content_ids'])
+
+    async def test_nuvio_next_up_only_upsert_dispatches_visibility_without_progress_echo(self):
+        from core.stream_actions import dispatch_stream_actions
+        self.show.tmdb_id = 987650022
+        self.show.imdb_id = 'tt987650022'
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='watching',
+            rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([entry, conn]); await self.db.flush()
+        baseline_snapshot = {'mappings': {'tt-next-up': self.show.tmdb_id},
+            'progress': {}, 'records': {'watched': [{'content_id': 'tt-next-up', 'content_type': 'series'}]}}
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot=baseline_snapshot)
+        action = StreamAction(user_id=self.owner.id, connection_id=conn.id, media_id=self.show.id,
+            action='upsert', payload={'content_id': 'tt-next-up', 'content_type': 'series',
+                'next_up_only': True})
+        self.db.add_all([baseline, action]); await self.db.commit()
+
+        token_db = AsyncMock(); token_context = AsyncMock()
+        token_context.__aenter__.return_value = token_db
+        client = object(); client_context = AsyncMock()
+        client_context.__aenter__.return_value = client
+        visibility = AsyncMock()
+        with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
+             patch('db.AsyncSessionLocal', return_value=token_context), \
+             patch('core.nuvio.httpx.AsyncClient', return_value=client_context), \
+             patch('core.nuvio.refresh_session', AsyncMock(return_value=SimpleNamespace(
+                 refresh_token='rotated', access_token='fixture'))), \
+             patch('core.nuvio.update_next_up_dismissals', visibility), \
+             patch('core.nuvio._pull_watch_progress', AsyncMock(return_value=[])) as pull, \
+             patch('core.nuvio._rpc', AsyncMock()) as rpc:
+            await dispatch_stream_actions(self.db, self.owner.id)
+
+        self.assertEqual(action.state, 'applied')
+        visibility.assert_awaited_once()
+        self.assertIn('tt-next-up', visibility.await_args.kwargs['show'])
+        pull.assert_awaited_once()
+        rpc.assert_not_awaited()
+        self.assertEqual(baseline.snapshot, baseline_snapshot)
+
+    async def test_returning_to_watching_cancels_stale_hide_without_a_resume(self):
+        from core.stream_actions import queue_restorations
+        self.show.tmdb_id = 987650023
+        self.show.imdb_id = 'tt987650023'
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.show.id, status='watching',
+            rating_mode='manual', season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
+            url='https://example.test', token='fixture', server_user_id='1', push_playback=True)
+        self.db.add_all([entry, conn]); await self.db.flush()
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            snapshot={'mappings': {'tt-watching-again': self.show.tmdb_id}, 'progress': {}})
+        stale = StreamAction(user_id=self.owner.id, connection_id=conn.id, media_id=self.show.id,
+            action='dismiss', payload={'content_id': 'tt-watching-again'}, state='pending')
+        self.db.add_all([baseline, stale]); await self.db.commit()
+
+        await queue_restorations(self.db, self.owner.id, self.show)
+
+        self.assertEqual(stale.state, 'cancelled')
+        queued = (await self.db.execute(select(StreamAction).where(
+            StreamAction.connection_id == conn.id, StreamAction.action == 'upsert',
+            StreamAction.state == 'pending'))).scalars().all()
+        self.assertEqual(len(queued), 1)
+        self.assertTrue(queued[0].payload['next_up_only'])
+        self.assertIn('tt-watching-again', queued[0].payload['content_ids'])
 
     async def test_nuvio_watch_delivery_visibility_includes_observed_provider_aliases(self):
         from core.watch_intents import queue_watch_intents, dispatch_watch_intents

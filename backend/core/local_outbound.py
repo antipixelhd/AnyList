@@ -13,6 +13,20 @@ from models.users import UserSettings
 logger = logging.getLogger(__name__)
 
 
+async def dispatch_queued_tracking_actions(user_id: int) -> None:
+    """Release previously queued stream/cloud actions after review commits."""
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with factory() as db:
+            from core.stream_actions import dispatch_stream_actions
+            from core.cloud_actions import dispatch_cloud_actions
+
+            await dispatch_stream_actions(db, user_id)
+            await dispatch_cloud_actions(db, user_id)
+    except Exception:
+        logger.exception("Reviewed tracking delivery failed for user %s", user_id)
+
+
 async def dispatch_local_tracking_delta(
     user_id: int,
     watched_ids: set[int],

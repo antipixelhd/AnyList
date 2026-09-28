@@ -1,15 +1,34 @@
 import asyncio
 import copy
 import os
+import secrets
+import string
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Iterator
 
 import httpx
+
+from core.config import settings
 
 
 DEFAULT_URL = "https://api.nuvio.tv"
 DEFAULT_APP_ANON_KEY = "sb_publishable_1Clq8rlTVACkdcZuqr6_AD__xUUC_EN"
 _PAGE_SIZE = 500
+_ORIGIN_CLIENT_ID_FILE = "anylist_nuvio_sync_client_id"
+_ORIGIN_CLIENT_ID_PREFIX = "anylist-"
+_ORIGIN_CLIENT_ID_LENGTH = 32
+_ORIGIN_CLIENT_ID_ALPHABET = string.ascii_lowercase + string.digits
+_ORIGIN_CLIENT_ID_MUTATION_RPCS = frozenset({
+    "sync_push_watched_items",
+    "sync_push_watch_progress",
+    "sync_delete_watch_progress",
+    "sync_push_profile_settings_blob",
+})
+_origin_client_id: str | None = None
+_origin_client_id_lock = threading.Lock()
 
 # _rpc retries a transient network/timeout failure this many times (so up to
 # 1 + _RPC_MAX_RETRIES attempts total) before giving up, with a short delay
@@ -22,6 +41,90 @@ _RPC_RETRYABLE_EXCEPTIONS = (httpx.TimeoutException, httpx.ConnectError, httpx.R
 
 class NuvioAPIError(RuntimeError):
     pass
+
+
+def _is_valid_origin_client_id(value: str) -> bool:
+    return (
+        16 <= len(value) <= 96
+        and all(char.isascii() and (char.isalnum() or char in "-_") for char in value)
+    )
+
+
+@contextmanager
+def _origin_client_identity_file_lock(lock_file: Path) -> Iterator[None]:
+    """Serialize identity-file reads and repairs across backend workers."""
+    with lock_file.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _get_origin_client_id() -> str:
+    """Return this AnyList installation's stable Nuvio mutation identity.
+
+    The file lives under DATA_DIR, which is already mounted as persistent app
+    storage in the production container. A file lock keeps simultaneous
+    workers from choosing different IDs on first use or while repairing it.
+    """
+    global _origin_client_id
+    with _origin_client_id_lock:
+        if _origin_client_id is not None:
+            return _origin_client_id
+
+        try:
+            identity_file = Path(settings.data_dir) / _ORIGIN_CLIENT_ID_FILE
+            identity_file.parent.mkdir(parents=True, exist_ok=True)
+            lock_file = identity_file.with_name(identity_file.name + ".lock")
+            with _origin_client_identity_file_lock(lock_file):
+                try:
+                    stored = identity_file.read_text(encoding="ascii").strip()
+                except FileNotFoundError:
+                    stored = ""
+                except UnicodeDecodeError:
+                    stored = ""
+                if _is_valid_origin_client_id(stored):
+                    _origin_client_id = stored
+                    return stored
+
+                generated = _ORIGIN_CLIENT_ID_PREFIX + "".join(
+                    secrets.choice(_ORIGIN_CLIENT_ID_ALPHABET)
+                    for _ in range(_ORIGIN_CLIENT_ID_LENGTH)
+                )
+                temporary_file = identity_file.with_name(
+                    f"{identity_file.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+                )
+                try:
+                    with temporary_file.open("w", encoding="ascii") as identity_handle:
+                        identity_handle.write(generated)
+                        identity_handle.flush()
+                        os.fsync(identity_handle.fileno())
+                    os.replace(temporary_file, identity_file)
+                finally:
+                    temporary_file.unlink(missing_ok=True)
+        except OSError as exc:
+            raise NuvioAPIError("Could not persist the Nuvio sync client identity under DATA_DIR") from exc
+
+        _origin_client_id = generated
+        return generated
 
 
 async def _pull_profile_settings(client, url, access_token, profile_id):
@@ -222,12 +325,20 @@ async def _rpc(
     request itself: unlike sign_in/refresh_session's single-use refresh
     token, this endpoint has no such one-shot state to lose on a resend.
     """
+    rpc_payload = payload
+    if function_name in _ORIGIN_CLIENT_ID_MUTATION_RPCS:
+        rpc_payload = {
+            **(payload or {}),
+            # Always use this installation's identity, even if a caller
+            # accidentally included a request-scoped value.
+            "p_origin_client_id": _get_origin_client_id(),
+        }
     for attempt in range(_RPC_MAX_RETRIES + 1):
         try:
             response = await client.post(
                 f"{_base_url(url)}/rest/v1/rpc/{function_name}",
                 headers=_auth_headers(access_token),
-                json=payload,
+                json=rpc_payload,
             )
             break
         except _RPC_RETRYABLE_EXCEPTIONS as exc:

@@ -460,6 +460,13 @@ async def observe_stream_snapshot(
             if media.media_type == MediaType.movie:
                 entry.progress = 1 if proposed == 'completed' else 0
             mark_status_change(entry,f'{conn.type}:{conn.id}',provider_changed_at(row))
+            if entry.status in {'planning', 'paused', 'dropped', 'completed'} and (
+                    entry.status != previous_status or newly_tracked):
+                # Inbound status changes must update Nuvio's independent Next
+                # Up preference too. For a Nuvio source, queue_dismissals
+                # sends only that visibility setting back to the source.
+                from core.stream_actions import queue_dismissals
+                await queue_dismissals(db, conn, media)
             entry.start_date, entry.finish_date = default_dates(previous_status, entry.status, entry.start_date, entry.finish_date, date.today())
             if newly_tracked:
                 if entry.status=='watching' and entry.start_date is None:entry.start_date=date.today()

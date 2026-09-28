@@ -274,6 +274,10 @@ async def reconcile_cloud_watch_events(
         if media.media_type == MediaType.movie:
             entry.progress = 1 if proposed_status == "completed" else 0
         mark_status_change(entry, provider, latest_at)
+        if (changed and not initial_import
+                and entry.status in {"planning", "paused", "dropped", "completed"}):
+            from core.stream_actions import queue_local_dismissals
+            await queue_local_dismissals(db, user_id, media)
         entry.start_date = proposed_start
         entry.finish_date = proposed_finish
         progress_changed = entry.progress != previous_progress

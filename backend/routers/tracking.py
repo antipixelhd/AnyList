@@ -607,6 +607,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
         event.dismissed_at=datetime.utcnow()
         await save_entry(event.media_id, EntryPatch(status=target_status), background_tasks, db, viewer)
         return {'state':event.state}
+    dispatch_hidden_status = False
     if body.action in {'add_watching','add_planning'}:
         raise HTTPException(422,'Release actions are only available on a new season notice')
     if event.kind=='initial_import':
@@ -614,6 +615,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
         baseline=await db.get(StreamBaseline,event.connection_id)
         if not baseline:raise HTTPException(409,'Import this connection again')
         baseline.approved=True
+        dispatch_hidden_status = True
     elif event.kind=='initial_cloud_import':
         if body.action!='confirm':raise HTTPException(422,'Confirm this summary before allowing outbound sync')
         from models.tracking import CloudBaseline
@@ -703,29 +705,45 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
         prior_status, prior_start_date = entry.status, entry.start_date
         if body.action not in {'confirm','keep','change'}:raise HTTPException(422,'Resolve or keep this imported history')
         status_changed = False
+        status_resolution = False
         if body.action!='keep':
             changes=(event.payload or {}).get('changes') or []
             for change in changes:
                 field=change.get('field');value=change.get('proposed')
                 if field=='status':
                     entry.status=body.status.value if body.action=='change' and body.status else value
-                    status_changed = True
+                    status_resolution = True
                 elif field=='start_date':entry.start_date=date.fromisoformat(value) if value else None
                 elif field=='finish_date':entry.finish_date=date.fromisoformat(value) if value else None
                 elif field=='progress' and value is not None:entry.progress=max(0,int(value))
             if body.action=='change' and body.status:
                 entry.status=body.status.value
-                status_changed = True
+                status_resolution = True
+            status_changed = entry.status != prior_status
             media=await db.get(Media, entry.media_id)
             if media.media_type == MediaType.movie:
                 entry.progress=1 if entry.status=='completed' else 0
             if status_changed:mark_status_change(entry,'local')
+            if status_resolution and entry.status in {'planning','paused','dropped','completed'}:
+                from core.stream_actions import queue_local_dismissals
+                await queue_local_dismissals(db, viewer.id, media)
+                dispatch_hidden_status = True
+            elif status_resolution and entry.status == 'watching':
+                from core.stream_actions import queue_restorations
+                await queue_restorations(db, viewer.id, media)
+                dispatch_hidden_status = True
             from core.activity import record_daily_activity, series_activity_details
             position, finished = await series_activity_details(db, media, entry.progress)
             await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                 progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed,
                 previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
+        if body.action=='keep' and entry.status in {'planning','paused','dropped','completed'}:
+            media=await db.get(Media, entry.media_id)
+            mark_status_change(entry, 'local')
+            from core.stream_actions import queue_local_dismissals
+            await queue_local_dismissals(db, viewer.id, media)
+            dispatch_hidden_status = True
     else:
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
         if not entry:raise HTTPException(409,'The tracked entry no longer exists')
@@ -737,15 +755,38 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
         if media.media_type == MediaType.movie:
             entry.progress=1 if status=='completed' else 0
         mark_status_change(entry,'local')
+        if entry.status in {'planning','paused','dropped','completed'}:
+            if (event.kind == 'playback_removed' and body.action == 'confirm'
+                    and event.connection_id):
+                source = await db.get(MediaServerConnection, event.connection_id)
+                if source:
+                    from core.stream_actions import queue_dismissals
+                    await queue_dismissals(db, source, media)
+                else:
+                    from core.stream_actions import queue_local_dismissals
+                    await queue_local_dismissals(db, viewer.id, media)
+            else:
+                from core.stream_actions import queue_local_dismissals
+                await queue_local_dismissals(db, viewer.id, media)
+            dispatch_hidden_status = True
         if status=='watching':
             from core.stream_actions import queue_restorations
             await queue_restorations(db,viewer.id,await db.get(Media,entry.media_id))
+            dispatch_hidden_status = True
         from core.activity import record_daily_activity
         await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=status,
             score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True,
             previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
+        if (event.kind in {'playback_removed','conflict'} and body.action in {'confirm','change'}
+                and entry.status in {'planning','paused','dropped','completed'}):
+            # Provider-inferred removals are applied locally before review.
+            # Confirmation still needs to release their queued outbound work.
+            dispatch_hidden_status = True
     event.state='confirmed' if body.action=='confirm' else 'corrected'
     await db.commit()
+    if dispatch_hidden_status:
+        from core.local_outbound import dispatch_queued_tracking_actions
+        background_tasks.add_task(dispatch_queued_tracking_actions, viewer.id)
     return {'state':event.state}
 
 
@@ -1498,6 +1539,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         ).order_by(TrackingDeliveryJob.id.desc()).limit(1))).scalar_one_or_none()
         result["delivery_job_id"] = latest_job_id
         return result
+    was_new_entry = entry is None
     previous = entry.status if entry else None
     old_start_date = entry.start_date if entry else None
     old_progress = entry.progress if entry else 0
@@ -1572,7 +1614,8 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             local_status_decision = entry.status != previous
     if local_status_decision:
         mark_status_change(entry, 'local')
-    if previous == 'watching' and entry.status != 'watching':
+    if entry.status in {'planning', 'paused', 'dropped', 'completed'} and (
+            previous != entry.status or was_new_entry or body.status is not None):
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, viewer.id, media)
     # Mirror the effective value into the existing provider-facing rating rows.

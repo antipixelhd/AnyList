@@ -1,7 +1,9 @@
 import json
 from datetime import datetime, timezone
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -73,6 +75,73 @@ class _SessionCM:
 
 
 class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_origin_client_id_is_persisted_for_the_installation(self):
+        with tempfile.TemporaryDirectory() as data_dir, \
+                patch.object(nuvio.settings, "data_dir", Path(data_dir)), \
+                patch.object(nuvio, "_origin_client_id", None):
+            first = nuvio._get_origin_client_id()
+            identity_path = Path(data_dir) / nuvio._ORIGIN_CLIENT_ID_FILE
+
+            self.assertRegex(first, r"^anylist-[a-z0-9]{32}$")
+            self.assertEqual(identity_path.read_text(encoding="ascii"), first)
+
+            # Simulate a process restart: discard only the in-memory cache.
+            nuvio._origin_client_id = None
+            self.assertEqual(nuvio._get_origin_client_id(), first)
+
+    async def test_origin_client_id_repairs_a_corrupt_persisted_value(self):
+        with tempfile.TemporaryDirectory() as data_dir, \
+                patch.object(nuvio.settings, "data_dir", Path(data_dir)), \
+                patch.object(nuvio, "_origin_client_id", None):
+            identity_path = Path(data_dir) / nuvio._ORIGIN_CLIENT_ID_FILE
+            identity_path.write_text("invalid identity", encoding="ascii")
+
+            repaired = nuvio._get_origin_client_id()
+
+            self.assertRegex(repaired, r"^anylist-[a-z0-9]{32}$")
+            self.assertEqual(identity_path.read_text(encoding="ascii"), repaired)
+
+    async def test_origin_client_id_is_added_to_current_mutation_rpcs_only(self):
+        seen: dict[str, dict] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            function_name = request.url.path.rsplit("/", 1)[-1]
+            seen[function_name] = json.loads(request.content or b"{}")
+            return httpx.Response(204)
+
+        mutation_rpcs = (
+            "sync_push_watched_items",
+            "sync_push_watch_progress",
+            "sync_delete_watch_progress",
+            "sync_push_profile_settings_blob",
+        )
+        with tempfile.TemporaryDirectory() as data_dir, \
+                patch.object(nuvio.settings, "data_dir", Path(data_dir)), \
+                patch.object(nuvio, "_origin_client_id", None):
+            transport = httpx.MockTransport(handler)
+            async with httpx.AsyncClient(transport=transport) as client:
+                for function_name in mutation_rpcs:
+                    await nuvio._rpc(
+                        client,
+                        "https://api.nuvio.tv",
+                        "access-token",
+                        function_name,
+                        {"p_profile_id": 1, "p_origin_client_id": "request-scoped"},
+                    )
+                await nuvio._rpc(
+                    client,
+                    "https://api.nuvio.tv",
+                    "access-token",
+                    "sync_pull_watch_progress",
+                    {"p_profile_id": 1},
+                )
+
+            expected_id = nuvio._get_origin_client_id()
+            for function_name in mutation_rpcs:
+                self.assertEqual(seen[function_name]["p_origin_client_id"], expected_id)
+                self.assertEqual(seen[function_name]["p_profile_id"], 1)
+            self.assertNotIn("p_origin_client_id", seen["sync_pull_watch_progress"])
+
     async def test_next_up_projection_hides_non_watching_and_untracked_history(self):
         from core.nuvio_visibility import next_up_visibility
         rows = []
@@ -536,7 +605,7 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["p_profile_id"], 3)
             function_name = request.url.path.rsplit("/", 1)[-1]
             items_key = "p_entries" if function_name == "sync_push_watch_progress" else "p_items"
-            self.assertEqual(set(payload), {"p_profile_id", items_key})
+            self.assertEqual(set(payload), {"p_profile_id", items_key, "p_origin_client_id"})
             calls.append((function_name, len(payload[items_key])))
             return httpx.Response(204)
 

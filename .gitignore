@@ -73,6 +73,7 @@ frontend/frontend.log
 backend/data/avatars/
 backend/data/image_cache/
 backend/data/*.pem
+backend/data/anylist_nuvio_sync_client_id*
 GEMINI.md
 CLAUDE.md
 AGENTS.md

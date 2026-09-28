@@ -262,7 +262,7 @@ async def dismiss_stremio(token, record, *, restore=False, reset=False):
     await stremio.datastore_put(token, [candidate])
 
 
-async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
+async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibility_only=False):
     async def refreshed(session):
         # Refresh tokens rotate. Persist independently of the action's
         # transaction so a later API failure cannot strand the connection.
@@ -279,6 +279,16 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False):
             session = await nuvio.refresh_session(conn.url, conn.token, client=client)
             await refreshed(session)
             profile = nuvio.parse_profile_id(conn.server_user_id)
+            content_ids = _nuvio_action_content_ids(record)
+            if visibility_only:
+                if not content_ids:
+                    raise ValueError('Nuvio visibility action has no content IDs')
+                # A removal inferred from this connection already happened on
+                # the provider. Persist only the Next Up decision; do not echo
+                # the removed resume back through watch-progress RPCs.
+                await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
+                    profile, hide=content_ids)
+                return
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
             watched_rows = []
             if reset:
@@ -486,7 +496,8 @@ async def _clear_nuvio_baseline_progress(db, connection_id, removed_rows, *, all
     baseline.snapshot = snapshot
 
 
-async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
+async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
+        source_visibility_connection_id=None):
     filters = [
         MediaServerConnection.user_id == user_id,
         MediaServerConnection.type.in_(['stremio', 'nuvio']),
@@ -526,6 +537,8 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
                 'imdb_id': _nuvio_imdb_id(media),
                 'observed_at': _iso_utc(changed_at),
             }
+            if conn.id == source_visibility_connection_id:
+                payload['visibility_only'] = True
             pending = (await db.execute(select(StreamAction).where(
                 StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
                 StreamAction.state == 'pending', StreamAction.action == 'dismiss',
@@ -552,13 +565,63 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None):
 
 
 async def queue_dismissals(db, source, media):
-    """Mirror an inferred provider removal to the user's other stream accounts."""
-    await _queue_dismissals(db, source.user_id, media, exclude_connection_id=source.id)
+    """Mirror an inferred removal, projecting source Nuvio visibility only."""
+    if source.type == 'nuvio':
+        await _queue_dismissals(db, source.user_id, media,
+            source_visibility_connection_id=source.id)
+    else:
+        await _queue_dismissals(db, source.user_id, media, exclude_connection_id=source.id)
 
 
 async def queue_local_dismissals(db, user_id, media):
     """An explicit local status change wins over every connected stream account."""
     await _queue_dismissals(db, user_id, media)
+
+
+async def _queue_nuvio_next_up_show(db, user_id, media, connections):
+    """Queue a settings-only Next Up show when no playback resume is available."""
+    if media.media_type != MediaType.series:
+        return
+    from core.nuvio_visibility import provider_content_ids
+    from core.watch_intents import _content_id_for_connection
+    from routers.sync import _nuvio_imdb_id
+
+    for conn in connections:
+        if conn.type != 'nuvio':
+            continue
+        baseline = await db.get(StreamBaseline, conn.id)
+        if not baseline:
+            continue
+        snapshot = baseline.snapshot or {}
+        cached_records = [
+            *snapshot.get('records', {}).get('progress', []),
+            *snapshot.get('records', {}).get('watched', []),
+        ]
+        content_ids = provider_content_ids(media, baseline, records=cached_records)
+        if not content_ids:
+            continue
+        primary = _content_id_for_connection(conn, baseline, media, None)
+        if primary not in content_ids:
+            primary = content_ids[0]
+        payload = {
+            'content_id': primary,
+            'content_ids': content_ids,
+            'content_type': 'series',
+            'tmdb_id': media.tmdb_id,
+            'imdb_id': _nuvio_imdb_id(media),
+            'next_up_only': True,
+        }
+        existing = (await db.execute(select(StreamAction).where(
+            StreamAction.connection_id == conn.id, StreamAction.media_id == media.id,
+            StreamAction.action == 'upsert', StreamAction.state == 'pending',
+        ).with_for_update())).scalar_one_or_none()
+        if existing:
+            existing.payload = payload
+            existing.attempts = 0
+            existing.last_error = None
+        else:
+            db.add(StreamAction(user_id=user_id, connection_id=conn.id,
+                media_id=media.id, action='upsert', payload=payload))
 
 
 async def queue_restorations(db, user_id, media):
@@ -574,9 +637,22 @@ async def queue_restorations(db, user_id, media):
     if not entry or entry.status!='watching':
         return
 
+    targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
+        MediaServerConnection.type.in_(['stremio','nuvio']),MediaServerConnection.push_playback.is_(True)))).scalars().all()
+    # A local return to Watching supersedes stale hidden-state work even if the
+    # catalogue cannot currently supply a safe resume position.
+    stale_dismissals=(await db.execute(select(StreamAction).where(
+        StreamAction.user_id==user_id, StreamAction.media_id==media.id,
+        StreamAction.action=='dismiss', StreamAction.state=='pending'))).scalars().all()
+    target_ids={conn.id for conn in targets}
+    for action in stale_dismissals:
+        if action.connection_id in target_ids:
+            action.state='cancelled';action.payload={};action.last_error=None
+
     observed_at=datetime.now(timezone.utc)
     record=await _local_resume_record(db,user_id,media,entry,observed_at)
     if record is None:
+        await _queue_nuvio_next_up_show(db, user_id, media, targets)
         return
     from models.users import UserSettings
     from routers.sync import _ensure_nuvio_imdb_ids, _get_effective_tmdb_key, _nuvio_imdb_id
@@ -585,8 +661,6 @@ async def queue_restorations(db, user_id, media):
     api_key = await _get_effective_tmdb_key(db, settings)
     await _ensure_nuvio_imdb_ids([record['episode_media']], {show.id: show} if show else {}, api_key)
     resolved_imdb_id = _nuvio_imdb_id(show or media)
-    targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
-        MediaServerConnection.type.in_(['stremio','nuvio']),MediaServerConnection.push_playback.is_(True)))).scalars().all()
     for conn in targets:
         baseline=await db.get(StreamBaseline,conn.id)
         if not baseline or not baseline.approved:
@@ -634,13 +708,6 @@ async def queue_restorations(db, user_id, media):
                 'content_type': 'series',
                 'next_up_only': True,
             }
-        # A progress row should replace an older dismissal for the same title.
-        stale_dismissals=(await db.execute(select(StreamAction).where(
-            StreamAction.user_id==user_id,StreamAction.connection_id==conn.id,
-            StreamAction.media_id==media.id,StreamAction.action=='dismiss',
-            StreamAction.state=='pending'))).scalars().all()
-        for action in stale_dismissals:
-            action.state='cancelled';action.payload={};action.last_error=None
         existing=(await db.execute(select(StreamAction).where(
             StreamAction.connection_id==conn.id,StreamAction.media_id==media.id,
             StreamAction.action=='upsert',StreamAction.state=='pending').with_for_update())).scalar_one_or_none()
@@ -776,6 +843,11 @@ async def dispatch_stream_actions(db, user_id):
         if invalid:
             action.state = 'cancelled'; action.payload = {}
             continue
+        media = await db.get(Media, action.media_id)
+        if not media and action.action != 'reset':
+            action.state = 'cancelled'; action.payload = {}
+            action.last_error = None
+            continue
         try:
             await require_stream_reconciliation(db, conn)
         except HTTPException:
@@ -783,9 +855,13 @@ async def dispatch_stream_actions(db, user_id):
         action.attempts += 1
         try:
             payload = dict(action.payload or {})
-            visibility_only = (conn.type == 'nuvio' and action.action == 'upsert'
-                and payload.get('next_up_only') is True)
+            visibility_only = (conn.type == 'nuvio' and (
+                action.action == 'dismiss' and payload.get('visibility_only') is True
+                or action.action == 'upsert' and payload.get('next_up_only') is True
+            ))
             if conn.type == 'nuvio' and (action.action == 'dismiss' or visibility_only):
+                if not media:
+                    raise RemotePlaybackChanged()
                 baseline_for_aliases = await db.get(StreamBaseline, conn.id)
                 from core.nuvio_visibility import provider_content_ids
                 from routers.sync import _nuvio_imdb_id
@@ -809,7 +885,9 @@ async def dispatch_stream_actions(db, user_id):
                 elif action.action == 'upsert' and visibility_only:
                     await show_nuvio_next_up(db, conn, payload)
                 elif action.action == 'upsert':await push_nuvio_progress(db, conn, payload)
-                else:await dismiss_nuvio(db, conn, payload)
+                elif action.action == 'dismiss':
+                    await dismiss_nuvio(db, conn, payload, visibility_only=visibility_only)
+                else:continue
             else:
                 continue
             action.state = 'applied'; action.last_error = None

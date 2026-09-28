@@ -1154,6 +1154,7 @@ async def _track_imported_root(
         TrackedEntry.user_id == user_id, TrackedEntry.media_id == root.id,
     ).with_for_update())).scalar_one_or_none()
     is_new = entry is None
+    previous_status = entry.status if entry is not None else None
     if entry is None:
         initial_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
         entry = TrackedEntry(user_id=user_id, media_id=root.id, status=initial_status, progress=0)
@@ -1165,6 +1166,9 @@ async def _track_imported_root(
     elif outcome.get("status_overridden") and entry.status != desired_status:
         entry.status = desired_status
         mark_status_change(entry, "netflix-import")
+    if (is_new or previous_status != entry.status) and entry.status in {"planning", "paused", "dropped", "completed"}:
+        from core.stream_actions import queue_local_dismissals
+        await queue_local_dismissals(db, user_id, root)
     entry.progress = max(int(entry.progress or 0), progress_count)
     if not is_movie and entry.start_date is None and accepted_dates:
         entry.start_date = min(accepted_dates)
