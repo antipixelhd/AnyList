@@ -389,3 +389,83 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     await dismiss_stremio('fixture',{'content_id':'tt1','position':30,'duration':100})
                 write.assert_not_awaited()
+
+    async def test_title_dismissal_clears_live_next_video_without_touching_library_or_watches(self):
+        remote = {
+            '_id': 'tt1', 'type': 'series', 'removed': False, 'temp': False,
+            'name': 'Fixture', '_mtime': '2026-09-28T12:00:00Z',
+            'state': {
+                'timeOffset': 100, 'duration': 100, 'video_id': 'tt1:1:4',
+                'watched': 'episode-bitfield', 'timesWatched': 3, 'flaggedWatched': 1,
+                'lastWatched': '2026-09-27T12:00:00Z', 'timeWatched': 400,
+                'overallTimeWatched': 900,
+            },
+        }
+        confirmed = {**remote, 'state': {**remote['state'],
+            'timeOffset': 0, 'duration': 0, 'video_id': None}}
+        with patch('core.stremio.datastore_get', AsyncMock(side_effect=[[remote], [confirmed]])) as read, \
+             patch('core.stremio.datastore_put', AsyncMock()) as write:
+            await dismiss_stremio('fixture', {
+                'content_id': 'tt1', 'content_ids': ['tt1'], 'content_type': 'series',
+                'title_dismissal': True, 'observed_at': '2026-09-29T12:00:00Z',
+            })
+
+        candidate = write.await_args.args[1][0]
+        self.assertEqual(candidate['state']['timeOffset'], 0)
+        self.assertEqual(candidate['state']['duration'], 0)
+        self.assertIsNone(candidate['state']['video_id'])
+        for key in ('watched', 'timesWatched', 'flaggedWatched', 'lastWatched',
+                    'timeWatched', 'overallTimeWatched'):
+            self.assertEqual(candidate['state'][key], remote['state'][key])
+        for key in ('removed', 'temp', 'name'):
+            self.assertEqual(candidate[key], remote[key])
+        self.assertTrue(read.await_args_list[0].kwargs['allow_missing'])
+        self.assertEqual(read.await_count, 2)
+
+    async def test_title_dismissal_clears_zero_offset_next_episode_pointer(self):
+        remote = {'_id': 'tt1', 'type': 'series', 'removed': False, 'temp': False,
+            'state': {'timeOffset': 0, 'duration': 0, 'video_id': 'tt1:1:5', 'watched': 'bits'}}
+        confirmed = {**remote, 'state': {**remote['state'], 'video_id': None}}
+        with patch('core.stremio.datastore_get', AsyncMock(side_effect=[[remote], [confirmed]])), \
+             patch('core.stremio.datastore_put', AsyncMock()) as write:
+            await dismiss_stremio('fixture', {'content_id': 'tt1', 'content_type': 'series',
+                'title_dismissal': True, 'observed_at': '2026-09-29T12:00:00Z'})
+        self.assertIsNone(write.await_args.args[1][0]['state']['video_id'])
+
+    async def test_title_dismissal_missing_row_and_already_clear_row_are_idempotent(self):
+        record = {'content_id': 'tt1', 'content_type': 'movie', 'title_dismissal': True,
+            'observed_at': '2026-09-29T12:00:00Z'}
+        with patch('core.stremio.datastore_get', AsyncMock(return_value=[])) as read, \
+             patch('core.stremio.datastore_put', AsyncMock()) as write:
+            await dismiss_stremio('fixture', record)
+        self.assertTrue(read.await_args.kwargs['allow_missing'])
+        write.assert_not_awaited()
+
+        already_clear = {'_id': 'tt1', 'type': 'movie', 'removed': False, 'temp': False,
+            'state': {'timeOffset': 0, 'duration': 0, 'video_id': 'tt1', 'watched': 'history'}}
+        with patch('core.stremio.datastore_get', AsyncMock(return_value=[already_clear])), \
+             patch('core.stremio.datastore_put', AsyncMock()) as write:
+            await dismiss_stremio('fixture', record)
+        write.assert_not_awaited()
+
+    async def test_title_dismissal_refuses_newer_live_activity(self):
+        remote = {'_id': 'tt1', 'type': 'movie', 'removed': False, 'temp': False,
+            '_mtime': '2026-09-30T12:00:00Z',
+            'state': {'timeOffset': 30, 'duration': 100, 'video_id': 'tt1'}}
+        with patch('core.stremio.datastore_get', AsyncMock(return_value=[remote])), \
+             patch('core.stremio.datastore_put', AsyncMock()) as write:
+            with self.assertRaises(RemotePlaybackChanged):
+                await dismiss_stremio('fixture', {'content_id': 'tt1', 'content_type': 'movie',
+                    'title_dismissal': True, 'observed_at': '2026-09-29T12:00:00Z'})
+        write.assert_not_awaited()
+
+    async def test_title_dismissal_requires_readback_confirmation(self):
+        remote = {'_id': 'tt1', 'type': 'movie', 'removed': False, 'temp': False,
+            '_mtime': '2026-09-28T12:00:00Z',
+            'state': {'timeOffset': 30, 'duration': 100, 'video_id': 'tt1'}}
+        not_cleared = {**remote, 'state': {**remote['state'], 'timeOffset': 30}}
+        with patch('core.stremio.datastore_get', AsyncMock(side_effect=[[remote], [not_cleared]])), \
+             patch('core.stremio.datastore_put', AsyncMock()):
+            with self.assertRaises(stremio.StremioAPIError):
+                await dismiss_stremio('fixture', {'content_id': 'tt1', 'content_type': 'movie',
+                    'title_dismissal': True, 'observed_at': '2026-09-29T12:00:00Z'})

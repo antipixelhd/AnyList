@@ -3010,12 +3010,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         review.state='confirmed';await self.db.commit()
         await require_stream_reconciliation(self.db,conn)
 
-    async def test_pull_only_connection_cannot_drop_existing_watching_after_first_import(self):
+    async def test_stremio_pull_only_connection_detects_removal_after_first_import(self):
         from core.tracking_snapshot import observe_stream_snapshot
 
         self.movie.tmdb_id = 987654302
         await self.save(self.movie, status='watching')
-        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Pull only',
+        conn = MediaServerConnection(user_id=self.owner.id, type='stremio', name='Pull only',
             url='https://example.test', token='fixture', sync_playback=True,
             push_playback=False)
         self.db.add(conn)
@@ -3033,12 +3033,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             TrackedEntry.user_id == self.owner.id,
             TrackedEntry.media_id == self.movie.id,
         ))).scalar_one()
-        self.assertEqual(entry.status, 'watching')
+        self.assertEqual(entry.status, 'dropped')
         reviews = (await self.db.execute(select(SyncReview).where(
             SyncReview.connection_id == conn.id,
             SyncReview.kind == 'playback_removed',
         ))).scalars().all()
-        self.assertEqual(reviews, [])
+        self.assertEqual([(review.state, review.proposed_status) for review in reviews], [('pending', 'dropped')])
 
     async def test_new_pull_only_connection_preserves_local_continue_watching(self):
         from routers.sync import _apply_nuvio_progress

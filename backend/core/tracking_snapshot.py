@@ -424,10 +424,9 @@ async def observe_stream_snapshot(
     inferred_watch_ids = set()
     old_active=previous.get('progress',{})
     outbound = dict(previous.get('outbound', {}))
-    # Nuvio playback pulls remain authoritative for its own removals even when
-    # progress export is disabled; other pull-only sources do not infer them.
+    # Streaming playback pulls can report removals independently of export.
     removed=set(old_active)-set(active) if not first and sync_playback and (
-        conn.push_playback or conn.type == 'nuvio'
+        conn.push_playback or conn.type in ('nuvio', 'stremio')
     ) else set()
     pending_writes = (await db.execute(select(StreamAction.payload).where(
         StreamAction.connection_id == conn.id,
@@ -493,7 +492,7 @@ async def observe_stream_snapshot(
         if not media:continue
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==conn.user_id,TrackedEntry.media_id==media.id))).scalar_one_or_none()
         if not entry or entry.status=='completed':continue
-        if conn.type == 'nuvio' and entry.status != 'watching':continue
+        if conn.type in ('nuvio', 'stremio') and entry.status != 'watching':continue
         pending=(await db.execute(select(SyncReview.id).where(SyncReview.user_id==conn.user_id,SyncReview.media_id==media.id,SyncReview.state=='pending',SyncReview.kind.in_(['playback_removed','conflict'])))).first()
         if pending:continue
         # A local edit since the prior source observation has uncertain ordering.

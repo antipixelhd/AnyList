@@ -244,15 +244,23 @@ async def queue_progress_update(db, source, media, record):
 
 
 async def dismiss_stremio(token, record, *, restore=False, reset=False):
+    title_dismissal = record.get('title_dismissal') is True and not restore and not reset
+    content_ids = list(dict.fromkeys(str(value) for value in
+        (record.get('content_ids') or [record.get('content_id')]) if value))
     rows = await stremio.datastore_get(
         token,
-        ids=[record['content_id']],
-        allow_missing=reset,
+        ids=content_ids if title_dismissal else [record['content_id']],
+        allow_missing=reset or title_dismissal,
     )
     # A deleted title that is already absent from the provider has no remote
     # playback state left to clear. Treat it as a completed reset rather than
     # failing the queued deletion action on datastore_get's missing-item check.
     if not rows and reset:
+        return
+    if title_dismissal:
+        target_ids = set(content_ids)
+        rows = [item for item in rows if str(item.get('_id') or '') in target_ids]
+        await _dismiss_stremio_title_rows(token, record, rows)
         return
     item = rows[0]
     if item.get('type') and record.get('content_type') and item['type']!=record['content_type']:
@@ -299,6 +307,60 @@ async def dismiss_stremio(token, record, *, restore=False, reset=False):
     state['timeOffset'] = 0
     candidate = {**item, 'state': state, '_mtime': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
     await stremio.datastore_put(token, [candidate])
+
+
+async def _dismiss_stremio_title_rows(token, record, rows):
+    """Clear playback/Next Up pointers without changing membership or watches."""
+    if not rows:
+        return
+    observed_at = provider_changed_at({'modified_at': record.get('observed_at')})
+    candidates = []
+    for item in rows:
+        if item.get('type') and record.get('content_type') and item['type'] != record['content_type']:
+            raise RemotePlaybackChanged()
+        state = dict(item.get('state') or {})
+        content_id = str(item.get('_id') or '')
+        video_id = state.get('video_id')
+        # Stremio can retain either a non-zero (including finished) resume or
+        # a series' next-video pointer after its last active resume left our
+        # bounded baseline. Clear both forms while preserving watched fields.
+        needs_clear = bool(state.get('timeOffset')) or bool(video_id and video_id != content_id)
+        if not needs_clear:
+            continue
+        remote_at = provider_changed_at({'modified_at': item.get('_mtime')})
+        if remote_at and (observed_at is None or remote_at > observed_at):
+            raise RemotePlaybackChanged()
+        cleared = {**state, 'timeOffset': 0, 'duration': 0, 'video_id': None}
+        candidates.append({
+            **item,
+            'state': cleared,
+            '_mtime': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        })
+    if not candidates:
+        return
+    await stremio.datastore_put(token, candidates)
+    confirmed_rows = await stremio.datastore_get(
+        token, ids=[str(item['_id']) for item in candidates], allow_missing=True,
+    )
+    confirmed_by_id = {str(item['_id']): item for item in confirmed_rows}
+    for candidate in candidates:
+        confirmed = confirmed_by_id.get(str(candidate['_id']))
+        if confirmed is None:
+            # A concurrently removed record can no longer appear in Continue
+            # Watching, so its absence confirms the requested dismissal.
+            continue
+        state = confirmed.get('state') or {}
+        if (state.get('timeOffset') not in (None, 0, '0')
+                or state.get('duration') not in (None, 0, '0')
+                or state.get('video_id') is not None):
+            raise stremio.StremioAPIError('Stremio did not confirm Continue Watching dismissal')
+        if confirmed.get('removed') != candidate.get('removed') or confirmed.get('temp') != candidate.get('temp'):
+            raise stremio.StremioAPIError('Stremio changed library membership during Continue Watching dismissal')
+        original_state = candidate['state']
+        for field in ('watched', 'timesWatched', 'flaggedWatched', 'lastWatched',
+                      'timeWatched', 'overallTimeWatched'):
+            if state.get(field) != original_state.get(field):
+                raise stremio.StremioAPIError('Stremio changed watched history during Continue Watching dismissal')
 
 
 async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibility_only=False):
@@ -620,14 +682,108 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
         has_resume = any(baseline.snapshot.get('mappings', {}).get(key) == media.tmdb_id
             and row.get('content_type') == media.media_type.value
             for key, row in baseline.snapshot.get('progress', {}).items())
-        for key, record in baseline.snapshot.get('progress', {}).items():
-            if baseline.snapshot.get('mappings', {}).get(key) != media.tmdb_id or record.get('content_type') != media.media_type.value:
-                continue
+        matching_progress = [
+            (key, record) for key, record in baseline.snapshot.get('progress', {}).items()
+            if baseline.snapshot.get('mappings', {}).get(key) == media.tmdb_id
+            and record.get('content_type') == media.media_type.value
+        ]
+        if not has_resume:
+            content_ids = _stremio_known_content_ids(media, baseline.snapshot or {})
+            if content_ids:
+                entry = (await db.execute(select(TrackedEntry).where(
+                    TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id,
+                ))).scalar_one_or_none()
+                changed_at = status_changed_at(entry) if entry else None
+                observed_at = _iso_utc(changed_at or datetime.now(timezone.utc))
+                payload = {
+                    'content_id': content_ids[0],
+                    'content_ids': content_ids,
+                    'content_type': media.media_type.value,
+                    'title_dismissal': True,
+                    'observed_at': observed_at,
+                }
+                pending = (await db.execute(select(StreamAction).where(
+                    StreamAction.connection_id == conn.id,
+                    StreamAction.media_id == media.id,
+                    StreamAction.state == 'pending',
+                    StreamAction.action == 'dismiss',
+                ).with_for_update())).scalar_one_or_none()
+                if pending:
+                    pending.payload = payload
+                    pending.attempts = 0
+                    pending.last_error = None
+                else:
+                    db.add(StreamAction(user_id=user_id, connection_id=conn.id,
+                        media_id=media.id, action='dismiss', payload=payload))
+            continue
+        for key, record in matching_progress:
             pending = (await db.execute(select(StreamAction.id).where(StreamAction.connection_id == conn.id,
                 StreamAction.media_id == media.id, StreamAction.state == 'pending', StreamAction.action == 'dismiss'))).first()
             if not pending:
                 db.add(StreamAction(user_id=user_id,connection_id=conn.id,media_id=media.id,
                     action='dismiss',payload=dict(record)))
+
+
+def _stremio_known_content_ids(media, snapshot):
+    """Resolve current Stremio IDs for a title, including a safe IMDb fallback."""
+    target_tmdb = str(getattr(media, 'tmdb_id', None) or '').strip()
+    imdb_id = _stremio_imdb_id(media) or ''
+    if not target_tmdb:
+        return [imdb_id] if imdb_id else []
+
+    def normalize_tmdb(value):
+        text = str(value or '').strip()
+        return text[5:] if text.startswith('tmdb:') else text
+
+    mappings = snapshot.get('mappings', {}) if isinstance(snapshot, dict) else {}
+    known_ids = []
+    for key, value in mappings.items():
+        if normalize_tmdb(value) == target_tmdb:
+            content_id = str(key or '').strip()
+            if content_id and content_id not in known_ids:
+                known_ids.append(content_id)
+
+    # Library and watched snapshots can retain a usable provider ID even when
+    # the current progress snapshot has no row for this title.
+    library_ids = snapshot.get('library', []) if isinstance(snapshot, dict) else []
+    if isinstance(library_ids, (list, tuple, set)):
+        for value in library_ids:
+            content_id = str(value or '').strip()
+            if (content_id in mappings and normalize_tmdb(mappings.get(content_id)) == target_tmdb
+                    or content_id == f'tmdb:{target_tmdb}'
+                    or content_id == imdb_id and imdb_id):
+                if content_id not in known_ids:
+                    known_ids.append(content_id)
+    records = snapshot.get('records', {}) if isinstance(snapshot, dict) else {}
+    for section in ('library', 'watched'):
+        rows = records.get(section, []) if isinstance(records, dict) else []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            content_id = str(row.get('content_id') or '').strip()
+            row_type = str(row.get('content_type') or '').strip()
+            if row_type and row_type != media.media_type.value:
+                continue
+            mapped_tmdb = mappings.get(content_id)
+            row_tmdb = row.get('tmdb_id') or row.get('tmdb')
+            if (normalize_tmdb(mapped_tmdb) == target_tmdb
+                    or normalize_tmdb(row_tmdb) == target_tmdb
+                    or content_id == f'tmdb:{target_tmdb}'
+                    or content_id == imdb_id and imdb_id):
+                if content_id and content_id not in known_ids:
+                    known_ids.append(content_id)
+    if not known_ids and imdb_id:
+        known_ids.append(imdb_id)
+    return known_ids
+
+
+def _stremio_imdb_id(media):
+    data = getattr(media, 'tmdb_data', None) or {}
+    external_ids = data.get('external_ids', {}) if isinstance(data, dict) else {}
+    candidate = str(getattr(media, 'imdb_id', None)
+        or (external_ids.get('imdb_id') if isinstance(external_ids, dict) else '')
+        or (data.get('imdb_id') if isinstance(data, dict) else '') or '').strip()
+    return candidate if candidate.startswith('tt') and candidate[2:].isdigit() else None
 
 
 async def queue_dismissals(db, source, media):
@@ -973,9 +1129,12 @@ async def dispatch_stream_actions(db, user_id):
             if not visibility_only:
                 baseline = await db.get(StreamBaseline, conn.id)
                 snapshot = dict(baseline.snapshot)
-                content_ids = (_nuvio_action_content_ids(payload)
-                    if conn.type == 'nuvio' and action.action in ('dismiss', 'reset')
-                    else [payload['content_id']])
+                if conn.type == 'nuvio' and action.action in ('dismiss', 'reset'):
+                    content_ids = _nuvio_action_content_ids(payload)
+                elif action.action == 'dismiss' and payload.get('title_dismissal') is True:
+                    content_ids = list(dict.fromkeys(payload.get('content_ids', [])))
+                else:
+                    content_ids = [payload['content_id']]
                 key = payload['content_id']
                 snapshot['progress'] = {k:v for k,v in snapshot.get('progress', {}).items()
                     if str(k) not in content_ids and str(v.get('content_id') or '') not in content_ids}
