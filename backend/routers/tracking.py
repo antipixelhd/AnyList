@@ -1125,9 +1125,10 @@ def entry_data(entry, media, owner=False):
         "season_scores": entry.season_scores, "progress": entry.progress,
         "favorite": entry.favorite, "start_date": entry.start_date, "finish_date": entry.finish_date,
         "rewatch_count": entry.rewatch_count, "updated_at": entry.updated_at,
+        "notes": entry.notes,
     }
     if owner:
-        result.update(notes=entry.notes, manual_score=entry.manual_score)
+        result.update(manual_score=entry.manual_score)
     return result
 
 

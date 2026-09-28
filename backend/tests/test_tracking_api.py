@@ -296,16 +296,44 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         duplicate = await self.client.put('/tracking/favorites/order', json={'media_ids': [self.movie.id, self.movie.id]})
         self.assertEqual(duplicate.status_code, 422, duplicate.text)
 
-    async def test_planning_rating_and_private_notes(self):
-        res=await self.save(self.movie,status='planning',manual_score=7.5,notes='private journal')
+    async def test_planning_rating_and_notes_follow_list_access(self):
+        note = 'Public list note\nSecond line <script>plain text</script>'
+        res=await self.save(self.movie,status='planning',manual_score=7.5,notes=note)
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['score'],7.5)
         self.assertIsNone(res.json()['start_date'])
         self.viewer=self.friend
         res=await self.client.get(f'/tracking/profile/{self.owner.username}/movie')
         self.assertEqual(res.status_code,200,res.text)
-        self.assertNotIn('notes',res.json()['entries'][0])
+        self.assertEqual(res.json()['entries'][0]['notes'], note)
+        self.assertNotIn('manual_score', res.json()['entries'][0])
         self.assertFalse(res.json()['owner'])
+
+        self.viewer = None
+        res = await self.client.get(f'/tracking/profile/{self.owner.username}/movie')
+        self.assertEqual(res.status_code, 401, res.text)
+
+        settings = await self.db.get(GlobalSettings, 1)
+        settings.enable_logged_out_navigation = True
+        await self.db.commit()
+        self.viewer = None
+        res = await self.client.get(f'/tracking/profile/{self.owner.username}/movie')
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()['entries'][0]['notes'], note)
+
+        self.owner.profile.privacy_level = PrivacyLevel.private
+        await self.db.commit()
+        res = await self.client.get(f'/tracking/profile/{self.owner.username}/movie')
+        self.assertEqual(res.status_code, 403, res.text)
+        self.assertNotIn(note, res.text)
+
+        self.viewer = self.friend
+        res = await self.client.get(f'/tracking/profile/{self.owner.username}/movie')
+        self.assertEqual(res.status_code, 403, res.text)
+        self.viewer = self.owner
+        res = await self.client.get(f'/tracking/profile/{self.owner.username}/movie')
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()['entries'][0]['notes'], note)
 
     async def test_anonymous_comment_reads_follow_instance_access_switch(self):
         self.viewer = None

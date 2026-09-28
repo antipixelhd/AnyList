@@ -1,0 +1,53 @@
+---
+import Icon from './Icon.astro';
+interface Props {
+  rewatchCount?: number;
+  notes?: string | null;
+}
+const {rewatchCount = 0, notes} = Astro.props;
+const rewatchLabel = `${rewatchCount} ${rewatchCount === 1 ? 'rewatch' : 'rewatches'}`;
+const hasNote = Boolean(notes?.trim());
+---
+{(rewatchCount > 0 || hasNote) && <span class="entry-annotations">
+  {rewatchCount > 0 && <span class="entry-rewatch" role="img" tabindex="0" aria-label={rewatchLabel} data-rewatch-label={rewatchLabel}><Icon name="arrows-rotate"/></span>}
+  {hasNote && <span class="entry-note" role="img" tabindex="0" aria-label={`Note: ${notes}`}>
+    <Icon name="comment"/>
+    <span class="entry-note-tooltip" aria-hidden="true">{notes}</span>
+  </span>}
+</span>}
+<script>
+  let annotationListeners: AbortController;
+  function initAnnotations() {
+    annotationListeners?.abort();
+    annotationListeners = new AbortController();
+    const {signal} = annotationListeners;
+    // Keep long notes inside the viewport in compact and cover-grid layouts.
+    const place = (note: HTMLElement) => {
+      note.removeAttribute('data-tooltip-dismissed');
+      const tooltip = note.querySelector<HTMLElement>('.entry-note-tooltip')!;
+      tooltip.style.translate = '0 0';
+      tooltip.classList.remove('tooltip-below');
+      const bounds = tooltip.getBoundingClientRect();
+      const shift = bounds.left < 12 ? 12 - bounds.left : bounds.right > window.innerWidth - 12 ? window.innerWidth - 12 - bounds.right : 0;
+      tooltip.style.translate = `${shift}px 0`;
+      const below = bounds.top < 12;
+      tooltip.classList.toggle('tooltip-below', below);
+    };
+    document.addEventListener('pointerover', event => {
+      const note = (event.target as HTMLElement).closest<HTMLElement>('.entry-note');
+      if (note && !note.contains(event.relatedTarget as Node | null)) place(note);
+    }, {signal});
+    document.addEventListener('focusin', event => {
+      const note = (event.target as HTMLElement).closest<HTMLElement>('.entry-note');
+      if (note) place(note);
+    }, {signal});
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') (event.target as HTMLElement).closest('.entry-note')?.setAttribute('data-tooltip-dismissed', 'true');
+    }, {signal});
+    window.addEventListener('resize', () => {
+      document.querySelectorAll<HTMLElement>('.entry-note:hover,.entry-note:focus-within').forEach(place);
+    }, {signal});
+  }
+  initAnnotations();
+  document.addEventListener('astro:page-load', initAnnotations);
+</script>

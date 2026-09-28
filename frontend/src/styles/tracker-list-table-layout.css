@@ -114,20 +114,26 @@
   text-overflow:ellipsis;
   white-space:nowrap
 }
-.entry-rewatch {
+.entry-annotations {
+  display:inline-flex;
+  align-items:center;
+  gap:12px;
+  flex:none;
+  margin-left:auto;
+}
+.entry-rewatch,.entry-note {
   position:relative;
   display:inline-grid;
   place-items:center;
   flex:none;
-  margin-left:auto;
   color:#8da1b6;
   font-size:var(--type-panel-size);
   line-height:1
 }
-.entry-rewatch:hover,.entry-rewatch:focus-visible {
+.entry-rewatch:hover,.entry-rewatch:focus-visible,.entry-note:hover,.entry-note:focus-visible {
   color:var(--bright)
 }
-.entry-rewatch:focus-visible {
+.entry-rewatch:focus-visible,.entry-note:focus-visible {
   outline:2px solid var(--blue);
   outline-offset:4px;
   border-radius:2px
@@ -155,13 +161,54 @@
 .entry-rewatch:hover:after,.entry-rewatch:focus-visible:after {
   opacity:1
 }
-.grid-view .entry-rewatch {
+.entry-note-tooltip {
+  position:absolute;
+  z-index:40;
+  right:0;
+  bottom:calc(100% + 9px);
+  width:max-content;
+  max-width:min(340px,calc(100vw - 24px));
+  max-height:240px;
+  overflow:auto;
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:4px;
+  background:#0a131e;
+  color:var(--bright);
+  box-shadow:0 5px 16px #02070d80;
+  font-size:var(--type-label-size);
+  font-weight:var(--type-body-weight);
+  line-height:1.5;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  visibility:hidden;
+  opacity:0;
+  transition:opacity .12s ease;
+}
+.entry-note:before {
+  content:'';
+  position:absolute;
+  inset:-10px -4px;
+}
+.entry-note:hover .entry-note-tooltip,.entry-note:focus-within .entry-note-tooltip {
+  visibility:visible;
+  opacity:1;
+}
+.entry-note[data-tooltip-dismissed] .entry-note-tooltip {
+  visibility:hidden;
+  opacity:0;
+}
+.entry-note-tooltip.tooltip-below {
+  top:calc(100% + 9px);
+  bottom:auto;
+}
+.grid-view .entry-annotations {
   position:absolute;
   right:8px;
   bottom:8px;
   margin:0;
-  padding:7px;
-  border-radius:50%;
+  padding:7px 9px;
+  border-radius:16px;
   background:#0a131ecc
 }
 @media(max-width:650px) {
@@ -205,16 +252,16 @@
     min-height:18px;
     line-height:18px
   }
-  .entry-rewatch {
+  .entry-rewatch,.entry-note {
     font-size:var(--type-control-size)
   }
-  .entry-rewatch:after {
+  .entry-rewatch:after,.entry-note-tooltip {
     right:0;
     transform:none
   }
 }
 @media(prefers-reduced-motion:reduce) {
-  .entry-rewatch:after {
+  .entry-rewatch:after,.entry-note-tooltip {
     transition:none
   }
 }
