@@ -111,6 +111,9 @@
     const clone = doc.documentElement.cloneNode(true) as HTMLElement;
     if (url.pathname === '/connections' && !redactedConnections(doc, clone)) return null;
     clone.querySelectorAll('[data-token]').forEach(element => element.removeAttribute('data-token'));
+    // An open attribute copied into cached HTML restores a non-modal dialog:
+    // it has no top-layer backdrop or focus lock. Cache pages with dialogs shut.
+    clone.querySelectorAll('dialog').forEach(dialog => dialog.removeAttribute('open'));
     clone.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(input => {
       input.value = '';
       input.removeAttribute('value');
@@ -225,6 +228,7 @@
 
     document.addEventListener('astro:before-preparation', rawEvent => {
       if (!isTransitionBeforePreparationEvent(rawEvent)) return;
+      closeNavigationDialogs();
       resetForIdentity();
       const event = rawEvent;
       const key = keyFor(event.to);
@@ -253,6 +257,14 @@
       if (state.usedCached.has(key)) void validate(url, key);
       else remember(url, document);
     });
+    window.addEventListener('pagehide', closeNavigationDialogs);
+    window.addEventListener('pageshow', event => {
+      if (event.persisted) closeNavigationDialogs();
+    });
+  }
+
+  function closeNavigationDialogs() {
+    document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close());
   }
 
   remember(new URL(location.href), document);
