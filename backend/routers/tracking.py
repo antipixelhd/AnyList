@@ -798,7 +798,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     following_ids = (await db.execute(select(Follow.following_id).where(Follow.follower_id == user.id))).scalars().all()
     followers_ids = (await db.execute(select(Follow.follower_id).where(Follow.following_id == user.id))).scalars().all()
     people = (await db.execute(select(User, UserProfileData).join(UserProfileData, UserProfileData.user_id == User.id).where(User.id.in_(set(following_ids + followers_ids)), UserProfileData.privacy_level == PrivacyLevel.public))).all()
-    visible = [{"id":u.id, "username":u.username, "display_name":p.display_name or u.username,
+    visible = [{"id":u.id, "username":u.username, "display_name":u.username,
                 "has_avatar":bool(p.avatar_path), "following":u.id in following_ids, "follower":u.id in followers_ids}
                for u,p in people]
     scores = [score for entry, _ in entries if (score := effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)) is not None]
@@ -864,11 +864,11 @@ async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(g
     if not term:return {'results':[]}
     rows=(await db.execute(select(User,UserProfileData).join(UserProfileData,UserProfileData.user_id==User.id).where(
         UserProfileData.privacy_level==PrivacyLevel.public,
-        or_(User.username.ilike(f'%{term}%'),UserProfileData.display_name.ilike(f'%{term}%'))
+        User.username.ilike(f'%{term}%')
     ).order_by(User.username).limit(24))).all()
     followed=set((await db.execute(select(Follow.following_id).where(Follow.follower_id==viewer.id,
         Follow.following_id.in_([u.id for u,_ in rows])))).scalars()) if rows else set()
-    return {'results':[{'id':u.id,'username':u.username,'display_name':p.display_name or u.username,
+    return {'results':[{'id':u.id,'username':u.username,'display_name':u.username,
         'bio':p.bio,'has_avatar':bool(p.avatar_path),'following':u.id in followed,'owner':u.id==viewer.id} for u,p in rows]}
 
 
@@ -1080,7 +1080,7 @@ def activity_data(rows, *, include_user=False, limit=12):
                 **({
                     "user_id": user.id,
                     "username": user.username,
-                    "display_name": profile.display_name or user.username,
+                    "display_name": user.username,
                     "has_avatar": bool(profile.avatar_path),
                 } if user else {}),
                 "status": activity.status,

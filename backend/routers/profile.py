@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, case, or_
 from sqlalchemy.orm import aliased
+from sqlalchemy.exc import IntegrityError
 from datetime import date as DateType, timedelta as TimeDelta
-from typing import Optional
+from typing import Annotated, Optional
 
 from db import get_db, AsyncSessionLocal
 from core import tmdb as tmdb_client
@@ -145,6 +146,28 @@ async def update_profile(
     await db.commit()
     await db.refresh(profile)
     return profile
+
+
+CurrentAccount = Annotated[User, Depends(get_current_user)]
+ProfileDB = Annotated[AsyncSession, Depends(get_db)]
+
+
+@router.patch("/me/account-name", response_model=schemas.AccountNameResponse)
+async def rename_account(body: schemas.AccountNameUpdate, current_user: CurrentAccount, db: ProfileDB):
+    # Use the same exact-match uniqueness rules as registration and login.
+    taken = await db.scalar(select(User.id).where(
+        User.username == body.username, User.id != current_user.id,
+    ))
+    if taken is not None:
+        raise HTTPException(status_code=409, detail="This account name is already taken. Choose another name.")
+    current_user.username = body.username
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The database constraint also protects simultaneous renames/registration.
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This account name is already taken. Choose another name.")
+    return {"username": body.username}
 
 
 _ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -467,12 +490,12 @@ async def search_users(
 
     pattern = f"%{q.strip()}%"
 
-    # Match on username or display_name, only public profiles (+ own profile)
+    # Match on account name, only public profiles (+ own profile)
     users_q = await db.execute(
         select(User, UserProfileData)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
         .where(
-            (User.username.ilike(pattern)) | (UserProfileData.display_name.ilike(pattern)),
+            User.username.ilike(pattern),
             (UserProfileData.privacy_level == PrivacyLevel.public)
             | (User.id == current_user.id),
         )
@@ -535,7 +558,7 @@ async def search_users(
 
     results = []
     for u, p in rows:
-        display_name = p.display_name if p and p.display_name else u.username
+        display_name = u.username
         results.append({
             "id": u.id,
             "username": u.username,
@@ -816,7 +839,7 @@ async def get_public_profile(
     followers_preview = [
         {
             "id": u.id,
-            "display_name": p.display_name if p and p.display_name else u.username,
+            "display_name": u.username,
             "avatar_url": f"/profile/avatar/{u.id}" if (p and p.avatar_path) else None,
         }
         for u, p in followers_q.all()
@@ -836,7 +859,7 @@ async def get_public_profile(
     following_preview = [
         {
             "id": u.id,
-            "display_name": p.display_name if p and p.display_name else u.username,
+            "display_name": u.username,
             "avatar_url": f"/profile/avatar/{u.id}" if (p and p.avatar_path) else None,
         }
         for u, p in following_q.all()
@@ -920,8 +943,8 @@ async def get_public_profile(
         for row in lists_rows
     ]
 
-    # Compute display_name from the already-loaded profile to avoid lazy-load in async context
-    display_name = (profile.display_name if profile and profile.display_name else user.username)
+    # Keep the response label compatible with clients; account name is the sole name.
+    display_name = user.username
 
     return {
         "id": user.id,

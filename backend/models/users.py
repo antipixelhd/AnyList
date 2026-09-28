@@ -26,8 +26,6 @@ class User(Base):
 
     @property
     def display_name(self) -> str:
-        if self.profile and self.profile.display_name:
-            return self.profile.display_name
         return self.username
 
     @property

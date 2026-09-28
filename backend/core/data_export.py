@@ -427,7 +427,7 @@ async def build_export_zip(
 ) -> bytes:
     profile_result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == user.id))
     profile = profile_result.scalar_one_or_none()
-    display_name = profile.display_name if profile and profile.display_name else user.username
+    display_name = user.username
 
     history = await build_history(db, user.id) if include_watched else []
     ratings = await build_ratings(db, user.id) if include_ratings else {"movies": [], "shows": [], "seasons": [], "episodes": []}

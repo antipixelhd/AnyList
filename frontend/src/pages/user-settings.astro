@@ -13,7 +13,6 @@ const [profileData, me, trackingPrefs] = await Promise.all([
 ]);
 
 const prefs: UserPreferences = {
-  display_name: null,
   bio: null,
   country: null,
   movie_genres: [],
@@ -167,7 +166,7 @@ const COUNTRIES = [
               <img id="avatar-img" src={`/api/proxy${prefs.avatar_url}`} alt="Avatar" class="w-full h-full object-cover" />
             ) : (
               <span id="avatar-initials" class="text-2xl font-black text-zinc-400 select-none">
-                {(prefs.display_name ?? me.username)[0].toUpperCase()}
+                {me.username[0].toUpperCase()}
               </span>
             )}
           </div>
@@ -190,17 +189,13 @@ const COUNTRIES = [
 
         <div class="grid grid-cols-1 gap-5">
           <div class="space-y-2">
-            <div class="setting-label-line"><label for="display_name" class="block text-sm font-medium text-zinc-400">Display Name</label><span class="setting-save-state" data-save-state="display_name" role="status"></span></div>
-            <input
-              type="text"
-              id="display_name"
-              name="display_name"
-              value={prefs.display_name ?? ""}
-              placeholder={me.username}
-              maxlength={64}
-              class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-            />
-            <p class="text-xs text-zinc-500">Shown instead of your username where your name appears.</p>
+            <label for="account-name" class="block text-sm font-medium text-zinc-400">Account name</label>
+            <div class="flex items-center gap-3">
+              <input type="text" id="account-name" name="username" value={me.username} maxlength={100} autocomplete="username" aria-describedby="account-name-help account-name-status" class="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+              <button id="save-account-name" type="button" class="button-primary px-4 py-3 text-sm shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Save</button>
+            </div>
+            <p id="account-name-help" class="text-xs text-zinc-500">Your unique name for login and your profile link. Use letters, numbers, underscores, hyphens or dots.</p>
+            <p id="account-name-status" class="setting-save-state" data-save-state="account-name" role="status" aria-live="polite"></p>
           </div>
           <div class="space-y-2">
             <div class="setting-label-line"><label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
@@ -536,7 +531,7 @@ const COUNTRIES = [
         image.alt = '';
         appbarAvatar?.replaceChildren(image);
       } else {
-        const initial = (document.getElementById('display_name') as HTMLInputElement | null)?.value.trim()[0]
+        const initial = (document.getElementById('account-name') as HTMLInputElement | null)?.value.trim()[0]
           ?? (uploadLabel?.closest('section')?.querySelector('span')?.textContent?.trim()[0] ?? '?');
         preview.innerHTML = `<span class="text-2xl font-black text-zinc-400 select-none">${esc(initial.toUpperCase())}</span>`;
         const fallback = document.createElement('span');
@@ -736,14 +731,63 @@ const COUNTRIES = [
         if (field === 'metadata_language') backfillSection?.classList.toggle('hidden', !select.value);
       }, () => { if (field === 'metadata_language') backfillSection?.classList.toggle('hidden', !select.value); }));
     }
-    const displayName = document.getElementById('display_name') as HTMLInputElement | null;
-    let nameTimer: ReturnType<typeof setTimeout>;
-    if (displayName) {
-      committed.set('display_name', { display_name: displayName.value.trim() || null });
-      displayName.addEventListener('input', () => {
-        clearTimeout(nameTimer);
-        setStatus('display_name', 'Saving…', 'saving');
-        nameTimer = setTimeout(() => queueSave('display_name', { display_name: displayName.value.trim() || null }), 500);
+    const accountName = document.getElementById('account-name') as HTMLInputElement | null;
+    const saveAccountName = document.getElementById('save-account-name') as HTMLButtonElement | null;
+    if (accountName && saveAccountName) {
+      let savedName = accountName.value;
+      let nameSaving = false;
+      const updateName = () => { saveAccountName.disabled = nameSaving || accountName.value.trim() === savedName; };
+      accountName.addEventListener('input', () => {
+        accountName.removeAttribute('aria-invalid');
+        setStatus('account-name', '');
+        updateName();
+      });
+      const saveName = async () => {
+        if (nameSaving || accountName.value.trim() === savedName) return;
+        const requested = accountName.value.trim();
+        if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(requested) || requested.length > 100) {
+          accountName.setAttribute('aria-invalid', 'true');
+          setStatus('account-name', 'Use 1–100 letters, numbers, underscores, hyphens or dots; start with a letter, number, underscore or hyphen.', 'error');
+          return;
+        }
+        nameSaving = true;
+        accountName.disabled = true;
+        updateName();
+        setStatus('account-name', 'Checking availability…', 'saving');
+        try {
+          const response = await fetch('/api/proxy/profile/me/account-name', {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: requested }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save account name.');
+          const previousHref = `/user/${encodeURIComponent(savedName)}`;
+          savedName = data.username;
+          accountName.value = savedName;
+          document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(link => {
+            if (link.pathname === previousHref || link.pathname.startsWith(`${previousHref}/`)) {
+              link.pathname = `/user/${encodeURIComponent(savedName)}${link.pathname.slice(previousHref.length)}`;
+            }
+          });
+          const appbarAvatar = document.querySelector<HTMLElement>('[data-appbar-avatar]');
+          appbarAvatar?.setAttribute('aria-label', `Open ${savedName}'s profile`);
+          const fallback = appbarAvatar?.querySelector('span');
+          if (fallback) fallback.textContent = savedName[0].toUpperCase();
+          if (!document.getElementById('avatar-img')) setAvatarPreview(null);
+          setStatus('account-name', 'Saved');
+        } catch (error) {
+          accountName.setAttribute('aria-invalid', 'true');
+          setStatus('account-name', error instanceof Error ? error.message : 'Could not save account name.', 'error');
+        } finally {
+          nameSaving = false;
+          accountName.disabled = false;
+          updateName();
+        }
+      };
+      saveAccountName.addEventListener('click', saveName);
+      accountName.addEventListener('keydown', event => {
+        if (event.key === 'Enter') { event.preventDefault(); void saveName(); }
       });
     }
     committed.set('streaming_services', chipValues(['streaming_services']));

@@ -753,7 +753,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         results=payload['results']
         self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
         self.assertEqual(results[0]['user_id'],self.friend.id)
-        self.assertEqual(results[0]['display_name'],'Friendly Viewer')
+        self.assertEqual(results[0]['display_name'],self.friend.username)
         self.assertTrue(results[0]['has_avatar'])
         self.assertEqual(results[0]['key'],f'{self.friend.id}:{self.movie.id}:{now.date().isoformat()}')
         self.assertEqual(results[0]['payload']['episodes_watched'],1)
@@ -1547,12 +1547,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalid.status_code,422,invalid.text)
 
     async def test_profile_partial_patch_and_markdown_bio_limit(self):
-        changed = await self.client.patch('/profile/me', json={'display_name': 'Reader', 'country': 'DE'})
+        changed = await self.client.patch('/profile/me', json={'country': 'DE'})
         self.assertEqual(changed.status_code, 200, changed.text)
         bio = '# Hello\n\n**Movies** and *series*'
         saved = await self.client.patch('/profile/me', json={'bio': bio})
         self.assertEqual(saved.status_code, 200, saved.text)
-        self.assertEqual(saved.json()['display_name'], 'Reader')
         self.assertEqual(saved.json()['country'], 'DE')
         self.assertEqual(saved.json()['bio'], bio)
         boundary = await self.client.patch('/profile/me', json={'bio': 'x' * 5000})
@@ -2044,7 +2043,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_people_search_and_one_way_follow(self):
         profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
         profile.privacy_level=PrivacyLevel.public;profile.display_name='Public Friend';profile.avatar_path='friend.png';await self.db.commit()
-        search=await self.client.get('/tracking/people-search?q=Public')
+        legacy_search=await self.client.get('/tracking/people-search?q=Public')
+        self.assertEqual(legacy_search.json()['results'],[])
+        search=await self.client.get('/tracking/people-search',params={'q':self.friend.username})
         self.assertEqual(search.status_code,200,search.text)
         self.assertEqual(search.json()['results'][0]['username'],self.friend.username)
         follow=await self.client.post(f'/tracking/people/{self.friend.username}/follow')

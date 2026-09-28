@@ -412,8 +412,27 @@ class ManualSessionUpdate(BaseModel):
     state: Optional[str] = None  # "playing" | "paused"
 
 
+class AccountNameUpdate(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+
+    @field_validator('username', mode='before')
+    @classmethod
+    def trim_username(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        if not re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*', value):
+            raise ValueError('Use letters, numbers, underscores, hyphens or dots; start with a letter, number, underscore or hyphen')
+        return value
+
+
+class AccountNameResponse(BaseModel):
+    username: str
+
+
 class UserProfileUpdate(BaseModel):
-    display_name: Optional[str] = None
     bio: Optional[str] = Field(default=None, max_length=5000)
     country: Optional[str] = None
     movie_genres: Optional[list[str]] = None
@@ -434,7 +453,6 @@ class UserProfileUpdate(BaseModel):
         return value.lower()
 
 class UserProfileResponse(BaseModel):
-    display_name: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None
     movie_genres: list[str] = []
