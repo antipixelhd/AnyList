@@ -443,8 +443,21 @@ async def observe_stream_snapshot(
     # polling must not restore cleared dates or reinterpret the same playback.
     if not first:
         old_watched = set(previous.get('watched', []))
+        old_watch_observations = {
+            (watch_key(row), str(row.get('watched_at')))
+            for row in previous.get('records', {}).get('watched', [])
+        }
+        dated_watch_keys = {key for key, _ in old_watch_observations}
         old_progress_completed = set(previous.get('progress_completed', []))
-        new_watched_rows = [row for row in watched_rows if watch_key(row) not in old_watched]
+        # A watch can change without changing its movie/episode identity (for
+        # example, marking an already known title watched again). Use the same
+        # date-aware delta as history import so its accepted watch also updates
+        # the tracked list and can propagate to other connections.
+        new_watched_rows = [row for row in watched_rows
+            if watch_key(row) not in old_watched or (
+                watch_key(row) in dated_watch_keys
+                and (watch_key(row), str(row.get('watched_at'))) not in old_watch_observations
+            )]
         new_watched_rows = await current_watch_rows(db, conn, new_watched_rows)
         new_progress_completed_rows = [row for row in progress_completed_rows
             if watch_key(row) not in old_progress_completed]

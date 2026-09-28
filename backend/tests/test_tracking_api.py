@@ -2698,6 +2698,71 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['released_episodes'],1)
         self.assertEqual((await self.save(self.show,progress=2)).status_code,409)
 
+    async def _assert_regular_sync_accepts_changed_watch_date(self, provider):
+        from core.tracking_snapshot import observe_stream_snapshot, changed_watch_rows_from_source
+        from routers.sync import _apply_nuvio_watch_history
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        old_date = now - timedelta(days=2)
+        fresh_date = now - timedelta(minutes=10)
+        self.movie.tmdb_id = 987654398
+        conn = MediaServerConnection(user_id=self.owner.id, type=provider, name='Watch source',
+            url='https://example.test', token='fixture', sync_watched=True, sync_playback=False)
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.movie.id,
+            status='planning', progress=0, status_source='local',
+            status_changed_at=now - timedelta(minutes=20))
+        self.db.add_all([conn, entry, WatchEvent(user_id=self.owner.id,
+            media_id=self.movie.id, completed=True, watched_at=old_date)])
+        await self.db.flush()
+        old = {'content_id': 'tt-repeat-watch', 'content_type': 'movie',
+               'watched_at': old_date.isoformat()}
+        baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True,
+            observed_at=now - timedelta(hours=1), snapshot={
+                'mappings': {'tt-repeat-watch': self.movie.tmdb_id},
+                'watched': ['tt-repeat-watch:None:None'],
+                'records': {'watched': [old], 'library': [], 'progress': []}})
+        self.db.add(baseline)
+        await self.db.commit()
+        fresh = {**old, 'watched_at': fresh_date.isoformat()}
+        mappings = {'tt-repeat-watch': self.movie.tmdb_id}
+        history = await changed_watch_rows_from_source(self.db, conn, [fresh])
+        self.assertEqual(history, [fresh])
+        added = await _apply_nuvio_watch_history(
+            self.db, self.owner.id, history, {}, mappings, include_unknown_dates=True)
+        self.assertEqual(added, {self.movie.id})
+        accepted = await observe_stream_snapshot(
+            self.db, conn, [], [fresh], [], mappings, sync_playback=False)
+        await self.db.refresh(entry)
+        self.assertEqual((entry.status, entry.progress, entry.status_source),
+                         ('completed', 1, f'{provider}:{conn.id}'))
+        self.assertEqual(accepted, {self.movie.id})
+
+        # An unchanged poll must preserve a subsequent local correction.
+        entry.status = 'planning'
+        entry.progress = 0
+        entry.finish_date = None
+        entry.status_source = 'local'
+        entry.status_changed_at = now + timedelta(minutes=1)
+        await self.db.commit()
+        repeated = await observe_stream_snapshot(
+            self.db, conn, [], [fresh], [], mappings, sync_playback=False)
+        self.assertEqual(repeated, set())
+        self.assertEqual((entry.status, entry.progress, entry.finish_date), ('planning', 0, None))
+        # A changed but older historical date also cannot override that correction.
+        stale = await observe_stream_snapshot(
+            self.db, conn, [], [old], [], mappings, sync_playback=False)
+        self.assertEqual(stale, set())
+        self.assertEqual((entry.status, entry.progress, entry.finish_date), ('planning', 0, None))
+        reviews = (await self.db.execute(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id, SyncReview.kind == 'conflict'))).scalars().all()
+        self.assertEqual(reviews, [])
+
+    async def test_regular_nuvio_sync_accepts_changed_watch_date(self):
+        await self._assert_regular_sync_accepts_changed_watch_date('nuvio')
+
+    async def test_regular_stremio_sync_accepts_changed_watch_date(self):
+        await self._assert_regular_sync_accepts_changed_watch_date('stremio')
+
     async def test_snapshot_first_empty_and_partial_pull_cannot_remove_tracking(self):
         from core.tracking_snapshot import observe_stream_snapshot
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Test only',url='https://example.test',token='fixture',push_playback=True)
