@@ -49,7 +49,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
         <button class="button-secondary" id="reset-filters" data-default-sort={defaultSort}>Reset filters</button>
       </aside>
       <div class="list-content">
-      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span><div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div></div>
+      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span>{entries.length>0&&<div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div>}</div>
       <div id="entry-groups">
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span>Progress</span>{isCombined&&<span>Type</span>}</div>
