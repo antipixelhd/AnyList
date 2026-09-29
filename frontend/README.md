@@ -1,43 +1,25 @@
-# Astro Starter Kit: Minimal
+# AnyList frontend
 
-```sh
-npm create astro@latest -- --template minimal
-```
+Run commands from this directory. Install dependencies with `npm ci`.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server on port 7330 |
+| `npm run check` | Check Astro and TypeScript sources |
+| `npm test` | Run the node:test regressions |
+| `npm run build` | Build the standalone server into dist/ |
+| `npm run preview` | Run the production build locally |
 
-## 🚀 Project Structure
+The Windows launcher in the repository root starts the frontend on port 7340,
+its backend on 7341, and the local database. See scripts/local.ps1.
 
-Inside of your Astro project, you'll see the following folders and files:
+- src/pages/: routes and server-rendered page composition.
+- src/components/: shared views; settings/ contains provider and import views.
+- src/layouts/: the app shell and shared settings navigation.
+- src/lib/: API types, shared presentation helpers, and browser controllers.
+- src/scripts/: feature entry points such as Netflix import.
+- src/styles/: shared tokens and feature stylesheets.
+- tests/: browser-independent regression tests.
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
-
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
-
-There's nothing special about `src/components/`, but that's where we keep reusable Astro components.
-
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Browser controllers must clean up requests and listeners on client navigation.
+Use neighbouring controllers and tests as the guide for page lifetimes.

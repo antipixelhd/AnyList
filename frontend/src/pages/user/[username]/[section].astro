@@ -12,7 +12,6 @@ const isCombined=section==='list';
 const mediaType = isCombined ? 'all' : section === 'movies' ? 'movie' : 'series';
 let data: any = null, error = '';
 try {data = await tracker(`profile/${encodeURIComponent(username!)}/${mediaType}`, Astro.locals.token);} catch(e) {error = (e as Error).message;}
-const profile = `/user/${encodeURIComponent(username!)}`;
 const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.locals.token).catch(() => ({default_sort:'title'})) : {default_sort:'title'};
 const defaultSort = ['title','score','progress','updated'].includes(viewerPrefs.default_sort) ? viewerPrefs.default_sort : 'title';
 const entries = [...(data?.entries || [])].sort((a:any,b:any) => defaultSort === 'title'

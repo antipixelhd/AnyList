@@ -2488,7 +2488,7 @@ const bottomNavItem = (active: boolean) =>
           slider.classList.remove('is-dragging');
         });
 
-        slider.addEventListener('mouseup', (e) => {
+        slider.addEventListener('mouseup', () => {
           if (!isDown) return;
           isDown = false;
           slider.classList.remove('is-dragging');

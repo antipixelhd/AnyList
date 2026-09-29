@@ -18,7 +18,6 @@ const getUrl = (p: number) => `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}pag
 // Desktop: ±2 around current (5 pages). Mobile: ±1 (3 pages).
 const getPages = (delta: number) => {
   const start = Math.max(1, currentPage - delta);
-  const end = Math.min(effectiveTotalPages, currentPage + delta);
   const adjustedStart = Math.max(1, Math.min(start, effectiveTotalPages - delta * 2));
   const adjustedEnd = Math.min(effectiveTotalPages, adjustedStart + delta * 2);
   const pages = [];

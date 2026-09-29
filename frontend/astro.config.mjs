@@ -26,7 +26,7 @@ export default defineConfig({
     // dependencies at startup so visiting a new page does not invalidate
     // optimized URLs already referenced by an open page.
     optimizeDeps: {
-      include: ['qrcode', 'chart.js/auto', 'hls.js'],
+      include: ['qrcode', 'chart.js/auto'],
     },
     server: {
       allowedHosts: ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com'],

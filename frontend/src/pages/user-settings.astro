@@ -627,7 +627,6 @@ const COUNTRIES = [
       .filter(button => button.classList.contains(group === 'disliked-genre' ? 'bg-red-500/20' : 'bg-blue-500/20'))
       .map(button => button.dataset.value!);
     const genreFields = ['movie_genres', 'show_genres', 'disliked_genres'] as const;
-    const chipField: Record<string, string> = { streaming: 'streaming_services', 'movie-genre': 'movie_genres', 'show-genre': 'show_genres', 'disliked-genre': 'disliked_genres' };
     const chipGroup: Record<string, string> = { streaming_services: 'streaming', movie_genres: 'movie-genre', show_genres: 'show-genre', disliked_genres: 'disliked-genre' };
     const chipValues = (fields: readonly string[]) => Object.fromEntries(fields.map(field => [field, activeChips(chipGroup[field])]));
     const applyChipValues = (values: Record<string, string[]>) => {

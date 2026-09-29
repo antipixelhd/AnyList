@@ -4,7 +4,6 @@ import { api } from "../../lib/api";
 
 const { token } = Astro.params as { token: string };
 
-let success = false;
 let error = "";
 
 if (Astro.request.method === "POST") {
