@@ -1791,6 +1791,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 <script>
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import { wireCancelButton } from '../lib/sync-controls';
+  import { createSyncJobMonitor } from '../lib/sync-job-monitor';
   import type { PersonalDataSelection } from '../lib/api';
   import { arrCredentials, arrSettings, fetchArrProfiles, renderArrProfiles } from '../lib/arr-settings';
   import { applyResponsiveArtwork } from "../lib/responsive-artwork";
@@ -1937,7 +1938,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 
   // ── Per-connection progress tracking ─────────────────────────────────────
-  const connPollers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function renderConnProgress(connId: string, job: any) {
     const strip = document.getElementById(`conn-progress-${connId}`);
@@ -2006,62 +2006,23 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (statusEl) statusEl.textContent = '';
   }
 
-  async function pollConnJob(connId: string) {
-    try {
-      const res = await fetch('/api/proxy/sync/status', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Connection job status is unavailable');
-      const jobs: any[] = await res.json();
-
-      // Prefer any active job so a newer terminal record cannot hide it.
-      const connectionJobs = jobs.filter(j => String(j.connection_id) === connId);
-      const activeJob = connectionJobs.find(j => j.status === 'pending' || j.status === 'running');
-      const job = activeJob || connectionJobs[0];
-      const parseUtc = (ts: string | undefined) => {
-        if (!ts) return 0;
-        return new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime();
-      };
-
-      const isActive = !!activeJob;
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-        && parseUtc(job.updated_at) > Date.now() - 30000;
-
-      setConnectionJobActive(connId, isActive);
-      renderConnProgress(connId, (isActive || isRecentDone) ? job : null);
-
-      if (isActive) {
-        connPollers.set(connId, setTimeout(() => pollConnJob(connId), 2000));
-      } else if (isRecentDone) {
-        // Refresh warnings/last-synced now that the job finished
-        loadSyncWarnings();
-        loadLastSynced();
-        // Show completion state briefly then hide
-        connPollers.set(connId, setTimeout(() => {
-          renderConnProgress(connId, null);
-          connPollers.delete(connId);
-        }, 4000));
-      } else {
-        connPollers.delete(connId);
-      }
-    } catch {
-      // Preserve the active-job lock until a successful poll proves that
-      // remote work ended. A transient status outage must not strand the
-      // controls or allow another destructive operation to overlap it.
-      const statusEl = document.getElementById(`conn-job-status-${connId}`);
-      if (statusEl) statusEl.textContent = 'Status unavailable; retrying…';
-      connPollers.set(connId, setTimeout(() => pollConnJob(connId), 5000));
-    }
-  }
+  let jobMonitor: ReturnType<typeof createSyncJobMonitor> | undefined;
 
   function startConnPoller(connId: string) {
-    const existing = connPollers.get(connId);
-    if (existing != null) clearTimeout(existing);
-    pollConnJob(connId);
+    void jobMonitor?.watch(`connection:${connId}`, {
+      matches: job => String(job.connection_id) === connId,
+      render: job => renderConnProgress(connId, job),
+      onUpdate: active => setConnectionJobActive(connId, active),
+      onDone: () => { void loadSyncWarnings(); void loadLastSynced(); },
+      onError: () => {
+        const status = document.getElementById(`conn-job-status-${connId}`);
+        if (status) status.textContent = 'Status unavailable; retrying…';
+      },
+      recentMs: 30_000,
+    });
   }
 
   // ── Simkl progress tracking ───────────────────────────────────────────────
-  let simklPoller: ReturnType<typeof setTimeout> | null = null;
 
   function renderSimklProgress(job: any) {
     const strip  = document.getElementById('simkl-progress');
@@ -2117,36 +2078,16 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
 
-  async function pollSimklJob() {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.source === 'simkl');
-      const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-        && new Date(job.updated_at).getTime() > Date.now() - 8000;
-      renderSimklProgress((isActive || isRecentDone) ? job : null);
-      if (isActive) {
-        simklPoller = setTimeout(pollSimklJob, 2000);
-      } else if (isRecentDone) {
-        simklPoller = setTimeout(() => { renderSimklProgress(null); simklPoller = null; }, 4000);
-      } else {
-        simklPoller = null;
-      }
-    } catch {
-      simklPoller = null;
-    }
-  }
-
-  function startSimklPoller() {
-    if (simklPoller != null) clearTimeout(simklPoller);
-    pollSimklJob();
+  function startSimklPoller(jobId?: number) {
+    void jobMonitor?.watch('simkl', {
+      matches: job => job.source === 'simkl',
+      render: renderSimklProgress,
+      jobId,
+      hideMs: 4000,
+    });
   }
 
   // ── Trakt progress tracking ───────────────────────────────────────────────
-  let traktPoller: ReturnType<typeof setTimeout> | null = null;
-  let traktImportPoller: ReturnType<typeof setTimeout> | null = null;
 
   function renderTraktProgress(job: any) {
     const strip  = document.getElementById('trakt-progress');
@@ -2204,31 +2145,13 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
 
-  async function pollTraktJob() {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.source === 'trakt');
-      const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-        && new Date(job.updated_at).getTime() > Date.now() - 8000;
-      renderTraktProgress((isActive || isRecentDone) ? job : null);
-      if (isActive) {
-        traktPoller = setTimeout(pollTraktJob, 2000);
-      } else if (isRecentDone) {
-        traktPoller = setTimeout(() => { renderTraktProgress(null); traktPoller = null; }, 4000);
-      } else {
-        traktPoller = null;
-      }
-    } catch {
-      traktPoller = null;
-    }
-  }
-
-  function startTraktPoller() {
-    if (traktPoller != null) clearTimeout(traktPoller);
-    pollTraktJob();
+  function startTraktPoller(jobId?: number) {
+    void jobMonitor?.watch('trakt', {
+      matches: job => job.source === 'trakt' && job.job_type !== 'import',
+      render: renderTraktProgress,
+      jobId,
+      hideMs: 4000,
+    });
   }
 
   // ── Trakt export-import progress (the "Import" section's upload box) ─────
@@ -2285,33 +2208,16 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (statusEl) statusEl.textContent = '';
   }
 
-  async function pollTraktImportJob(jobId: number) {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.id === jobId);
-      if (!job) { traktImportPoller = null; return; }
-      const isActive = job.status === 'pending' || job.status === 'running';
-      renderTraktImportProgress(job);
-      if (isActive) {
-        traktImportPoller = setTimeout(() => pollTraktImportJob(jobId), 1500);
-      } else {
-        // Leave the final state visible for a moment before reverting to the dropzone.
-        traktImportPoller = setTimeout(() => { renderTraktImportProgress(null); traktImportPoller = null; }, 4000);
-      }
-    } catch {
-      traktImportPoller = null;
-    }
-  }
-
-  function startTraktImportPoller(jobId: number) {
-    if (traktImportPoller != null) clearTimeout(traktImportPoller);
-    pollTraktImportJob(jobId);
+  function startTraktImportPoller(jobId?: number) {
+    void jobMonitor?.watch('trakt-import', {
+      matches: job => job.source === 'trakt' && job.job_type === 'import',
+      render: renderTraktImportProgress,
+      jobId,
+      hideMs: 4000,
+    });
   }
 
   // ── Scrob export-import progress (the "Import" section's Scrob tab) ──────
-  let scrobImportPoller: ReturnType<typeof setTimeout> | null = null;
 
   function renderScrobImportProgress(job: any) {
     const dropzone = document.getElementById('scrob-import-dropzone');
@@ -2366,32 +2272,16 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (statusEl) statusEl.textContent = '';
   }
 
-  async function pollScrobImportJob(jobId: number) {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.id === jobId);
-      if (!job) { scrobImportPoller = null; return; }
-      const isActive = job.status === 'pending' || job.status === 'running';
-      renderScrobImportProgress(job);
-      if (isActive) {
-        scrobImportPoller = setTimeout(() => pollScrobImportJob(jobId), 1500);
-      } else {
-        scrobImportPoller = setTimeout(() => { renderScrobImportProgress(null); scrobImportPoller = null; }, 4000);
-      }
-    } catch {
-      scrobImportPoller = null;
-    }
-  }
-
-  function startScrobImportPoller(jobId: number) {
-    if (scrobImportPoller != null) clearTimeout(scrobImportPoller);
-    pollScrobImportJob(jobId);
+  function startScrobImportPoller(jobId?: number) {
+    void jobMonitor?.watch('manual-import', {
+      matches: job => job.source === 'manual' && job.job_type === 'import',
+      render: renderScrobImportProgress,
+      jobId,
+      hideMs: 4000,
+    });
   }
 
   // ── Yamtrack/Floppy import progress (the "Import" section's Yamtrack tab) ──
-  let yamtrackImportPoller: ReturnType<typeof setTimeout> | null = null;
 
   function renderYamtrackImportProgress(job: any) {
     const dropzone = document.getElementById('yamtrack-import-dropzone');
@@ -2446,41 +2336,16 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (statusEl) statusEl.textContent = '';
   }
 
-  async function pollYamtrackImportJob(jobId: number) {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.id === jobId);
-      if (!job) { yamtrackImportPoller = null; return; }
-      const isActive = job.status === 'pending' || job.status === 'running';
-      renderYamtrackImportProgress(job);
-      if (isActive) {
-        yamtrackImportPoller = setTimeout(() => pollYamtrackImportJob(jobId), 1500);
-      } else {
-        yamtrackImportPoller = setTimeout(() => { renderYamtrackImportProgress(null); yamtrackImportPoller = null; }, 4000);
-      }
-    } catch {
-      yamtrackImportPoller = null;
-    }
-  }
-
-  function startYamtrackImportPoller(jobId: number) {
-    if (yamtrackImportPoller != null) clearTimeout(yamtrackImportPoller);
-    pollYamtrackImportJob(jobId);
+  function startYamtrackImportPoller(jobId?: number) {
+    void jobMonitor?.watch('yamtrack-import', {
+      matches: job => job.source === 'yamtrack' && job.job_type === 'import',
+      render: renderYamtrackImportProgress,
+      jobId,
+      hideMs: 4000,
+    });
   }
 
   // ── MDBList progress tracking ─────────────────────────────────────────────
-  let mdblistPoller: ReturnType<typeof setTimeout> | null = null;
-  let mdblistHideTimer: ReturnType<typeof setTimeout> | null = null;
-  // The job id we last observed as pending/running. If that exact job later shows
-  // up as completed/failed, we show it regardless of how much wall-clock time has
-  // passed — comparing against job.updated_at alone is unreliable because browsers
-  // throttle setTimeout in backgrounded tabs (e.g. the user switching away to check
-  // mdblist.com while the push runs), which can delay the next poll well past any
-  // fixed "recently completed" window and make the job look stale when it isn't.
-  let mdblistTrackedJobId: number | null = null;
-
   function renderMdblistProgress(job: any) {
     const strip = document.getElementById('mdblist-progress');
     const bar = document.getElementById('mdblist-job-bar');
@@ -2529,46 +2394,16 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
 
-  async function pollMdblistJob() {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.source === 'mdblist');
-      const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled');
-      const isFresh = job && new Date(job.updated_at).getTime() > Date.now() - 8000;
-      const isTrackedJobDone = isDone && job.id === mdblistTrackedJobId;
-
-      if (isActive) {
-        mdblistTrackedJobId = job.id;
-        renderMdblistProgress(job);
-        mdblistPoller = setTimeout(pollMdblistJob, 2000);
-        return;
-      }
-
-      if (isDone && (isTrackedJobDone || isFresh)) {
-        renderMdblistProgress(job);
-        if (mdblistHideTimer != null) clearTimeout(mdblistHideTimer);
-        mdblistHideTimer = setTimeout(() => { renderMdblistProgress(null); mdblistHideTimer = null; }, 8000);
-      } else {
-        renderMdblistProgress(null);
-      }
-      mdblistTrackedJobId = null;
-      mdblistPoller = null;
-    } catch {
-      mdblistPoller = null;
-    }
-  }
-
-  function startMdblistPoller() {
-    if (mdblistPoller != null) clearTimeout(mdblistPoller);
-    pollMdblistJob();
+  function startMdblistPoller(jobId?: number) {
+    void jobMonitor?.watch('mdblist', {
+      matches: job => job.source === 'mdblist',
+      render: renderMdblistProgress,
+      jobId,
+      hideMs: 8000,
+    });
   }
 
   // ── Bingebase progress tracking ───────────────────────────────────────────
-  let bingebasePoller: ReturnType<typeof setTimeout> | null = null;
-  let bingebaseTrackedJobId: number | null = null;
 
   function renderBingebaseProgress(job: any) {
     const strip  = document.getElementById('bingebase-progress');
@@ -2616,78 +2451,32 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
 
-  async function pollBingebaseJob(trackedJobId?: number) {
-    if (trackedJobId !== undefined) bingebaseTrackedJobId = trackedJobId;
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find(j => j.source === 'bingebase');
-      const isActive = job && (job.status === 'pending' || job.status === 'running' || job.status === 'in_progress');
-      const isDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled');
-      const isFresh = job && new Date(job.updated_at).getTime() > Date.now() - 8000;
-      const isTrackedJobDone = isDone && job.id === bingebaseTrackedJobId;
-
-      if (isActive) {
-        bingebaseTrackedJobId = job.id;
-        renderBingebaseProgress(job);
-        bingebasePoller = setTimeout(pollBingebaseJob, 2000);
-      } else if (isTrackedJobDone || isFresh) {
-        renderBingebaseProgress(job);
-        bingebasePoller = setTimeout(() => { renderBingebaseProgress(null); bingebasePoller = null; bingebaseTrackedJobId = null; }, 4000);
-      } else {
-        renderBingebaseProgress(null);
-        bingebasePoller = null;
-      }
-    } catch {
-      bingebasePoller = null;
-    }
+  function startBingebasePoller(jobId?: number) {
+    void jobMonitor?.watch('bingebase', {
+      matches: job => job.source === 'bingebase',
+      render: renderBingebaseProgress,
+      jobId,
+      hideMs: 4000,
+    });
   }
 
-  function startBingebasePoller() {
-    if (bingebasePoller != null) clearTimeout(bingebasePoller);
-    pollBingebaseJob();
+  function setupJobMonitoring() {
+    jobMonitor?.stop();
+    jobMonitor = undefined;
+    if (!document.querySelector('[data-connections-page]')) return;
+    jobMonitor = createSyncJobMonitor(document.getElementById('app-data')?.dataset.token ?? '');
+    const ids = new Set(Array.from(document.querySelectorAll<HTMLElement>('[data-connection-id]')).map(card => card.dataset.connectionId!));
+    ids.forEach(startConnPoller);
+    startSimklPoller();
+    startTraktPoller();
+    startTraktImportPoller();
+    startScrobImportPoller();
+    startYamtrackImportPoller();
+    startMdblistPoller();
+    startBingebasePoller();
   }
+  setupJobMonitoring();
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && mdblistTrackedJobId != null) {
-      if (mdblistPoller != null) clearTimeout(mdblistPoller);
-      pollMdblistJob();
-    }
-    if (document.visibilityState === 'visible' && bingebaseTrackedJobId != null) {
-      if (bingebasePoller != null) clearTimeout(bingebasePoller);
-      pollBingebaseJob();
-    }
-  });
-
-  // On page load, resume any in-progress jobs
-  (async () => {
-    try {
-      const res = await fetch('/api/proxy/sync/status', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      for (const job of jobs) {
-        if (job.connection_id && (job.status === 'pending' || job.status === 'running')) {
-          startConnPoller(String(job.connection_id));
-        }
-        if (job.source === 'simkl' && (job.status === 'pending' || job.status === 'running')) {
-          startSimklPoller();
-        }
-        if (job.source === 'trakt' && (job.status === 'pending' || job.status === 'running')) {
-          startTraktPoller();
-          if (job.job_type === 'import') startTraktImportPoller(job.id);
-        }
-        if (job.source === 'mdblist' && (job.status === 'pending' || job.status === 'running')) {
-          startMdblistPoller();
-        }
-        if (job.source === 'bingebase' && (job.status === 'pending' || job.status === 'running' || job.status === 'in_progress')) {
-          startBingebasePoller();
-        }
-      }
-    } catch { /* non-fatal */ }
-  })();
   // ── End progress tracking ─────────────────────────────────────────────────
 
   function formatList(items: string[]): string {
@@ -3343,7 +3132,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             const data = await pushRes.json();
             if (!pushRes.ok) throw new Error(data.detail || 'Bingebase push failed to start');
             showMessage('Bingebase history push started.');
-            pollBingebaseJob(data.job_id);
+            startBingebasePoller(data.job_id);
             return;
           } else if (action === 'save_radarr_settings' || action === 'save_sonarr_settings') {
             const provider = action === 'save_radarr_settings' ? 'radarr' : 'sonarr';
@@ -6080,6 +5869,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   setupSeasonRemap();
 
   document.addEventListener('astro:after-swap', () => {
+    setupJobMonitoring();
     setupActions();
     setupPasswordToggles();
     setupConnections();

@@ -3,7 +3,6 @@ import "../styles/typography.css";
 import "../styles/global.css";
 import "../styles/checkbox.css";
 import "../styles/action-controls.css";
-import WatchedAtPicker from "../components/WatchedAtPicker.astro";
 import BrandMark from "../components/BrandMark.astro";
 import { api } from "../lib/api";
 import { themeVariables, viewerProfileTheme } from "../lib/profile-theme";
@@ -535,7 +534,6 @@ const bottomNavItem = (active: boolean) =>
     </div>
   </div>
 
-  <WatchedAtPicker />
 
   <!-- Create list modal -->
   <div id="create-list-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -991,90 +989,6 @@ const bottomNavItem = (active: boolean) =>
         if (err.message) msg = err.message;
       }
       alert(msg);
-    }
-
-    // ── Watched-at picker ──────────────────────────────────────────────────────
-    function showWatchedAtPicker(anchorEl: HTMLElement): Promise<string | null> {
-      return new Promise(resolve => {
-        const picker = document.getElementById('watched-at-picker')!;
-        const nowBtn = document.getElementById('watched-at-now-btn')!;
-        const customBtn = document.getElementById('watched-at-custom-btn')!;
-        const input = document.getElementById('watched-at-input') as HTMLInputElement;
-        const confirmBtn = document.getElementById('watched-at-confirm')!;
-        const cancelBtn = document.getElementById('watched-at-cancel')!;
-
-        const activeClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
-        const inactiveClass = 'flex-1 px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
-
-        // Reset to "Just now" state
-        let useNow = true;
-        input.classList.add('hidden');
-        nowBtn.className = activeClass;
-        customBtn.className = inactiveClass;
-
-        // Pre-fill input with current local time
-        const toLocal = (d: Date) => {
-          const pad = (n: number) => String(n).padStart(2, '0');
-          return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        };
-        input.value = toLocal(new Date());
-        input.max = toLocal(new Date());
-
-        // Position below the button if there's room, otherwise above
-        picker.classList.remove('hidden');
-        const rect = anchorEl.getBoundingClientRect();
-        const pickerH = picker.offsetHeight;
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const top = spaceBelow >= pickerH + 8
-          ? rect.bottom + window.scrollY + 4
-          : rect.top + window.scrollY - pickerH - 4;
-        picker.style.top = `${top}px`;
-        picker.style.left = `${Math.min(rect.left + window.scrollX, window.innerWidth - 288 - 8)}px`;
-
-        const close = (result: string | null) => {
-          picker.classList.add('hidden');
-          document.removeEventListener('pointerdown', outsideHandler);
-          nowBtn.replaceWith(nowBtn.cloneNode(true));
-          customBtn.replaceWith(customBtn.cloneNode(true));
-          confirmBtn.replaceWith(confirmBtn.cloneNode(true));
-          cancelBtn.replaceWith(cancelBtn.cloneNode(true));
-          resolve(result);
-        };
-
-        document.getElementById('watched-at-now-btn')!.addEventListener('click', () => {
-          useNow = true;
-          input.classList.add('hidden');
-          (document.getElementById('watched-at-now-btn') as HTMLElement).className = activeClass;
-          (document.getElementById('watched-at-custom-btn') as HTMLElement).className = inactiveClass;
-        });
-
-        document.getElementById('watched-at-custom-btn')!.addEventListener('click', () => {
-          useNow = false;
-          input.max = toLocal(new Date());
-          input.classList.remove('hidden');
-          (document.getElementById('watched-at-now-btn') as HTMLElement).className = inactiveClass;
-          (document.getElementById('watched-at-custom-btn') as HTMLElement).className = activeClass;
-        });
-
-        document.getElementById('watched-at-confirm')!.addEventListener('click', () => {
-          if (useNow) {
-            close(toLocal(new Date()));
-          } else {
-            const val = input.value;
-            if (!val) { close(toLocal(new Date())); return; }
-            close(val); // already a naive local datetime string
-          }
-        });
-
-        document.getElementById('watched-at-cancel')!.addEventListener('click', () => close(null));
-
-        const outsideHandler = (e: PointerEvent) => {
-          if (!picker.contains(e.target as Node) && e.target !== anchorEl && !anchorEl.contains(e.target as Node)) {
-            close(null);
-          }
-        };
-        setTimeout(() => document.addEventListener('pointerdown', outsideHandler), 0);
-      });
     }
 
     // ── Confirm dialog ─────────────────────────────────────────────────────────

@@ -250,6 +250,9 @@ export interface WatchEvent {
 
 export interface SyncJob {
   id: number;
+  connection_id: number | null;
+  job_type: string;
+  current_step: string | null;
   source: string;
   status: string;
   total_items: number;

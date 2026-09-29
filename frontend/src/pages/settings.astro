@@ -832,6 +832,7 @@ if (me.totp_enabled) {
 <script>
   import { errorMessage, showMessage } from '../lib/settings-feedback';
   import { wireCancelButton } from '../lib/sync-controls';
+  import { createSyncJobMonitor } from '../lib/sync-job-monitor';
   import type { PersonalDataSelection } from '../lib/api';
   import { showOverlay, hideOverlay } from '../lib/ui-motion';
   const appData = document.getElementById('app-data');
@@ -839,7 +840,7 @@ if (me.totp_enabled) {
 
 
   // ── Heal progress tracking ────────────────────────────────────────────────
-  let healPoller: ReturnType<typeof setTimeout> | null = null;
+  let healMonitor: ReturnType<typeof createSyncJobMonitor> | undefined;
 
   function renderHealProgress(job: any) {
     const strip = document.getElementById('heal-progress');
@@ -888,48 +889,21 @@ if (me.totp_enabled) {
     if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
   }
 
-  async function pollHealJob() {
-    try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      const job = jobs.find((j: any) => j.source === 'tmdb' && j.job_type === 'heal');
-      const isActive = job && (job.status === 'pending' || job.status === 'running');
-      const isRecentDone = job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-        && new Date(job.updated_at).getTime() > Date.now() - 8000;
-      renderHealProgress((isActive || isRecentDone) ? job : null);
-      if (isActive) {
-        healPoller = setTimeout(pollHealJob, 2000);
-      } else if (isRecentDone) {
-        healPoller = setTimeout(() => { renderHealProgress(null); healPoller = null; }, 4000);
-      } else {
-        healPoller = null;
-      }
-    } catch {
-      healPoller = null;
-    }
-  }
-
   function startHealPoller() {
-    if (healPoller != null) clearTimeout(healPoller);
-    pollHealJob();
+    void healMonitor?.watch('heal', {
+      matches: job => job.source === 'tmdb' && job.job_type === 'heal',
+      render: renderHealProgress,
+    });
   }
 
-  // On page load, resume any in-progress jobs
-  (async () => {
-    try {
-      const res = await fetch('/api/proxy/sync/status', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) return;
-      const jobs: any[] = await res.json();
-      for (const job of jobs) {
-        if (job.source === 'tmdb' && job.job_type === 'heal' && (job.status === 'pending' || job.status === 'running')) {
-          startHealPoller();
-        }
-      }
-    } catch { /* non-fatal */ }
-  })();
+  function setupHealMonitoring() {
+    healMonitor?.stop();
+    healMonitor = undefined;
+    if (!document.querySelector('[data-account-settings-page]')) return;
+    healMonitor = createSyncJobMonitor(document.getElementById('app-data')?.dataset.token ?? '');
+    startHealPoller();
+  }
+  setupHealMonitoring();
   // ── End progress tracking ─────────────────────────────────────────────────
 
   function showConfirmModal(title: string, body: string, confirmLabel: string, infoOnly = false): Promise<boolean> {
@@ -1748,6 +1722,7 @@ if (me.totp_enabled) {
   setupClearSessionsButton();
 
   document.addEventListener('astro:after-swap', () => {
+    setupHealMonitoring();
     setupAccentSwatches();
     setupActions();
     setupPasswordToggles();
@@ -1799,7 +1774,7 @@ if (me.totp_enabled) {
     const qrCanvas = document.querySelector<HTMLCanvasElement>('#totp-qr-canvas');
     const newCodesPanel = document.getElementById('2fa-new-codes-panel');
     const newCodesGrid = document.getElementById('2fa-new-codes-grid');
-    const newCodesDoneBtn = document.querySelector<HTMLButtonElement>('#2fa-new-codes-done-btn');
+    const newCodesDoneBtn = document.querySelector<HTMLButtonElement>('[id="2fa-new-codes-done-btn"]');
 
     enableBtn?.addEventListener('click', async () => {
       enableBtn.textContent = 'Loading...';

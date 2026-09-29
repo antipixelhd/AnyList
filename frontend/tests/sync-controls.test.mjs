@@ -58,3 +58,40 @@ test('clear jobs cannot retain a cancellation action from a previous job', () =>
   assert.equal(control.classes.has('hidden'), true);
   assert.equal(control.onclick, null);
 });
+
+test('progress updates preserve cancellation and cannot submit it twice', async t => {
+  const control = button();
+  let finish, calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    return new Promise(resolve => { finish = resolve; });
+  });
+  wireCancelButton(control, { id: 42 }, 'token', () => {});
+  const pending = control.onclick();
+  wireCancelButton(control, { id: 42 }, 'token', () => {});
+  assert.equal(control.disabled, true);
+  assert.equal(control.textContent, 'Cancelling…');
+  await control.onclick();
+  assert.equal(calls, 1);
+  finish(new Response(null, { status: 204 }));
+  await pending;
+  wireCancelButton(control, { id: 42 }, 'token', () => {});
+  assert.equal(control.disabled, true);
+  wireCancelButton(control, { id: 43 }, 'token', () => {});
+  assert.equal(control.disabled, false);
+  assert.equal(control.textContent, 'Cancel');
+});
+
+test('a failed cancellation for an old job cannot change the new job controls', async t => {
+  const control = button(), errors = [];
+  let fail;
+  t.mock.method(globalThis, 'fetch', () => new Promise((_, reject) => { fail = reject; }));
+  wireCancelButton(control, { id: 1 }, 'token', message => errors.push(message));
+  const pending = control.onclick();
+  wireCancelButton(control, { id: 2 }, 'token', message => errors.push(message));
+  fail(new Error('Old request failed'));
+  await pending;
+  assert.equal(control.disabled, false);
+  assert.equal(control.textContent, 'Cancel');
+  assert.deepEqual(errors, []);
+});
