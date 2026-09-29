@@ -312,6 +312,8 @@ export interface UserProfile {
   is_admin: boolean;
   api_key: string;
   totp_enabled: boolean;
+  email_confirmed: boolean;
+  has_password: boolean;
   created_at: string;
 }
 
@@ -419,6 +421,18 @@ export interface OidcExchangeResponse {
 
 export type PrivacyLevel = "public" | "friends_only" | "private";
 
+export interface PersonalDataSelection {
+  watched: boolean;
+  ratings: boolean;
+  collection: boolean;
+  lists: boolean;
+  comments: boolean;
+  api_keys: boolean;
+  media_connections: boolean;
+  scrobble_connections: boolean;
+  connections: boolean;
+}
+
 export interface UserPreferences {
   background_url?: string | null;
   profile_color: string;
@@ -435,74 +449,88 @@ export interface UserPreferences {
   avatar_url: string | null;
 }
 
-export interface UserSettings extends Pick<GlobalSettings, 'radarr_customize_on_add' | 'sonarr_customize_on_add'> {
+export interface UserSettings {
   tmdb_api_key: string | null;
-  has_effective_tmdb_key: boolean;
-  has_global_tmdb_key: boolean;
-
-  tvdb_api_key: string | null;
-  tvdb_subscriber_pin: string | null;
-  has_effective_tvdb_key: boolean;
-  has_global_tvdb_key: boolean;
-
   rpdb_api_key: string | null;
   has_rpdb_key: boolean;
-
+  has_effective_tmdb_key: boolean;
+  has_global_tmdb_key: boolean;
+  tvdb_api_key: string | null;
+  tvdb_subscriber_pin: string | null;
+  has_global_tvdb_key: boolean;
+  has_effective_tvdb_key: boolean;
   radarr_url: string | null;
   radarr_token: string | null;
   radarr_root_folder: string | null;
   radarr_quality_profile: number | null;
   radarr_tags: number[] | null;
+  radarr_customize_on_add: boolean | null;
   has_effective_radarr: boolean;
-
   sonarr_url: string | null;
   sonarr_token: string | null;
   sonarr_root_folder: string | null;
   sonarr_quality_profile: number | null;
   sonarr_tags: number[] | null;
+  sonarr_season_folder: boolean | null;
+  sonarr_customize_on_add: boolean | null;
   has_effective_sonarr: boolean;
-
-  // Trakt
-  trakt_connected: boolean;
-  trakt_sync_watched: boolean;
-  trakt_sync_ratings: boolean;
-  trakt_sync_lists: boolean;
-  trakt_watchlist_split: boolean;
-  trakt_push_watched: boolean;
-  trakt_push_ratings: boolean;
-  trakt_push_lists: boolean;
-  trakt_scrobble: boolean;
-
-  // Simkl
+  trakt_client_id: string | null;
+  trakt_client_secret: string | null;
+  trakt_connected: boolean | null;
+  trakt_sync_watched: boolean | null;
+  trakt_sync_ratings: boolean | null;
+  trakt_sync_lists: boolean | null;
+  trakt_sync_dropped: boolean | null;
+  trakt_watchlist_split: boolean | null;
+  trakt_push_watched: boolean | null;
+  trakt_push_ratings: boolean | null;
+  trakt_push_collection: boolean | null;
+  trakt_push_dropped: boolean | null;
+  trakt_push_lists: boolean | null;
+  trakt_scrobble: boolean | null;
+  trakt_auto_sync_interval: number | null;
+  trakt_auto_push_interval: number | null;
   simkl_client_id: string | null;
-  simkl_connected: boolean;
-  simkl_sync_watched: boolean;
-  simkl_sync_ratings: boolean;
-  simkl_sync_lists: boolean;
-  simkl_push_watched: boolean;
-  simkl_push_ratings: boolean;
-  simkl_scrobble: boolean;
-
-  // MDBList
+  simkl_connected: boolean | null;
+  simkl_sync_watched: boolean | null;
+  simkl_sync_ratings: boolean | null;
+  simkl_sync_lists: boolean | null;
+  simkl_push_watched: boolean | null;
+  simkl_push_ratings: boolean | null;
+  simkl_scrobble: boolean | null;
+  simkl_auto_sync_interval: number | null;
+  simkl_auto_push_interval: number | null;
   mdblist_api_key: string | null;
-  mdblist_connected: boolean;
-  mdblist_sync_watched: boolean;
-  mdblist_sync_ratings: boolean;
-  mdblist_sync_watchlist: boolean;
-  mdblist_push_watched: boolean;
-  mdblist_push_ratings: boolean;
-  mdblist_push_watchlist: boolean;
-
+  mdblist_connected: boolean | null;
+  mdblist_sync_watched: boolean | null;
+  mdblist_sync_ratings: boolean | null;
+  mdblist_sync_watchlist: boolean | null;
+  mdblist_sync_dropped: boolean | null;
+  mdblist_push_watched: boolean | null;
+  mdblist_push_ratings: boolean | null;
+  mdblist_push_watchlist: boolean | null;
+  mdblist_push_collection: boolean | null;
+  mdblist_push_dropped: boolean | null;
+  mdblist_scrobble: boolean | null;
+  mdblist_auto_sync_interval: number | null;
+  mdblist_auto_push_interval: number | null;
+  bingebase_webhook_url: string | null;
+  bingebase_api_key: string | null;
+  bingebase_connected: boolean | null;
+  bingebase_scrobble: boolean | null;
+  bingebase_push_watched: boolean | null;
+  bingebase_push_ratings: boolean | null;
   preferences: UserPreferences | null;
-  blur_explicit: boolean;
-  time_format_24h: boolean;
-  use_hls_player: boolean;
-  shuffle_next_up: boolean;
-  minimalist_next_up: boolean;
-  rate_prompt_movies: boolean;
-  rate_prompt_episodes: boolean;
+  blur_explicit: boolean | null;
+  time_format_24h: boolean | null;
+  use_hls_player: boolean | null;
+  shuffle_next_up: boolean | null;
+  minimalist_next_up: boolean | null;
+  hide_watched_from_recently_added: boolean | null;
+  condense_history_by_show: boolean | null;
+  rate_prompt_movies: boolean | null;
+  rate_prompt_episodes: boolean | null;
   duplicate_watch_window_minutes: number | null;
-  condense_history_by_show: boolean;
 }
 
 export interface MediaServerConnection {
@@ -524,6 +552,8 @@ export interface MediaServerConnection {
   push_ratings: boolean;
   auto_sync_interval: number | null;
   auto_push_interval: number | null;
+  watchlist_all_users: boolean;
+  watchlist_monitored_users: string[] | null;
   created_at: string;
 }
 
@@ -1156,7 +1186,7 @@ export const api = {
     login: (body: FormData) =>
       post<LoginResponse>("/auth/login", body),
     register: (body: unknown) =>
-      post<{ id: number; email: string; username: string }>("/auth/register", body),
+      post<UserProfile>("/auth/register", body),
     registrationStatus: () =>
       get<{ enabled: boolean; smtp_configured: boolean }>("/auth/registration-status"),
     hasUsers: () =>

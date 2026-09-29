@@ -11,6 +11,7 @@ declare namespace App {
 }
 
 interface Window {
+  __applyResponsiveArtwork?: typeof import('./lib/responsive-artwork').applyResponsiveArtwork;
   showConfirm: (title: string, body: string) => Promise<boolean>;
   __HAS_RPDB__: boolean;
   ratingPosterUrl: typeof import('./lib/posters').ratingPosterUrl;

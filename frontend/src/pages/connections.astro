@@ -1792,6 +1792,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 </TrackerSettings>
 
 <script>
+  import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
+  import { wireCancelButton } from '../lib/sync-controls';
+  import type { PersonalDataSelection } from '../lib/api';
   import { applyResponsiveArtwork } from "../lib/responsive-artwork";
   import { showOverlay, hideOverlay, showCollapsible, hideCollapsible } from '../lib/ui-motion';
 
@@ -1921,10 +1924,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
   }
 
-  function esc(s) {
-    if (s == null) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+
 
   function applyResponsiveImages(root: ParentNode) {
     root.querySelectorAll<HTMLImageElement>('img[data-artwork-path]').forEach(img => {
@@ -1936,64 +1936,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
   }
 
-  // Keeps the toast below the nav (so it never covers it or the account
-  // dropdown) while still sitting near the top once the nav scrolls away -
-  // floored by the iOS safe-area inset (notch/status bar), not just a flat
-  // 16px, or it renders underneath it once the nav is out of view (#402).
-  function positionMessage(msg: HTMLElement) {
-    const nav = document.querySelector('nav');
-    const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
-    msg.style.top = `max(16px, calc(env(safe-area-inset-top, 0px) + 8px), ${navBottom + 12}px)`;
-  }
 
-  function showMessage(text, type = 'success', opts: { scroll?: boolean } = {}) {
-    const msg = document.getElementById('js-message');
-    if (!msg) return;
-    msg.textContent = text;
-    msg.className = `fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border ${
-      type === 'success'
-        ? 'bg-zinc-900 border-green-500/50 text-green-400'
-        : 'bg-zinc-900 border-red-500/50 text-red-400'
-    }`;
-    positionMessage(msg);
-    msg.classList.remove('hidden');
-
-    if (window._messageTimeout) clearTimeout(window._messageTimeout);
-    window._messageTimeout = setTimeout(() => msg.classList.add('hidden'), 4000);
-  }
-
-  window.addEventListener('scroll', () => {
-    const msg = document.getElementById('js-message');
-    if (msg && !msg.classList.contains('hidden')) positionMessage(msg);
-  }, { passive: true });
-
-  // ── Shared sync-job cancellation ──────────────────────────────────────────
-  // The background job only notices on its next cooperative checkpoint, so the
-  // strip keeps showing "Cancelling…" until the next poll reflects status=cancelled.
-  async function cancelSyncJob(jobId: number, btn: HTMLButtonElement | null) {
-    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
-    try {
-      await fetch(`/api/proxy/sync/${jobId}/cancel`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-    } catch {
-      // best-effort — the next poll reflects the real state either way
-    }
-  }
-
-  function wireCancelButton(btn: HTMLButtonElement | null, job: any) {
-    if (!btn) return;
-    if (job.job_type === 'clear') {
-      btn.classList.add('hidden');
-      btn.onclick = null;
-      return;
-    }
-    btn.classList.remove('hidden');
-    btn.disabled = false;
-    btn.textContent = 'Cancel';
-    btn.onclick = () => cancelSyncJob(job.id, btn);
-  }
 
   // ── Per-connection progress tracking ─────────────────────────────────────
   const connPollers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -2026,7 +1969,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         ? (isClear ? 'Clear cancelled' : isPush ? 'Push cancelled' : 'Pull cancelled')
         : (isClear ? 'Clear failed' : isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       if (statusEl) statusEl.textContent = '';
       return;
     }
@@ -2044,7 +1987,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       return;
     }
 
-    wireCancelButton(cancelBtn, job);
+    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
     // pending / running
     const pct = job.total_items > 0
       ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100))
@@ -2145,7 +2088,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
       if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
 
@@ -2161,7 +2104,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       return;
     }
 
-    wireCancelButton(cancelBtn, job);
+    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const barColor = isPush ? 'bg-amber-500' : 'bg-blue-600';
     const indeterminate = isPending || pct === 0;
@@ -2235,7 +2178,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
       if (label) label.textContent = isCancelled ? verbs.cancelled : verbs.failed;
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
 
@@ -2251,7 +2194,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       return;
     }
 
-    wireCancelButton(cancelBtn, job);
+    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const indeterminate = isPending || pct === 0;
     if (bar) {
@@ -2319,7 +2262,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
       if (pctEl) pctEl.textContent = '';
       if (items) items.textContent = '';
-      if (statusEl) statusEl.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (statusEl) statusEl.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
 
@@ -2400,7 +2343,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
       if (pctEl) pctEl.textContent = '';
       if (items) items.textContent = '';
-      if (statusEl) statusEl.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (statusEl) statusEl.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
 
@@ -2480,7 +2423,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
       if (pctEl) pctEl.textContent = '';
       if (items) items.textContent = '';
-      if (statusEl) statusEl.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (statusEl) statusEl.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
 
@@ -2562,7 +2505,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
       if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
     if (isCompleted) {
@@ -2574,7 +2517,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       return;
     }
 
-    wireCancelButton(cancelBtn, job);
+    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const indeterminate = isPending || pct === 0;
     if (bar) {
@@ -2652,7 +2595,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
       if (label) label.textContent = isCancelled ? 'Push cancelled' : 'Push failed';
       if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : esc(job.error_message || 'Unknown error');
+      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
       return;
     }
     if (isCompleted) {
@@ -2664,7 +2607,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       return;
     }
 
-    wireCancelButton(cancelBtn, job);
+    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
     const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
     const indeterminate = isPending || pct === 0;
     if (bar) {
@@ -2842,13 +2785,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
   }
 
-  type ExportSelection = {
-    watched: boolean; ratings: boolean; collection: boolean; lists: boolean; comments: boolean;
-    api_keys: boolean; media_connections: boolean; scrobble_connections: boolean; connections: boolean;
-  };
-
-
-  function showScrobImportModal(filename: string): Promise<ScrobImportSelection | null> {
+  function showScrobImportModal(filename: string): Promise<PersonalDataSelection | null> {
     return new Promise(resolve => {
       const modal = document.getElementById('scrob-import-modal');
       const bodyEl = document.getElementById('scrob-import-modal-body');
@@ -2890,7 +2827,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
       showOverlay(modal);
 
-      const cleanup = (result: ScrobImportSelection | null) => {
+      const cleanup = (result: PersonalDataSelection | null) => {
         void hideOverlay(modal);
         confirmBtn.removeEventListener('click', onConfirm);
         cancelBtn.removeEventListener('click', onCancel);
@@ -3480,7 +3417,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             const data = await pushRes.json();
             if (!pushRes.ok) throw new Error(data.detail || 'Bingebase push failed to start');
             showMessage('Bingebase history push started.');
-            pollConnJob('bingebase', data.job_id, token);
+            pollBingebaseJob(data.job_id);
             return;
           } else if (action === 'save_radarr_settings') {
             const radarrTagInputs = document.querySelectorAll('#radarr_tags_list input[name="radarr_tags"]');
@@ -3908,10 +3845,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const data = await res.json();
 
           if (res.ok) {
-            const showsProgressBar = !!syncConnId || [
-              'sync_trakt', 'full_sync_trakt', 'push_trakt', 'sync_simkl', 'push_simkl', 'sync_mdblist', 'push_mdblist',
-            ].includes(action);
-            showMessage(data.message || 'Action successful!', 'success', { scroll: !showsProgressBar });
+
+            showMessage(data.message || 'Action successful!', 'success');
             if (syncConnId) {
               setConnectionJobActive(syncConnId, true);
               startConnPoller(syncConnId);
@@ -3926,7 +3861,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         } catch (e) {
           if (actionConnId && action === 'clear_connection_data') renderConnProgress(actionConnId, null);
           if (actionConnId && action === 'full_resync_connection') renderConnProgress(actionConnId, null);
-          showMessage(e.message, 'error');
+          showMessage(errorMessage(e), 'error');
         } finally {
           newBtn.innerHTML = originalHTML;
           if (lockedConnectionId) setConnectionOperationPending(lockedConnectionId, false);
@@ -4035,7 +3970,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             };
             setTimeout(poll, interval);
           } catch (e) {
-            showMessage(e.message, 'error');
+            showMessage(errorMessage(e), 'error');
             connectBtn.disabled = false;
             connectBtn.textContent = 'Connect Trakt';
           }
@@ -4119,7 +4054,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || 'Import failed');
-          showMessage(data.message || 'Import started!', 'success', { scroll: false });
+          showMessage(data.message || 'Import started!', 'success');
           startTraktPoller();
           if (data.job_id) startTraktImportPoller(data.job_id);
         } catch (e) {
@@ -4190,7 +4125,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || 'Import failed');
-          showMessage(data.message || 'Import started!', 'success', { scroll: false });
+          showMessage(data.message || 'Import started!', 'success');
           if (data.job_id) startScrobImportPoller(data.job_id);
         } catch (e) {
           showMessage(e instanceof Error ? e.message : 'Import failed', 'error');
@@ -4256,7 +4191,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || 'Import failed');
-          showMessage(data.message || 'Import started!', 'success', { scroll: false });
+          showMessage(data.message || 'Import started!', 'success');
           if (data.job_id) startYamtrackImportPoller(data.job_id);
         } catch (e) {
           showMessage(e instanceof Error ? e.message : 'Import failed', 'error');
@@ -4369,7 +4304,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             };
             setTimeout(poll, interval);
           } catch (e) {
-            showMessage(e.message, 'error');
+            showMessage(errorMessage(e), 'error');
             connectBtn.disabled = false;
             connectBtn.textContent = 'Connect Simkl';
           }
@@ -5063,7 +4998,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             else throw new Error(data.detail || 'Connection test failed');
           }
         } catch (e: any) {
-          showMessage(e.message, 'error');
+          showMessage(errorMessage(e), 'error');
         } finally {
           testNewBtn.disabled = false;
           testNewBtn.textContent = orig;
@@ -5135,7 +5070,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           showMessage('Connection added! Reloading…');
           setTimeout(() => window.location.reload(), 1000);
         } catch (e: any) {
-          showMessage(e.message, 'error');
+          showMessage(errorMessage(e), 'error');
           createBtn.disabled = false;
           createBtn.textContent = orig;
         }
@@ -5210,7 +5145,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           showMessage('Scrobble connection added! Reloading…');
           setTimeout(() => window.location.reload(), 1000);
         } catch (e: any) {
-          showMessage(e.message, 'error');
+          showMessage(errorMessage(e), 'error');
           createScrobbleBtn.removeAttribute('disabled');
           createScrobbleBtn.textContent = orig;
         }
@@ -5296,11 +5231,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   }
 
   function flashCopied(btn: HTMLElement): void {
-    btn.innerHTML = CHECK_ICON;
+    const originalHTML = btn.innerHTML;
+    btn.textContent = '✓';
     btn.classList.add('bg-green-900', 'border-green-700', 'text-green-400');
     btn.classList.remove('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700', 'text-zinc-300');
     setTimeout(() => {
-      btn.innerHTML = COPY_ICON;
+      btn.innerHTML = originalHTML;
       btn.classList.remove('bg-green-900', 'border-green-700', 'text-green-400');
       btn.classList.add('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700', 'text-zinc-300');
     }, 2000);
@@ -5343,7 +5279,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           keyInput.value = data.api_key;
           showMessage('API key regenerated successfully!');
         } catch (e) {
-          showMessage(e.message, 'error');
+          showMessage(errorMessage(e), 'error');
         } finally {
           regenBtn.disabled = false;
           regenBtn.textContent = originalText;
@@ -5462,9 +5398,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
   }
 
-  function escapeHtml(s: string): string {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+
 
   async function loadSyncWarnings() {
     const appData = document.getElementById('app-data') as HTMLElement | null;
@@ -5541,11 +5475,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             ${enrichmentWarnings.map((w: any) => {
               const key = `${w.tmdb_id}:${w.season}`;
               const existing = overrideMap.get(key);
-              const remapAttr = `data-src-tmdb="${w.tmdb_id}" data-src-season="${w.season}" data-src-title="${escapeHtml(w.show)}"`;
+              const remapAttr = `data-src-tmdb="${w.tmdb_id}" data-src-season="${w.season}" data-src-title="${esc(w.show)}"`;
               return `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.show)}</span>
+                  <span class="text-sm text-zinc-200 font-medium">${esc(w.show)}</span>
                   <span class="ml-2 text-xs text-zinc-500">Season ${w.season}</span>
                   ${existing ? `<span class="ml-2 text-xs text-green-500">→ remapped</span>` : ''}
                 </div>
@@ -5632,21 +5566,21 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               return `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(seriesName)}</span>
+                  <span class="text-sm text-zinc-200 font-medium">${esc(seriesName)}</span>
                   <span class="ml-2 text-xs text-zinc-600">${count} episode${count !== 1 ? 's' : ''}</span>
                   ${isMatched
-                    ? `<span class="ml-2 text-xs text-green-500">→ matched${matchedTitle && matchedTitle.toLowerCase() !== seriesName.toLowerCase() ? ` as "${escapeHtml(matchedTitle)}"` : ''}</span>`
-                    : `<p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(reason)}</p>`
+                    ? `<span class="ml-2 text-xs text-green-500">→ matched${matchedTitle && matchedTitle.toLowerCase() !== seriesName.toLowerCase() ? ` as "${esc(matchedTitle)}"` : ''}</span>`
+                    : `<p class="text-xs text-zinc-500 mt-0.5">${esc(reason)}</p>`
                   }
-                  ${plex_guids.length ? `<p class="text-xs text-zinc-600 font-mono mt-0.5">${plex_guids.map((g: string) => escapeHtml(g)).join(' · ')}</p>` : ''}
+                  ${plex_guids.length ? `<p class="text-xs text-zinc-600 font-mono mt-0.5">${plex_guids.map((g: string) => esc(g)).join(' · ')}</p>` : ''}
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
-                  ${isMatched && matchHref ? `<a href="${escapeHtml(matchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
+                  ${isMatched && matchHref ? `<a href="${esc(matchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
                   ${isMatched
                     ? `<button type="button" class="unmatch-show-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors"
-                        data-series-name="${escapeHtml(seriesName)}">Unmatch</button>`
+                        data-series-name="${esc(seriesName)}">Unmatch</button>`
                     : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors"
-                        data-series-name="${escapeHtml(seriesName)}">Match</button>`
+                        data-series-name="${esc(seriesName)}">Match</button>`
                   }
                 </div>
               </div>`;
@@ -5660,21 +5594,21 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               return `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title)}</span>
-                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
+                  <span class="text-sm text-zinc-200 font-medium">${esc(w.title)}</span>
+                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${esc(w.media_type)}</span>` : ''}
                   ${wMatched
-                    ? `<span class="ml-2 text-xs text-green-500">→ matched${wMatchedTitle && wMatchedTitle.toLowerCase() !== (w.title ?? '').toLowerCase() ? ` as "${escapeHtml(wMatchedTitle)}"` : ''}</span>`
-                    : `<p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(w.reason ?? 'unknown reason')}</p>`
+                    ? `<span class="ml-2 text-xs text-green-500">→ matched${wMatchedTitle && wMatchedTitle.toLowerCase() !== (w.title ?? '').toLowerCase() ? ` as "${esc(wMatchedTitle)}"` : ''}</span>`
+                    : `<p class="text-xs text-zinc-500 mt-0.5">${esc(w.reason ?? 'unknown reason')}</p>`
                   }
-                  ${w.plex_guids?.length ? `<p class="text-xs text-zinc-600 font-mono mt-0.5">${w.plex_guids.map((g: string) => escapeHtml(g)).join(' · ')}</p>` : ''}
+                  ${w.plex_guids?.length ? `<p class="text-xs text-zinc-600 font-mono mt-0.5">${w.plex_guids.map((g: string) => esc(g)).join(' · ')}</p>` : ''}
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
-                  ${wMatched && wMatchHref ? `<a href="${escapeHtml(wMatchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
+                  ${wMatched && wMatchHref ? `<a href="${esc(wMatchHref)}" class="text-xs px-2.5 py-1 rounded-lg border border-green-700/40 text-green-400 hover:bg-green-900/20 transition-colors">View</a>` : ''}
                   ${wMatched
                     ? `<button type="button" class="unmatch-show-btn text-xs px-2.5 py-1 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 cursor-pointer transition-colors"
-                        data-series-name="${escapeHtml(w.title)}" data-media-type="${escapeHtml(w.media_type ?? '')}">Unmatch</button>`
+                        data-series-name="${esc(w.title)}" data-media-type="${esc(w.media_type ?? '')}">Unmatch</button>`
                     : `<button type="button" class="match-show-btn text-xs px-2.5 py-1 rounded-lg border bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25 hover:border-amber-500/60 cursor-pointer transition-colors shrink-0"
-                        data-series-name="${escapeHtml(w.title)}" data-media-type="${escapeHtml(w.media_type ?? '')}">Match</button>`
+                        data-series-name="${esc(w.title)}" data-media-type="${esc(w.media_type ?? '')}">Match</button>`
                   }
                 </div>
               </div>`;
@@ -5699,7 +5633,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               <div class="flex items-center gap-2">
                 ${warnIcon}
                 <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${displayCount} item${displayCount > 1 ? 's' : ''} couldn't be fully synced</span>
-                <span class="text-xs text-zinc-500">· ${escapeHtml(date)}</span>
+                <span class="text-xs text-zinc-500">· ${esc(date)}</span>
               </div>
               ${chevron}
             </button>
@@ -5734,17 +5668,17 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             ${[...groupedLookupWarnings.entries()].map(([seriesName, {count, reason}]) => `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(seriesName)}</span>
+                  <span class="text-sm text-zinc-200 font-medium">${esc(seriesName)}</span>
                   <span class="ml-2 text-xs text-zinc-600">${count} episode${count !== 1 ? 's' : ''}</span>
-                  <p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(reason)}</p>
+                  <p class="text-xs text-zinc-500 mt-0.5">${esc(reason)}</p>
                 </div>
               </div>`).join('')}
             ${standaloneLookupWarnings.map((w: any) => `
               <div class="flex items-center gap-3 py-1.5 border-b border-zinc-800/60 last:border-0">
                 <div class="flex-1 min-w-0">
-                  <span class="text-sm text-zinc-200 font-medium">${escapeHtml(w.title ?? 'Untitled')}</span>
-                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${escapeHtml(w.media_type)}</span>` : ''}
-                  <p class="text-xs text-zinc-500 mt-0.5">${escapeHtml(w.reason ?? 'Not found on this server')}</p>
+                  <span class="text-sm text-zinc-200 font-medium">${esc(w.title ?? 'Untitled')}</span>
+                  ${w.media_type ? `<span class="ml-2 text-xs text-zinc-600">${esc(w.media_type)}</span>` : ''}
+                  <p class="text-xs text-zinc-500 mt-0.5">${esc(w.reason ?? 'Not found on this server')}</p>
                 </div>
               </div>`).join('')}
           </div>
@@ -5760,7 +5694,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               <div class="flex items-center gap-2">
                 ${warnIcon}
                 <span class="text-xs font-semibold uppercase tracking-wider text-amber-400">${lookupDisplayCount} watched item${lookupDisplayCount !== 1 ? 's' : ''} not found on this server${lookupWarnings.length !== lookupDisplayCount ? ` (${lookupWarnings.length} episodes)` : ''}</span>
-                <span class="text-xs text-zinc-500">· ${escapeHtml(pushDate)}</span>
+                <span class="text-xs text-zinc-500">· ${esc(pushDate)}</span>
               </div>
               ${chevron}
             </button>
@@ -5973,11 +5907,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const year = String(r.first_air_date ?? r.release_date ?? '').slice(0, 4);
       resultsEl.innerHTML = `
         <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
-          data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${escapeHtml(year)}" data-poster="${escapeHtml(r.poster_path ?? '')}">
-          <img data-artwork-path="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
+          data-tmdb="${r.tmdb_id}" data-title="${esc(r.title ?? '')}" data-year="${esc(year)}" data-poster="${esc(r.poster_path ?? '')}">
+          <img data-artwork-path="${esc(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
           <div class="flex-1 min-w-0">
-            <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
-            <p class="text-xs text-zinc-500">${escapeHtml(year)}</p>
+            <p class="text-sm text-zinc-100 truncate">${esc(r.title ?? '')}</p>
+            <p class="text-xs text-zinc-500">${esc(year)}</p>
           </div>
         </button>`;
       applyResponsiveImages(resultsEl);
@@ -6053,9 +5987,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             seasonBtn.className = 'remap-season-pick w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-transparent hover:border-blue-600/50 hover:bg-blue-600/10 transition-colors cursor-pointer text-left';
             seasonBtn.dataset.season = String(s.season_number);
             seasonBtn.innerHTML = `
-              <img data-artwork-path="${escapeHtml(s.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
+              <img data-artwork-path="${esc(s.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
               <div class="flex-1 min-w-0">
-                <p class="text-sm text-zinc-100">${escapeHtml(s.name ?? `Season ${s.season_number}`)}</p>
+                <p class="text-sm text-zinc-100">${esc(s.name ?? `Season ${s.season_number}`)}</p>
                 <p class="text-xs text-zinc-500">Season ${s.season_number}${s.episode_count ? ` · ${s.episode_count} eps` : ''}</p>
               </div>`;
             seasonBtn.addEventListener('click', () => {
@@ -6096,7 +6030,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           return;
         }
         resultsEl.innerHTML = results.map((r: any) => {
-          const year = escapeHtml(String(r.release_date ?? r.first_air_date ?? '').slice(0, 4));
+          const year = esc(String(r.release_date ?? r.first_air_date ?? '').slice(0, 4));
           // Same rationale as the TVDB results below (#364) - an exact-title
           // remake/reboot is otherwise indistinguishable, especially when
           // TMDB hasn't got a release/air date on record yet. TMDB has no
@@ -6106,14 +6040,14 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           const subtitle = [
             year || null,
             `TMDB ${r.tmdb_id}`,
-            r.original_title && r.original_title !== r.title ? escapeHtml(r.original_title) : null,
+            r.original_title && r.original_title !== r.title ? esc(r.original_title) : null,
           ].filter(Boolean).join(' · ');
           return `
           <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
-            data-tmdb="${r.tmdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${year}" data-poster="${escapeHtml(r.poster_path ?? '')}">
-            <img data-artwork-path="${escapeHtml(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
+            data-tmdb="${r.tmdb_id}" data-title="${esc(r.title ?? '')}" data-year="${year}" data-poster="${esc(r.poster_path ?? '')}">
+            <img data-artwork-path="${esc(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
             <div class="flex-1 min-w-0">
-              <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
+              <p class="text-sm text-zinc-100 truncate">${esc(r.title ?? '')}</p>
               <p class="text-xs text-zinc-500">${subtitle}</p>
             </div>
           </button>`;
@@ -6142,7 +6076,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               <p class="text-xs text-amber-400">A TVDB API key is required to search. Set one in <a href="/settings" class="underline hover:text-amber-300">Settings</a> or ask your admin to configure a global key.</p>
             </div>`;
           } else {
-            resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">${escapeHtml(detail)}</p>`;
+            resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">${esc(detail)}</p>`;
           }
           return;
         }
@@ -6157,24 +6091,24 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           // - the TVDB id is always shown so there's an unambiguous fallback
           // to pick the right one by (#364).
           const subtitle = [
-            r.year ? escapeHtml(String(r.year)) : null,
+            r.year ? esc(String(r.year)) : null,
             `TVDB ${r.tvdb_id}`,
-            r.network ? escapeHtml(r.network) : null,
-            r.status ? escapeHtml(r.status) : null,
+            r.network ? esc(r.network) : null,
+            r.status ? esc(r.status) : null,
           ].filter(Boolean).join(' · ');
           return `
           <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
-            data-tvdb="${r.tvdb_id}" data-title="${escapeHtml(r.title ?? '')}" data-year="${escapeHtml(String(r.year ?? ''))}" data-poster="${escapeHtml(r.image_url ?? '')}">
-            <img src="${escapeHtml(r.image_url ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
+            data-tvdb="${r.tvdb_id}" data-title="${esc(r.title ?? '')}" data-year="${esc(String(r.year ?? ''))}" data-poster="${esc(r.image_url ?? '')}">
+            <img src="${esc(r.image_url ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" onerror="this.style.display='none'" />
             <div class="flex-1 min-w-0">
-              <p class="text-sm text-zinc-100 truncate">${escapeHtml(r.title ?? '')}</p>
+              <p class="text-sm text-zinc-100 truncate">${esc(r.title ?? '')}</p>
               <p class="text-xs text-zinc-500">${subtitle}</p>
             </div>
           </button>`;
         }).join('');
         resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
       } catch (e: any) {
-        resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">Search failed: ${escapeHtml(e.message ?? '')}</p>`;
+        resultsEl.innerHTML = `<p class="text-xs text-red-400 py-2">Search failed: ${esc(e.message ?? '')}</p>`;
       }
     };
 

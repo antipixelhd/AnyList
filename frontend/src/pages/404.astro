@@ -10,14 +10,15 @@ const { token } = Astro.locals;
 let canPick = false;
 if (token) {
   try {
-    const [settings, profileData] = await Promise.all([
+    const [settings, profileData, connections] = await Promise.all([
       api.auth.getSettings(token),
       api.profile.get(token).catch(() => null),
+      api.auth.getConnections(token),
     ]);
     const hasTmdbKey = !!settings?.has_effective_tmdb_key;
     const SUPPORTED_PROVIDERS = ["8", "9", "337", "350", "1899", "15"];
     const userServices = (profileData?.streaming_services ?? []).filter((id: string) => SUPPORTED_PROVIDERS.includes(id));
-    const hasMediaServer = !!(settings?.plex_url || settings?.jellyfin_url || settings?.emby_url);
+    const hasMediaServer = connections.some(connection => ['plex', 'jellyfin', 'emby'].includes(connection.type));
     canPick = hasTmdbKey && (userServices.length > 0 || hasMediaServer);
   } catch { /* fall back to simple 404 */ }
 }
