@@ -541,7 +541,7 @@ button:disabled {
   content:"";
   position:absolute;
   inset:0;
-  background:linear-gradient(transparent,#0b1622)
+  background:linear-gradient(to bottom,transparent 20%,#0b1622 85%)
 }
 .detail-layout {
   max-width:1220px;
