@@ -18,7 +18,7 @@ router = APIRouter()
 async def run_bingebase_push(user_id: int, job_id: int) -> None:
     """Push all historical watched events from AnyList to the Bingebase webhook."""
     from db import AsyncSessionLocal
-    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
+    from core.sync_jobs import SyncCancelled, raise_if_cancelled, short_error
     from routers.webhooks import _maybe_bingebase_scrobble
 
     processed_so_far = 0
@@ -61,7 +61,7 @@ async def run_bingebase_push(user_id: int, job_id: int) -> None:
                         update(SyncJob).where(SyncJob.id == job_id).values(processed_items=processed_so_far)
                     )
                     await db.commit()
-                    await _raise_if_cancelled(db, job_id)
+                    await raise_if_cancelled(db, job_id)
 
                 await asyncio.sleep(0.05)  # Slight delay to avoid overwhelming webhook server
 
@@ -90,7 +90,7 @@ async def run_bingebase_push(user_id: int, job_id: int) -> None:
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.failed,
-                    error_message=_short_error(exc),
+                    error_message=short_error(exc),
                 )
             )
             await db.commit()

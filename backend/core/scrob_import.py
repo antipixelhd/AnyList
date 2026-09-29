@@ -237,7 +237,7 @@ async def apply_scrob_import(
     since removed), so it can't clobber a currently-working connection with a
     stale exported one.
     """
-    from routers.sync import _raise_if_cancelled
+    from core.sync_jobs import raise_if_cancelled
     from routers.trakt import (
         _apply_imported_rating,
         _get_or_create_episode_media,
@@ -275,7 +275,7 @@ async def apply_scrob_import(
         if processed % 50 == 0:
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=processed))
             await db.commit()
-            await _raise_if_cancelled(db, job_id)
+            await raise_if_cancelled(db, job_id)
 
     # ── Watch history ──────────────────────────────────────────────────
     if include_watched:

@@ -5,7 +5,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from models.sync import SyncStatus
-from routers.sync import _MAX_ERROR_MESSAGE, _short_error
+from core.sync_jobs import MAX_ERROR_MESSAGE, short_error
 
 
 class ShortErrorTests(unittest.TestCase):
@@ -13,18 +13,18 @@ class ShortErrorTests(unittest.TestCase):
     made the UPDATE itself raise, leaving the job stuck on 'running'."""
 
     def test_short_message_is_unchanged(self) -> None:
-        self.assertEqual(_short_error(ValueError("boom")), "boom")
+        self.assertEqual(short_error(ValueError("boom")), "boom")
 
     def test_long_message_fits_the_column(self) -> None:
-        text = _short_error(RuntimeError("x" * 50_000))
-        self.assertEqual(len(text), _MAX_ERROR_MESSAGE)
+        text = short_error(RuntimeError("x" * 50_000))
+        self.assertEqual(len(text), MAX_ERROR_MESSAGE)
         self.assertTrue(text.endswith("…"))
 
     def test_message_exactly_at_the_limit_is_unchanged(self) -> None:
-        self.assertEqual(_short_error("y" * _MAX_ERROR_MESSAGE), "y" * _MAX_ERROR_MESSAGE)
+        self.assertEqual(short_error("y" * MAX_ERROR_MESSAGE), "y" * MAX_ERROR_MESSAGE)
 
     def test_accepts_a_plain_string(self) -> None:
-        self.assertEqual(_short_error("plain"), "plain")
+        self.assertEqual(short_error("plain"), "plain")
 
 
 class SyncStatusTests(unittest.TestCase):

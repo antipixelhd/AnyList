@@ -5,11 +5,12 @@ import logging
 import re
 from typing import Any
 from core.timestamps import milliseconds
+from core.sync_jobs import SyncCancelled, raise_if_cancelled, mark_job_running_unless_cancelled
 from types import SimpleNamespace
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy import select, update, delete, func, cast, bindparam, DateTime, literal_column
+from sqlalchemy import select, update, delete, func, cast, bindparam, DateTime, literal_column, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.dialects.postgresql import insert, JSONB
@@ -57,51 +58,6 @@ logger = logging.getLogger("uvicorn.error")
 
 
 
-class SyncCancelled(Exception):
-    """Raised internally to unwind a background sync loop once its SyncJob has been cancelled."""
-
-
-async def _raise_if_cancelled(db: AsyncSession, job_id: int | None) -> None:
-    """Re-read a job's status from the DB and raise SyncCancelled if the user cancelled it.
-
-    Background sync loops run in their own DB session, separate from the one the
-    cancel endpoint commits to, so cancellation can only be observed by polling —
-    call this at natural checkpoints (per page/batch/item) inside long-running loops.
-    """
-    if job_id is None:
-        return
-    result = await db.execute(select(SyncJob.status).where(SyncJob.id == job_id))
-    status = result.scalar_one_or_none()
-    if status == SyncStatus.cancelled:
-        raise SyncCancelled()
-
-
-async def _mark_job_running_unless_cancelled(db: AsyncSession, job_id: int, **values) -> bool:
-    """Every _run_*_sync entry point's first write flips its SyncJob from
-    pending to running. Since they all share one _sync_semaphore (only one
-    sync at a time across the whole instance), a job can sit pending for a
-    while queued behind another one - long enough for the user to cancel it
-    before it ever starts. Without the WHERE status=pending guard here, that
-    first write would unconditionally stamp the row back to running,
-    silently reviving a job the user already cancelled while it was queued
-    (confirmed live: cancel-while-queued left a job stuck running with a
-    stale "Cancelled by user" error_message next to it).
-
-    Returns False - and leaves the row untouched - when the job was already
-    cancelled by the time this runs; callers must return immediately rather
-    than proceed. `values` are the same extra columns (current_step,
-    processed_items, etc.) each call site already reset at job start.
-    """
-    result = await db.execute(
-        update(SyncJob)
-        .where(SyncJob.id == job_id, SyncJob.status == SyncStatus.pending)
-        .values(status=SyncStatus.running, **values)
-        .returning(SyncJob.id)
-    )
-    await db.commit()
-    return result.scalar_one_or_none() is not None
-
-
 async def _get_effective_tmdb_key(db: AsyncSession, user_settings: UserSettings | None) -> str | None:
     if user_settings and user_settings.tmdb_api_key:
         return user_settings.tmdb_api_key
@@ -133,17 +89,6 @@ BATCH_SIZE = 500
 TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
-_MAX_ERROR_MESSAGE = 1000
-
-
-def _short_error(exc: BaseException | str) -> str:
-    """Fit a failure into the sync_jobs.error_message column."""
-    message = str(exc)
-    if len(message) <= _MAX_ERROR_MESSAGE:
-        return message
-    return message[: _MAX_ERROR_MESSAGE - 1] + "\u2026"
-
-
 _MEDIA_BROWSER_ITEM_SOURCES = (
     CollectionSource.jellyfin,
     CollectionSource.emby,
@@ -3047,7 +2992,7 @@ async def sync_items(
                     .values(processed_items=SyncJob.processed_items + BATCH_SIZE, updated_at=func.now())
                 )
                 await db.commit()
-                await _raise_if_cancelled(db, job_id)
+                await raise_if_cancelled(db, job_id)
             print(f"    Processed {i+1}/{len(items)} items...")
 
     await flush_collection_heals()
@@ -3060,7 +3005,7 @@ async def sync_items(
             .values(processed_items=SyncJob.processed_items + processed_remainder, updated_at=func.now())
         )
         await db.commit()
-        await _raise_if_cancelled(db, job_id)
+        await raise_if_cancelled(db, job_id)
 
     # ── Phase 3: Batch enrich newly created media ─────────────────────────────
     warnings: list[dict] = []
@@ -3105,7 +3050,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            if not await _mark_job_running_unless_cancelled(db, job_id, processed_items=0, total_items=0):
+            if not await mark_job_running_unless_cancelled(db, job_id, processed_items=0, total_items=0):
                 print(f"Jellyfin sync job {job_id} was cancelled before it started - skipping")
                 return
 
@@ -3319,7 +3264,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            if not await _mark_job_running_unless_cancelled(db, job_id, processed_items=0, total_items=0):
+            if not await mark_job_running_unless_cancelled(db, job_id, processed_items=0, total_items=0):
                 print(f"Emby sync job {job_id} was cancelled before it started - skipping")
                 return
 
@@ -4293,7 +4238,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            if not await _mark_job_running_unless_cancelled(
+            if not await mark_job_running_unless_cancelled(
                 db, job_id, processed_items=0, total_items=0, current_step="Pulling library",
             ):
                 print(f"Plex sync job {job_id} was cancelled before it started - skipping")
@@ -5091,7 +5036,7 @@ async def _run_nuvio_sync(
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            if not await _mark_job_running_unless_cancelled(
+            if not await mark_job_running_unless_cancelled(
                 db, job_id, processed_items=0, total_items=0, current_step="Pulling from Nuvio",
             ):
                 logger.info("Nuvio sync job %s was cancelled before it started - skipping", job_id)
@@ -5770,7 +5715,7 @@ async def _run_stremio_sync(
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            if not await _mark_job_running_unless_cancelled(
+            if not await mark_job_running_unless_cancelled(
                 db, job_id, processed_items=0, total_items=0, current_step="Pulling from Stremio",
             ):
                 logger.info("Stremio sync job %s was cancelled before it started - skipping", job_id)
@@ -6654,7 +6599,7 @@ async def _run_arvio_sync(
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
-            if not await _mark_job_running_unless_cancelled(
+            if not await mark_job_running_unless_cancelled(
                 db, job_id, processed_items=0, total_items=0, updated_at=func.now(),
             ):
                 logger.info("ARVIO sync job %s was cancelled before it started - skipping", job_id)
@@ -6731,7 +6676,7 @@ async def _run_arvio_sync(
 
             if conn.sync_watched:
                 for movie_item in watched_movies:
-                    await _raise_if_cancelled(db, job_id)
+                    await raise_if_cancelled(db, job_id)
                     await _apply_arvio_watched_movie(db, user_id, movie_item, tmdb_api_key)
                     processed += 1
                     if processed % 10 == 0:
@@ -6743,7 +6688,7 @@ async def _run_arvio_sync(
                         await db.commit()
 
                 for ep_item in watched_episodes:
-                    await _raise_if_cancelled(db, job_id)
+                    await raise_if_cancelled(db, job_id)
                     await _apply_arvio_watched_episode(db, user_id, ep_item, tmdb_api_key)
                     processed += 1
                     if processed % 10 == 0:
@@ -6756,7 +6701,7 @@ async def _run_arvio_sync(
 
             if conn.sync_playback:
                 for cw_item in progress_items:
-                    await _raise_if_cancelled(db, job_id)
+                    await raise_if_cancelled(db, job_id)
                     await _apply_arvio_playback_progress(db, user_id, cw_item, tmdb_api_key)
                     processed += 1
                     if processed % 10 == 0:
@@ -7360,7 +7305,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
-        if not await _mark_job_running_unless_cancelled(db, job_id):
+        if not await mark_job_running_unless_cancelled(db, job_id):
             print(f"Full push job {job_id} was cancelled before it started - skipping")
             return
 
@@ -8092,7 +8037,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         failed_count += newly_failed
                         await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=done))
                         await db.commit()
-                        await _raise_if_cancelled(db, job_id)
+                        await raise_if_cancelled(db, job_id)
 
                 # Every sid that will need an already-watched check below is
                 # now known (watched_sid_to_mids is fully populated, including
@@ -8131,7 +8076,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     if done // _PROGRESS_INTERVAL != prev_done // _PROGRESS_INTERVAL:
                         await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=done))
                         await db.commit()
-                        await _raise_if_cancelled(db, job_id)
+                        await raise_if_cancelled(db, job_id)
 
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                 status=SyncStatus.completed,
@@ -8345,11 +8290,22 @@ async def get_sync_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    # A high enough limit that a long-running job (e.g. a large MDBList push) doesn't
-    # fall out of the window just because other sync jobs (connection scans, etc.)
-    # fired while it was still in flight — the frontend pollers each pick out their
-    # own source from this list and would otherwise lose track of it mid-run.
-    query = select(SyncJob).where(SyncJob.user_id == current_user.id).order_by(SyncJob.created_at.desc()).limit(20)
+    # Keep the latest history bounded, but always include queued/running work.
+    # Other jobs completing must not make a long-running job disappear.
+    recent_ids = (
+        select(SyncJob.id)
+        .where(SyncJob.user_id == current_user.id)
+        .order_by(SyncJob.updated_at.desc(), SyncJob.id.desc())
+        .limit(20)
+    )
+    query = (
+        select(SyncJob)
+        .where(
+            SyncJob.user_id == current_user.id,
+            or_(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]), SyncJob.id.in_(recent_ids)),
+        )
+        .order_by(SyncJob.created_at.desc(), SyncJob.id.desc())
+    )
     result = await db.execute(query)
     jobs = result.scalars().all()
     return jobs
@@ -8389,7 +8345,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
 
         try:
             await _update_job(status=SyncStatus.running)
-            await _raise_if_cancelled(db, job_id)
+            await raise_if_cancelled(db, job_id)
 
             # ── Phase 1: Re-enrich items that have show linkage but missing poster ──
             coll_q = await db.execute(
@@ -8434,7 +8390,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                 print(f"Heal: nothing to re-enrich for user {user_id}")
                 await _update_job(total_items=0, processed_items=0, current_step="Re-enriching metadata")
 
-            await _raise_if_cancelled(db, job_id)
+            await raise_if_cancelled(db, job_id)
 
             # ── Phase 2: Recover orphaned episodes via Jellyfin/Emby ─────────────
             # Webhook-created episodes may have show_id=None if the show wasn't in
@@ -8531,7 +8487,7 @@ async def cancel_sync_job(
     """Cancel a single pending or running sync job owned by the current user.
 
     The background loop only notices on its next cooperative checkpoint (see
-    _raise_if_cancelled), so the job may keep running briefly after this returns.
+    raise_if_cancelled), so the job may keep running briefly after this returns.
     A destructive clear that has started must finish its verification instead.
     """
     result = await db.execute(

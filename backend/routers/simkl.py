@@ -254,7 +254,7 @@ def _simkl_rating_value(item: dict) -> float | None:
 # ── Background sync job ───────────────────────────────────────────────────────
 
 async def run_simkl_sync(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled, _short_error
+    from core.sync_jobs import SyncCancelled, raise_if_cancelled, short_error
     print(f"Starting Simkl sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -339,7 +339,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         logger.warning("Error processing Simkl movie tmdb=%s: %s", tmdb_id, exc)
                         stats["errors"] += 1
                 await db.commit()
-                await _raise_if_cancelled(db, job_id)
+                await raise_if_cancelled(db, job_id)
 
             # ── Shows / Episodes ──────────────────────────────────────────────
             if settings.simkl_sync_watched:
@@ -423,7 +423,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         stats["errors"] += 1
 
                 await db.commit()
-                await _raise_if_cancelled(db, job_id)
+                await raise_if_cancelled(db, job_id)
 
             # ── Ratings ───────────────────────────────────────────────────────
             if settings.simkl_sync_ratings:
@@ -510,7 +510,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                         stats["errors"] += 1
 
                 await db.commit()
-                await _raise_if_cancelled(db, job_id)
+                await raise_if_cancelled(db, job_id)
 
             # ── Watchlist / plan-to-watch ─────────────────────────────────────
             if settings.simkl_sync_lists:
@@ -617,7 +617,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
             print(f"Simkl sync job {job_id} failed: {exc}")
             await db.execute(
                 update(SyncJob).where(SyncJob.id == job_id).values(
-                    status=SyncStatus.failed, error_message=_short_error(exc)
+                    status=SyncStatus.failed, error_message=short_error(exc)
                 )
             )
             await db.commit()
@@ -657,7 +657,8 @@ async def sync_simkl(
 # ── Push (Scrob → Simkl) ──────────────────────────────────────────────────────
 
 async def _run_simkl_push(user_id: int, job_id: int) -> None:
-    from routers.sync import SyncCancelled, _raise_if_cancelled, _select_in_chunks, _short_error
+    from core.sync_jobs import SyncCancelled, raise_if_cancelled, short_error
+    from routers.sync import _select_in_chunks
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
@@ -861,7 +862,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
                         succeeded += item_count
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(processed_items=succeeded + failed))
                 await db.commit()
-                await _raise_if_cancelled(db, job_id)
+                await raise_if_cancelled(db, job_id)
             print(f"Simkl full push: {succeeded}/{total} succeeded")
 
             await db.execute(
@@ -884,7 +885,7 @@ async def _run_simkl_push(user_id: int, job_id: int) -> None:
 
         except Exception as exc:
             print(f"Simkl push job {job_id} failed: {exc}")
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=_short_error(exc)))
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=short_error(exc)))
             await db.commit()
 
 

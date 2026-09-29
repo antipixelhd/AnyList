@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
+from core.sync_jobs import mark_job_running_unless_cancelled
 from models.connections import MediaServerConnection
 from routers import sync
 
@@ -1002,7 +1003,7 @@ class MarkJobRunningUnlessCancelledTests(unittest.IsolatedAsyncioTestCase):
             return _MarkJobRunningResult(42 if matched else None)
 
         db = SimpleNamespace(execute=execute, commit=AsyncMock())
-        started = await sync._mark_job_running_unless_cancelled(db, 42, **values)
+        started = await mark_job_running_unless_cancelled(db, 42, **values)
         return started, db, captured[0]
 
     async def test_statement_only_matches_a_still_pending_job(self):
