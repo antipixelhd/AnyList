@@ -1,3 +1,6 @@
+Commit changes you made after each turn 
+
+if you make changes to the database apply the migration before ending the turn
 # Media Tracker
 
 Work within this repository. Sibling projects have separate instructions and checks.

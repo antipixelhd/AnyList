@@ -551,7 +551,7 @@ button:disabled {
   background:linear-gradient(rgba(6, 13, 34, 0) 40%, rgba(6, 13, 34, 0.6))
 }
 .detail-layout {
-  max-width:1220px;
+  max-width:1320px;
   margin:-125px auto 0;
   padding:0 28px;
   position:relative;
@@ -565,7 +565,7 @@ button:disabled {
   background:var(--panel)
 }
 .detail-body {
-  padding-top:125px
+  padding-top:165px
 }
 .detail-body h1 {
   color:var(--bright);
