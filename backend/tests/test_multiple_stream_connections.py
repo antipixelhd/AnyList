@@ -513,7 +513,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("routers.sync._select_in_chunks", AsyncMock(return_value=[movie])),
             patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
-            patch("routers.sync._push_stremio_connection", AsyncMock()) as push,
+            patch("core.stremio_delivery.push_connection", AsyncMock()) as push,
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
         ):

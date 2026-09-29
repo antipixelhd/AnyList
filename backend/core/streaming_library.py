@@ -4,6 +4,7 @@ Observed collection files describe provider state. The intent is kept separately
 so a failed write, or another collection source, cannot silently reverse it.
 """
 
+from core import stremio_payloads
 from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 import logging
@@ -186,7 +187,6 @@ async def _record_for_media(db: AsyncSession, user_id: int, media: Media) -> dic
 
 
 async def _write_stremio(db: AsyncSession, conn: MediaServerConnection, item: dict, desired: bool) -> None:
-    from routers.sync import _stremio_new_library_item, _stremio_same_item
 
     content_id = item["content_id"]
     async with stremio.connection_lock(conn.id):
@@ -196,11 +196,11 @@ async def _write_stremio(db: AsyncSession, conn: MediaServerConnection, item: di
         if old is None and not desired:
             return
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        candidate = dict(old or _stremio_new_library_item(item, now, in_library=desired))
+        candidate = dict(old or stremio_payloads.new_library_item(item, now, in_library=desired))
         candidate["removed"] = not desired
         candidate["temp"] = False
         candidate["_mtime"] = now
-        if old is None or not _stremio_same_item(old, candidate):
+        if old is None or not stremio_payloads.same_item(old, candidate):
             await stremio.datastore_put(conn.token, [candidate])
 
 

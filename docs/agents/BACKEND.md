@@ -72,6 +72,11 @@ Continue Watching queries. core/nuvio.py owns provider transport; routers/sync.p
 orchestrates sync jobs and full pushes. Payload and projection tests live in
 backend/tests/test_nuvio_payloads.py and test_nuvio_projection.py.
 
+For Stremio outbound state, core/stremio_delivery.py owns projection, serialized
+writes, and playback confirmation. core/stremio_payloads.py owns item formatting
+and watch/resume state updates; core/stremio.py owns HTTP transport and Cinemeta
+fetching. The focused tests are test_stremio_delivery.py and test_stremio_payloads.py.
+
 The database is PostgreSQL with async SQLAlchemy. Existing naive timestamps are
 interpreted as UTC; database sessions are pinned to UTC in db.py.
 Keep schema changes in migrations and follow existing transaction boundaries.

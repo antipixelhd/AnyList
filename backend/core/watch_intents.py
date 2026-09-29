@@ -1,6 +1,7 @@
 """Durable watched-state delivery for Nuvio and Stremio connections."""
 from __future__ import annotations
 
+from core import stremio_delivery
 from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 from datetime import datetime
@@ -119,13 +120,13 @@ async def _write_provider_watch_state(
 ) -> None:
     if conn.type == "stremio":
         from models.users import UserSettings
-        from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
+        from routers.sync import _get_effective_tmdb_key
 
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == conn.user_id,
         ))).scalar_one_or_none()
         api_key = await _get_effective_tmdb_key(db, settings)
-        await _push_stremio_connection(
+        await stremio_delivery.push_connection(
             db,
             conn,
             conn.user_id,
@@ -281,10 +282,10 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
                 row.attempts += 1
             try:
                 from models.users import UserSettings
-                from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
+                from routers.sync import _get_effective_tmdb_key
                 settings = (await db.execute(select(UserSettings).where(
                     UserSettings.user_id == user_id))).scalar_one_or_none()
-                await _push_stremio_connection(db, conn, user_id,
+                await stremio_delivery.push_connection(db, conn, user_id,
                     api_key=await _get_effective_tmdb_key(db, settings),
                     watch_overrides=overrides, watch_only=True)
             except Exception as error:

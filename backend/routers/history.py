@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, aliased
+from core import stremio_delivery
 from core import nuvio_payloads, nuvio_projection
 from db import get_db, AsyncSessionLocal
 from models.media import Media
@@ -342,7 +343,7 @@ async def _push_watch_state(
         if conn.type == "stremio" and not skip_stream_watch_writes
     ]
     if stremio_connections:
-        from routers.sync import _get_effective_tmdb_key, _push_stremio_connection
+        from routers.sync import _get_effective_tmdb_key
 
         api_key = await _get_effective_tmdb_key(db, settings)
         # Exclude episodes enriched from TVDB (no real TMDB counterpart, see
@@ -358,7 +359,7 @@ async def _push_watch_state(
             try:
                 from core.tracking_snapshot import require_stream_reconciliation
                 await require_stream_reconciliation(db, conn)
-                await _push_stremio_connection(
+                await stremio_delivery.push_connection(
                     db,
                     conn,
                     user_id,

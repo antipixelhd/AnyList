@@ -1,6 +1,7 @@
 import base64
 import asyncio
 import copy
+import logging
 from datetime import datetime, timezone
 import zlib
 from typing import Any
@@ -15,6 +16,8 @@ LINK_URL = "https://link.stremio.com/api/v2"
 CINEMETA_URL = "https://v3-cinemeta.strem.io"
 LIBRARY_COLLECTION = "libraryItem"
 _TIMEOUT = 30.0
+_CINEMETA_CONCURRENCY = 5
+logger = logging.getLogger(__name__)
 _WRITE_BATCH_SIZE = 100
 _connection_locks: dict[int, asyncio.Lock] = {}
 
@@ -367,3 +370,22 @@ def encode_watched_bitfield(watched_ids: set[str], video_ids: list[str]) -> str 
             last_watched_index = index
     packed = base64.b64encode(zlib.compress(bytes(values))).decode("ascii")
     return f"{video_ids[last_watched_index]}:{last_watched_index + 1}:{packed}"
+
+
+async def get_series_metadata(content_ids: set[str]) -> dict[str, dict]:
+    semaphore = asyncio.Semaphore(_CINEMETA_CONCURRENCY)
+
+    async def fetch(content_id: str) -> tuple[str, dict | None]:
+        try:
+            async with semaphore:
+                return content_id, await get_cinemeta_series(content_id)
+        except StremioAPIError:
+            logger.warning("Cinemeta metadata unavailable for %s", content_id)
+            return content_id, None
+
+    results = await asyncio.gather(*(fetch(content_id) for content_id in content_ids))
+    return {
+        content_id: metadata
+        for content_id, metadata in results
+        if metadata is not None
+    }

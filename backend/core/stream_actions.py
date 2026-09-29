@@ -1,4 +1,5 @@
 """Retryable playback actions; never mutates streaming library membership."""
+from core import stremio_payloads
 from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 import logging
@@ -88,8 +89,7 @@ async def push_stremio_progress(token, record):
     if rows:
         item = rows[0]
     else:
-        from routers.sync import _stremio_new_library_item
-        item = _stremio_new_library_item(record, _iso_utc(datetime.now(timezone.utc)), in_library=False)
+        item = stremio_payloads.new_library_item(record, _iso_utc(datetime.now(timezone.utc)), in_library=False)
     if item.get('type') and record.get('content_type') and item['type'] != record['content_type']:
         raise RemotePlaybackChanged()
     state = dict(item.get('state') or {})

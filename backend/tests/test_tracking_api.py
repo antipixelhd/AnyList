@@ -4339,7 +4339,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         push = AsyncMock(return_value=1)
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
              patch('routers.sync._get_effective_tmdb_key', AsyncMock(return_value='fixture')), \
-             patch('routers.sync._push_stremio_connection', push):
+             patch('core.stremio_delivery.push_connection', push):
             await dispatch_watch_intents(self.db, self.owner.id)
         self.assertEqual(push.await_count, 1)
         self.assertEqual(push.await_args.kwargs['watch_overrides'],
