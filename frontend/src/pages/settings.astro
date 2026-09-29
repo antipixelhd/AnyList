@@ -830,7 +830,7 @@ if (me.totp_enabled) {
 
 </TrackerSettings>
 <script>
-  import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
+  import { errorMessage, showMessage } from '../lib/settings-feedback';
   import { wireCancelButton } from '../lib/sync-controls';
   import type { PersonalDataSelection } from '../lib/api';
   import { showOverlay, hideOverlay } from '../lib/ui-motion';
@@ -847,7 +847,7 @@ if (me.totp_enabled) {
     const pctEl = document.getElementById('heal-job-pct');
     const label = document.getElementById('heal-job-label');
     const items = document.getElementById('heal-job-items');
-    const cancelBtn = document.getElementById('heal-job-cancel') as HTMLButtonElement | null;
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#heal-job-cancel');
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
@@ -937,8 +937,8 @@ if (me.totp_enabled) {
       const modal = document.getElementById('confirm-action-modal');
       const titleEl = document.getElementById('confirm-action-title');
       const bodyEl = document.getElementById('confirm-action-body');
-      const confirmBtn = document.getElementById('confirm-action') as HTMLButtonElement | null;
-      const cancelBtn = document.getElementById('cancel-action') as HTMLButtonElement | null;
+      const confirmBtn = document.querySelector<HTMLButtonElement>('#confirm-action');
+      const cancelBtn = document.querySelector<HTMLButtonElement>('#cancel-action');
       if (!modal || !titleEl || !bodyEl || !confirmBtn || !cancelBtn) { resolve(false); return; }
       titleEl.textContent = title;
       bodyEl.textContent = body;
@@ -962,8 +962,8 @@ if (me.totp_enabled) {
   function showExportDataModal(): Promise<PersonalDataSelection | null> {
     return new Promise(resolve => {
       const modal = document.getElementById('export-data-modal');
-      const confirmBtn = document.getElementById('export-data-modal-confirm') as HTMLButtonElement | null;
-      const cancelBtn = document.getElementById('export-data-modal-cancel') as HTMLButtonElement | null;
+      const confirmBtn = document.querySelector<HTMLButtonElement>('#export-data-modal-confirm');
+      const cancelBtn = document.querySelector<HTMLButtonElement>('#export-data-modal-cancel');
       const options = Array.from(document.querySelectorAll<HTMLButtonElement>('.export-option'));
       if (!modal || !confirmBtn || !cancelBtn || options.length === 0) { resolve(null); return; }
 
@@ -1023,10 +1023,10 @@ if (me.totp_enabled) {
   }
 
   function setupActions() {
-    const btns = document.querySelectorAll('[data-account-settings-page] .js-action-btn');
+    const btns = document.querySelectorAll<HTMLButtonElement>('[data-account-settings-page] .js-action-btn');
     btns.forEach(btn => {
       // Clean up previous listeners if any (important for Astro View Transitions)
-      const newBtn = btn.cloneNode(true);
+      const newBtn = btn.cloneNode(true) as HTMLButtonElement;
       if (btn.parentNode) {
         btn.parentNode.replaceChild(newBtn, btn);
       }
@@ -1040,7 +1040,7 @@ if (me.totp_enabled) {
         try {
           let url = '';
           let method = 'POST';
-          let requestBody: Record<string, string> | undefined;
+          let requestBody: Record<string, string | null> | undefined;
 
           if (action === 'test_tmdb') {
             const val = (document.getElementById('tmdb_api_key') as HTMLInputElement).value;
@@ -1052,7 +1052,7 @@ if (me.totp_enabled) {
             url = '/api/proxy/auth/test-tvdb';
             requestBody = { key: val, pin: pin || null };
           } else if (action === 'test_rpdb') {
-            const val = (document.getElementById('rpdb_api_key') as HTMLInputElement).value;
+            const val = (document.querySelector<HTMLInputElement>('#rpdb_api_key') as HTMLInputElement).value;
             url = '/api/proxy/auth/test-rpdb';
             requestBody = { key: val };
           }
@@ -1086,11 +1086,11 @@ if (me.totp_enabled) {
     });
 
     // Delete Account Logic
-    const deleteBtn = document.getElementById('delete-account-btn');
+    const deleteBtn = document.querySelector<HTMLButtonElement>('#delete-account-btn');
     const modal = document.getElementById('delete-modal');
-    const cancelBtn = document.getElementById('cancel-delete');
-    const confirmBtn = document.getElementById('confirm-delete');
-    const clearHistoryBtn = document.getElementById('clear-history-btn');
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#cancel-delete');
+    const confirmBtn = document.querySelector<HTMLButtonElement>('#confirm-delete');
+    const clearHistoryBtn = document.querySelector<HTMLButtonElement>('#clear-history-btn');
 
     if (clearHistoryBtn) {
       clearHistoryBtn.onclick = async () => {
@@ -1124,7 +1124,7 @@ if (me.totp_enabled) {
       };
     }
 
-    const clearRatingsBtn = document.getElementById('clear-ratings-btn') as HTMLButtonElement | null;
+    const clearRatingsBtn = document.querySelector<HTMLButtonElement>('#clear-ratings-btn');
     if (clearRatingsBtn) {
       clearRatingsBtn.onclick = async () => {
         const ok = await showConfirmModal(
@@ -1155,7 +1155,7 @@ if (me.totp_enabled) {
       };
     }
 
-    const clearCollectionBtn = document.getElementById('clear-collection-btn') as HTMLButtonElement | null;
+    const clearCollectionBtn = document.querySelector<HTMLButtonElement>('#clear-collection-btn');
     if (clearCollectionBtn) {
       clearCollectionBtn.onclick = async () => {
         const ok = await showConfirmModal(
@@ -1186,7 +1186,7 @@ if (me.totp_enabled) {
       };
     }
 
-    const clearListsBtn = document.getElementById('clear-lists-btn') as HTMLButtonElement | null;
+    const clearListsBtn = document.querySelector<HTMLButtonElement>('#clear-lists-btn');
     if (clearListsBtn) {
       clearListsBtn.onclick = async () => {
         const ok = await showConfirmModal(
@@ -1277,7 +1277,7 @@ if (me.totp_enabled) {
   function setupAccentSwatches() {
     const saved = localStorage.getItem('accentTheme') || 'blue';
 
-    function applyAccent(id) {
+    function applyAccent(id: string) {
       if (id === 'blue') {
         document.documentElement.removeAttribute('data-accent');
       } else {
@@ -1297,13 +1297,13 @@ if (me.totp_enabled) {
     applyAccent(saved);
 
     document.querySelectorAll('.accent-swatch').forEach(btn => {
-      btn.addEventListener('click', () => applyAccent(btn.getAttribute('data-accent-id')));
+      btn.addEventListener('click', () => applyAccent(btn.getAttribute('data-accent-id') || 'blue'));
     });
   }
 
   function setupSettingsForm() {
-    const form = document.getElementById('settings-form');
-    const saveBtn = document.getElementById('save-settings-btn');
+    const form = document.querySelector<HTMLFormElement>('#settings-form');
+    const saveBtn = document.querySelector<HTMLButtonElement>('#save-settings-btn');
     if (!form || !saveBtn || form.dataset.initialized) return;
     form.dataset.initialized = 'true';
     const fields = ['rpdb_api_key'];
@@ -1351,8 +1351,8 @@ if (me.totp_enabled) {
   }
 
   function setupPasswordForm() {
-    const form = document.getElementById('password-form');
-    const updateBtn = document.getElementById('update-password-btn');
+    const form = document.querySelector<HTMLFormElement>('#password-form');
+    const updateBtn = document.querySelector<HTMLButtonElement>('#update-password-btn');
     if (!form || !updateBtn) return;
 
     form.addEventListener('submit', async (e) => {
@@ -1396,7 +1396,7 @@ if (me.totp_enabled) {
   }
 
   function setupExportData() {
-    const btn = document.getElementById('export-data-btn') as HTMLButtonElement | null;
+    const btn = document.querySelector<HTMLButtonElement>('#export-data-btn');
     if (!btn) return;
 
     btn.addEventListener('click', async () => {
@@ -1446,10 +1446,10 @@ if (me.totp_enabled) {
   }
 
   function setupHealButton() {
-    const btn = document.getElementById('heal-btn');
+    const btn = document.querySelector<HTMLButtonElement>('#heal-btn');
     const modal = document.getElementById('heal-modal');
-    const cancelBtn = document.getElementById('cancel-heal');
-    const confirmBtn = document.getElementById('confirm-heal');
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#cancel-heal');
+    const confirmBtn = document.querySelector<HTMLButtonElement>('#confirm-heal');
     if (!btn || !modal || !cancelBtn || !confirmBtn) return;
 
     btn.addEventListener('click', () => {
@@ -1486,7 +1486,7 @@ if (me.totp_enabled) {
   }
 
   function setupClearSessionsButton() {
-    const btn = document.getElementById('clear-sessions-btn');
+    const btn = document.querySelector<HTMLButtonElement>('#clear-sessions-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
       const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1507,7 +1507,7 @@ if (me.totp_enabled) {
       }
     });
 
-    const healStubBtn = document.getElementById('heal-stub-titles-btn');
+    const healStubBtn = document.querySelector<HTMLButtonElement>('#heal-stub-titles-btn');
     if (healStubBtn) {
       healStubBtn.addEventListener('click', async () => {
         const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1530,7 +1530,7 @@ if (me.totp_enabled) {
       });
     }
 
-    const healPushEchoBtn = document.getElementById('heal-push-echo-btn');
+    const healPushEchoBtn = document.querySelector<HTMLButtonElement>('#heal-push-echo-btn');
     if (healPushEchoBtn) {
       healPushEchoBtn.addEventListener('click', async () => {
         const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1553,10 +1553,10 @@ if (me.totp_enabled) {
       });
     }
 
-    const healDuplicateHistoryBtn = document.getElementById('heal-duplicate-history-btn');
+    const healDuplicateHistoryBtn = document.querySelector<HTMLButtonElement>('#heal-duplicate-history-btn');
     if (healDuplicateHistoryBtn) {
       healDuplicateHistoryBtn.addEventListener('click', async () => {
-        const windowInput = document.getElementById('heal-duplicate-history-window') as HTMLInputElement | null;
+        const windowInput = document.querySelector<HTMLInputElement>('#heal-duplicate-history-window');
         const windowMinutes = parseInt(windowInput?.value || '', 10);
         if (!windowMinutes || windowMinutes < 1) {
           windowInput?.focus();
@@ -1583,7 +1583,7 @@ if (me.totp_enabled) {
       });
     }
 
-    const healStuckUnwatchedBtn = document.getElementById('heal-stuck-unwatched-btn');
+    const healStuckUnwatchedBtn = document.querySelector<HTMLButtonElement>('#heal-stuck-unwatched-btn');
     if (healStuckUnwatchedBtn) {
       healStuckUnwatchedBtn.addEventListener('click', async () => {
         const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1613,7 +1613,7 @@ if (me.totp_enabled) {
   setupSettingsForm();
   setupPasswordForm();
 
-  const shuffleNextUpToggle = document.getElementById('shuffle-next-up-toggle') as HTMLInputElement | null;
+  const shuffleNextUpToggle = document.querySelector<HTMLInputElement>('#shuffle-next-up-toggle');
   if (shuffleNextUpToggle) {
     shuffleNextUpToggle.addEventListener('change', async () => {
       const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1625,7 +1625,7 @@ if (me.totp_enabled) {
     });
   }
 
-  const minimalistNextUpToggle = document.getElementById('minimalist-next-up-toggle') as HTMLInputElement | null;
+  const minimalistNextUpToggle = document.querySelector<HTMLInputElement>('#minimalist-next-up-toggle');
   if (minimalistNextUpToggle) {
     minimalistNextUpToggle.addEventListener('change', async () => {
       const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1637,7 +1637,7 @@ if (me.totp_enabled) {
     });
   }
 
-  const hideWatchedRecentlyAddedToggle = document.getElementById('hide-watched-recently-added-toggle') as HTMLInputElement | null;
+  const hideWatchedRecentlyAddedToggle = document.querySelector<HTMLInputElement>('#hide-watched-recently-added-toggle');
   if (hideWatchedRecentlyAddedToggle) {
     hideWatchedRecentlyAddedToggle.addEventListener('change', async () => {
       const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1649,7 +1649,7 @@ if (me.totp_enabled) {
     });
   }
 
-  const condenseHistoryToggle = document.getElementById('condense-history-toggle') as HTMLInputElement | null;
+  const condenseHistoryToggle = document.querySelector<HTMLInputElement>('#condense-history-toggle');
   if (condenseHistoryToggle) {
     condenseHistoryToggle.addEventListener('change', async () => {
       const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1677,7 +1677,7 @@ if (me.totp_enabled) {
     });
   }
 
-  const duplicateWatchWindowInput = document.getElementById('duplicate-watch-window-input') as HTMLInputElement | null;
+  const duplicateWatchWindowInput = document.querySelector<HTMLInputElement>('#duplicate-watch-window-input');
   if (duplicateWatchWindowInput) {
     duplicateWatchWindowInput.addEventListener('change', async () => {
       const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
@@ -1693,7 +1693,7 @@ if (me.totp_enabled) {
 
   // Sync blur_explicit cookie from the server-rendered value on page load.
   // Picks up changes made on another device/browser.
-  const blurToggle = document.getElementById('blur-explicit-toggle') as HTMLInputElement | null;
+  const blurToggle = document.querySelector<HTMLInputElement>('#blur-explicit-toggle');
   if (blurToggle) {
     const val = blurToggle.checked ? 'true' : 'false';
     document.cookie = `blur_explicit=${val}; path=/; SameSite=Lax; Max-Age=31536000`;
@@ -1713,7 +1713,7 @@ if (me.totp_enabled) {
   }
 
   // Sync time_format_24h cookie from the server-rendered value on page load.
-  const timeFormatToggle = document.getElementById('time-format-24h-toggle') as HTMLInputElement | null;
+  const timeFormatToggle = document.querySelector<HTMLInputElement>('#time-format-24h-toggle');
   if (timeFormatToggle) {
     document.cookie = `time_format_24h=${timeFormatToggle.checked ? 'true' : 'false'}; path=/; SameSite=Lax; Max-Age=31536000`;
 
@@ -1729,7 +1729,7 @@ if (me.totp_enabled) {
   }
 
   // Sync use_hls_player cookie from the server-rendered value on page load.
-  const hlsPlayerToggle = document.getElementById('use-hls-player-toggle') as HTMLInputElement | null;
+  const hlsPlayerToggle = document.querySelector<HTMLInputElement>('#use-hls-player-toggle');
   if (hlsPlayerToggle) {
     document.cookie = `use_hls_player=${hlsPlayerToggle.checked ? 'true' : 'false'}; path=/; SameSite=Lax; Max-Age=31536000`;
 
@@ -1790,16 +1790,16 @@ if (me.totp_enabled) {
 
   function setup2fa() {
     // Enable flow
-    const enableBtn = document.getElementById('enable-2fa-btn');
+    const enableBtn = document.querySelector<HTMLButtonElement>('#enable-2fa-btn');
     const setupPanel = document.getElementById('2fa-setup-panel');
-    const cancelSetupBtn = document.getElementById('cancel-2fa-setup-btn');
-    const confirmEnableBtn = document.getElementById('confirm-enable-2fa-btn') as HTMLButtonElement | null;
-    const verifyInput = document.getElementById('totp-verify-code') as HTMLInputElement | null;
+    const cancelSetupBtn = document.querySelector<HTMLButtonElement>('#cancel-2fa-setup-btn');
+    const confirmEnableBtn = document.querySelector<HTMLButtonElement>('#confirm-enable-2fa-btn');
+    const verifyInput = document.querySelector<HTMLInputElement>('#totp-verify-code');
     const secretDisplay = document.getElementById('totp-secret-display');
-    const qrCanvas = document.getElementById('totp-qr-canvas') as HTMLCanvasElement | null;
+    const qrCanvas = document.querySelector<HTMLCanvasElement>('#totp-qr-canvas');
     const newCodesPanel = document.getElementById('2fa-new-codes-panel');
     const newCodesGrid = document.getElementById('2fa-new-codes-grid');
-    const newCodesDoneBtn = document.getElementById('2fa-new-codes-done-btn');
+    const newCodesDoneBtn = document.querySelector<HTMLButtonElement>('#2fa-new-codes-done-btn');
 
     enableBtn?.addEventListener('click', async () => {
       enableBtn.textContent = 'Loading...';
@@ -1886,11 +1886,11 @@ if (me.totp_enabled) {
     });
 
     // Disable flow
-    const disableBtn = document.getElementById('disable-2fa-btn');
+    const disableBtn = document.querySelector<HTMLButtonElement>('#disable-2fa-btn');
     const disablePanel = document.getElementById('2fa-disable-panel');
-    const cancelDisableBtn = document.getElementById('cancel-disable-2fa-btn');
-    const confirmDisableBtn = document.getElementById('confirm-disable-2fa-btn') as HTMLButtonElement | null;
-    const disableCodeInput = document.getElementById('totp-disable-code') as HTMLInputElement | null;
+    const cancelDisableBtn = document.querySelector<HTMLButtonElement>('#cancel-disable-2fa-btn');
+    const confirmDisableBtn = document.querySelector<HTMLButtonElement>('#confirm-disable-2fa-btn');
+    const disableCodeInput = document.querySelector<HTMLInputElement>('#totp-disable-code');
 
     disableBtn?.addEventListener('click', () => {
       disablePanel?.classList.remove('hidden');

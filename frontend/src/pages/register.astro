@@ -43,6 +43,8 @@ if (Astro.request.method === "POST") {
       loginData.append("password", password);
       const result = await api.auth.login(loginData);
 
+      if (!result.access_token) return Astro.redirect("/login");
+
       Astro.cookies.set("token", result.access_token, {
         path: "/",
         httpOnly: true,

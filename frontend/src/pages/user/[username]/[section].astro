@@ -261,7 +261,7 @@ document.addEventListener('astro:page-load', () => {
       filterDropdowns.forEach(syncDropdown);
       document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.status===status)));
     }
-    function filter() {
+    const filter = () => {
       hidePreview();
       let count = 0;
       const query = input('list-search').value.toLowerCase().trim();

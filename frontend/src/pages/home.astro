@@ -314,7 +314,7 @@ document.addEventListener('astro:page-load',()=>{
     if(activities.length)feed.querySelector('[data-activity-empty]')?.remove();
     activities.forEach(activity=>{
       const existing=cards.get(activity.key);
-      const card=existing?.dataset.createdAt===activity.created_at?existing:render(activity);
+      const card=existing && existing.dataset.createdAt===activity.created_at?existing:render(activity);
       if(card!==existing)existing?.remove();
       feed.append(card);
     });

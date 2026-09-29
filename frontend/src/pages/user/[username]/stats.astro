@@ -3,11 +3,12 @@ import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import Icon from '../../../components/Icon.astro';
 import {tracker} from '../../../lib/tracker';
+import type { ProfileStats } from '../../../lib/profile-stats-data';
 const {username} = Astro.params;
-let data:any=null,error='';
+let data: ProfileStats | null = null, error = '';
 try { data=await tracker(`profile/${encodeURIComponent(username!)}/stats/summary`,Astro.locals.token); }
 catch(cause){ error=(cause as Error).message; }
-const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).slice(0,4)))].sort().reverse();
+const years=[...new Set<string>((data?.activity||[]).map((item:any)=>String(item.month).slice(0,4)))].sort().reverse();
 ---
 <Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
 {data?<>
@@ -36,50 +37,4 @@ const years=[...new Set((data?.activity||[]).map((item:any)=>String(item.month).
 </>:<div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 
-<script>
-import Chart from 'chart.js/auto';
-function setupStats() {
-const root=document.querySelector<HTMLElement>('#profile-stats');
-if(root && root.dataset.statsInitialized !== 'true'){
-  root.dataset.statsInitialized = 'true';
-  let data=JSON.parse(root.dataset.initial||'{}');
-  let media='all';
-  const charts:Chart[]=[];
-  const text=(name:string,value:string)=>{const node=root.querySelector<HTMLElement>(`[data-stat="${name}"]`);if(node)node.textContent=value;};
-  const duration=(minutes:number)=>minutes?minutes>=60?`${Math.floor(minutes/60).toLocaleString()}h ${minutes%60}m`:`${minutes}m`:'0m';
-  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const typography=getComputedStyle(document.documentElement);
-  Chart.defaults.color='#8fa5bb';
-  Chart.defaults.font.family=typography.getPropertyValue('--font-body').trim();
-  Chart.defaults.font.size=parseFloat(typography.fontSize)*parseFloat(typography.getPropertyValue('--type-meta-size'));
-  Chart.defaults.font.weight=Number.parseInt(typography.getPropertyValue('--type-row-weight'),10);
-  function render(next:any){
-    data=next; charts.splice(0).forEach(chart=>chart.destroy());
-    text('current',String(data.current.total)); text('titles',String(data.viewing.unique_titles));
-    text('episodes',`${data.viewing.unique_episodes} / ${data.viewing.unique_seasons}`); text('seasons','Unique episodes / seasons');
-    text('time',duration(data.viewing.estimated_watch_minutes)); text('average',data.scores.average==null?'—':`${Number(data.scores.average).toFixed(1)} / 10`);
-    text('rated',`${data.scores.rated} rated ${data.scores.rated===1?'title':'titles'}`); text('repeats',String(data.viewing.repeat_views));
-    const labels:{[key:string]:string}={watching:'Watching',completed:'Completed',paused:'Paused',dropped:'Dropped',planning:'Plan to watch'};
-    root.querySelector('[data-status-list]')!.innerHTML=Object.entries(data.current.statuses).map(([key,value])=>`<div><span>${labels[key]||key}</span><strong>${value}</strong><i style="--status-width:${data.current.total?Number(value)/data.current.total*100:0}%"></i></div>`).join('');
-    const common={responsive:true,maintainAspectRatio:false,animation:reduced?false:{duration:220},plugins:{legend:{display:false}}};
-    charts.push(new Chart(root.querySelector<HTMLCanvasElement>('#score-chart')!,{type:'bar',data:{labels:data.scores.distribution.map((x:any)=>x.score),datasets:[{data:data.scores.distribution.map((x:any)=>x.count),backgroundColor:'#3db4f2',borderRadius:3}]},options:{...common,scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}}}));
-    charts.push(new Chart(root.querySelector<HTMLCanvasElement>('#activity-chart')!,{type:'line',data:{labels:data.activity.map((x:any)=>x.month),datasets:[{label:'Movies',data:data.activity.map((x:any)=>x.movies),borderColor:'#3db4f2',backgroundColor:'#3db4f233',fill:true,tension:.3},{label:'Episodes',data:data.activity.map((x:any)=>x.episodes),borderColor:'#818cf8',backgroundColor:'#818cf822',fill:true,tension:.3}]},options:{...common,plugins:{legend:{display:true,labels:{boxWidth:10}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}}}));
-    const genres=data.genres.slice(0,8);
-    charts.push(new Chart(root.querySelector<HTMLCanvasElement>('#genre-chart')!,{type:'bar',data:{labels:genres.map((x:any)=>x.genre),datasets:[{data:genres.map((x:any)=>x.count),backgroundColor:'#5d79df',borderRadius:3}]},options:{...common,indexAxis:'y',scales:{x:{beginAtZero:true,ticks:{precision:0}},y:{grid:{display:false}}}}}));
-    root.querySelector<HTMLElement>('[data-score-summary]')!.textContent=data.scores.rated?`${data.scores.rated} current ratings with an average of ${Number(data.scores.average).toFixed(1)}.`:'No current ratings.';
-    root.querySelector<HTMLElement>('[data-genre-summary]')!.textContent=genres.length?genres.map((x:any)=>`${x.genre} ${x.count}`).join(' · '):'No genre data.';
-  }
-  async function load(){
-    const year=(root.querySelector<HTMLSelectElement>('#stats-year')!).value;
-    const error=root.querySelector<HTMLElement>('.stats-error')!; error.hidden=true; root.setAttribute('aria-busy','true');
-    try{const response=await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(root.dataset.username!)}/stats/summary?media_type=${media}${year?`&year=${year}`:''}`);if(!response.ok)throw new Error('Unable to load these statistics.');render(await response.json());}
-    catch(cause){error.textContent=cause instanceof Error?cause.message:'Unable to load these statistics.';error.hidden=false;}finally{root.removeAttribute('aria-busy');}
-  }
-  root.querySelectorAll<HTMLButtonElement>('[data-stats-media]').forEach(button=>button.addEventListener('click',()=>{media=button.dataset.statsMedia!;root.querySelectorAll('[data-stats-media]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));load();}));
-  root.querySelector('#stats-year')?.addEventListener('change',load); render(data);
-  document.addEventListener('astro:before-swap', () => charts.splice(0).forEach(chart => chart.destroy()), {once:true});
-}
-}
-setupStats();
-document.addEventListener('astro:after-swap', setupStats);
-</script>
+<script src="../../../lib/profile-stats.ts"></script>

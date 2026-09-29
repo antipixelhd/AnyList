@@ -27,9 +27,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   { value: 24, label: "Every 24h" },
   { value: 48, label: "Every 48h" },
 ];
-const traktConfigured    = !!(settings.trakt_connected || settings.trakt_client_id);
-const radarrConfigured   = !!(settings.radarr_url && settings.radarr_token);
-const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 ---
 
 <TrackerSettings title="Connections">
@@ -1795,6 +1792,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import { wireCancelButton } from '../lib/sync-controls';
   import type { PersonalDataSelection } from '../lib/api';
+  import { arrCredentials, arrSettings, fetchArrProfiles, renderArrProfiles } from '../lib/arr-settings';
   import { applyResponsiveArtwork } from "../lib/responsive-artwork";
   import { showOverlay, hideOverlay, showCollapsible, hideCollapsible } from '../lib/ui-motion';
 
@@ -1955,8 +1953,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     strip.classList.remove('hidden');
 
-    const isClear = job.job_type === 'clear';
     const isPush = job.job_type === 'push';
+    const isClear = job.job_type === 'clear';
     const isFailed = job.status === 'failed';
     const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
@@ -2071,7 +2069,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const pctEl  = document.getElementById('simkl-job-pct');
     const label  = document.getElementById('simkl-job-label');
     const items  = document.getElementById('simkl-job-items');
-    const cancelBtn = document.getElementById('simkl-job-cancel') as HTMLButtonElement | null;
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#simkl-job-cancel');
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
@@ -2156,7 +2154,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const pctEl  = document.getElementById('trakt-job-pct');
     const label  = document.getElementById('trakt-job-label');
     const items  = document.getElementById('trakt-job-items');
-    const cancelBtn = document.getElementById('trakt-job-cancel') as HTMLButtonElement | null;
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#trakt-job-cancel');
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
@@ -2489,7 +2487,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const pctEl = document.getElementById('mdblist-job-pct');
     const label = document.getElementById('mdblist-job-label');
     const items = document.getElementById('mdblist-job-items');
-    const cancelBtn = document.getElementById('mdblist-job-cancel') as HTMLButtonElement | null;
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#mdblist-job-cancel');
     if (!strip) return;
     if (!job) { strip.classList.add('hidden'); return; }
     strip.classList.remove('hidden');
@@ -2578,13 +2576,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const pctEl  = document.getElementById('bingebase-job-pct');
     const label  = document.getElementById('bingebase-job-label');
     const items  = document.getElementById('bingebase-job-items');
-    const cancelBtn = document.getElementById('bingebase-job-cancel') as HTMLButtonElement | null;
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#bingebase-job-cancel');
     if (!strip) return;
 
     if (!job) { strip.classList.add('hidden'); return; }
     strip.classList.remove('hidden');
 
-    const isPush = job.job_type === 'push';
     const isFailed = job.status === 'failed';
     const isCancelled = job.status === 'cancelled';
     const isCompleted = job.status === 'completed';
@@ -2705,8 +2702,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       const modal = document.getElementById('confirm-action-modal');
       const titleEl = document.getElementById('confirm-action-title');
       const bodyEl = document.getElementById('confirm-action-body');
-      const confirmBtn = document.getElementById('confirm-action') as HTMLButtonElement | null;
-      const cancelBtn = document.getElementById('cancel-action') as HTMLButtonElement | null;
+      const confirmBtn = document.querySelector<HTMLButtonElement>('#confirm-action');
+      const cancelBtn = document.querySelector<HTMLButtonElement>('#cancel-action');
       if (!modal || !titleEl || !bodyEl || !confirmBtn || !cancelBtn) { resolve(false); return; }
       titleEl.textContent = title;
       bodyEl.textContent = body;
@@ -2733,8 +2730,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     return new Promise(resolve => {
       const modal = document.getElementById('trakt-import-modal');
       const bodyEl = document.getElementById('trakt-import-modal-body');
-      const confirmBtn = document.getElementById('trakt-import-modal-confirm') as HTMLButtonElement | null;
-      const cancelBtn = document.getElementById('trakt-import-modal-cancel') as HTMLButtonElement | null;
+      const confirmBtn = document.querySelector<HTMLButtonElement>('#trakt-import-modal-confirm');
+      const cancelBtn = document.querySelector<HTMLButtonElement>('#trakt-import-modal-cancel');
       const options = Array.from(document.querySelectorAll<HTMLButtonElement>('.trakt-import-option'));
       if (!modal || !bodyEl || !confirmBtn || !cancelBtn || options.length === 0) { resolve(null); return; }
 
@@ -2789,8 +2786,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     return new Promise(resolve => {
       const modal = document.getElementById('scrob-import-modal');
       const bodyEl = document.getElementById('scrob-import-modal-body');
-      const confirmBtn = document.getElementById('scrob-import-modal-confirm') as HTMLButtonElement | null;
-      const cancelBtn = document.getElementById('scrob-import-modal-cancel') as HTMLButtonElement | null;
+      const confirmBtn = document.querySelector<HTMLButtonElement>('#scrob-import-modal-confirm');
+      const cancelBtn = document.querySelector<HTMLButtonElement>('#scrob-import-modal-cancel');
       const options = Array.from(document.querySelectorAll<HTMLButtonElement>('.scrob-import-option'));
       if (!modal || !bodyEl || !confirmBtn || !cancelBtn || options.length === 0) { resolve(null); return; }
 
@@ -2857,8 +2854,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     return new Promise(resolve => {
       const modal = document.getElementById('yamtrack-import-modal');
       const bodyEl = document.getElementById('yamtrack-import-modal-body');
-      const confirmBtn = document.getElementById('yamtrack-import-modal-confirm') as HTMLButtonElement | null;
-      const cancelBtn = document.getElementById('yamtrack-import-modal-cancel') as HTMLButtonElement | null;
+      const confirmBtn = document.querySelector<HTMLButtonElement>('#yamtrack-import-modal-confirm');
+      const cancelBtn = document.querySelector<HTMLButtonElement>('#yamtrack-import-modal-cancel');
       const options = Array.from(document.querySelectorAll<HTMLButtonElement>('.yamtrack-import-option'));
       if (!modal || !bodyEl || !confirmBtn || !cancelBtn || options.length === 0) { resolve(null); return; }
 
@@ -2911,7 +2908,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
   }
 
-  function setConnStatus(id, state) {
+  function setConnStatus(id: string, state: 'checking' | 'connected' | 'disconnected') {
     const el = document.getElementById(id);
     if (!el) return;
     el.classList.remove('hidden');
@@ -2927,24 +2924,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
   }
 
-  function populateSelect(selectId, options, currentValue) {
-    const sel = document.getElementById(selectId);
-    if (!sel) return;
-    sel.innerHTML = '<option value="">-- Select --</option>' + options.map(o => {
-      const val = String(o.value ?? o.path ?? o.id ?? '');
-      const label = o.label ?? o.name ?? o.path ?? val;
-      const selected = val === String(currentValue ?? '') ? 'selected' : '';
-      return `<option value="${esc(val)}" ${selected}>${esc(label)}</option>`;
-    }).join('');
-  }
-
   async function checkConnections() {
     if (!token) return;
-    const traktConnected = !!document.getElementById('trakt-disconnect-btn');
-    const simklConnected = !!document.getElementById('simkl-disconnect-btn');
-    const mdblistConfigured = !!document.getElementById('mdblist_api_key')?.value;
-    const radarrConfigured = !!document.getElementById('radarr_url')?.value;
-    const sonarrConfigured = !!document.getElementById('sonarr_url')?.value;
+    const traktConnected = !!document.querySelector<HTMLButtonElement>('#trakt-disconnect-btn');
+    const simklConnected = !!document.querySelector<HTMLButtonElement>('#simkl-disconnect-btn');
+    const mdblistConfigured = !!document.querySelector<HTMLInputElement>('#mdblist_api_key')?.value;
+    const radarrConfigured = !!document.querySelector<HTMLInputElement>('#radarr_url')?.value;
+    const sonarrConfigured = !!document.querySelector<HTMLInputElement>('#sonarr_url')?.value;
     const mediaServerIds = Array.from(document.querySelectorAll<HTMLElement>('[data-connection-id]'))
       .map(el => el.getAttribute('data-connection-id'))
       .filter(Boolean) as string[];
@@ -2964,39 +2950,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (!res.ok) return;
       const data = await res.json();
 
-      if (data.radarr?.configured) {
-        setConnStatus('radarr-conn-status', data.radarr.connected ? 'connected' : 'disconnected');
-        if (data.radarr.connected) {
-          const currentFolder = document.getElementById('radarr_root_folder')?.value;
-          const currentProfile = document.getElementById('radarr_quality_profile')?.value;
-          populateSelect('radarr_root_folder', (data.radarr.root_folders ?? []).map(f => ({
-            value: f.path,
-            label: `${f.path} (${(f.freeSpace / 1024 ** 3).toFixed(1)} GB free)`
-          })), currentFolder);
-          populateSelect('radarr_quality_profile', data.radarr.quality_profiles ?? [], currentProfile);
-          const tagContainer = document.getElementById('radarr_tags_list');
-          const selectedTags = Array.from(tagContainer?.querySelectorAll('input[name="radarr_tags"]') ?? [])
-            .filter(i => i.type !== 'checkbox' || i.checked)
-            .map(i => parseInt(i.value));
-          renderTags('radarr_tags_list', data.radarr.tags, selectedTags, 'radarr');
-        }
-      }
-      if (data.sonarr?.configured) {
-        setConnStatus('sonarr-conn-status', data.sonarr.connected ? 'connected' : 'disconnected');
-        if (data.sonarr.connected) {
-          const currentFolder = document.getElementById('sonarr_root_folder')?.value;
-          const currentProfile = document.getElementById('sonarr_quality_profile')?.value;
-          populateSelect('sonarr_root_folder', (data.sonarr.root_folders ?? []).map(f => ({
-            value: f.path,
-            label: `${f.path} (${(f.freeSpace / 1024 ** 3).toFixed(1)} GB free)`
-          })), currentFolder);
-          populateSelect('sonarr_quality_profile', data.sonarr.quality_profiles ?? [], currentProfile);
-          const tagContainer = document.getElementById('sonarr_tags_list');
-          const selectedTags = Array.from(tagContainer?.querySelectorAll('input[name="sonarr_tags"]') ?? [])
-            .filter(i => i.type !== 'checkbox' || i.checked)
-            .map(i => parseInt(i.value));
-          renderTags('sonarr_tags_list', data.sonarr.tags, selectedTags, 'sonarr');
-        }
+      for (const provider of ['radarr', 'sonarr'] as const) {
+        const status = data[provider];
+        if (!status?.configured) continue;
+        setConnStatus(`${provider}-conn-status`, status.connected ? 'connected' : 'disconnected');
+        if (status.connected) renderArrProfiles(provider, status);
       }
       if (data.trakt?.configured) {
         setConnStatus('trakt-conn-status', data.trakt.connected ? 'connected' : 'disconnected');
@@ -3088,38 +3046,6 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
   }
 
-  function renderTags(containerId, tags, selectedIds, prefix) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    
-    if (!tags || tags.length === 0) {
-      container.innerHTML = '<span class="text-xs text-zinc-500 italic px-2 py-1">No tags found</span>';
-      return;
-    }
-
-    container.innerHTML = tags.map(tag => {
-      const isSelected = selectedIds.includes(tag.id);
-      return `
-        <label class="group relative flex items-center gap-1.5 px-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-md cursor-pointer transition-colors ${isSelected ? 'ring-1 ring-blue-500 border-blue-500/50 bg-blue-500/10' : ''}">
-          <input type="checkbox" name="${prefix}_tags" value="${esc(String(tag.id))}" ${isSelected ? 'checked' : ''} class="hidden tag-checkbox" />
-          <span class="text-xs font-medium text-zinc-300 group-hover:text-zinc-100">${esc(tag.label)}</span>
-        </label>
-      `;
-    }).join('');
-
-    // Add click listeners to update styling
-    container.querySelectorAll('label').forEach(label => {
-      const cb = label.querySelector('input');
-      cb.addEventListener('change', () => {
-        if (cb.checked) {
-          label.classList.add('ring-1', 'ring-blue-500', 'border-blue-500/50', 'bg-blue-500/10');
-        } else {
-          label.classList.remove('ring-1', 'ring-blue-500', 'border-blue-500/50', 'bg-blue-500/10');
-        }
-      });
-    });
-  }
-
   async function persistMdblistPreferences(keys: string[]) {
     const preferences = Object.fromEntries(keys.map(key => {
       const input = document.querySelector<HTMLInputElement>(`input[name="${key}"]`);
@@ -3151,7 +3077,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const btns = document.querySelectorAll('[data-connections-page] .js-action-btn');
     btns.forEach(btn => {
       // Clean up previous listeners if any (important for Astro View Transitions)
-      const newBtn = btn.cloneNode(true);
+      const newBtn = btn.cloneNode(true) as HTMLButtonElement;
       if (btn.parentNode) {
         btn.parentNode.replaceChild(newBtn, btn);
       }
@@ -3207,7 +3133,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
               });
             } else {
               const testEndpoint = `/api/proxy/auth/test-${connType === 'plex' ? 'plex' : connType === 'emby' ? 'emby' : 'jellyfin'}`;
-              const credentials = connType === 'plex'
+              const credentials: Record<string, string> = connType === 'plex'
                 ? { url: u, token: t }
                 : { url: u, token: t, user_id: ui };
               testRes = await postIntegrationCredentials(testEndpoint, credentials);
@@ -3308,8 +3234,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             return;
           } else if (action === 'save_trakt_settings') {
             const body: Record<string, any> = {
-              trakt_client_id: (document.getElementById('trakt_client_id') as HTMLInputElement)?.value || null,
-              trakt_client_secret: (document.getElementById('trakt_client_secret') as HTMLInputElement)?.value || null,
+              trakt_client_id: (document.querySelector<HTMLInputElement>('#trakt_client_id'))?.value || null,
+              trakt_client_secret: (document.querySelector<HTMLInputElement>('#trakt_client_secret'))?.value || null,
               trakt_auto_sync_interval: (() => {
                 const v = (document.querySelector('[name="trakt_auto_sync_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
@@ -3336,7 +3262,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             return;
           } else if (action === 'save_simkl_settings') {
             const body: Record<string, any> = {
-              simkl_client_id: (document.getElementById('simkl_client_id') as HTMLInputElement)?.value || null,
+              simkl_client_id: (document.querySelector<HTMLInputElement>('#simkl_client_id'))?.value || null,
               simkl_auto_sync_interval: (() => {
                 const v = (document.querySelector('[name="simkl_auto_sync_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
@@ -3363,7 +3289,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             return;
           } else if (action === 'save_mdblist_settings') {
             const body: Record<string, any> = {
-              mdblist_api_key: (document.getElementById('mdblist_api_key') as HTMLInputElement)?.value || null,
+              mdblist_api_key: (document.querySelector<HTMLInputElement>('#mdblist_api_key'))?.value || null,
               mdblist_auto_sync_interval: (() => {
                 const v = (document.querySelector('[name="mdblist_auto_sync_interval"]') as HTMLSelectElement)?.value;
                 return v ? parseFloat(v) : null;
@@ -3390,8 +3316,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             return;
           } else if (action === 'save_bingebase_settings') {
             const body: Record<string, any> = {
-              bingebase_webhook_url: (document.getElementById('bingebase_webhook_url') as HTMLInputElement)?.value || null,
-              bingebase_api_key: (document.getElementById('bingebase_api_key') as HTMLInputElement)?.value || null,
+              bingebase_webhook_url: (document.querySelector<HTMLInputElement>('#bingebase_webhook_url'))?.value || null,
+              bingebase_api_key: (document.querySelector<HTMLInputElement>('#bingebase_api_key'))?.value || null,
             };
             const bingebaseKeys = ['bingebase_scrobble', 'bingebase_push_watched', 'bingebase_push_ratings'];
             for (const key of bingebaseKeys) {
@@ -3419,58 +3345,19 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             showMessage('Bingebase history push started.');
             pollBingebaseJob(data.job_id);
             return;
-          } else if (action === 'save_radarr_settings') {
-            const radarrTagInputs = document.querySelectorAll('#radarr_tags_list input[name="radarr_tags"]');
-            const body = {
-              radarr_url: (document.getElementById('radarr_url') as HTMLInputElement)?.value || null,
-              radarr_token: (document.getElementById('radarr_token') as HTMLInputElement)?.value || null,
-              radarr_root_folder: (document.getElementById('radarr_root_folder') as HTMLSelectElement)?.value || null,
-              radarr_quality_profile: (() => {
-                const v = (document.getElementById('radarr_quality_profile') as HTMLSelectElement)?.value;
-                return v ? parseInt(v) : null;
-              })(),
-              radarr_tags: Array.from(radarrTagInputs)
-                .filter((i: any) => i.type !== 'checkbox' || i.checked)
-                .map((i: any) => parseInt(i.value)),
-              radarr_customize_on_add: (document.getElementById('radarr_customize_on_add') as HTMLInputElement)?.checked ?? false,
-            };
-            const radarrRes = await fetch('/api/proxy/auth/settings', {
+          } else if (action === 'save_radarr_settings' || action === 'save_sonarr_settings') {
+            const provider = action === 'save_radarr_settings' ? 'radarr' : 'sonarr';
+            const name = provider === 'radarr' ? 'Radarr' : 'Sonarr';
+            const response = await fetch('/api/proxy/auth/settings', {
               method: 'PATCH',
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
+              body: JSON.stringify(arrSettings(provider)),
             });
-            if (!radarrRes.ok) {
-              const err = await radarrRes.json();
-              throw new Error(err.detail || 'Failed to save Radarr settings');
+            if (!response.ok) {
+              const data = await response.json().catch(() => ({}));
+              throw new Error(typeof data.detail === 'string' ? data.detail : `Failed to save ${name} settings`);
             }
-            showMessage('Radarr settings saved.');
-            return;
-          } else if (action === 'save_sonarr_settings') {
-            const sonarrTagInputs = document.querySelectorAll('#sonarr_tags_list input[name="sonarr_tags"]');
-            const body = {
-              sonarr_url: (document.getElementById('sonarr_url') as HTMLInputElement)?.value || null,
-              sonarr_token: (document.getElementById('sonarr_token') as HTMLInputElement)?.value || null,
-              sonarr_root_folder: (document.getElementById('sonarr_root_folder') as HTMLSelectElement)?.value || null,
-              sonarr_quality_profile: (() => {
-                const v = (document.getElementById('sonarr_quality_profile') as HTMLSelectElement)?.value;
-                return v ? parseInt(v) : null;
-              })(),
-              sonarr_tags: Array.from(sonarrTagInputs)
-                .filter((i: any) => i.type !== 'checkbox' || i.checked)
-                .map((i: any) => parseInt(i.value)),
-              sonarr_season_folder: (document.getElementById('sonarr_season_folder') as HTMLInputElement)?.checked ?? true,
-              sonarr_customize_on_add: (document.getElementById('sonarr_customize_on_add') as HTMLInputElement)?.checked ?? false,
-            };
-            const sonarrRes = await fetch('/api/proxy/auth/settings', {
-              method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-            });
-            if (!sonarrRes.ok) {
-              const err = await sonarrRes.json();
-              throw new Error(err.detail || 'Failed to save Sonarr settings');
-            }
-            showMessage('Sonarr settings saved.');
+            showMessage(`${name} settings saved.`);
             return;
           } else if (action === 'delete_scrobble_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
@@ -3534,6 +3421,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             syncConnId = connId;
           } else if (action === 'sync_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
+            if (!connId) throw new Error('Connection ID is missing');
             const connName = newBtn.getAttribute('data-conn-name') || 'this server';
             const card = document.querySelector(`[data-connection-id="${connId}"]`);
             const pullPrefLabels: Record<string, string> = {
@@ -3617,83 +3505,19 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             renderConnProgress(connId, { status: 'pending', job_type: 'clear', processed_items: 0, total_items: 0, updated_at: new Date().toISOString() });
             url = `/api/proxy/sync/connection/${connId}/clear-data`;
             syncConnId = connId;
-          } else if (action === 'test_radarr') {
-            const u = document.getElementById('radarr_url').value;
-            const t = document.getElementById('radarr_token').value;
-            setConnStatus('radarr-conn-status', 'checking');
-            // First test connection
-            const testRes = await postIntegrationCredentials('/api/proxy/auth/test-radarr', { url: u, token: t });
-            if (!testRes.ok) {
-              setConnStatus('radarr-conn-status', 'disconnected');
-              throw new Error((await testRes.json()).detail || 'Failed to connect to Radarr');
+          } else if (action === 'test_radarr' || action === 'test_sonarr') {
+            const provider = action === 'test_radarr' ? 'radarr' : 'sonarr';
+            const name = provider === 'radarr' ? 'Radarr' : 'Sonarr';
+            setConnStatus(`${provider}-conn-status`, 'checking');
+            try {
+              const profiles = await fetchArrProfiles(provider, arrCredentials(provider), postIntegrationCredentials);
+              renderArrProfiles(provider, profiles);
+              setConnStatus(`${provider}-conn-status`, 'connected');
+              showMessage(`${name} connection successful and profiles fetched!`);
+            } catch (error) {
+              setConnStatus(`${provider}-conn-status`, 'disconnected');
+              throw error;
             }
-            
-            // Then fetch profiles
-            const profRes = await postIntegrationCredentials('/api/proxy/auth/radarr/profiles', { url: u, token: t });
-            const profData = await profRes.json();
-            
-            // Populate selects
-            const rootSelect = document.getElementById('radarr_root_folder');
-            const qualSelect = document.getElementById('radarr_quality_profile');
-            if (rootSelect) {
-              const current = rootSelect.value;
-              rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' + 
-                profData.root_folders.map(f => `<option value="${esc(f.path)}" ${f.path === current ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
-            }
-            if (qualSelect) {
-              const current = qualSelect.value;
-              qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' + 
-                profData.quality_profiles.map(p => `<option value="${esc(String(p.id))}" ${String(p.id) === current ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-            }
-            
-            // Populate tags
-            const tagContainer = document.getElementById('radarr_tags_list');
-            const selectedTags = Array.from(tagContainer.querySelectorAll('input[name="radarr_tags"]'))
-              .filter(i => i.type !== 'checkbox' || i.checked)
-              .map(i => parseInt(i.value));
-            renderTags('radarr_tags_list', profData.tags, selectedTags, 'radarr');
-
-            setConnStatus('radarr-conn-status', 'connected');
-            showMessage('Radarr connection successful and profiles fetched!');
-            return;
-          } else if (action === 'test_sonarr') {
-            const u = document.getElementById('sonarr_url').value;
-            const t = document.getElementById('sonarr_token').value;
-            setConnStatus('sonarr-conn-status', 'checking');
-            // First test connection
-            const testRes = await postIntegrationCredentials('/api/proxy/auth/test-sonarr', { url: u, token: t });
-            if (!testRes.ok) {
-              setConnStatus('sonarr-conn-status', 'disconnected');
-              throw new Error((await testRes.json()).detail || 'Failed to connect to Sonarr');
-            }
-            
-            // Then fetch profiles
-            const profRes = await postIntegrationCredentials('/api/proxy/auth/sonarr/profiles', { url: u, token: t });
-            const profData = await profRes.json();
-            
-            // Populate selects
-            const rootSelect = document.getElementById('sonarr_root_folder');
-            const qualSelect = document.getElementById('sonarr_quality_profile');
-            if (rootSelect) {
-              const current = rootSelect.value;
-              rootSelect.innerHTML = '<option value="">-- Select Folder --</option>' + 
-                profData.root_folders.map(f => `<option value="${esc(f.path)}" ${f.path === current ? 'selected' : ''}>${esc(f.path)} (${(f.freeSpace / 1024**3).toFixed(1)}GB free)</option>`).join('');
-            }
-            if (qualSelect) {
-              const current = qualSelect.value;
-              qualSelect.innerHTML = '<option value="">-- Select Profile --</option>' + 
-                profData.quality_profiles.map(p => `<option value="${esc(String(p.id))}" ${String(p.id) === current ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-            }
-
-            // Populate tags
-            const tagContainer = document.getElementById('sonarr_tags_list');
-            const selectedTags = Array.from(tagContainer.querySelectorAll('input[name="sonarr_tags"]'))
-              .filter(i => i.type !== 'checkbox' || i.checked)
-              .map(i => parseInt(i.value));
-            renderTags('sonarr_tags_list', profData.tags, selectedTags, 'sonarr');
-
-            setConnStatus('sonarr-conn-status', 'connected');
-            showMessage('Sonarr connection successful and profiles fetched!');
             return;
           } else if (action === 'sync_trakt' || action === 'full_sync_trakt') {
             const fullResync = action === 'full_sync_trakt';
@@ -3892,8 +3716,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     // Trakt Device Auth
     function setupTraktAuth() {
-      const connectBtn = document.getElementById('trakt-connect-btn');
-      const disconnectBtn = document.getElementById('trakt-disconnect-btn');
+      const connectBtn = document.querySelector<HTMLButtonElement>('#trakt-connect-btn');
+      const disconnectBtn = document.querySelector<HTMLButtonElement>('#trakt-disconnect-btn');
 
       if (connectBtn) {
         connectBtn.onclick = async () => {
@@ -3901,8 +3725,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           connectBtn.textContent = 'Starting…';
           try {
             // If credentials aren't saved yet, save them from the input fields first
-            const clientIdInput = document.getElementById('trakt_client_id') as HTMLInputElement | null;
-            const clientSecretInput = document.getElementById('trakt_client_secret') as HTMLInputElement | null;
+            const clientIdInput = document.querySelector<HTMLInputElement>('#trakt_client_id');
+            const clientSecretInput = document.querySelector<HTMLInputElement>('#trakt_client_secret');
             const clientId = clientIdInput?.value.trim() || '';
             const clientSecret = clientSecretInput?.value.trim() || '';
             if (clientId && clientSecret) {
@@ -4024,7 +3848,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     // Trakt Export Import (no VIP / API app required)
     function setupTraktExportImport() {
       const dropzone = document.getElementById('trakt-import-dropzone') as HTMLDivElement | null;
-      const fileInput = document.getElementById('trakt_export_file') as HTMLInputElement | null;
+      const fileInput = document.querySelector<HTMLInputElement>('#trakt_export_file');
       if (!dropzone || !fileInput) return;
 
       const uploadFile = async (file: File) => {
@@ -4094,7 +3918,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     // AnyList and compatible Scrob data export import
     function setupScrobExportImport() {
       const dropzone = document.getElementById('scrob-import-dropzone') as HTMLDivElement | null;
-      const fileInput = document.getElementById('scrob_export_file') as HTMLInputElement | null;
+      const fileInput = document.querySelector<HTMLInputElement>('#scrob_export_file');
       if (!dropzone || !fileInput) return;
 
       const uploadFile = async (file: File) => {
@@ -4164,7 +3988,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     // Yamtrack / Floppy CSV export import
     function setupYamtrackExportImport() {
       const dropzone = document.getElementById('yamtrack-import-dropzone') as HTMLDivElement | null;
-      const fileInput = document.getElementById('yamtrack_export_file') as HTMLInputElement | null;
+      const fileInput = document.querySelector<HTMLInputElement>('#yamtrack_export_file');
       if (!dropzone || !fileInput) return;
 
       const uploadFile = async (file: File) => {
@@ -4229,8 +4053,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     // Simkl PIN Auth
     function setupSimklAuth() {
-      const connectBtn = document.getElementById('simkl-connect-btn');
-      const disconnectBtn = document.getElementById('simkl-disconnect-btn');
+      const connectBtn = document.querySelector<HTMLButtonElement>('#simkl-connect-btn');
+      const disconnectBtn = document.querySelector<HTMLButtonElement>('#simkl-disconnect-btn');
 
       if (connectBtn) {
         connectBtn.onclick = async () => {
@@ -4238,7 +4062,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
           connectBtn.textContent = 'Starting…';
           try {
             // Auto-save client_id if not yet persisted
-            const clientIdInput = document.getElementById('simkl_client_id') as HTMLInputElement | null;
+            const clientIdInput = document.querySelector<HTMLInputElement>('#simkl_client_id');
             const clientId = clientIdInput?.value.trim() || '';
             if (clientId) {
               const saveRes = await fetch('/api/proxy/auth/settings', {
@@ -4334,7 +4158,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     // MDBList disconnect
     function setupMdblistAuth() {
-      const disconnectBtn = document.getElementById('mdblist-disconnect-btn');
+      const disconnectBtn = document.querySelector<HTMLButtonElement>('#mdblist-disconnect-btn');
       if (disconnectBtn) {
         disconnectBtn.onclick = async () => {
           if (!confirm('Disconnect MDBList? This will remove your MDBList API key from AnyList.')) return;
@@ -4381,7 +4205,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   }
 
   function setupConnections() {
-    const apiKey = (document.getElementById('scrob_api_key') as HTMLInputElement | null)?.value ?? '';
+    const apiKey = (document.querySelector<HTMLInputElement>('#scrob_api_key'))?.value ?? '';
 
     // Set webhook URLs and wire copy buttons for all existing connection cards
     document.querySelectorAll('[data-connection-id]').forEach(card => {
@@ -4576,18 +4400,18 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
 
     // Add Connection toggle
-    const addBtn = document.getElementById('add-connection-btn');
+    const addBtn = document.querySelector<HTMLButtonElement>('#add-connection-btn');
     const addForm = document.getElementById('add-connection-form');
-    const cancelBtn = document.getElementById('cancel-add-connection-btn');
-    const connectStremioBtn = document.getElementById('connect-stremio-btn') as HTMLButtonElement | null;
+    const cancelBtn = document.querySelector<HTMLButtonElement>('#cancel-add-connection-btn');
+    const connectStremioBtn = document.querySelector<HTMLButtonElement>('#connect-stremio-btn');
     let stremioPollTimer: number | null = null;
 
     // Login with Plex (auto-fills the URL / token / username fields)
-    const plexLoginBtn = document.getElementById('plex-login-btn') as HTMLButtonElement | null;
+    const plexLoginBtn = document.querySelector<HTMLButtonElement>('#plex-login-btn');
     const plexServerWrap = document.getElementById('plex-login-server-wrap');
-    const plexServerSelect = document.getElementById('plex-login-server') as HTMLSelectElement | null;
+    const plexServerSelect = document.querySelector<HTMLSelectElement>('#plex-login-server');
     const plexConnWrap = document.getElementById('plex-login-connection-wrap');
-    const plexConnSelect = document.getElementById('plex-login-connection') as HTMLSelectElement | null;
+    const plexConnSelect = document.querySelector<HTMLSelectElement>('#plex-login-connection');
     const plexLoginStatus = document.getElementById('plex-login-status');
     let plexPollTimer: number | null = null;
     type PlexLoginConn = { uri: string; local: boolean; relay: boolean; reachable: boolean; label: string };
@@ -4602,7 +4426,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const applyPlexConnection = () => {
       const server = plexLoginServers[plexServerSelect ? plexServerSelect.selectedIndex : 0];
       const conn = server?.connections[plexConnSelect ? plexConnSelect.selectedIndex : 0];
-      const urlEl = document.getElementById('new-conn-url') as HTMLInputElement | null;
+      const urlEl = document.querySelector<HTMLInputElement>('#new-conn-url');
       if (urlEl && conn) urlEl.value = conn.uri;
     };
     plexConnSelect?.addEventListener('change', applyPlexConnection);
@@ -4610,11 +4434,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const applyPlexServer = () => {
       const server = plexLoginServers[plexServerSelect ? plexServerSelect.selectedIndex : 0];
       if (!server) return;
-      const tokenEl = document.getElementById('new-conn-token') as HTMLInputElement | null;
-      const machineEl = document.getElementById('new-plex-machine-id') as HTMLInputElement | null;
+      const tokenEl = document.querySelector<HTMLInputElement>('#new-conn-token');
+      const machineEl = document.querySelector<HTMLInputElement>('#new-plex-machine-id');
       if (tokenEl) tokenEl.value = server.token;
       if (machineEl) machineEl.value = server.machine_identifier;
-      const nameEl = document.getElementById('new-conn-name') as HTMLInputElement | null;
+      const nameEl = document.querySelector<HTMLInputElement>('#new-conn-name');
       if (nameEl && !nameEl.value.trim()) nameEl.value = server.name;
       if (plexConnSelect) {
         plexConnSelect.innerHTML = server.connections
@@ -4669,7 +4493,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
 
     // Provider-specific fields for a new connection
-    const typeSelect = document.getElementById('new-conn-type') as HTMLSelectElement | null;
+    const typeSelect = document.querySelector<HTMLSelectElement>('#new-conn-type');
     const userIdRow = document.getElementById('new-conn-user-id-row');
     const usernameRow = document.getElementById('new-conn-username-row');
     const nuvioEmailRow = document.getElementById('new-nuvio-email-row');
@@ -4677,11 +4501,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const stremioLinkRow = document.getElementById('new-stremio-link-row');
     const urlRow = document.getElementById('new-conn-url-row');
     const tokenRow = document.getElementById('new-conn-token-row');
-    const urlInput = document.getElementById('new-conn-url') as HTMLInputElement | null;
+    const urlInput = document.querySelector<HTMLInputElement>('#new-conn-url');
     const urlLabel = document.getElementById('new-conn-url-label');
-    const tokenInput = document.getElementById('new-conn-token') as HTMLInputElement | null;
+    const tokenInput = document.querySelector<HTMLInputElement>('#new-conn-token');
     const tokenLabel = document.getElementById('new-conn-token-label');
-    const nuvioProfileSelect = document.getElementById('new-nuvio-profile') as HTMLSelectElement | null;
+    const nuvioProfileSelect = document.querySelector<HTMLSelectElement>('#new-nuvio-profile');
     let pendingNuvioRefreshToken = '';
     let previousType = typeSelect?.value ?? 'jellyfin';
 
@@ -4700,8 +4524,8 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       document.getElementById('new-plex-login-row')?.classList.toggle('hidden', !isPlex);
       urlRow?.classList.toggle('hidden', isStremio);
       tokenRow?.classList.toggle('hidden', isStremio);
-      document.getElementById('create-connection-btn')?.classList.toggle('hidden', isStremio);
-      document.getElementById('test-new-connection-btn')?.classList.toggle('hidden', isStremio);
+      document.querySelector<HTMLButtonElement>('#create-connection-btn')?.classList.toggle('hidden', isStremio);
+      document.querySelector<HTMLButtonElement>('#test-new-connection-btn')?.classList.toggle('hidden', isStremio);
       if (urlInput) {
         if (isNuvio) {
           urlInput.value = 'https://api.nuvio.tv';
@@ -4727,10 +4551,10 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       if (tokenInput) tokenInput.autocomplete = (isNuvio || isArvio) ? 'current-password' : 'off';
       const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
       const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
-      const pushPlayback = document.getElementById('new-push-playback') as HTMLInputElement | null;
+      const pushPlayback = document.querySelector<HTMLInputElement>('#new-push-playback');
       pushPlayback?.closest('label')?.classList.toggle('hidden', !isCloud);
       if (pushPlayback) pushPlayback.disabled = !isCloud;
-      const pushCollection = document.getElementById('new-push-collection') as HTMLInputElement | null;
+      const pushCollection = document.querySelector<HTMLInputElement>('#new-push-collection');
       pushCollection?.closest('label')?.classList.toggle('hidden', !isCloud);
       if (pushCollection) pushCollection.disabled = !isCloud;
       for (const checkbox of [syncRatings, pushRatings]) {
@@ -4761,7 +4585,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     const authenticateNuvio = async () => {
       const type = typeSelect?.value ?? 'nuvio';
       const isArvio = type === 'arvio';
-      const email = (document.getElementById('new-nuvio-email') as HTMLInputElement | null)?.value.trim() || '';
+      const email = (document.querySelector<HTMLInputElement>('#new-nuvio-email'))?.value.trim() || '';
       const password = tokenInput?.value || '';
       const url = urlInput?.value || (isArvio ? 'https://auth.arvio.tv/.netlify/functions' : 'https://api.nuvio.tv');
       if (!password) throw new Error(`${isArvio ? 'ARVIO' : 'Nuvio'} password or refresh token is required.`);
@@ -4814,7 +4638,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     };
 
     connectStremioBtn?.addEventListener('click', async () => {
-      const name = (document.getElementById('new-conn-name') as HTMLInputElement | null)?.value.trim() || '';
+      const name = (document.querySelector<HTMLInputElement>('#new-conn-name'))?.value.trim() || '';
       if (!name) {
         showMessage('Choose a name for the Stremio connection.', 'error');
         return;
@@ -4860,11 +4684,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
                 sync_collection: (document.getElementById('new-sync-collection') as HTMLInputElement)?.checked ?? true,
                 sync_watched: (document.getElementById('new-sync-watched') as HTMLInputElement)?.checked ?? true,
                 sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
-                push_collection: (document.getElementById('new-push-collection') as HTMLInputElement)?.checked ?? false,
+                push_collection: (document.querySelector<HTMLInputElement>('#new-push-collection'))?.checked ?? false,
                 push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
-                push_playback: (document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false,
+                push_playback: (document.querySelector<HTMLInputElement>('#new-push-playback'))?.checked ?? false,
                 auto_sync_interval: (() => {
-                  const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
+                  const value = (document.querySelector<HTMLSelectElement>('#new-auto-sync'))?.value;
                   return value ? parseFloat(value) : null;
                 })(),
               }),
@@ -4931,11 +4755,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             plexPollTimer = null;
             plexLoginServers = result.servers || [];
             const username: string = result.account?.username || '';
-            const usernameEl = document.getElementById('new-conn-username') as HTMLInputElement | null;
+            const usernameEl = document.querySelector<HTMLInputElement>('#new-conn-username');
             if (usernameEl && username) usernameEl.value = username;
-            const authTokenEl = document.getElementById('new-plex-auth-token') as HTMLInputElement | null;
+            const authTokenEl = document.querySelector<HTMLInputElement>('#new-plex-auth-token');
             if (authTokenEl) authTokenEl.value = result.auth_token || '';
-            const accountIdEl = document.getElementById('new-plex-account-id') as HTMLInputElement | null;
+            const accountIdEl = document.querySelector<HTMLInputElement>('#new-plex-account-id');
             if (accountIdEl) accountIdEl.value = result.account?.id || '';
 
             if (!plexLoginServers.length) {
@@ -4973,13 +4797,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
 
     // Test new connection button
-    const testNewBtn = document.getElementById('test-new-connection-btn');
+    const testNewBtn = document.querySelector<HTMLButtonElement>('#test-new-connection-btn');
     if (testNewBtn) {
       testNewBtn.addEventListener('click', async () => {
         const type = typeSelect?.value ?? 'jellyfin';
-        const u = (document.getElementById('new-conn-url') as HTMLInputElement)?.value || '';
-        const t = (document.getElementById('new-conn-token') as HTMLInputElement)?.value || '';
-        const ui = (document.getElementById('new-conn-user-id') as HTMLInputElement)?.value || '';
+        const u = (document.querySelector<HTMLInputElement>('#new-conn-url'))?.value || '';
+        const t = (document.querySelector<HTMLInputElement>('#new-conn-token'))?.value || '';
+        const ui = (document.querySelector<HTMLInputElement>('#new-conn-user-id'))?.value || '';
         testNewBtn.disabled = true;
         const orig = testNewBtn.textContent;
         testNewBtn.textContent = '...';
@@ -4989,7 +4813,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             showMessage(`${type === 'arvio' ? 'ARVIO' : 'Nuvio'} connection successful. Select the profile to sync.`);
           } else {
             const endpoint = `/api/proxy/auth/test-${type === 'plex' ? 'plex' : type === 'emby' ? 'emby' : 'jellyfin'}`;
-            const credentials = type === 'plex'
+            const credentials: Record<string, string> = type === 'plex'
               ? { url: u, token: t }
               : { url: u, token: t, user_id: ui };
             const res = await postIntegrationCredentials(endpoint, credentials);
@@ -5007,15 +4831,15 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
 
     // Create connection button
-    const createBtn = document.getElementById('create-connection-btn');
+    const createBtn = document.querySelector<HTMLButtonElement>('#create-connection-btn');
     if (createBtn) {
       createBtn.addEventListener('click', async () => {
-        const name = (document.getElementById('new-conn-name') as HTMLInputElement)?.value.trim();
+        const name = (document.querySelector<HTMLInputElement>('#new-conn-name'))?.value.trim();
         const type = typeSelect?.value ?? 'jellyfin';
-        const u = (document.getElementById('new-conn-url') as HTMLInputElement)?.value.trim();
-        let connectionToken = (document.getElementById('new-conn-token') as HTMLInputElement)?.value.trim();
-        let userId = (document.getElementById('new-conn-user-id') as HTMLInputElement)?.value.trim() || null;
-        const username = (document.getElementById('new-conn-username') as HTMLInputElement)?.value.trim() || null;
+        const u = (document.querySelector<HTMLInputElement>('#new-conn-url'))?.value.trim();
+        let connectionToken = (document.querySelector<HTMLInputElement>('#new-conn-token'))?.value.trim();
+        let userId = (document.querySelector<HTMLInputElement>('#new-conn-user-id'))?.value.trim() || null;
+        const username = (document.querySelector<HTMLInputElement>('#new-conn-username'))?.value.trim() || null;
         if (!name || !u || !connectionToken) {
           showMessage(type === 'nuvio' || type === 'arvio' ? `Name, ${type === 'arvio' ? 'ARVIO' : 'Nuvio'} email and password are required.` : 'Name, URL and Token are required.', 'error');
           return;
@@ -5038,19 +4862,19 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
             sync_ratings: type === 'nuvio' ? false : ((document.getElementById('new-sync-ratings') as HTMLInputElement)?.checked ?? true),
             sync_playback: (document.getElementById('new-sync-playback') as HTMLInputElement)?.checked ?? true,
             push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
-            push_collection: type === 'nuvio' && ((document.getElementById('new-push-collection') as HTMLInputElement)?.checked ?? false),
-            push_playback: type === 'nuvio' && ((document.getElementById('new-push-playback') as HTMLInputElement)?.checked ?? false),
+            push_collection: type === 'nuvio' && ((document.querySelector<HTMLInputElement>('#new-push-collection'))?.checked ?? false),
+            push_playback: type === 'nuvio' && ((document.querySelector<HTMLInputElement>('#new-push-playback'))?.checked ?? false),
             push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
             auto_sync_interval: (() => {
-              const value = (document.getElementById('new-auto-sync') as HTMLSelectElement)?.value;
+              const value = (document.querySelector<HTMLSelectElement>('#new-auto-sync'))?.value;
               return value ? parseFloat(value) : null;
             })(),
           };
           if (type === 'plex') {
             body.server_username = username;
-            const authTok = (document.getElementById('new-plex-auth-token') as HTMLInputElement)?.value.trim();
-            const acctId = (document.getElementById('new-plex-account-id') as HTMLInputElement)?.value.trim();
-            const machineId = (document.getElementById('new-plex-machine-id') as HTMLInputElement)?.value.trim();
+            const authTok = (document.querySelector<HTMLInputElement>('#new-plex-auth-token'))?.value.trim();
+            const acctId = (document.querySelector<HTMLInputElement>('#new-plex-account-id'))?.value.trim();
+            const machineId = (document.querySelector<HTMLInputElement>('#new-plex-machine-id'))?.value.trim();
             if (authTok) body.plex_auth_token = authTok;
             if (acctId) body.plex_account_id = acctId;
             if (machineId) body.plex_machine_identifier = machineId;
@@ -5079,7 +4903,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   }
 
   function setupScrobbleConnections() {
-    const apiKey = (document.getElementById('scrob_api_key') as HTMLInputElement | null)?.value ?? '';
+    const apiKey = (document.querySelector<HTMLInputElement>('#scrob_api_key'))?.value ?? '';
 
     // Set webhook URLs and wire copy buttons for scrobble connection cards
     document.querySelectorAll('[data-scrobble-conn-id]').forEach(card => {
@@ -5103,7 +4927,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
 
     // Show/hide user_id vs username based on new scrobble connection type
-    const scrobbleTypeSelect = document.getElementById('new-scrobble-type') as HTMLSelectElement | null;
+    const scrobbleTypeSelect = document.querySelector<HTMLSelectElement>('#new-scrobble-type');
     const scrobbleUserIdRow = document.getElementById('new-scrobble-user-id-row');
     const scrobbleUsernameRow = document.getElementById('new-scrobble-username-row');
     const updateScrobbleTypeFields = () => {
@@ -5115,13 +4939,13 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     updateScrobbleTypeFields();
 
     // Create scrobble connection button
-    const createScrobbleBtn = document.getElementById('create-scrobble-conn-btn');
+    const createScrobbleBtn = document.querySelector<HTMLButtonElement>('#create-scrobble-conn-btn');
     if (createScrobbleBtn) {
       createScrobbleBtn.addEventListener('click', async () => {
-        const name = (document.getElementById('new-scrobble-name') as HTMLInputElement)?.value.trim();
+        const name = (document.querySelector<HTMLInputElement>('#new-scrobble-name'))?.value.trim();
         const type = scrobbleTypeSelect?.value ?? 'jellyfin';
-        const ui = (document.getElementById('new-scrobble-user-id') as HTMLInputElement)?.value.trim() || null;
-        const un = (document.getElementById('new-scrobble-username') as HTMLInputElement)?.value.trim() || null;
+        const ui = (document.querySelector<HTMLInputElement>('#new-scrobble-user-id'))?.value.trim() || null;
+        const un = (document.querySelector<HTMLInputElement>('#new-scrobble-username'))?.value.trim() || null;
         if (!name) { showMessage('Name is required.', 'error'); return; }
 
         createScrobbleBtn.setAttribute('disabled', 'true');
@@ -5153,7 +4977,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     }
   }
   function setupSettingsForm() {
-    const form = document.getElementById('connections-form');
+    const form = document.querySelector<HTMLFormElement>('#connections-form');
     if (!form) return;
 
     // Plex "Also monitor users" — toggle picker visibility and lazy-load friends
@@ -5205,7 +5029,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     });
 
     // Show/hide the watchlist split sub-option based on the Lists checkbox
-    const syncListsCb = document.getElementById('trakt_sync_lists') as HTMLInputElement | null;
+    const syncListsCb = document.querySelector<HTMLInputElement>('#trakt_sync_lists');
     const splitRow = document.getElementById('trakt-watchlist-split-row');
     if (syncListsCb && splitRow) {
       syncListsCb.addEventListener('change', () => {
@@ -5243,9 +5067,9 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
   }
 
   function setupApiKey() {
-    const copyBtn = document.getElementById('copy-api-key-btn');
-    const regenBtn = document.getElementById('regenerate-api-key-btn');
-    const keyInput = document.getElementById('scrob_api_key');
+    const copyBtn = document.querySelector<HTMLButtonElement>('#copy-api-key-btn');
+    const regenBtn = document.querySelector<HTMLButtonElement>('#regenerate-api-key-btn');
+    const keyInput = document.querySelector<HTMLInputElement>('#scrob_api_key');
 
     if (copyBtn && keyInput) {
       copyBtn.addEventListener('click', async () => {
@@ -5829,14 +5653,14 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     const closeModal = () => {
       void hideOverlay(modal);
-      (document.getElementById('remap-search-input') as HTMLInputElement).value = '';
-      (document.getElementById('remap-tvdb-input') as HTMLInputElement).value = '';
+      (document.querySelector<HTMLInputElement>('#remap-search-input') as HTMLInputElement).value = '';
+      (document.querySelector<HTMLInputElement>('#remap-tvdb-input') as HTMLInputElement).value = '';
       (document.getElementById('remap-search-results') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-tvdb-results') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-seasons-list') as HTMLElement).innerHTML = '';
       (document.getElementById('remap-selected-area') as HTMLElement).classList.add('hidden');
       (document.getElementById('match-tab-bar') as HTMLElement).classList.add('hidden');
-      (document.getElementById('remap-save') as HTMLButtonElement).disabled = true;
+      (document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement).disabled = true;
       (document.getElementById('remap-error') as HTMLElement).classList.add('hidden');
       targetTmdbId = 0;
       targetTvdbId = 0;
@@ -5847,12 +5671,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     };
 
     const setMatchTab = (tab: 'tvdb' | 'tmdb') => {
-      const tvdbBtn = document.getElementById('match-tab-tvdb') as HTMLElement;
-      const tmdbBtn = document.getElementById('match-tab-tmdb') as HTMLElement;
+      const tvdbBtn = document.querySelector<HTMLButtonElement>('#match-tab-tvdb') as HTMLElement;
+      const tmdbBtn = document.querySelector<HTMLButtonElement>('#match-tab-tmdb') as HTMLElement;
       const tvdbSection = document.getElementById('remap-tvdb-section') as HTMLElement;
       const tmdbSection = document.getElementById('remap-tmdb-section') as HTMLElement;
       const selectedArea = document.getElementById('remap-selected-area') as HTMLElement;
-      const saveBtn = document.getElementById('remap-save') as HTMLButtonElement;
+      const saveBtn = document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement;
       // Reset selection
       selectedArea.classList.add('hidden');
       saveBtn.disabled = true;
@@ -5864,7 +5688,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         tvdbSection.classList.remove('hidden');
         tmdbSection.classList.add('hidden');
         (document.getElementById('remap-tvdb-results') as HTMLElement).innerHTML = '';
-        const tvdbInput = document.getElementById('remap-tvdb-input') as HTMLInputElement;
+        const tvdbInput = document.querySelector<HTMLInputElement>('#remap-tvdb-input') as HTMLInputElement;
         tvdbInput.focus();
         if (tvdbInput.value.trim()) doTvdbSearch();
       } else {
@@ -5873,50 +5697,34 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         tmdbSection.classList.remove('hidden');
         tvdbSection.classList.add('hidden');
         (document.getElementById('remap-search-results') as HTMLElement).innerHTML = '';
-        const tmdbInput = document.getElementById('remap-search-input') as HTMLInputElement;
+        const tmdbInput = document.querySelector<HTMLInputElement>('#remap-search-input') as HTMLInputElement;
         tmdbInput.focus();
         if (tmdbInput.value.trim()) doSearch();
       }
     };
 
-    document.getElementById('match-tab-tvdb')?.addEventListener('click', () => setMatchTab('tvdb'));
-    document.getElementById('match-tab-tmdb')?.addEventListener('click', () => setMatchTab('tmdb'));
+    document.querySelector<HTMLButtonElement>('#match-tab-tvdb')?.addEventListener('click', () => setMatchTab('tvdb'));
+    document.querySelector<HTMLButtonElement>('#match-tab-tmdb')?.addEventListener('click', () => setMatchTab('tmdb'));
 
-    document.getElementById('remap-close')?.addEventListener('click', closeModal);
-    document.getElementById('remap-cancel')?.addEventListener('click', closeModal);
+    document.querySelector<HTMLButtonElement>('#remap-close')?.addEventListener('click', closeModal);
+    document.querySelector<HTMLButtonElement>('#remap-cancel')?.addEventListener('click', closeModal);
     modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
-    document.getElementById('remap-clear-selection')?.addEventListener('click', () => {
+    document.querySelector<HTMLButtonElement>('#remap-clear-selection')?.addEventListener('click', () => {
       (document.getElementById('remap-selected-area') as HTMLElement).classList.add('hidden');
       const selectedPoster = document.getElementById('remap-selected-poster') as HTMLImageElement;
       selectedPoster.removeAttribute('src');
       selectedPoster.removeAttribute('srcset');
       selectedPoster.removeAttribute('sizes');
       (document.getElementById('remap-seasons-list') as HTMLElement).innerHTML = '';
-      (document.getElementById('remap-save') as HTMLButtonElement).disabled = true;
+      (document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement).disabled = true;
       targetTmdbId = 0;
       targetTvdbId = 0;
       targetSeasonNumber = null;
     });
 
-    const searchInput = document.getElementById('remap-search-input') as HTMLInputElement;
-    const searchBtn = document.getElementById('remap-search-btn') as HTMLButtonElement;
-
-    const renderSearchResult = (r: any, resultsEl: HTMLElement) => {
-      resultsEl.innerHTML = '';
-      const year = String(r.first_air_date ?? r.release_date ?? '').slice(0, 4);
-      resultsEl.innerHTML = `
-        <button type="button" class="remap-result w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer text-left"
-          data-tmdb="${r.tmdb_id}" data-title="${esc(r.title ?? '')}" data-year="${esc(year)}" data-poster="${esc(r.poster_path ?? '')}">
-          <img data-artwork-path="${esc(r.poster_path ?? '')}" alt="" class="w-8 h-11 object-cover rounded bg-zinc-700 shrink-0" loading="lazy" decoding="async" onerror="this.style.display='none'" />
-          <div class="flex-1 min-w-0">
-            <p class="text-sm text-zinc-100 truncate">${esc(r.title ?? '')}</p>
-            <p class="text-xs text-zinc-500">${esc(year)}</p>
-          </div>
-        </button>`;
-      applyResponsiveImages(resultsEl);
-      resultsEl.querySelectorAll('.remap-result').forEach(btn => wireResultClick(btn as HTMLElement));
-    };
+    const searchInput = document.querySelector<HTMLInputElement>('#remap-search-input') as HTMLInputElement;
+    const searchBtn = document.querySelector<HTMLButtonElement>('#remap-search-btn') as HTMLButtonElement;
 
     const wireResultClick = (btn: HTMLElement) => {
       btn.addEventListener('click', async () => {
@@ -5950,7 +5758,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
         (document.getElementById('remap-tvdb-results') as HTMLElement).innerHTML = '';
         searchInput.value = '';
 
-        const saveBtn = document.getElementById('remap-save') as HTMLButtonElement;
+        const saveBtn = document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement;
         const seasonsArea = document.getElementById('remap-seasons-area') as HTMLElement;
 
         if (modalMode === 'match' || modalMode === 'match-movie') {
@@ -6060,7 +5868,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
     };
 
     const doTvdbSearch = async () => {
-      const q = (document.getElementById('remap-tvdb-input') as HTMLInputElement).value.trim();
+      const q = (document.querySelector<HTMLInputElement>('#remap-tvdb-input') as HTMLInputElement).value.trim();
       if (!q) return;
       const resultsEl = document.getElementById('remap-tvdb-results') as HTMLElement;
       resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">Searching…</p>';
@@ -6114,11 +5922,11 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
 
     searchBtn.addEventListener('click', doSearch);
     searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-    document.getElementById('remap-tvdb-search-btn')?.addEventListener('click', doTvdbSearch);
-    (document.getElementById('remap-tvdb-input') as HTMLInputElement)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doTvdbSearch(); });
+    document.querySelector<HTMLButtonElement>('#remap-tvdb-search-btn')?.addEventListener('click', doTvdbSearch);
+    (document.querySelector<HTMLInputElement>('#remap-tvdb-input'))?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doTvdbSearch(); });
 
-    document.getElementById('remap-save')?.addEventListener('click', async () => {
-      const saveBtn = document.getElementById('remap-save') as HTMLButtonElement;
+    document.querySelector<HTMLButtonElement>('#remap-save')?.addEventListener('click', async () => {
+      const saveBtn = document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement;
       const errEl = document.getElementById('remap-error') as HTMLElement;
       errEl.classList.add('hidden');
       saveBtn.disabled = true;
@@ -6212,7 +6020,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${title}" — Season ${season}`;
       (document.getElementById('remap-tmdb-label') as HTMLElement).textContent = 'Search for the correct TMDB show';
       (document.getElementById('remap-seasons-area') as HTMLElement).classList.remove('hidden');
-      (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Save & Apply';
+      (document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement).textContent = 'Save & Apply';
       // TMDB/TVDB toggle (#178) - some shows' season structure only exists on
       // TVDB, so the remap target needs the same TMDB/TVDB choice the "Match"
       // flow already has, not just TMDB search.
@@ -6227,12 +6035,12 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       (document.getElementById('remap-modal-title') as HTMLElement).textContent = 'Match Show';
       (document.getElementById('remap-source-label') as HTMLElement).textContent = `"${seriesName}"`;
       (document.getElementById('remap-seasons-area') as HTMLElement).classList.add('hidden');
-      (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
+      (document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
       (document.getElementById('remap-tmdb-label') as HTMLElement).textContent = 'Search for the correct TMDB show';
       (document.getElementById('match-tab-bar') as HTMLElement).classList.remove('hidden');
-      const tvdbInput = document.getElementById('remap-tvdb-input') as HTMLInputElement;
+      const tvdbInput = document.querySelector<HTMLInputElement>('#remap-tvdb-input') as HTMLInputElement;
       tvdbInput.value = seriesName;
-      (document.getElementById('remap-search-input') as HTMLInputElement).value = seriesName;
+      (document.querySelector<HTMLInputElement>('#remap-search-input') as HTMLInputElement).value = seriesName;
       showOverlay(modal);
       // Default to TVDB tab and auto-search
       setMatchTab('tvdb');
@@ -6248,7 +6056,7 @@ const sonarrConfigured   = !!(settings.sonarr_url && settings.sonarr_token);
       (document.getElementById('remap-tmdb-section') as HTMLElement).classList.remove('hidden');
       (document.getElementById('remap-tvdb-section') as HTMLElement).classList.add('hidden');
       (document.getElementById('remap-seasons-area') as HTMLElement).classList.add('hidden');
-      (document.getElementById('remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
+      (document.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement).textContent = 'Match & Apply';
       searchInput.value = movieTitle;
       showOverlay(modal);
       searchInput.focus();

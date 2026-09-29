@@ -9,7 +9,8 @@ import '../../../styles/social.css';
 
 const username = Astro.params.username!;
 const query = Astro.url.searchParams.get('q')?.trim() || '';
-const initialSection = query || Astro.url.searchParams.get('section') === 'search' ? 'search' : 'following';
+const section = Astro.url.searchParams.get('section');
+const initialSection = query || section === 'search' ? 'search' : section === 'followers' ? 'followers' : 'following';
 let profile: any = null, error = '';
 try {
   profile = await tracker(`people/${encodeURIComponent(username)}`, Astro.locals.token);
@@ -62,6 +63,7 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
   }
 
   let socialListeners: AbortController | undefined;
+  document.addEventListener('astro:before-swap', () => socialListeners?.abort());
   document.addEventListener('astro:page-load', () => {
     socialListeners?.abort();
     socialListeners = new AbortController();
@@ -103,7 +105,7 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
       return card;
     }
 
-    function renderGroup(group: 'following' | 'followers' | 'search', people: SocialPerson[], emptyText: string) {
+    const renderGroup = (group: 'following' | 'followers' | 'search', people: SocialPerson[], emptyText: string) => {
       const grid = page.querySelector<HTMLElement>(`[data-social-grid="${group}"]`);
       const empty = page.querySelector<HTMLElement>(`[data-social-empty="${group}"]`);
       if (!grid || !empty) return;
@@ -112,7 +114,7 @@ const followers = (profile?.people || []).filter((person: any) => person.followe
       empty.hidden = people.length > 0;
     }
 
-    async function searchPeople() {
+    const searchPeople = async () => {
       const q = searchInput?.value.trim() || '';
       const request = ++searchRequest;
       const empty = page.querySelector<HTMLElement>('[data-social-empty="search"]');
