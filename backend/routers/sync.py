@@ -1,3 +1,4 @@
+from core.connection_identity import refresh_stream_connection
 import asyncio
 import logging
 import re
@@ -924,7 +925,7 @@ async def _push_nuvio_library_delta(
         # See core/nuvio.py's connection_lock docstring - conn may have been
         # loaded before another request already rotated this single-use
         # refresh token while this one waited.
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         await nuvio.merge_library(
             conn.url,
             conn.token,
@@ -933,11 +934,10 @@ async def _push_nuvio_library_delta(
             removed_content_ids=set(removals),
             on_refresh=_persist_refresh,
         )
-    # This connection-scoped set records only library IDs AnyList has
-    # successfully managed. A failed delta leaves it unchanged, so the next
-    # full/scheduled push can retry removals without touching remote-only rows.
-    conn.stremio_pushed_library_ids = sorted(items_by_id)
-    await db.commit()
+        # Commit the managed IDs before releasing the provider lock, so an
+        # account switch cannot be followed by this old account's bookkeeping.
+        conn.stremio_pushed_library_ids = sorted(items_by_id)
+        await db.commit()
     return True
 
 
@@ -1783,7 +1783,7 @@ async def _fan_out_changes_to_other_connections(
                 # See core/nuvio.py's connection_lock docstring - conn may
                 # have been loaded before another request already rotated
                 # this single-use refresh token while this one waited.
-                await db.refresh(conn)
+                await refresh_stream_connection(db, conn)
                 await nuvio.push_watched_items(
                     conn.url,
                     conn.token,
@@ -5154,7 +5154,7 @@ async def _run_nuvio_sync(
                 # See core/nuvio.py's connection_lock docstring - conn may
                 # have been loaded before another request already rotated
                 # this single-use refresh token while this one waited.
-                await db.refresh(conn)
+                await refresh_stream_connection(db, conn)
                 _, data = await nuvio.pull_sync_data(
                     conn.url, conn.token, profile_id, on_refresh=_persist_refresh
                 )
@@ -5798,6 +5798,7 @@ async def _run_stremio_sync(
                 raise RuntimeError("A provider clear is incomplete; retry Clear data or run a full resync before syncing")
 
             async with stremio.connection_lock(conn.id):
+                await refresh_stream_connection(db, conn)
                 items, complete_snapshot, pull_started_at = await _pull_stremio_items(
                     conn,
                     full_resync=full_resync,
@@ -7089,6 +7090,7 @@ async def _push_stremio_connection(
 
     lock = stremio.connection_lock(conn.id)
     async with lock:
+        await refresh_stream_connection(db, conn)
         remote_items = await stremio.datastore_get(conn.token, all_items=True)
         remote_by_id = {
             str(item.get("_id")): item
@@ -7467,7 +7469,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     # See core/nuvio.py's connection_lock docstring - conn may
                     # have been loaded before another request already rotated
                     # this single-use refresh token while this one waited.
-                    await db.refresh(conn)
+                    await refresh_stream_connection(db, conn)
                     if conn.push_collection:
                         # Remove only IDs a previous successful AnyList push
                         # managed. Remote-only rows remain untouched, while a failed
@@ -8198,7 +8200,7 @@ async def clear_connection_data(
         raise HTTPException(status_code=400, detail="Clear data is supported only for Stremio and Nuvio")
 
     await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
-    await db.refresh(conn)
+    await refresh_stream_connection(db, conn)
 
     from core.streaming_clear import run_clear_data_job, selected_scope, target_identity
     scope = selected_scope(conn)

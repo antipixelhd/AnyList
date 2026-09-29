@@ -237,6 +237,8 @@ class NuvioSession:
     access_token: str
     refresh_token: str
     expires_in: int
+    # Stable identity from the authenticated server response, not credentials.
+    account_id: str | None = None
 
 
 def _base_url(url: str) -> str:
@@ -286,6 +288,8 @@ def _parse_session(payload: dict[str, Any]) -> NuvioSession:
         access_token=str(access_token),
         refresh_token=str(refresh_token),
         expires_in=int(payload.get("expires_in") or 0),
+        account_id=str(payload["user"]["id"]) if isinstance(payload.get("user"), dict)
+        and payload["user"].get("id") else None,
     )
 
 

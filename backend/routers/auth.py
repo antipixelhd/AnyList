@@ -8,6 +8,8 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete, func, or_, and_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
 from jose import jwt, JWTError
@@ -93,6 +95,35 @@ def _nuvio_profile_name(profiles: list[dict], profile_id: int) -> str:
             name = str(profile.get("name") or "").strip()
             return name or f"Profile {profile_id}"
     return f"Profile {profile_id}"
+
+
+async def _commit_stream_connection(db: AsyncSession) -> None:
+    """Translate identity conflicts and concurrent changes into retryable errors."""
+    try:
+        await db.commit()
+    except StaleDataError as error:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Connection changed during this request; retry") from error
+    except IntegrityError as error:
+        await db.rollback()
+        if any(name in str(error.orig) for name in (
+            "uq_msc_user_stremio_account", "uq_msc_user_nuvio_identity",
+        )):
+            raise HTTPException(status_code=409, detail="This account/profile is already connected") from error
+        raise
+
+
+async def _check_nuvio_session_is_independent(db, url, token, exclude_connection_id=None):
+    """Never redeem a rotating token currently owned by a different connection."""
+    from core.connection_identity import canonical_nuvio_url
+    duplicate = (await db.execute(select(MediaServerConnection.id).where(
+        MediaServerConnection.type == "nuvio",
+        MediaServerConnection.url == canonical_nuvio_url(url),
+        MediaServerConnection.token == token,
+        MediaServerConnection.id != (exclude_connection_id or -1),
+    ).limit(1))).scalar_one_or_none()
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="Use a separate Nuvio sign-in for each connection")
 
 
 
@@ -524,23 +555,16 @@ async def create_connection(
     connection_token = body.token
     server_user_id = body.server_user_id
     server_username = body.server_username
+    provider_account_id = None
     if body.type == "stremio":
         from core import stremio
-
-        existing_result = await db.execute(
-            select(MediaServerConnection).where(
-                MediaServerConnection.user_id == current_user.id,
-                MediaServerConnection.type == "stremio",
-            )
-        )
-        if existing_result.scalar_one_or_none():
-            raise HTTPException(status_code=409, detail="Stremio is already connected")
         try:
             account = await stremio.validate_auth_key(connection_token)
         except stremio.StremioAPIError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         validated_url = stremio.DEFAULT_URL
         server_user_id = str(account["_id"])
+        provider_account_id = server_user_id
         server_username = str(account.get("email") or "Stremio")
     else:
         validated_url = await validate_service_url(
@@ -551,6 +575,7 @@ async def create_connection(
         from core import nuvio
 
         profile_id = _parse_nuvio_profile_id(server_user_id)
+        await _check_nuvio_session_is_independent(db, validated_url, connection_token)
         try:
             session, profiles = await nuvio.validate_connection(validated_url, connection_token, profile_id)
         except nuvio.NuvioAPIError as exc:
@@ -558,6 +583,9 @@ async def create_connection(
         connection_token = session.refresh_token
         server_user_id = str(profile_id)
         server_username = _nuvio_profile_name(profiles, profile_id)
+        provider_account_id = session.account_id
+        from core.connection_identity import canonical_nuvio_url
+        validated_url = canonical_nuvio_url(validated_url)
     elif body.type == "arvio":
         from core import arvio
 
@@ -590,6 +618,13 @@ async def create_connection(
             if dup.scalar_one_or_none():
                 raise HTTPException(status_code=409, detail="This Plex server is already connected.")
 
+    if body.type in ("nuvio", "stremio"):
+        from core.connection_identity import assert_connection_identity_available
+        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        await assert_connection_identity_available(
+            db, current_user.id, body.type, provider_account_id,
+            validated_url, server_user_id,
+        )
     cloud_media_provider = body.type in ("nuvio", "stremio", "arvio")
     conn = MediaServerConnection(
         user_id=current_user.id,
@@ -599,6 +634,7 @@ async def create_connection(
         token=connection_token,
         server_user_id=server_user_id,
         server_username=server_username,
+        provider_account_id=provider_account_id,
         plex_auth_token=plex_auth_token,
         plex_account_id=plex_account_id,
         plex_machine_identifier=plex_machine_identifier,
@@ -614,7 +650,7 @@ async def create_connection(
         auto_push_interval=body.auto_push_interval,
     )
     db.add(conn)
-    await db.commit()
+    await _commit_stream_connection(db)
     await db.refresh(conn)
     return conn
 
@@ -636,6 +672,27 @@ async def update_connection(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
 
+    if conn.type in ("stremio", "nuvio"):
+        from core import stremio, nuvio
+        # Delivery workers take this lock before the provider lock. Use the
+        # same order so a reset waits for their state commit without deadlock.
+        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        provider = stremio if conn.type == "stremio" else nuvio
+        async with provider.connection_lock(conn.id):
+            await db.refresh(conn)
+            return await _update_connection_fields(conn, body, db, current_user)
+    return await _update_connection_fields(conn, body, db, current_user)
+
+
+async def _update_connection_fields(conn, body, db, current_user):
+    from core.connection_identity import (
+        assert_connection_identity_available, canonical_nuvio_url,
+        reset_stream_connection_state,
+    )
+
+    previous_account = getattr(conn, "provider_account_id", None)
+    previous_profile = conn.server_user_id
+    previous_url = conn.url
     update_data = body.model_dump(exclude_unset=True)
     if conn.type == "stremio":
         from core import stremio
@@ -648,9 +705,14 @@ async def update_connection(
             except stremio.StremioAPIError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
             update_data["server_user_id"] = str(account["_id"])
+            update_data["provider_account_id"] = str(account["_id"])
             update_data["server_username"] = str(account.get("email") or "Stremio")
         else:
             update_data.pop("token", None)
+            # Account identity is authenticated, never editable by its display fields.
+            update_data.pop("server_user_id", None)
+            update_data.pop("server_username", None)
+            update_data["provider_account_id"] = previous_account or conn.server_user_id
         update_data["sync_ratings"] = False
         update_data["push_ratings"] = False
         update_data["push_playback"] = update_data.get("push_playback", conn.push_playback)
@@ -665,33 +727,32 @@ async def update_connection(
         if conn.type == "nuvio":
             from core import nuvio
 
-            candidate_url = update_data.get("url", conn.url)
+            candidate_url = canonical_nuvio_url(update_data.get("url", conn.url))
             profile_id = _parse_nuvio_profile_id(update_data.get("server_user_id", conn.server_user_id))
+            candidate_token = update_data.get("token") or conn.token
+            uses_existing_token = candidate_token == conn.token
+            await _check_nuvio_session_is_independent(db, candidate_url, candidate_token, conn.id)
 
             async def _persist_refresh(session: nuvio.NuvioSession) -> None:
                 # Persist the rotated token the moment it exists — if the
                 # profile lookup that follows fails, the connection must not
                 # be left holding a refresh token Nuvio has already redeemed.
-                conn.token = session.refresh_token
-                await db.commit()
+                if uses_existing_token:
+                    from core.connection_identity import persist_rotated_session
+                    await persist_rotated_session(db, conn, session)
 
             try:
-                async with nuvio.connection_lock(conn.id):
-                    # Refresh_token is single-use and rotates on every redeem
-                    # (see core/nuvio.py's connection_lock docstring) - conn
-                    # may have been loaded before another request (e.g. the
-                    # connections page's status check) already rotated it
-                    # while this one waited for the lock. Re-read the latest
-                    # persisted value now, inside the lock, rather than reuse
-                    # whatever was loaded at request start.
-                    await db.refresh(conn)
-                    candidate_token = update_data.get("token", conn.token)
-                    session, profiles = await nuvio.validate_connection(
-                        candidate_url, candidate_token, profile_id, on_refresh=_persist_refresh
-                    )
+                session, profiles = await nuvio.validate_connection(
+                    candidate_url, candidate_token, profile_id, on_refresh=_persist_refresh
+                )
             except nuvio.NuvioAPIError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
             update_data["token"] = session.refresh_token
+            update_data["url"] = candidate_url
+            update_data["provider_account_id"] = session.account_id
+            # Existing credentials establish the identity of an unbackfilled row.
+            if previous_account is None and uses_existing_token:
+                previous_account = session.account_id
             update_data["server_user_id"] = str(profile_id)
             update_data["server_username"] = _nuvio_profile_name(profiles, profile_id)
             update_data["sync_ratings"] = False
@@ -701,6 +762,22 @@ async def update_connection(
         else:
             update_data["push_playback"] = False
             update_data["push_collection"] = False
+
+    if conn.type in ("nuvio", "stremio"):
+        account_id = update_data["provider_account_id"]
+        await assert_connection_identity_available(
+            db, current_user.id, conn.type, account_id,
+            update_data.get("url", conn.url),
+            update_data.get("server_user_id", conn.server_user_id),
+            exclude_connection_id=conn.id,
+        )
+        old_account = previous_account or (previous_profile if conn.type == "stremio" else None)
+        identity_changed = old_account != account_id or (conn.type == "nuvio" and (
+            canonical_nuvio_url(previous_url) != update_data["url"]
+            or previous_profile != update_data["server_user_id"]
+        ))
+        if identity_changed:
+            await reset_stream_connection_state(db, conn)
 
     # Re-enabling a watchlist sync direction starts from a clean bootstrap: a
     # baseline recorded under the old settings must not drive deletions.
@@ -719,7 +796,7 @@ async def update_connection(
         from core.stream_actions import cleanup_disabled_stream_actions
         await cleanup_disabled_stream_actions(db, current_user.id)
 
-    await db.commit()
+    await _commit_stream_connection(db)
     await db.refresh(conn)
     return conn
 
@@ -739,16 +816,36 @@ async def delete_connection(
     conn = result.scalar_one_or_none()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    if conn.type in ("stremio", "nuvio"):
+        from core import stremio, nuvio
+        from core.connection_identity import reset_stream_connection_state
+        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        provider = stremio if conn.type == "stremio" else nuvio
+        async with provider.connection_lock(conn.id):
+            await db.refresh(conn)
+            await reset_stream_connection_state(db, conn)
+            return await _delete_connection_fields(db, conn)
+    return await _delete_connection_fields(db, conn)
+
+
+async def _delete_connection_fields(db, conn):
     if conn.type == "stremio":
         from core import stremio
-
-        try:
-            await stremio.logout(conn.token)
-        except stremio.StremioAPIError:
-            logger.warning(
-                "Failed to revoke Stremio session for connection %s",
-                conn.id,
-            )
+        # A manually supplied auth key may also serve another AnyList user.
+        # Removing this connection must not revoke that remaining session.
+        shared_session = (await db.execute(select(MediaServerConnection.id).where(
+            MediaServerConnection.type == "stremio",
+            MediaServerConnection.token == conn.token,
+            MediaServerConnection.id != conn.id,
+        ).limit(1))).scalar_one_or_none()
+        if shared_session is None:
+            try:
+                await stremio.logout(conn.token)
+            except stremio.StremioAPIError:
+                logger.warning(
+                    "Failed to revoke Stremio session for connection %s",
+                    conn.id,
+                )
     await db.delete(conn)
     await db.commit()
     return {"status": "deleted"}
@@ -1102,19 +1199,19 @@ async def poll_stremio_link(
     current_user: User = Depends(get_current_user),
 ):
     from core import stremio
+    from core.connection_identity import (
+        assert_connection_identity_available, reset_stream_connection_state,
+    )
 
-    existing_result = await db.execute(
-        select(MediaServerConnection).where(
+    existing = None
+    if body.connection_id is not None:
+        existing = (await db.execute(select(MediaServerConnection).where(
+            MediaServerConnection.id == body.connection_id,
             MediaServerConnection.user_id == current_user.id,
             MediaServerConnection.type == "stremio",
-        )
-    )
-    existing = existing_result.scalar_one_or_none()
-    # A reconnect passes the id of the (e.g. disconnected) connection it's
-    # replacing the auth key on; anything else with an existing row present
-    # is the "add new" flow hitting Scrob's one-Stremio-connection limit.
-    if existing and existing.id != body.connection_id:
-        raise HTTPException(status_code=409, detail="Stremio is already connected")
+        ))).scalar_one_or_none()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Stremio connection not found")
 
     try:
         auth_key = await stremio.read_link_code(body.code)
@@ -1125,19 +1222,33 @@ async def poll_stremio_link(
         raise HTTPException(status_code=400, detail=str(exc))
 
     if existing:
-        # Reconnecting: replace the auth key in place and keep the user's
-        # existing sync/push settings — this request's defaults only apply
-        # to a brand-new connection.
-        existing.token = auth_key
-        existing.server_user_id = str(account["_id"])
-        existing.server_username = str(account.get("email") or "Stremio")
-        await db.commit()
-        await db.refresh(existing)
+        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        async with stremio.connection_lock(existing.id):
+            await db.refresh(existing)
+            await assert_connection_identity_available(
+                db, current_user.id, "stremio", str(account["_id"]),
+                stremio.DEFAULT_URL, str(account["_id"]),
+                exclude_connection_id=existing.id,
+            )
+            if (getattr(existing, "provider_account_id", None) or existing.server_user_id) != str(account["_id"]):
+                await reset_stream_connection_state(db, existing)
+            # Request defaults only apply to a new connection, not reconnects.
+            existing.token = auth_key
+            existing.provider_account_id = str(account["_id"])
+            existing.server_user_id = str(account["_id"])
+            existing.server_username = str(account.get("email") or "Stremio")
+            await _commit_stream_connection(db)
+            await db.refresh(existing)
         return {
             "status": "connected",
             "connection": schemas.MediaServerConnectionResponse.model_validate(existing),
         }
 
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    await assert_connection_identity_available(
+        db, current_user.id, "stremio", str(account["_id"]),
+        stremio.DEFAULT_URL, str(account["_id"]),
+    )
     connection = MediaServerConnection(
         user_id=current_user.id,
         type="stremio",
@@ -1145,6 +1256,7 @@ async def poll_stremio_link(
         url=stremio.DEFAULT_URL,
         token=auth_key,
         server_user_id=str(account["_id"]),
+        provider_account_id=str(account["_id"]),
         server_username=str(account.get("email") or "Stremio"),
         sync_collection=body.sync_collection,
         sync_watched=body.sync_watched,
@@ -1158,7 +1270,7 @@ async def poll_stremio_link(
         auto_push_interval=body.auto_push_interval,
     )
     db.add(connection)
-    await db.commit()
+    await _commit_stream_connection(db)
     await db.refresh(connection)
     return {
         "status": "connected",
@@ -1359,9 +1471,12 @@ async def get_connection_status(
                 # while this one waited would still leave conn.token stale;
                 # re-read it now that the lock is held.
                 async with nuvio.connection_lock(conn.id):
-                    await db.refresh(conn)
-                    session, profiles = await nuvio.validate_connection(conn.url, conn.token, profile_id)
-                    conn.token = session.refresh_token
+                    from core.connection_identity import refresh_stream_connection, persist_rotated_session
+                    await refresh_stream_connection(db, conn)
+                    session, profiles = await nuvio.validate_connection(
+                        conn.url, conn.token, profile_id,
+                        on_refresh=lambda rotated: persist_rotated_session(db, conn, rotated),
+                    )
                 conn.server_username = _nuvio_profile_name(profiles, profile_id)
                 connected = True
             elif conn.type == "arvio":
@@ -1379,9 +1494,11 @@ async def get_connection_status(
                 conn.server_username = arvio.get_profile_name(profiles, conn.server_user_id)
                 connected = True
             elif conn.type == "stremio":
-                account = await stremio.validate_auth_key(conn.token)
-                conn.server_user_id = str(account["_id"])
-                conn.server_username = str(account.get("email") or "Stremio")
+                from core.connection_identity import refresh_stream_connection
+                async with stremio.connection_lock(conn.id):
+                    await refresh_stream_connection(db, conn)
+                    account = await stremio.validate_auth_key(conn.token)
+                    conn.server_username = str(account.get("email") or "Stremio")
                 connected = True
             else:
                 connected = await jellyfin.validate_connection(conn.url, conn.token, conn.server_user_id)
@@ -1419,12 +1536,14 @@ async def get_connection_status(
         connected = await mdblist.validate_api_key(user_settings.mdblist_api_key)
         return {"configured": True, "connected": connected}
 
-    media_server_tasks = [check_media_server(c) for c in media_server_conns]
-    rdr_status, snr_status, trakt_status, simkl_status, mdblist_status, *ms_statuses = await asyncio.gather(
-        check_radarr(), check_sonarr(), check_trakt(), check_simkl(), check_mdblist(), *media_server_tasks
+    rdr_status, snr_status, trakt_status, simkl_status, mdblist_status = await asyncio.gather(
+        check_radarr(), check_sonarr(), check_trakt(), check_simkl(), check_mdblist(),
     )
+    # Cloud-media checks refresh/persist ORM state. Multiple accounts must not
+    # issue concurrent operations against this shared AsyncSession.
+    ms_statuses = [await check_media_server(conn) for conn in media_server_conns]
     if any(conn.type in ("nuvio", "stremio") for conn in media_server_conns):
-        await db.commit()
+        await _commit_stream_connection(db)
 
     return {"radarr": rdr_status, "sonarr": snr_status, "trakt": trakt_status, "simkl": simkl_status, "mdblist": mdblist_status, "connections": ms_statuses}
 

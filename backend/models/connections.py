@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,6 +10,20 @@ from .base import Base
 
 class MediaServerConnection(Base):
     __tablename__ = "media_server_connections"
+    __table_args__ = (
+        Index(
+            "uq_msc_user_stremio_account",
+            "user_id", "provider_account_id", unique=True,
+            postgresql_where=text("type = 'stremio' AND provider_account_id IS NOT NULL"),
+            sqlite_where=text("type = 'stremio' AND provider_account_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_msc_user_nuvio_identity",
+            "user_id", "url", "provider_account_id", "server_user_id", unique=True,
+            postgresql_where=text("type = 'nuvio' AND provider_account_id IS NOT NULL AND server_user_id IS NOT NULL"),
+            sqlite_where=text("type = 'nuvio' AND provider_account_id IS NOT NULL AND server_user_id IS NOT NULL"),
+        ),
+    )
 
     id               : Mapped[int]           = mapped_column(Integer, primary_key=True)
     user_id          : Mapped[int]           = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -18,6 +32,14 @@ class MediaServerConnection(Base):
     url              : Mapped[str]           = mapped_column(String(500), nullable=False)
     token            : Mapped[str]           = mapped_column(String(500), nullable=False)
     server_user_id   : Mapped[Optional[str]] = mapped_column(String(255))  # jellyfin/emby user ID
+    # Stable account identity returned by the provider's authenticated session.
+    provider_account_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Incremented when the account/profile attached to this row changes. Workers
+    # capture it before network I/O and verify it before using the result.
+    identity_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # A provider call may finish before its bookkeeping is committed. Fence
+    # those ORM updates too, so an old identity cannot overwrite a later reset.
+    __mapper_args__ = {"version_id_col": identity_version, "version_id_generator": False}
     server_username  : Mapped[Optional[str]] = mapped_column(String(255))  # plex username for webhook attribution
 
     # Plex "Login with Plex" (PIN auth). NULL on manually-configured connections.

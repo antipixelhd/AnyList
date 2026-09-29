@@ -4,6 +4,7 @@ Observed collection files describe provider state. The intent is kept separately
 so a failed write, or another collection source, cannot silently reverse it.
 """
 
+from core.connection_identity import refresh_stream_connection
 import logging
 from datetime import datetime, timezone
 
@@ -184,11 +185,12 @@ async def _record_for_media(db: AsyncSession, user_id: int, media: Media) -> dic
     return item
 
 
-async def _write_stremio(conn: MediaServerConnection, item: dict, desired: bool) -> None:
+async def _write_stremio(db: AsyncSession, conn: MediaServerConnection, item: dict, desired: bool) -> None:
     from routers.sync import _stremio_new_library_item, _stremio_same_item
 
     content_id = item["content_id"]
     async with stremio.connection_lock(conn.id):
+        await refresh_stream_connection(db, conn)
         remote = {str(row["_id"]): row for row in await stremio.datastore_get(conn.token, all_items=True)}
         old = remote.get(content_id)
         if old is None and not desired:
@@ -212,7 +214,7 @@ async def _write_nuvio(db: AsyncSession, conn: MediaServerConnection, item: dict
         await db.flush()
 
     async with nuvio.connection_lock(conn.id):
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         await nuvio.merge_library(
             conn.url, conn.token, _nuvio_profile_id(conn),
             additions=[item] if desired else [],
@@ -295,7 +297,7 @@ async def dispatch_library_deliveries(db: AsyncSession, user_id: int, media_id: 
         try:
             await require_stream_reconciliation(db, conn)
             if conn.type == "stremio":
-                await _write_stremio(conn, item, row.desired)
+                await _write_stremio(db, conn, item, row.desired)
             else:
                 await _write_nuvio(db, conn, item, row.desired)
             await _record_membership(db, user_id, media_id, conn, item["content_id"], row.desired)

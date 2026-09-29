@@ -220,7 +220,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(get=AsyncMock(return_value=baseline), execute=AsyncMock(side_effect=[
             SimpleNamespace(all=lambda:[(media,"paused")]),
             SimpleNamespace(scalars=lambda:SimpleNamespace(all=lambda:[])),
-        ]))
+        ]), refresh=AsyncMock())
         with patch("routers.sync._build_nuvio_library_items", AsyncMock(return_value=[{
                 "content_id":"tt0133093", "content_type":"movie", "title":"The Matrix",
             }])), \
@@ -404,7 +404,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(stremio, "datastore_put", datastore_put),
         ):
             changed = await _push_stremio_connection(
-                SimpleNamespace(),
+                SimpleNamespace(refresh=AsyncMock()),
                 connection,
                 7,
                 api_key="tmdb-key",
@@ -462,7 +462,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(stremio, "datastore_put", datastore_put),
         ):
             changed = await _push_stremio_connection(
-                SimpleNamespace(),
+                SimpleNamespace(refresh=AsyncMock()),
                 connection,
                 7,
                 api_key="tmdb-key",
@@ -513,7 +513,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(stremio, "datastore_put", datastore_put),
         ):
             changed = await _push_stremio_connection(
-                SimpleNamespace(),
+                SimpleNamespace(refresh=AsyncMock()),
                 connection,
                 7,
                 api_key="tmdb-key",
@@ -584,7 +584,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(stremio, "datastore_put", datastore_put),
         ):
             await _push_stremio_connection(
-                SimpleNamespace(),
+                SimpleNamespace(refresh=AsyncMock()),
                 connection,
                 7,
                 api_key="tmdb-key",
@@ -635,6 +635,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
                         SimpleNamespace(all=lambda: []),
                         SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
                     ]),
+                    refresh=AsyncMock(),
                 ),
                 connection,
                 7,
@@ -756,6 +757,8 @@ def _stremio_connection(**overrides) -> SimpleNamespace:
         url=stremio.DEFAULT_URL,
         token="dead-auth-key",
         server_user_id="old-account-id",
+        provider_account_id="old-account-id",
+        identity_version=0,
         server_username="old@example.com",
         sync_collection=False,
         sync_watched=True,
@@ -780,9 +783,7 @@ def _stremio_connection(**overrides) -> SimpleNamespace:
 
 
 class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
-    """A disconnected Stremio connection has no in-place recovery path today
-    (unlike a fresh 'add new', poll_stremio_link 409s if one already exists).
-    Passing the existing connection's id reconnects it instead."""
+    """Link polling adds distinct accounts and reconnects one connection in place."""
 
     async def test_reconnect_replaces_auth_key_and_preserves_existing_settings(self) -> None:
         existing = _stremio_connection()
@@ -799,13 +800,17 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
                 "core.stremio.validate_auth_key",
                 AsyncMock(return_value={"_id": "new-account-id", "email": "new@example.com"}),
             ),
+            patch("core.connection_identity.assert_connection_identity_available", AsyncMock()),
+            patch("core.connection_identity.reset_stream_connection_state", AsyncMock()) as reset,
         ):
             result = await auth.poll_stremio_link(body, db=db, current_user=SimpleNamespace(id=7))
 
         self.assertEqual(result["status"], "connected")
         self.assertEqual(existing.token, "fresh-auth-key")
         self.assertEqual(existing.server_user_id, "new-account-id")
+        self.assertEqual(existing.provider_account_id, "new-account-id")
         self.assertEqual(existing.server_username, "new@example.com")
+        reset.assert_awaited_once_with(db, existing)
         # Existing sync/push preferences must survive a reconnect untouched —
         # the request body's defaults only apply to a brand-new connection.
         self.assertFalse(existing.sync_collection)
@@ -813,17 +818,38 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(existing.auto_sync_interval, 6.0)
         db.commit.assert_awaited_once()
 
-    async def test_poll_without_matching_connection_id_still_rejects(self) -> None:
-        existing = _stremio_connection()
+    async def test_poll_without_connection_id_adds_a_second_account(self) -> None:
+        async def _fake_refresh(connection) -> None:
+            connection.id = 15
+            connection.created_at = datetime(2026, 8, 1)
+            connection.watchlist_to_radarr = False
+            connection.watchlist_to_sonarr = False
+            connection.watchlist_all_users = False
+            connection.watchlist_monitored_users = None
+            connection.plex_sync_watchlist = False
+            connection.plex_push_watchlist = False
+
         db = SimpleNamespace(
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing)),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+            add=MagicMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(side_effect=_fake_refresh),
         )
-        body = StremioLinkPollRequest(code="ABCD", connection_id=None)
+        body = StremioLinkPollRequest(code="ABCD", connection_id=None, name="Second account")
 
-        with self.assertRaises(HTTPException) as ctx:
-            await auth.poll_stremio_link(body, db=db, current_user=SimpleNamespace(id=7))
+        with (
+            patch("core.stremio.read_link_code", AsyncMock(return_value="second-auth-key")),
+            patch("core.stremio.validate_auth_key", AsyncMock(return_value={"_id": "second-account-id"})),
+            patch("core.connection_identity.assert_connection_identity_available", AsyncMock()),
+        ):
+            result = await auth.poll_stremio_link(body, db=db, current_user=SimpleNamespace(id=7))
 
-        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(result["status"], "connected")
+        db.add.assert_called_once()
+        added = db.add.call_args.args[0]
+        self.assertEqual(added.provider_account_id, "second-account-id")
+        self.assertEqual(added.token, "second-auth-key")
+        self.assertEqual(added.name, "Second account")
 
     async def test_poll_creates_new_connection_when_none_exists(self) -> None:
         async def _fake_refresh(connection) -> None:

@@ -1,6 +1,7 @@
 """Durable watched-state delivery for Nuvio and Stremio connections."""
 from __future__ import annotations
 
+from core.connection_identity import refresh_stream_connection
 from datetime import datetime, timezone
 import logging
 from typing import Awaitable, Callable
@@ -204,7 +205,7 @@ async def _write_provider_watch_state(
         set_committed_value(conn, "token", session.refresh_token)
 
     async with nuvio.connection_lock(conn.id):
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         if watched:
             await nuvio.push_watched_items(
                 conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),

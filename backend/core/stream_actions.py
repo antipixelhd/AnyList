@@ -1,4 +1,5 @@
 """Retryable playback actions; never mutates streaming library membership."""
+from core.connection_identity import refresh_stream_connection
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -157,7 +158,7 @@ async def push_nuvio_progress(db, conn, record):
             await token_db.commit()
         set_committed_value(conn, 'token', session.refresh_token)
     async with nuvio.connection_lock(conn.id):
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             session = await nuvio.refresh_session(conn.url, conn.token, client=client)
             await refreshed(session)
@@ -379,7 +380,7 @@ async def dismiss_nuvio(db, conn, record, *, restore=False, reset=False, visibil
             await token_db.commit()
         set_committed_value(conn, 'token', session.refresh_token)
     async with nuvio.connection_lock(conn.id):
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             session = await nuvio.refresh_session(conn.url, conn.token, client=client)
             await refreshed(session)
@@ -557,7 +558,7 @@ async def show_nuvio_next_up(db, conn, record):
     if not content_ids:
         raise ValueError('Nuvio visibility action has no content IDs')
     async with nuvio.connection_lock(conn.id):
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             session = await nuvio.refresh_session(conn.url, conn.token, client=client)
             await refreshed(session)
@@ -1111,6 +1112,7 @@ async def dispatch_stream_actions(db, user_id):
                 # pulls, and clear operations so datastore read/modify/write
                 # actions cannot race those snapshots.
                 async with stremio.connection_lock(conn.id):
+                    await refresh_stream_connection(db, conn)
                     if action.action == 'reset':await dismiss_stremio(conn.token, payload, reset=True)
                     elif action.action == 'restore':await dismiss_stremio(conn.token, payload, restore=True)
                     elif action.action == 'upsert':await push_stremio_progress(conn.token, payload)

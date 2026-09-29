@@ -46,6 +46,21 @@ Read only for backend changes or questions. Confirm details in the affected code
 
 ## Implementation anchors
 
+Streaming connections are independent by connection ID. Each AnyList user may
+connect multiple Stremio accounts and multiple Nuvio accounts/profiles; duplicate
+Stremio accounts or Nuvio account/profile pairs on the same canonical endpoint
+are rejected within that user. The same remote identity may belong to another
+AnyList user. Accepted changes propagate to same-provider peers using each
+destination's enabled directions and approved reconciliation.
+Nuvio connections need independent sign-in sessions because refresh tokens
+rotate; an existing connection's token cannot be reused for another connection.
+
+Changing a connection's account or Nuvio profile clears its snapshot, cursors,
+reviews, and queued deliveries, requiring a fresh first import; same-identity
+reauthentication preserves them. Deletion removes connection-scoped state while
+preserving accepted AnyList history. Active syncs must finish before switching
+or deleting; identity versions fence operations loaded before a switch.
+
 For tracking changes, start with tracking_rules.py and the affected tracking router.
 For provider sync, inspect pull_cycle.py, tracking_snapshot.py, and the relevant
 reconciliation/delivery modules. For streaming-library changes, inspect

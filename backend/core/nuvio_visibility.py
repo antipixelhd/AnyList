@@ -182,6 +182,7 @@ async def next_up_visibility(db, user_id, connection_id, records, *, seed_record
 
 async def sync_next_up_visibility(db, conn, records):
     from core import nuvio
+    from core.connection_identity import refresh_stream_connection
     from db import AsyncSessionLocal
     from sqlalchemy import update
     from sqlalchemy.orm.attributes import set_committed_value
@@ -189,7 +190,7 @@ async def sync_next_up_visibility(db, conn, records):
     if not records:
         return
     async with nuvio.connection_lock(conn.id):
-        await db.refresh(conn)
+        await refresh_stream_connection(db, conn)
         async with nuvio.httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             session = await nuvio.refresh_session(conn.url, conn.token, client=client)
             async with AsyncSessionLocal() as token_db:
