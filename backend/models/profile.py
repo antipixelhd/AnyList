@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from typing import Optional
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Enum as SQLEnum
@@ -5,6 +6,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PrivacyLevel
+
+if TYPE_CHECKING:
+    from .users import User
+
 
 
 class UserProfileData(Base):

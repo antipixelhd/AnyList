@@ -1,6 +1,6 @@
 import type { APIRoute } from "astro";
 
-const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
+const BACKEND_PORT = (import.meta.env?.BACKEND_PORT as string | undefined) ?? "7331";
 const BACKEND = `http://localhost:${BACKEND_PORT}`;
 
 // This proxy is a generic catch-all for every backend path, so a redirect
@@ -18,22 +18,24 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
 
   const forwardHeaders = new Headers();
 
-  const auth = request.headers.get("Authorization");
-  if (auth) {
-    forwardHeaders.set("Authorization", auth);
-  } else {
-    // Video elements can't set custom headers — extract JWT from the query string or session cookie instead
-    const url = new URL(request.url);
-    const tokenQuery = url.searchParams.get("token");
-    if (tokenQuery) {
-      forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
+  try {
+    const auth = request.headers.get("Authorization");
+    if (auth) {
+      forwardHeaders.set("Authorization", auth);
     } else {
-      const cookieStr = request.headers.get("Cookie") ?? "";
-      const tokenMatch = /(?:^|;\s*)token=([^;]+)/.exec(cookieStr);
-      if (tokenMatch) {
-        forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
+      // Video elements use query tokens or the session cookie.
+      const tokenQuery = new URL(request.url).searchParams.get("token");
+      if (tokenQuery) {
+        forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
+      } else {
+        const tokenMatch = /(?:^|;\s*)token=([^;]+)/.exec(request.headers.get("Cookie") ?? "");
+        if (tokenMatch) {
+          forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
+        }
       }
     }
+  } catch {
+    return new Response(null, { status: 400 });
   }
 
   // Forward full Content-Type including multipart boundary
@@ -69,7 +71,7 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
       redirect: "manual",
     });
   } catch (e) {
-    console.error(`Proxy request to ${backendUrl} failed:`, e);
+    console.error(`Proxy request to /${path} failed (${e instanceof Error ? e.name : 'unknown error'})`);
     return new Response(null, { status: 502 });
   }
 
@@ -78,12 +80,13 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
     if (location) {
       let allowed = false;
       try {
-        allowed = ALLOWED_REDIRECT_HOSTS.has(new URL(location).hostname);
+        const target = new URL(location);
+        allowed = target.protocol === 'https:' && !target.username && !target.password && ALLOWED_REDIRECT_HOSTS.has(target.hostname);
       } catch {
         // Relative or otherwise unparseable Location - not one of ours, reject below.
       }
       if (!allowed) {
-        console.error(`Proxy refused to forward redirect to unexpected host: ${location}`);
+        console.error('Proxy refused to forward an unexpected redirect');
         return new Response(null, { status: 502 });
       }
       return new Response(null, { status: res.status, headers: { Location: location } });
@@ -107,10 +110,11 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
     if (v) responseHeaders.set(h, v);
   }
 
-  return new Response(res.body, { status: res.status, headers: responseHeaders });
+  return new Response(request.method === 'HEAD' ? null : res.body, { status: res.status, headers: responseHeaders });
 }
 
 export const GET: APIRoute = (ctx) => handle(ctx);
+export const HEAD: APIRoute = (ctx) => handle(ctx);
 export const POST: APIRoute = (ctx) => handle(ctx);
 export const PUT: APIRoute = (ctx) => handle(ctx);
 export const PATCH: APIRoute = (ctx) => handle(ctx);

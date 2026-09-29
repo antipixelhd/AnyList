@@ -1,10 +1,16 @@
+from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, Enum as SQLEnum
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PrivacyLevel
+
+if TYPE_CHECKING:
+    from .users import User
+    from .media import Media
+
 
 
 class List(Base):

@@ -4,7 +4,6 @@ Set TRACKING_TEST_DATABASE_URL to the disposable local database; never productio
 """
 import os
 import copy
-import json
 import unittest
 from unittest.mock import AsyncMock, patch
 from datetime import date, datetime, timedelta, timezone
@@ -23,7 +22,7 @@ from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_optional_user_or_api_key, get_tracking_write_user
 from models import User, UserSettings, UserProfileData, Media, GlobalSettings, Follow, WatchEvent, Collection, CollectionFile, Rating, Show, MediaServerConnection
 from models.base import CollectionSource, MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingDeletion, TrackingDeliveryJob, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, ProviderMatch, CloudAction, WebPushSubscription
+from models.tracking import TrackedEntry, TrackingDeletion, TrackingDeliveryJob, StreamBaseline, StreamAction, SyncReview, TrackingPreferences, TrackingActivity, CloudBaseline, ProviderIgnore, CloudAction, WebPushSubscription
 from models.streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from models.sync import SyncJob, SyncStatus
 from routers.tracking import router
@@ -3865,7 +3864,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_correcting_to_watching_discards_stale_saved_progress(self):
         from core.stream_actions import dispatch_stream_actions
-        from models.tracking import StreamAction
         self.movie.tmdb_id=987654313
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Fixture',url='https://example.test',token='fixture',push_playback=True)
         self.db.add(conn);await self.db.commit()
@@ -5119,7 +5117,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_playback_only_clear_suppresses_old_nuvio_next_up_write(self):
         from core import nuvio
-        from core.nuvio_visibility import sync_next_up_visibility
         from models.watch_intent import WatchIntent
         from routers import sync as sync_router
         from core.watch_intents import dispatch_watch_intents

@@ -15,9 +15,7 @@ from core.episode_order import (
 )
 from models.base import MediaType
 from models.collection import Collection
-from models.comments import Comment
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
-from models.events import WatchEvent
 from models.lists import ListItem
 from models.media import Media
 from models.playback_progress import PlaybackProgress
@@ -905,7 +903,6 @@ import os
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from sqlalchemy import select as _sa_select
 from sqlalchemy.dialects.postgresql import JSONB as _JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker as _async_sessionmaker, create_async_engine as _create_async_engine
 from sqlalchemy.ext.compiler import compiles as _compiles
@@ -913,7 +910,6 @@ from sqlalchemy.pool import StaticPool as _StaticPool
 
 from core import episode_order as _eo
 from core import tmdb as _tmdb, tvdb as _tvdb
-from models.episode_order import ShowEpisodePosition
 
 
 @_compiles(_JSONB, "sqlite")

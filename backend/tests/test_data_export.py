@@ -236,7 +236,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_export_zip_excludes_secret_categories_by_default(self) -> None:
         user = SimpleNamespace(id=1, username="alice", api_key="secret", created_at=datetime(2026, 1, 1))
-        db = _FakeSession([[None]])  # only the UserProfileData lookup in build_export_zip
+        db = _FakeSession([])
 
         payload = await data_export.build_export_zip(
             db, user, None,
@@ -245,6 +245,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
         )
 
         names = zipfile.ZipFile(io.BytesIO(payload)).namelist()
+        db.execute.assert_not_awaited()
         for secret_file in ("api-keys.json", "media-connections.json", "scrobble-connections.json", "connections.json"):
             self.assertNotIn(secret_file, names)
 
@@ -255,7 +256,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
                                    rpdb_api_key="rpdb-secret")
         for include in (False, True):
             payload = await data_export.build_export_zip(
-                _FakeSession([[None]]), user, settings,
+                _FakeSession([]), user, settings,
                 include_watched=False, include_ratings=False, include_collection=False,
                 include_lists=False, include_comments=False, include_api_keys=include,
             )

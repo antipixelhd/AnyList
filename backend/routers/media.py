@@ -25,10 +25,8 @@ from models.ratings import Rating
 from models.base import MediaType, CollectionSource
 from models.lists import List as UserList, ListItem
 from models.media_request import MediaRequest, RequestStatus
-from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder, ShowEpisodePosition
+from models.episode_order import ShowEpisodePosition
 from core.episode_order import (
-    get_episode_orders_for_series,
-    get_tmdb_to_tvdb_positions,
     get_order_keys_for_series,
     get_positions_for_series,
     canonical_pairs_for_display_season,
@@ -471,7 +469,6 @@ async def enrich_with_state(
         total_map: dict[int, int] = {}
         show_status_map: dict[int, str] = {}
         show_seasons_map: dict[int, list] = {}
-        show_ep_tmdb_ids: dict[int, set[int]] = {} # show_tmdb_id -> {ep_tmdb_id, ...}
 
         for show_tmdb_id, tmdb_data, status in shows_meta_q.all():
             seasons = (tmdb_data or {}).get("seasons", [])
@@ -3237,7 +3234,7 @@ async def manually_collect(
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     coll_stmt = pg_insert(Collection).values(user_id=current_user.id, media_id=media.id)
     coll_stmt = coll_stmt.on_conflict_do_nothing(constraint="uq_collection_user_media")
-    result = await db.execute(coll_stmt)
+    await db.execute(coll_stmt)
     await db.flush()
     coll_q = await db.execute(
         select(Collection).where(Collection.user_id == current_user.id, Collection.media_id == media.id)
@@ -3513,7 +3510,6 @@ async def collect_season(
     current_user: User = Depends(get_current_user),
 ):
     """Manually add all episodes in a season to the user's collection."""
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     tmdb_key = await get_user_tmdb_key(db, current_user.id)
 
@@ -5901,7 +5897,7 @@ async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db
             raise credentials_exception
         user_id: int = int(payload.get("sub"))
         return user_id
-    except (JWTError, ValueError):
+    except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
 

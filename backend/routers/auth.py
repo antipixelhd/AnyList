@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Optional
+from typing import Annotated
 from jose import jwt, JWTError
 
 from db import get_db
@@ -39,7 +39,6 @@ from core.backup import restore_backup
 from core.nuvio import NuvioAPIError, parse_profile_id
 import schemas
 from dependencies import get_current_user, DEVICE_TOKEN_TYPE
-from sqlalchemy.orm import selectinload
 from fastapi import File, UploadFile
 
 logger = logging.getLogger(__name__)

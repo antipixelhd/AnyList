@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import zipfile
+from core.archive_reader import BoundedZipReader
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -99,26 +100,10 @@ def parse_scrob_export(content: bytes) -> ScrobImportData:
 
     # Same rationale as core/trakt_export.py: ZipInfo.file_size is attacker-controlled
     # metadata, so caps are enforced against bytes actually produced while streaming.
-    total_read = 0
-
-    def _read_limited(name: str) -> bytes:
-        nonlocal total_read
-        chunks: list[bytes] = []
-        entry_read = 0
-        try:
-            with zf.open(name) as f:
-                while True:
-                    chunk = f.read(_READ_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    entry_read += len(chunk)
-                    total_read += len(chunk)
-                    if entry_read > MAX_ENTRY_SIZE or total_read > MAX_TOTAL_SIZE:
-                        raise ValueError("Export file is too large to import.")
-                    chunks.append(chunk)
-        except zipfile.BadZipFile:
-            raise ValueError(f"'{name}' in the export is corrupted or inconsistent.")
-        return b"".join(chunks)
+    _read_limited = BoundedZipReader(
+        zf, max_entry_size=MAX_ENTRY_SIZE, max_total_size=MAX_TOTAL_SIZE,
+        chunk_size=_READ_CHUNK_SIZE,
+    ).read
 
     def _load_list(name: str) -> list:
         if name not in names:

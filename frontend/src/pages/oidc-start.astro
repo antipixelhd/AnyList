@@ -1,5 +1,6 @@
 ---
 import { api } from "../lib/api";
+import { safeReturnPath } from "../lib/request-security";
 
 // Initiate the OIDC flow: get the provider's auth URL + a fresh state token from
 // the backend, set the state as an httpOnly cookie on the browser, then redirect
@@ -7,10 +8,7 @@ import { api } from "../lib/api";
 
 let errorMsg = "";
 
-// Same validation as login.astro's `next` handling - only a same-site path
-// is a safe redirect target once the provider sends the browser back.
-const rawNext = Astro.url.searchParams.get("next") || "";
-const nextPath = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+const nextPath = safeReturnPath(Astro.url.searchParams.get("next"));
 
 try {
   const { auth_url, state } = await api.auth.oidcAuthorize();

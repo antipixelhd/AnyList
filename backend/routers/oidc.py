@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from core.config import settings as app_settings
-from core.security import create_access_token, get_password_hash
+from core.security import create_access_token
 from db import get_db
 from models.base import UserRole
 from models.users import User

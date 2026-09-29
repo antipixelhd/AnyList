@@ -1,5 +1,6 @@
 from core.connection_identity import refresh_stream_connection
 import asyncio
+import json
 import logging
 import re
 from typing import Any
@@ -1697,7 +1698,6 @@ async def _fan_out_changes_to_other_connections(
             for source_id, connection_id, media_id in files_result.all():
                 source_ids_map.setdefault((connection_id, media_id), []).append(source_id)
 
-        import httpx as _httpx
         sem = asyncio.Semaphore(20)
 
         async def _guarded(coro):
@@ -4234,7 +4234,7 @@ async def _reconcile_plex_watchlist(user_id: int, connection_id: int, tmdb_api_k
                 )
                 baseline = baseline_result.scalar_one_or_none()
 
-                print(f"  Fetching Plex watchlist...")
+                print("  Fetching Plex watchlist...")
                 remote_items = await plex.get_watchlist(conn.plex_account_token)
                 print(f"  {len(remote_items)} items in Plex watchlist")
                 remote_by_key = _plex_watchlist_remote_map(remote_items)
@@ -4344,7 +4344,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             # itself, which still gates the (correct) backfill call further down.
             plex_watched_state_is_reliable = conn.sync_watched and not conn.server_username
 
-            print(f"  Fetching Plex libraries...")
+            print("  Fetching Plex libraries...")
             libraries = await plex.get_libraries(p_url, p_token)
 
             sel_result = await db.execute(
@@ -6272,7 +6272,7 @@ def _parse_arvio_timestamp(ts: Any) -> datetime | None:
             ts = ts / 1000.0
         try:
             return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
-        except Exception:
+        except (OverflowError, OSError, ValueError):
             return None
     if isinstance(ts, str):
         try:
@@ -6363,7 +6363,7 @@ def _parse_arvio_episode_info(item: dict[str, Any] | str | int) -> tuple[int, in
             parsed = json.loads(item_str)
             if isinstance(parsed, dict):
                 item = parsed
-        except Exception:
+        except json.JSONDecodeError:
             return None
 
     if isinstance(item, dict):
@@ -6491,8 +6491,8 @@ async def _apply_arvio_playback_progress(
     if isinstance(item, str):
         try:
             item = json.loads(item)
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            return False
     if not isinstance(item, dict):
         return False
 
@@ -8928,7 +8928,7 @@ async def match_unmatched_show(
     if not body.tmdb_id and not body.tvdb_id:
         raise HTTPException(status_code=400, detail="Either tmdb_id or tvdb_id is required")
 
-    from sqlalchemy import cast as sa_cast, Text as SAText, func as sa_func
+    from sqlalchemy import func as sa_func
 
     ep_result = await db.execute(
         select(Media)
@@ -9881,7 +9881,6 @@ async def list_matched_shows(
     2. SyncJob warnings with matched:true (covers shows where show_title is absent from
        tmdb_data, e.g. episodes that weren't created as stubs or had tmdb_data overwritten).
     """
-    from sqlalchemy import func as sa_func
 
     # Fetch all shows in the system to build a db_id -> Show mapping
     # This allows us to map any database show.id to its tmdb_id dynamically,

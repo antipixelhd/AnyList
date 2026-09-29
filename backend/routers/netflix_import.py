@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import csv
@@ -779,7 +780,7 @@ async def update_netflix_import_item(
             remapped_item = await _prepare_remapped_item(old_item, media_type, tmdb_id, api_key, language)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        except Exception as exc:
+        except Exception:
             logger.exception("Could not prepare Netflix remap %s -> %s", item_id, tmdb_id)
             raise HTTPException(status_code=502, detail="The selected title could not be loaded from TMDB. Try again.")
 
@@ -1301,7 +1302,6 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                 raise ValueError(f"{item.get('source_title')}: this existing show needs TVDB episode mappings for {len(missing)} episode(s). Skip this title or choose another show.")
         # Preserve a complete canonical catalogue for commits, deriving rows
         # only from metadata fetched during preparation (no network in txn).
-        watched_dates_by_media: dict[int, list[date]] = {}
         watched_media: set[int] = set()
         imported_release_media_ids: set[int] = set()
         accepted_dates: list[date] = []

@@ -8,7 +8,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/
 from core.stream_actions import (dismiss_stremio, dismiss_nuvio, push_stremio_progress,
     push_nuvio_progress, queue_restorations, RemotePlaybackChanged)
 from core import stremio
-from models import MediaServerConnection, Media, MediaType, Show
+from models import MediaServerConnection, Media, MediaType
 from models.tracking import StreamAction, StreamBaseline, TrackedEntry
 
 

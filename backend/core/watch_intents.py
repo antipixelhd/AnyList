@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from core.connection_identity import refresh_stream_connection
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 from typing import Awaitable, Callable
 

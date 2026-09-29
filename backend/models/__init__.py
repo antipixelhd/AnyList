@@ -80,4 +80,7 @@ __all__ = [
     "StreamingLibraryIntent", "StreamingLibraryDelivery",
     "NetflixImportSession",
     "WatchIntent",
+    "TitleCredits", "UserCalendarCache",
+    "TrackedEntry", "TrackingActivity", "TrackingDeletion", "TrackingPreferences",
+    "SyncReview", "StreamBaseline",
 ]

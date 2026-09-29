@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import Optional
 
@@ -6,6 +7,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, MediaType
+
+if TYPE_CHECKING:
+    from .show import Show
+    from .collection import Collection
+    from .events import WatchEvent
+    from .ratings import Rating
+    from .lists import ListItem
+
 
 
 class Media(Base):

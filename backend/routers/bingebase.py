@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select, update
@@ -8,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db import get_db
-from models import CollectionSource, Media, Show, SyncJob, SyncStatus, User, UserSettings, WatchEvent
+from models import CollectionSource, SyncJob, SyncStatus, User, UserSettings, WatchEvent
 from routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)

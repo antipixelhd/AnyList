@@ -10,7 +10,7 @@ from db import get_db
 from models.media import Media
 from models.ratings import Rating
 from models.base import MediaType
-from dependencies import get_current_user, get_current_user_or_api_key
+from dependencies import get_current_user_or_api_key
 from models.users import User
 from core.enrichment import enrich_media, create_media_safely
 from core.identity import find_media

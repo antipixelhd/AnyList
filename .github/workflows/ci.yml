@@ -48,6 +48,9 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         run: uv run --no-sync python -m unittest discover -s tests -q
+      - name: Lint backend
+        working-directory: backend
+        run: uvx ruff==0.16.8 check .
 
   frontend:
     runs-on: ubuntu-latest
@@ -64,3 +67,6 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test

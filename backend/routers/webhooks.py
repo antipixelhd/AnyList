@@ -3640,7 +3640,6 @@ async def kodi_rating(
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
-    window_minutes = dedup_window_from_settings(settings)
     tmdb_key = await _get_tmdb_key(db, settings)
 
     data = {

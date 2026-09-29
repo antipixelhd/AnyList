@@ -1,5 +1,6 @@
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
+import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon.svg", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -89,6 +90,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // cookie. Let the backend validate its scope for each proxied operation.
   const hasProxyBearer = pathname.startsWith("/api/proxy/") &&
     /^Bearer\s+\S+$/i.test(context.request.headers.get("Authorization") || "");
+
+  // The proxy prefers the cookie over an API key, so a query key cannot exempt
+  // a cookie-authenticated write. Explicit Bearer headers override the cookie.
+  if (requiresSameOrigin(context.request.method, pathname, !!token, hasProxyBearer) &&
+      !isSameOrigin(context.request, context.url, process.env.SERVER_URL)) {
+    return new Response('Cross-site form submissions are forbidden', { status: 403, headers: SECURITY_HEADERS });
+  }
 
   // Skip auth for static assets and public routes
   const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname);

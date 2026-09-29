@@ -19,19 +19,18 @@ import io
 import json
 import re
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.base import MediaType
-from models.collection import Collection, CollectionFile
+from models.collection import Collection
 from models.comments import Comment
 from models.connections import MediaServerConnection
 from models.events import WatchEvent
 from models.lists import List as ListModel, ListItem
 from models.media import Media
-from models.profile import UserProfileData
 from models.ratings import Rating
 from models.scrobble_connection import ScrobbleConnection
 from models.show import Show
@@ -425,8 +424,6 @@ async def build_export_zip(
     include_scrobble_connections: bool = False,
     include_connections: bool = False,
 ) -> bytes:
-    profile_result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == user.id))
-    profile = profile_result.scalar_one_or_none()
     display_name = user.username
 
     history = await build_history(db, user.id) if include_watched else []

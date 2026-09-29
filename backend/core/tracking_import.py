@@ -3,7 +3,7 @@
 Library membership is deliberately not consulted. This does not infer removals.
 """
 from datetime import date, datetime, timezone
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from models import Media, WatchEvent, PlaybackProgress, Rating, Show, User
 from models.base import MediaType
 from models.tracking import TrackedEntry, TrackingDeletion

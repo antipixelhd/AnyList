@@ -10,7 +10,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from fastapi import HTTPException
 
 from models.base import MediaType, CollectionSource
-from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder, ShowEpisodePosition
+from models.episode_order import UserShowEpisodeOrder, ShowEpisodePosition
 from models.events import WatchEvent
 from models.media import Media
 from models.playback_progress import PlaybackProgress
@@ -216,6 +216,16 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class UnknownWatchDateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_offset_is_converted_to_utc_before_storage_and_push(self):
+        _, event, push = await self._mark({
+            "tmdb_id": 550, "media_type": "movie",
+            "watched_at": "2026-09-29T01:00:00.123999+02:00",
+        })
+        expected = datetime(2026, 9, 28, 23, 0, 0, 123000)
+        self.assertEqual(event.watched_at, expected)
+        self.assertFalse(event.date_inferred)
+        self.assertEqual(push.await_args.kwargs["watched_at_by_media"], {10: expected})
+
     async def _mark(self, payload: dict):
         media = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club")
         # Execute calls cover the media lookup, duplicate-watch settings and

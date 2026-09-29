@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -5,6 +6,11 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, func, Inde
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+if TYPE_CHECKING:
+    from .users import User
+    from .media import Media
+
 
 
 class WatchEvent(Base):

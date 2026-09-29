@@ -3,6 +3,7 @@ import Base from "../layouts/Base.astro";
 import AuthHero from "../components/AuthHero.astro";
 import BrandMark from "../components/BrandMark.astro";
 import { api } from "../lib/api";
+import { safeReturnPath } from "../lib/request-security";
 import type { OidcConfig } from "../lib/api";
 
 let error = "";
@@ -20,11 +21,7 @@ const { enabled: registrationEnabled, smtp_configured: smtpConfigured } = await 
 const { has_users: hasUsers } = await api.auth.hasUsers().catch(() => ({ has_users: true }));
 const { enable_logged_out_navigation: showNav } = await api.profile.publicAccessStatus().catch(() => ({ enable_logged_out_navigation: false }));
 
-// Only a same-site path is a safe redirect target - anything else (an
-// absolute URL, or a protocol-relative "//evil.com") could send a
-// successful login to an attacker-controlled site.
-const rawNext = Astro.url.searchParams.get("next") || "";
-const nextPath = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+const nextPath = safeReturnPath(Astro.url.searchParams.get("next"));
 
 if (Astro.url.searchParams.get("restored") === "true") {
   success = "Database restored successfully. You can now log in.";
@@ -32,7 +29,7 @@ if (Astro.url.searchParams.get("restored") === "true") {
 
 const oidcError = Astro.url.searchParams.get("oidc_error");
 if (oidcError) {
-  error = decodeURIComponent(oidcError.replace(/\+/g, " "));
+  error = oidcError;
 }
 
 const urlError = Astro.url.searchParams.get("error");
@@ -59,8 +56,7 @@ if (Astro.request.method === "POST") {
   // what the form that was actually rendered (and might have moved through
   // the 2FA step) carried, rather than assuming the POST landed back on the
   // same URL the page was first loaded with.
-  const submittedNext = (data.get("_next") as string) || "";
-  const postNext = submittedNext.startsWith("/") && !submittedNext.startsWith("//") ? submittedNext : nextPath;
+  const postNext = safeReturnPath(data.get("_next"), nextPath);
 
   if (step === "login") {
     try {
@@ -72,6 +68,7 @@ if (Astro.request.method === "POST") {
         Astro.cookies.set("token", result.access_token, {
           path: "/",
           httpOnly: true,
+          secure: import.meta.env.PROD,
           sameSite: "lax",
           maxAge: 60 * 60 * 24 * 7,
         });
@@ -89,6 +86,7 @@ if (Astro.request.method === "POST") {
         Astro.cookies.set("token", result.access_token, {
           path: "/",
           httpOnly: true,
+          secure: import.meta.env.PROD,
           sameSite: "lax",
           maxAge: 60 * 60 * 24 * 7,
         });

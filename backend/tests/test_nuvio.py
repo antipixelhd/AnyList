@@ -13,7 +13,6 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from core import nuvio
-import core.stream_actions
 from models.base import MediaType
 from models.media import Media
 from models.playback_progress import PlaybackProgress
@@ -1523,8 +1522,6 @@ class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_synthetic_series_resume_cleanup_normalizes_tv_and_checks_echo_time(self) -> None:
         series = Media(id=10, tmdb_id=1396, media_type=MediaType.series,
             title="Breaking Bad", imdb_id="tt0903747")
-        episode = Media(id=21, media_type=MediaType.episode, title="Next",
-            show_id=5, season_number=1, episode_number=2)
         progress_key = "tt0903747_s1e2"
         outbound = {
             "action": "upsert", "synthetic_resume": True,

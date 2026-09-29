@@ -1,4 +1,4 @@
-from typing import Generator, Optional
+from typing import Optional
 from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -86,11 +86,9 @@ async def get_current_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This access token has limited scope and cannot be used for account operations",
             )
-        user_id: int = int(payload.get("sub"))
-        if user_id is None:
-            raise credentials_exception
+        user_id = int(payload.get("sub"))
         token_data = schemas.TokenPayload(sub=user_id)
-    except (JWTError, ValueError):
+    except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
     query = select(User).where(User.id == token_data.sub).options(selectinload(User.profile))

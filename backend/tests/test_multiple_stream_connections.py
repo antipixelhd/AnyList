@@ -271,7 +271,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(validate.await_count, 4)
 
     async def test_stremio_reconnect_rejects_an_account_already_attached_to_another_row(self):
-        first = await self._connection(provider="stremio", account_id="remote-a")
+        await self._connection(provider="stremio", account_id="remote-a")
         second = await self._connection(provider="stremio", account_id="remote-b")
         self.db.add(StreamBaseline(
             connection_id=second.id, user_id=self.owner.id, snapshot={"keep": True},

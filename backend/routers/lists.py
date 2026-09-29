@@ -12,7 +12,7 @@ from models.media import Media
 from models.base import MediaType, PrivacyLevel
 from models.show import Show as ShowModel
 from models.users import UserSettings
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
+from dependencies import get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings

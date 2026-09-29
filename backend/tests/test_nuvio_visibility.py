@@ -7,12 +7,10 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
-from core import nuvio
 from core.stream_actions import RemotePlaybackChanged, dismiss_nuvio, show_nuvio_next_up
 from core.nuvio_visibility import next_up_visibility, provider_content_ids
 from models import MediaServerConnection, MediaType
 from models.media import Media
-from models.tracking import StreamBaseline
 
 
 class _Result:

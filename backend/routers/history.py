@@ -18,19 +18,18 @@ from models.collection import Collection, CollectionFile
 from models.base import MediaType, CollectionSource
 from models.users import UserSettings
 from models.connections import MediaServerConnection
-from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from models.tracking import TrackedEntry, TrackingDeletion
 from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
-from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, resolve_display_to_canonical, normalize_order_key, is_aired_order
+from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
 from core.enrichment import create_media_safely
-from core.episode_order import get_episode_orders_for_series, get_tmdb_to_tvdb_positions
 
-from dependencies import get_current_user, get_current_user_or_api_key
+from dependencies import get_current_user_or_api_key
+from core.watch_dates import inferred_watch_datetime, normalize_watch_datetime
 from models.users import User
 import core.plex as plex_client
 import core.jellyfin as jellyfin_client
@@ -1473,10 +1472,9 @@ async def get_next_up(
 
 import schemas
 from core import tmdb
-from core.enrichment import enrich_media, enrich_episode_from_tvdb, tmdb_season_covers, is_unmapped_tvdb_episode, enrich_media_safely
+from core.enrichment import enrich_media, enrich_episode_from_tvdb, is_unmapped_tvdb_episode, enrich_media_safely
 from core.identity import find_media, find_show, link_show_ids
 from datetime import datetime
-from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm.attributes import flag_modified
@@ -2235,7 +2233,7 @@ async def mark_as_watched(
     # date is inferred from the user's action and can later be corrected by a
     # provider history import.
     date_inferred = event_in.watched_at is None
-    watched_at = event_in.watched_at.replace(tzinfo=None) if event_in.watched_at is not None else datetime.utcnow()
+    watched_at = normalize_watch_datetime(event_in.watched_at) if event_in.watched_at is not None else inferred_watch_datetime()
     if event_in.completed and not event_in.force:
         window_minutes = await get_dedup_window_minutes(db, current_user.id)
         duplicate = await find_duplicate_watch_event(db, current_user.id, media.id, watched_at, window_minutes)

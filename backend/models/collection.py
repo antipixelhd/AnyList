@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import Optional
 
@@ -7,6 +8,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, CollectionSource
 from .connections import MediaServerConnection
+
+if TYPE_CHECKING:
+    from .users import User
+    from .media import Media
+
 
 
 class Collection(Base):

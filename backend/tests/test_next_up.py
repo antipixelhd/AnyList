@@ -459,7 +459,6 @@ class StreamNextUpRefreshTests(unittest.IsolatedAsyncioTestCase):
 
     def _patches(self, rows, get_show):
         session = _FakeSession(rows)
-        apply_meta = AsyncMock()  # patched as a plain callable below
         apply_calls = []
         return session, apply_calls, (
             patch("routers.history.check_tmdb_key", lambda k: bool(k)),

@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
@@ -16,6 +17,9 @@ from sqlalchemy.pool import StaticPool
 
 from models.connections import MediaServerConnection
 from routers import sync
+
+if TYPE_CHECKING:
+    from models.events import WatchEvent
 
 
 @compiles(JSONB, "sqlite")

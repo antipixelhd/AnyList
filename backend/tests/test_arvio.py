@@ -1,7 +1,7 @@
 import json
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -10,20 +10,30 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from core import arvio
-from models.base import MediaType
-from models.media import Media
 from models.playback_progress import PlaybackProgress
-from models.show import Show
 from models.events import WatchEvent
 from routers.sync import (
     _apply_arvio_playback_progress,
     _apply_arvio_watched_episode,
     _apply_arvio_watched_movie,
     _parse_arvio_timestamp,
-    _run_arvio_sync,
+    _parse_arvio_episode_info,
 )
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
+
+class ArvioJsonInputTests(unittest.IsolatedAsyncioTestCase):
+    def test_json_episode_identity_is_parsed(self):
+        item = {"showTmdbId": 42, "season": 2, "episode": 3}
+        self.assertEqual(_parse_arvio_episode_info(json.dumps(item)), (42, 2, 3))
+        self.assertIsNone(_parse_arvio_episode_info("invalid JSON"))
+
+    async def test_json_completed_movie_reaches_watched_handler(self):
+        item = {"mediaType": "MOVIE", "tmdbId": 550, "completed": True}
+        db = object()
+        with patch("routers.sync._apply_arvio_watched_movie", new_callable=AsyncMock, return_value=True) as watched:
+            self.assertTrue(await _apply_arvio_playback_progress(db, 7, json.dumps(item), "tmdb-key"))
+        watched.assert_awaited_once_with(db, 7, item, "tmdb-key")
 
 class _Result:
     def __init__(self, *, scalars=None, rows=None):
@@ -273,6 +283,12 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             },
             tmdb_api_key=None,
         )
+        self.assertTrue(added)
+        progress = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], PlaybackProgress))
+        self.assertEqual(progress.user_id, 1)
+        self.assertEqual(progress.progress_seconds, 2700)
+        self.assertEqual(progress.progress_percent, 45)
+        db.commit.assert_awaited_once()
     async def test_apply_arvio_watched_movie_int_item(self) -> None:
         db = AsyncMock()
         db.add = MagicMock()

@@ -8,6 +8,9 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from fastapi import HTTPException
 
 import dependencies
+from jose import jwt
+from core.config import settings
+from core.security import ALGORITHM
 
 
 class _Result:
@@ -70,6 +73,22 @@ class GetCurrentUserOrApiKeyTests(unittest.IsolatedAsyncioTestCase):
                 db=db, jwt_user=None, api_key=None, x_api_key=None,
             )
         self.assertEqual(ctx.exception.status_code, 401)
+
+
+class SessionTokenValidationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_subject_is_rejected_without_a_database_lookup(self):
+        from unittest.mock import AsyncMock
+        from starlette.requests import Request
+        from routers.media import verify_image_token
+
+        token = jwt.encode({}, settings.secret_key, algorithm=ALGORITHM)
+        db = SimpleNamespace(execute=AsyncMock())
+        request = Request({"type": "http", "headers": [(b"authorization", f"Bearer {token}".encode())]})
+        for check in (dependencies.get_current_user(db=db, token=token), verify_image_token(request, db)):
+            with self.assertRaises(HTTPException) as ctx:
+                await check
+            self.assertEqual(ctx.exception.status_code, 401)
+        db.execute.assert_not_awaited()
 
 
 if __name__ == "__main__":

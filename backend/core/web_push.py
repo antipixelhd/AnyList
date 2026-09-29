@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from core.config import settings
 from core.tracking_rules import effective_score
-from models import Media, Rating
+from models import Media
 from models.tracking import SyncReview, TrackedEntry, WebPushSubscription
 
 _KEY_FILE = Path(settings.data_dir) / "web-push-vapid-private.pem"

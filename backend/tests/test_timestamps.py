@@ -1,14 +1,20 @@
 import unittest
 from datetime import datetime, timedelta, timezone
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import postgresql, sqlite
 from core.timestamps import milliseconds
 from core.status_provenance import naive_utc, provider_changed_at
 from core.watch_dates import normalize_watch_datetime
-from models import Base, TrackedEntry
+from models import Base, TrackedEntry, User
 from models.timestamps import MillisecondDateTime
 
 
 class TimestampPrecisionTests(unittest.TestCase):
+    def test_sql_default_preserves_postgres_truncation_and_works_on_sqlite(self):
+        expression = User.__table__.c.created_at.server_default.arg
+        options = {"literal_binds": True}
+        self.assertEqual(str(expression.compile(dialect=postgresql.dialect(), compile_kwargs=options)), "date_trunc('milliseconds', now())")
+        self.assertEqual(str(expression.compile(dialect=sqlite.dialect(), compile_kwargs=options)), "CURRENT_TIMESTAMP")
+
     def test_truncation_preserves_timezone_and_never_rounds_into_next_second(self):
         zone=timezone(timedelta(hours=2))
         for fraction in (931495,931995,999999,1,0):

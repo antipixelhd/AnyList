@@ -18,3 +18,23 @@ from core.jellyfin import (
     set_rating,
     scan_libraries,
 )
+
+__all__ = [
+    "validate_connection",
+    "get_libraries",
+    "get_movies",
+    "get_shows",
+    "get_episodes",
+    "get_item",
+    "get_items_batch",
+    "get_items_watched_state",
+    "extract_quality",
+    "find_movie_by_tmdb_id",
+    "find_episode_by_ids",
+    "find_episode_in_series",
+    "build_tmdb_index",
+    "mark_watched",
+    "mark_unwatched",
+    "set_rating",
+    "scan_libraries",
+]

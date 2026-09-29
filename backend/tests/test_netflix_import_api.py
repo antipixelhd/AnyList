@@ -4,10 +4,11 @@ The database case uses the disposable local PostgreSQL instance only when
 TRACKING_TEST_DATABASE_URL is explicitly configured.
 """
 import os
+import asyncio
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -664,3 +665,30 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         }), progress)
         await self.db.flush()
         self.assertEqual((entry.manual_score, (await self.db.execute(select(Rating).where(Rating.user_id == self.user.id, Rating.media_id == existing.id))).scalar_one().rating), (6.5, 6.5))
+
+
+class NetflixRestartTests(unittest.IsolatedAsyncioTestCase):
+    async def test_restart_resumes_preparation_and_commit_once(self):
+        from routers import netflix_import as imports
+
+        rows = [
+            SimpleNamespace(id="prepare", user_id=7, status="preparing", payload={"language": "de"}, idempotency_key=None),
+            SimpleNamespace(id="commit", user_id=8, status="committing", payload={}, idempotency_key="receipt"),
+            SimpleNamespace(id="active", user_id=7, status="preparing", payload={}, idempotency_key=None),
+            SimpleNamespace(id="no-key", user_id=7, status="committing", payload={}, idempotency_key=None),
+        ]
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = rows
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.execute.return_value = result
+        with patch.object(imports, "async_sessionmaker", return_value=lambda: db), \
+             patch.object(imports, "_running", {"active"}), \
+             patch.object(imports, "_committing", set()), \
+             patch.object(imports, "_prepare_session", new_callable=AsyncMock) as prepare, \
+             patch.object(imports, "_commit_session", new_callable=AsyncMock) as commit:
+            self.assertEqual(await imports.resume_incomplete_netflix_imports(), 2)
+            self.assertEqual(await imports.resume_incomplete_netflix_imports(), 0)
+            await asyncio.sleep(0)
+            prepare.assert_awaited_once_with("prepare", 7, "de")
+            commit.assert_awaited_once_with("commit", 8, "receipt")

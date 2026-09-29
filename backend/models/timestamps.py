@@ -2,9 +2,28 @@
 from datetime import datetime
 from sqlalchemy import DateTime, ColumnDefault, DefaultClause, event, func
 from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.types import TypeDecorator
 from core.timestamps import milliseconds
+
+
+class MillisecondTimestamp(FunctionElement):
+    type = DateTime()
+    inherit_cache = True
+
+
+@compiles(MillisecondTimestamp)
+def _compile_millisecond_timestamp(element, compiler, **kw):
+    return compiler.process(func.date_trunc('milliseconds', *element.clauses), **kw)
+
+
+@compiles(MillisecondTimestamp, 'sqlite')
+def _compile_sqlite_timestamp(element, compiler, **kw):
+    # SQLite's CURRENT_TIMESTAMP already has whole-second precision. Bind and
+    # result processors handle precision for explicit values.
+    return compiler.process(element.clauses, **kw)
 
 
 class MillisecondDateTime(TypeDecorator):
@@ -40,9 +59,9 @@ def configure_millisecond_timestamps(base):
             # Preserve SQL defaults/update behavior, with truncation occurring
             # before PostgreSQL's timestamp(3) conversion could round upward.
             if column.server_default is not None and hasattr(column.server_default, 'arg'):
-                column.server_default = DefaultClause(func.date_trunc('milliseconds', column.server_default.arg))
+                column.server_default = DefaultClause(MillisecondTimestamp(column.server_default.arg))
             for name in ('default', 'onupdate'):
                 default = getattr(column, name)
                 if default is not None and isinstance(default.arg, ClauseElement):
-                    setattr(column, name, ColumnDefault(func.date_trunc('milliseconds', default.arg)))
+                    setattr(column, name, ColumnDefault(MillisecondTimestamp(default.arg)))
             event.listen(getattr(mapper.class_, column.key), 'set', _normalize_assignment, retval=True)

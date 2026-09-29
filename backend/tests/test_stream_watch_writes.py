@@ -9,7 +9,6 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 
 from core.watch_intents import _write_provider_watch_state
 from models import MediaType
-from models.tracking import StreamBaseline
 
 
 class _Result:

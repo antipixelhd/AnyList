@@ -454,6 +454,26 @@ class TraktClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TraktSeasonListTests(unittest.IsolatedAsyncioTestCase):
+    async def test_list_removals_propagate_http_failures(self):
+        for remove, args, expected_body in (
+            (trakt.remove_from_list, ("movies", 550), {"movies": [{"ids": {"tmdb": 550}}]}),
+            (trakt.remove_season_from_list, (3572,), {"seasons": [{"ids": {"tmdb": 3572}}]}),
+        ):
+            for status in (200, 204, 401, 429, 503):
+                with self.subTest(helper=remove.__name__, status=status):
+                    def handler(request):
+                        self.assertEqual(request.url.path, "/users/me/lists/my-list/items/remove")
+                        self.assertEqual(json.loads(request.content), expected_body)
+                        return httpx.Response(status)
+
+                    with patch.object(trakt.httpx, "AsyncClient", side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)):
+                        if status >= 400:
+                            with self.assertRaises(httpx.HTTPStatusError) as ctx:
+                                await remove("client-id", "access-token", "my-list", *args)
+                            self.assertEqual(ctx.exception.response.status_code, status)
+                        else:
+                            await remove("client-id", "access-token", "my-list", *args)
+
     async def test_add_and_remove_season_from_list_use_season_tmdb_id(self) -> None:
         requests: list[tuple[str, dict]] = []
 

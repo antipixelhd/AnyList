@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import Optional
 
@@ -9,6 +10,11 @@ from .base import Base
 
 RatingKey = tuple[int, int | None]
 RatingChanges = dict[RatingKey, float]
+
+if TYPE_CHECKING:
+    from .users import User
+    from .media import Media
+
 
 
 class Rating(Base):

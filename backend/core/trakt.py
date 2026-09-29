@@ -646,6 +646,7 @@ async def remove_from_list(client_id: str, access_token: str, list_slug: str, me
             json={media_type: [{"ids": {"tmdb": tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
+        resp.raise_for_status()
 
 
 async def add_season_to_list(client_id: str, access_token: str, list_slug: str, season_tmdb_id: int) -> None:
@@ -668,6 +669,7 @@ async def remove_season_from_list(client_id: str, access_token: str, list_slug: 
             json={"seasons": [{"ids": {"tmdb": season_tmdb_id}}]},
             headers=_headers(client_id, access_token),
         )
+        resp.raise_for_status()
 
 
 async def set_show_rating(

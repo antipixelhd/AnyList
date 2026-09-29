@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { api } from "../lib/api";
+import { safeReturnPath } from "../lib/request-security";
 
 // This page is the OIDC redirect_uri — the provider sends the browser here with
 // ?code=...&state=... after the user authenticates.
@@ -24,7 +25,7 @@ if (!error) {
     error = "Invalid state parameter. Please try logging in again.";
   } else {
     Astro.cookies.delete("oidc_state", { path: "/" });
-    const storedNext = Astro.cookies.get("oidc_next")?.value ?? "/";
+    const storedNext = safeReturnPath(Astro.cookies.get("oidc_next")?.value);
     Astro.cookies.delete("oidc_next", { path: "/" });
 
     try {

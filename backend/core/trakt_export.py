@@ -11,6 +11,7 @@ import io
 import json
 import re
 import zipfile
+from core.archive_reader import BoundedZipReader
 from dataclasses import dataclass, field
 
 MAX_ENTRY_SIZE = 100 * 1024 * 1024
@@ -55,26 +56,10 @@ def parse_trakt_export(content: bytes) -> TraktExportData:
     # inflates to hundreds of MB), so it must never be trusted as a decompression
     # cap. Enforce the limits against bytes actually produced while streaming
     # each entry out, aborting mid-read the moment either cap is exceeded.
-    total_read = 0
-
-    def _read_limited(name: str) -> bytes:
-        nonlocal total_read
-        chunks: list[bytes] = []
-        entry_read = 0
-        try:
-            with zf.open(name) as f:
-                while True:
-                    chunk = f.read(_READ_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    entry_read += len(chunk)
-                    total_read += len(chunk)
-                    if entry_read > MAX_ENTRY_SIZE or total_read > MAX_TOTAL_SIZE:
-                        raise ValueError("Export file is too large to import.")
-                    chunks.append(chunk)
-        except zipfile.BadZipFile:
-            raise ValueError(f"'{name}' in the export is corrupted or inconsistent.")
-        return b"".join(chunks)
+    _read_limited = BoundedZipReader(
+        zf, max_entry_size=MAX_ENTRY_SIZE, max_total_size=MAX_TOTAL_SIZE,
+        chunk_size=_READ_CHUNK_SIZE,
+    ).read
 
     def _load(name: str) -> list:
         if name not in names:

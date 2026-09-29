@@ -11,6 +11,7 @@ export default defineConfig({
   devToolbar: {enabled: false},
 
   security: {
+    // middleware.ts checks browser writes while preserving external API clients.
     checkOrigin: false,
   },
 

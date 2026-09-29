@@ -14,7 +14,6 @@ from models.lists import List as UserList, ListItem
 
 from db import get_db, engine
 from models.media import Media
-from models.collection import Collection, CollectionFile
 from models.base import CollectionSource, MediaType
 from models.show import Show as ShowModel
 from models.sync import SyncJob, SyncStatus
@@ -44,7 +43,6 @@ from core.episode_order import (
 from core.enrichment import (
     tmdb_season_covers,
     enrich_episode_from_tvdb,
-    create_media_safely,
     apply_media_change_safely,
     is_unmapped_tvdb_episode,
 )
@@ -53,7 +51,6 @@ from core.rewatch import (
     capped_season_episode_counts,
     total_aired_episodes,
     get_active_rewatch,
-    get_active_rewatches_for_shows,
     get_rewatch_progress_media_ids,
 )
 from core.translations import (

@@ -1294,7 +1294,6 @@ async def get_user_stats(
     watch_time_activity = sorted(watch_time_map.values(), key=lambda x: x["month"])
 
     # Average watches per weekday (0=Sun … 6=Sat)
-    from sqlalchemy import extract
     dow_expr = func.extract("dow", WatchEvent.watched_at)
     dow_q = await db.execute(
         select(
