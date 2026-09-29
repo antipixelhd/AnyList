@@ -2,7 +2,6 @@
 <div class="offline-toast" data-offline-toast role="status" aria-live="polite" hidden></div>
 
 <script>
-  import { isTransitionBeforePreparationEvent } from 'astro:transitions/client';
 
   type CachedPage = { html: string; bytes: number; storedAt: number };
   type NavigationState = {
@@ -29,7 +28,7 @@
     || /^\/user\/[^/]+(?:\/(?:movies|series|list|library|social|stats))?$/.test(url.pathname)
   );
   const keyFor = (url: URL, user = currentUser()) => `${user}:${url.pathname}${url.search}`;
-  const state = window.__anyListNavigation ||= {
+  const state: NavigationState = window.__anyListNavigation ||= {
     user: currentUser(), pages: new Map(), bytes: 0, usedCached: new Set(), generation: 0,
   };
 
@@ -227,7 +226,6 @@
     }, true);
 
     document.addEventListener('astro:before-preparation', rawEvent => {
-      if (!isTransitionBeforePreparationEvent(rawEvent)) return;
       closeNavigationDialogs();
       resetForIdentity();
       const event = rawEvent;

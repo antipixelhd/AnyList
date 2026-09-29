@@ -343,6 +343,8 @@ export interface GlobalSettings {
   sonarr_season_folder: boolean;
   radarr_require_approval: boolean;
   sonarr_require_approval: boolean;
+  radarr_customize_on_add: boolean;
+  sonarr_customize_on_add: boolean;
   image_cache_enabled: boolean;
   image_cache_limit_gb: number | null;
   enable_logged_out_navigation: boolean;
@@ -433,7 +435,7 @@ export interface UserPreferences {
   avatar_url: string | null;
 }
 
-export interface UserSettings {
+export interface UserSettings extends Pick<GlobalSettings, 'radarr_customize_on_add' | 'sonarr_customize_on_add'> {
   tmdb_api_key: string | null;
   has_effective_tmdb_key: boolean;
   has_global_tmdb_key: boolean;
@@ -660,8 +662,6 @@ export interface MediaItem {
   // The item's own provider ids besides tmdb_id. For an episode, tvdb_id is
   // the TVDB *episode* id. A TVDB-only episode has tvdb_id and no tmdb_id;
   // actions on it go through its local `id` (media_id) instead.
-  tvdb_id?: number | null;
-  imdb_id?: string | null;
   // True when this episode has no real TMDB counterpart and was enriched
   // from TVDB instead (see #101) — its season/episode numbers are TVDB's
   // raw numbers, not TMDB's, regardless of whether show_tmdb_id is set.

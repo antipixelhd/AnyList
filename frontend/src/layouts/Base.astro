@@ -196,7 +196,6 @@ const bottomNavItem = (active: boolean) =>
             </div>
           )}
           {(user || showAnonNavLinks) && (
-            <!-- Desktop search -->
             <form action="/search" method="GET" class="relative hidden md:block">
               <input
                 id="desktop-search-input"
@@ -217,7 +216,6 @@ const bottomNavItem = (active: boolean) =>
         <!-- Right: mobile search icon + theme + user -->
         <div class="flex items-center gap-2">
           {(user || showAnonNavLinks) && (
-            <!-- Mobile search icon -->
             <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Search">
               <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             </button>
@@ -319,7 +317,6 @@ const bottomNavItem = (active: boolean) =>
       </div>
 
       {(user || showAnonNavLinks) && (
-        <!-- Mobile search bar (hidden by default, shown when search icon tapped) -->
         <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
           <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -896,9 +893,9 @@ const bottomNavItem = (active: boolean) =>
         const data = await res.json();
         const sessions = data.now_playing ?? [];
         container.innerHTML = renderNowPlaying(sessions);
-        const applyArtwork = (window as any).__applyResponsiveArtwork;
+        const applyArtwork = window.__applyResponsiveArtwork;
         if (typeof applyArtwork === 'function') {
-          container.querySelectorAll<HTMLImageElement>('img[data-artwork-path]').forEach(img => {
+          container.querySelectorAll('img[data-artwork-path]').forEach(img => {
             applyArtwork(img, img.dataset.artworkPath, {
               size: 'w185',
               sizes: '28px',
@@ -906,7 +903,7 @@ const bottomNavItem = (active: boolean) =>
             });
           });
         } else {
-          container.querySelectorAll<HTMLImageElement>('img[data-artwork-path]').forEach(img => {
+          container.querySelectorAll('img[data-artwork-path]').forEach(img => {
             if (img.dataset.artworkPath) img.src = img.dataset.artworkPath;
           });
         }
@@ -1081,7 +1078,7 @@ const bottomNavItem = (active: boolean) =>
     }
 
     // ── Confirm dialog ─────────────────────────────────────────────────────────
-    (window as Window & { showConfirm: typeof showConfirm }).showConfirm = showConfirm;
+    window.showConfirm = showConfirm;
     function showConfirm(title: string, body: string): Promise<boolean> {
       return new Promise(resolve => {
         const dialog = document.getElementById('confirm-dialog')!;
@@ -1142,7 +1139,7 @@ const bottomNavItem = (active: boolean) =>
         itemSubEl.textContent = itemInfo.subtitle ?? '';
         itemSubEl.classList.toggle('hidden', !itemInfo.subtitle);
         if (itemInfo.posterUrl) {
-          const applyArtwork = (window as any).__applyResponsiveArtwork;
+          const applyArtwork = window.__applyResponsiveArtwork;
           if (typeof applyArtwork === 'function') {
             applyArtwork(itemPosterEl, itemInfo.posterUrl, {
               size: itemInfo.landscape ? 'w780' : 'w500',
@@ -1899,13 +1896,13 @@ const bottomNavItem = (active: boolean) =>
           [data-card][data-media-type="series"][data-show-tmdb-id="${tmdbId}"][data-season]:not([data-season=""])
         `);
         allSeasonCards.forEach(c => {
-          const sBtn = c.querySelector('[data-action="watched"]');
+          const sBtn = c.querySelector<HTMLElement>('[data-action="watched"]');
           if (sBtn) updateWatchedButtonUI(sBtn, nowWatched);
         });
         // Also update any episode cards for this show
         const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${tmdbId}"]`);
         allEpCards.forEach(c => {
-          const eBtn = c.querySelector('[data-action="watched"]');
+          const eBtn = c.querySelector<HTMLElement>('[data-action="watched"]');
           if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
         });
       }
@@ -1918,7 +1915,7 @@ const bottomNavItem = (active: boolean) =>
         const seasonAttribute = nonAiredOrder(episodeOrder) ? 'data-display-season' : 'data-season';
         const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][${seasonAttribute}="${season}"]`);
         allEpCards.forEach(c => {
-          const eBtn = c.querySelector('[data-action="watched"]');
+          const eBtn = c.querySelector<HTMLElement>('[data-action="watched"]');
           if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
         });
       }
@@ -2025,7 +2022,7 @@ const bottomNavItem = (active: boolean) =>
       // Air Date's own "active"/"inactive" classes never touch its "hidden"
       // state - that's set once, separately, by resetWatchHistoryDateUI based
       // on whether an air date is actually available (#395).
-      const setDateModeButtons = (mode) => {
+      const setDateModeButtons = (mode: 'now' | 'airdate' | 'custom' | 'unknown') => {
         (document.getElementById('watch-history-now-btn') as HTMLElement).className = mode === 'now' ? activeClass : inactiveClass;
         const airDateBtn = document.getElementById('watch-history-airdate-btn') as HTMLElement;
         const airDateWasHidden = airDateBtn.classList.contains('hidden');

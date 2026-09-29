@@ -3,13 +3,7 @@
 
 declare namespace App {
   interface Locals {
-    user: {
-      id: number;
-      username: string;
-      display_name: string;
-      email: string;
-      role: string;
-    } | null;
+    user: import('./lib/api').UserProfile | null;
     token: string | undefined;
     settings?: import('./lib/api').UserSettings;
     hasRpdbKey?: boolean;
@@ -17,6 +11,7 @@ declare namespace App {
 }
 
 interface Window {
+  showConfirm: (title: string, body: string) => Promise<boolean>;
   __HAS_RPDB__: boolean;
   ratingPosterUrl: typeof import('./lib/posters').ratingPosterUrl;
 }

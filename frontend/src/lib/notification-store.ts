@@ -133,7 +133,7 @@ function ensureLifecycle() {
   const activeLifecycle = startVisibleRefresh({
     intervalMs: 60_000,
     immediate: true,
-    refresh: signal => refreshNotifications({signal}),
+    refresh: async signal => { await refreshNotifications({signal}); },
     onError: error => console.debug('Notification refresh deferred.', error),
   });
   lifecycle = activeLifecycle;

@@ -18,9 +18,17 @@ const { token } = Astro.locals;
 </div>
 
 <script>
+  import { startVisibleRefresh, type VisibleRefreshHandle } from '../lib/visible-refresh';
+
+  let syncStatusRefresh: VisibleRefreshHandle | undefined;
+
   function setupSyncStatus() {
-    const container = document.getElementById('sync-status-container') as HTMLElement | null;
-    if (!container) return;
+    syncStatusRefresh?.stop();
+    syncStatusRefresh = undefined;
+    const element = document.getElementById('sync-status-container');
+    if (!element) return;
+    const container: HTMLElement = element;
+    let nextPoll = 0;
 
     const activeJobsList = document.getElementById('active-jobs');
     const abortBtn = document.getElementById('abort-sync-btn') as HTMLButtonElement | null;
@@ -40,7 +48,8 @@ const { token } = Astro.locals;
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (res.ok) {
-            updateStatus();
+            nextPoll = 0;
+            void syncStatusRefresh?.refresh();
           }
         } catch (e) {
           console.error('Failed to abort sync', e);
@@ -56,14 +65,19 @@ const { token } = Astro.locals;
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    async function updateStatus() {
+    async function updateStatus(signal: AbortSignal) {
+      if (Date.now() < nextPoll) return;
+      nextPoll = Date.now() + 10000;
       try {
         const res = await fetch(`${apiUrl}/sync/status`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal,
+          cache: 'no-store',
         });
         if (!res.ok) return;
         
         const jobs = await res.json();
+        if (signal.aborted) return;
         const activeJobs = jobs.filter((j: any) => j.status === 'running' || j.status === 'pending' || (j.status === 'failed' && new Date(j.updated_at).getTime() > Date.now() - 15000));
         
         if (activeJobs.length > 0) {
@@ -108,19 +122,20 @@ const { token } = Astro.locals;
           }
           
           // Poll faster if there are active jobs
-          setTimeout(updateStatus, 2000);
+          nextPoll = Date.now() + 2000;
         } else {
           container.classList.add('hidden');
-          // Poll slower if no active jobs
-          setTimeout(updateStatus, 10000);
         }
       } catch (e) {
-        console.error('Failed to poll sync status', e);
-        setTimeout(updateStatus, 10000);
+        if (!signal.aborted) console.error('Failed to poll sync status', e);
       }
     }
 
-    updateStatus();
+    syncStatusRefresh = startVisibleRefresh({
+      intervalMs: 2000,
+      immediate: true,
+      refresh: updateStatus,
+    });
   }
 
   // Initial setup

@@ -13,6 +13,10 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist as mdblist_client
+from core.catalog_import import (
+    get_or_create_show as _get_or_create_show,
+    get_or_create_movie_media as _get_or_create_movie_media,
+)
 from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
 from core.rewatch import record_rewatch_progress
@@ -32,8 +36,6 @@ from models.users import User, UserSettings
 from routers.trakt import (
     _apply_dropped_shows_import,
     _get_or_create_episode_media,
-    _get_or_create_movie_media,
-    _get_or_create_show,
     _local_dropped_show_tmdb_ids,
 )
 

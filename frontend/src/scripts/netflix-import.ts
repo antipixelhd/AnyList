@@ -193,7 +193,7 @@ function mountNetflixImport() {
   }
 
   function isIncomplete(item: NetflixItem): boolean {
-    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && season.total_released > 0);
+    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0);
     const unknownSeasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && season.total_released == null);
     if (unknownSeasons.length) return true;
     if (seasons.length) return seasons.some((season) => season.represented < (season.total_released ?? 0));
@@ -268,11 +268,11 @@ function mountNetflixImport() {
 
   function partialControls(item: NetflixItem): string {
     if (item.outcome.status !== "partial") return "";
-    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && season.total_released > 0).sort((a, b) => a.season_number - b.season_number);
+    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0).sort((a, b) => a.season_number - b.season_number);
     if (!seasons.length) return `<p class="mt-3 text-xs text-amber-200">Episode details are not available for this show yet. Choose Skip or wait for the catalogue to finish loading.</p>`;
     const currentSeason = seasons.find((season) => season.season_number === item.outcome.latest_season) ?? seasons[seasons.length - 1];
     const season = currentSeason.season_number;
-    const total = currentSeason.total_released;
+    const total = currentSeason.total_released ?? 0;
     const episode = Math.max(1, Math.min(total, item.outcome.latest_episode ?? total));
     const seasonOptions = seasons.map((meta) => `<option value="${meta.season_number}" ${meta.season_number === season ? "selected" : ""}>Season ${meta.season_number}</option>`).join("");
     const episodeOptions = Array.from({ length: Math.min(total, 100) }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === episode ? "selected" : ""}>Episode ${n}</option>`).join("");

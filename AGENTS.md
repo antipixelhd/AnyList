@@ -1,6 +1,6 @@
 # Working rules
 
-Commit changes you made after each turn 
+Commit changes you for completed features or tests, leave partial edits open until the user confirms them
 
 if you make changes to the database apply the migration before ending the turn
 

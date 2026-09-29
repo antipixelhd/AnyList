@@ -19,8 +19,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
+from core.catalog_import import (
+    get_or_create_show as _get_or_create_show,
+    get_or_create_movie_media as _get_or_create_movie_media,
+    get_or_create_series_media as _get_or_create_series_media,
+)
 from core.cloud_reconciliation import require_cloud_reconciliation
-from core.enrichment import enrich_media, is_unmapped_tvdb_episode, create_media_safely
+from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import DEFAULT_DEDUP_WINDOW_MINUTES, dedup_window_from_settings, is_duplicate_watch_time, load_existing_watch_times
@@ -344,81 +349,6 @@ async def trakt_disconnect(
 
 
 # ── Sync ─────────────────────────────────────────────────────────────────────
-
-async def _get_or_create_show(db: AsyncSession, tmdb_id: int, title: str, api_key: str | None) -> Show | None:
-    result = await db.execute(select(Show).where(Show.tmdb_id == tmdb_id))
-    show = result.scalars().first()
-    if show:
-        return show
-    from core import tmdb
-    try:
-        d = await tmdb.get_show(tmdb_id, api_key=api_key)
-        show = Show(
-            tmdb_id=tmdb_id,
-            title=d.get("name") or title,
-            original_title=d.get("original_name"),
-            overview=d.get("overview"),
-            poster_path=tmdb.poster_url(d.get("poster_path")),
-            backdrop_path=tmdb.poster_url(d.get("backdrop_path"), size="w1280"),
-            tmdb_rating=d.get("vote_average"),
-            status=d.get("status"),
-            tagline=d.get("tagline"),
-            first_air_date=d.get("first_air_date"),
-            last_air_date=d.get("last_air_date"),
-            tmdb_data={
-                "genres": [g["name"] for g in d.get("genres", [])],
-                "external_ids": d.get("external_ids", {}),
-                "original_language": d.get("original_language"),
-                "seasons": [
-                    {
-                        "season_number": s["season_number"],
-                        "poster_path": tmdb.poster_url(s.get("poster_path")),
-                        "episode_count": s["episode_count"],
-                        "name": s["name"],
-                    }
-                    for s in d.get("seasons", [])
-                ],
-            },
-        )
-        db.add(show)
-        await db.flush()
-        return show
-    except Exception as exc:
-        logger.warning("Could not fetch show tmdb=%s: %s", tmdb_id, exc)
-        return None
-
-
-async def _get_or_create_movie_media(db: AsyncSession, tmdb_id: int, title: str, api_key: str | None) -> Media | None:
-    result = await db.execute(
-        select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.movie)
-    )
-    media = result.scalars().first()
-    if media:
-        return media
-    media, _created = await create_media_safely(db, tmdb_id, MediaType.movie, title=title)
-    await enrich_media(media, api_key=api_key)
-    return media
-
-
-async def _get_or_create_series_media(
-    db: AsyncSession,
-    tmdb_id: int,
-    title: str,
-    api_key: str | None,
-) -> Media | None:
-    result = await db.execute(
-        select(Media).where(
-            Media.tmdb_id == tmdb_id,
-            Media.media_type == MediaType.series,
-        )
-    )
-    media = result.scalars().first()
-    if media:
-        return media
-    media, _created = await create_media_safely(db, tmdb_id, MediaType.series, title=title)
-    await enrich_media(media, api_key=api_key)
-    return media
-
 
 async def _resolve_trakt_title(
     db,

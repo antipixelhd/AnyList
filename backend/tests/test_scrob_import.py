@@ -15,7 +15,6 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 
 from core import scrob_import
 from core.scrob_import import apply_scrob_import, parse_scrob_export, ScrobImportData
-from routers import trakt as trakt_router
 from routers import export as export_router
 
 
@@ -189,7 +188,7 @@ class CollectionImportTests(unittest.IsolatedAsyncioTestCase):
         # execute() order: total_items update, select(Collection) [none existing], final processed_items update
         db = _FakeSession([[], [], []])
 
-        with patch.object(trakt_router, "_get_or_create_movie_media", AsyncMock(return_value=media_stub)):
+        with patch.object(scrob_import, "_get_or_create_movie_media", AsyncMock(return_value=media_stub)):
             stats = await apply_scrob_import(
                 db, job_id=1, user_id=1, data=data, api_key=None,
                 **{**_EMPTY_INCLUDE, "include_collection": True},
@@ -205,7 +204,7 @@ class CollectionImportTests(unittest.IsolatedAsyncioTestCase):
         data = ScrobImportData(collection_movies=[{"movie": {"ids": {"tmdb": 100}, "title": "X"}}])
         db = _FakeSession([[], [existing_collection], []])
 
-        with patch.object(trakt_router, "_get_or_create_movie_media", AsyncMock(return_value=media_stub)):
+        with patch.object(scrob_import, "_get_or_create_movie_media", AsyncMock(return_value=media_stub)):
             stats = await apply_scrob_import(
                 db, job_id=1, user_id=1, data=data, api_key=None,
                 **{**_EMPTY_INCLUDE, "include_collection": True},

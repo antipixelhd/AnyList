@@ -10,15 +10,15 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "check": "astro check"
   },
   "dependencies": {
-    "@astrojs/node": "^10.0.4",
+    "@astrojs/node": "^11.1.6",
     "@fortawesome/fontawesome-svg-core": "^7.3.1",
     "@fortawesome/free-solid-svg-icons": "^7.3.1",
     "@tailwindcss/vite": "^4.2.2",
-    "@types/qrcode": "^1.5.6",
-    "astro": "^6.1.2",
+    "astro": "^7.3.3",
     "chart.js": "^4.5.1",
     "hls.js": "^1.6.16",
     "markdown-it": "^15.0.2",
@@ -27,6 +27,8 @@
     "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
-    "@types/markdown-it": "^14.2.0"
+    "@astrojs/check": "^0.9.10",
+    "@types/qrcode": "^1.5.6",
+    "typescript": "^5.9.3"
   }
 }

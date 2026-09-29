@@ -1,7 +1,4 @@
-import MarkdownIt from 'markdown-it';
-import type StateBlock from 'markdown-it/lib/rules_block/state_block.mjs';
-import type StateInline from 'markdown-it/lib/rules_inline/state_inline.mjs';
-import type Token from 'markdown-it/lib/token.mjs';
+import MarkdownIt, { type MarkdownIt as MarkdownParser, type Env, type StateBlock, type StateInline, type Token } from 'markdown-it';
 
 type EmbedKind = 'youtube' | 'video';
 
@@ -44,7 +41,7 @@ function safeVideoSource(value: string): string | null {
   return null;
 }
 
-function addInlineChildren(md: MarkdownIt, token: Token, source: string, env: unknown): void {
+function addInlineChildren(md: MarkdownParser, token: Token, source: string, env: Env): void {
   token.children = [];
   md.inline.parse(source, md, env, token.children);
 }

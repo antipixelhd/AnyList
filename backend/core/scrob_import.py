@@ -19,6 +19,12 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.catalog_import import (
+    get_or_create_show as _get_or_create_show,
+    get_or_create_movie_media as _get_or_create_movie_media,
+    get_or_create_series_media as _get_or_create_series_media,
+)
+
 from models.base import CollectionSource, PrivacyLevel
 from models.collection import Collection, CollectionFile
 from models.comments import Comment
@@ -235,9 +241,6 @@ async def apply_scrob_import(
     from routers.trakt import (
         _apply_imported_rating,
         _get_or_create_episode_media,
-        _get_or_create_movie_media,
-        _get_or_create_series_media,
-        _get_or_create_show,
     )
 
     stats = {
