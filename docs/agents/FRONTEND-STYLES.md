@@ -12,6 +12,10 @@ Trakt, Simkl, MDBList, and Bingebase each have a focused component. Device sign-
 and disconnect handlers live in lib/tracking-service-auth.ts; polling and request
 cancellation live in lib/device-authorization.ts and have focused node:test coverage.
 
+Data-import views use DataImportSettings and DataImportDialogs. lib/data-imports.ts
+owns supported formats and multipart uploads; lib/data-import-controls.ts owns
+selection dialogs, file input wiring, and navigation cleanup.
+
 ## Shared sources
 
 - typography.css: font families, semantic size/weight tokens, line height, and

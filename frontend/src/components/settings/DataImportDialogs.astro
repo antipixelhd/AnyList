@@ -1,0 +1,39 @@
+---
+import { importFormats } from "../../lib/data-imports";
+---
+
+{importFormats.map(format => (
+  <div id={`${format.id}-import-modal`} class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+      <h2 class="text-2xl font-bold text-zinc-100 mb-2">Import from {format.title} export?</h2>
+      <p id={`${format.id}-import-modal-body`} class="text-zinc-400 mb-6 text-sm leading-relaxed"></p>
+      {[false, true].map(secret => {
+        const options = format.options.filter(option => Boolean(option.secret) === secret);
+        if (!options.length) return null;
+        return (
+          <>
+            {secret && <p class="text-xs text-amber-400/90 mb-2 leading-relaxed">These restore API keys and connections from the export. Existing values are never overwritten — only gaps are filled.</p>}
+            <div class:list={["space-y-2", secret || !format.options.some(option => option.secret) ? "mb-8" : "mb-6"]}>
+              {options.map(option => (
+                <button type="button" data-import-option={option.key} data-secret={secret ? "true" : undefined}
+                  class={`${format.id}-import-option w-full flex items-center justify-between px-4 py-3 bg-zinc-800 hover:bg-zinc-700 border-2 border-transparent rounded-xl transition-colors cursor-pointer`}>
+                  <span class="text-sm font-medium text-zinc-100">{option.label}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"
+                    class:list={["check-icon w-5 h-5", secret ? "text-amber-500 invisible" : format.color === "green" ? "text-green-500" : "text-blue-500"]}>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          </>
+        );
+      })}
+      {format.note && <p class="text-xs text-zinc-500 mb-6 leading-relaxed">{format.note}</p>}
+      <div class="flex gap-3">
+        <button type="button" id={`${format.id}-import-modal-cancel`} class="flex-1 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer">Cancel</button>
+        <button type="button" id={`${format.id}-import-modal-confirm`}
+          class:list={["flex-1 px-6 py-3 text-zinc-100 font-bold rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed", format.color === "green" ? "bg-green-600 hover:bg-green-500 disabled:hover:bg-green-600" : "bg-blue-600 hover:bg-blue-500 disabled:hover:bg-blue-600"]}>Import</button>
+      </div>
+    </div>
+  </div>
+))}
