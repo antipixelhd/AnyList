@@ -552,7 +552,7 @@ button:disabled {
 }
 .detail-layout {
   max-width:1220px;
-  margin:-85px auto 0;
+  margin:-125px auto 0;
   padding:0 28px;
   position:relative;
   display:grid;
