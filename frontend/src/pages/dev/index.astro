@@ -1,0 +1,4 @@
+---
+if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(Astro.url.hostname)) return new Response('Not found', {status:404});
+return Astro.redirect('/dev/details');
+---

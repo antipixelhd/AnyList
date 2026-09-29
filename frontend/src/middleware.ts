@@ -66,9 +66,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get("token")?.value;
   const { pathname } = context.url;
 
-  // The card playground is isolated from sessions and backend data. Never serve
+  // Development playgrounds are isolated from sessions and backend data. Never serve
   // it in a production build or through a non-loopback development hostname.
-  if (pathname === '/dev/cards' || pathname.startsWith('/dev/cards/')) {
+  if (pathname === '/dev' || pathname.startsWith('/dev/')) {
     if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(context.url.hostname)) {
       return new Response('Not found', { status: 404 });
     }

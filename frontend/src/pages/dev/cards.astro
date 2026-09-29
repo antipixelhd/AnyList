@@ -57,6 +57,7 @@ const activities = [
         <div><span class="eyebrow">Local development · dummy data</span><h1>Card playground</h1><p>Real card components with simulated actions. Hover or focus cards to reveal controls.</p></div>
         <button type="button" id="reset" class="button-primary">Reset everything</button>
       </header>
+      <p><a href="/dev/details">Explore media detail designs →</a></p>
       <div class="lab-tools"><label>Show <select id="category"><option value="all">All cards</option>{['Notifications','Activities','Favorites','Progress','Media','Episodes','Continue watching','History','Lists & people','List notes'].map(label => <option>{label}</option>)}</select></label><label>Content width <select id="width"><option value="full">Full width</option><option value="390">390px</option><option value="768">768px</option></select></label><label><input type="checkbox" id="fail"/> Simulate action failure</label></div>
       <p id="feedback" role="status" aria-live="polite">Ready. All actions stay in this page; no account data is changed.</p>
       <div id="canvas">
