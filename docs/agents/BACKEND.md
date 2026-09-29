@@ -66,6 +66,12 @@ For provider sync, inspect pull_cycle.py, tracking_snapshot.py, and the relevant
 reconciliation/delivery modules. For streaming-library changes, inspect
 streaming_library.py and stream_actions.py.
 
+For Nuvio outbound state, inspect core/nuvio_payloads.py for wire formatting and
+identity selection, and core/nuvio_projection.py for library, watch-history, and
+Continue Watching queries. core/nuvio.py owns provider transport; routers/sync.py
+orchestrates sync jobs and full pushes. Payload and projection tests live in
+backend/tests/test_nuvio_payloads.py and test_nuvio_projection.py.
+
 The database is PostgreSQL with async SQLAlchemy. Existing naive timestamps are
 interpreted as UTC; database sessions are pinned to UTC in db.py.
 Keep schema changes in migrations and follow existing transaction boundaries.

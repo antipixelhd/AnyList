@@ -330,8 +330,8 @@ class ProfileSettingsTests(unittest.IsolatedAsyncioTestCase):
             get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={'mappings': {'tt42': 42}})))
         self.watched = [{'content_id': 'tt42', 'content_type': 'series', 'season': 2, 'episode': 7}]
         with patch('routers.sync.async_sessionmaker', lambda *args, **kwargs: lambda: _SessionCM(db)), \
-                patch('routers.sync._build_nuvio_progress_items', AsyncMock(return_value=[])), \
-                patch('routers.sync._nuvio_progress_keys_to_clear', AsyncMock(return_value=[])), \
+                patch('core.nuvio_projection.build_progress_items', AsyncMock(return_value=[])), \
+                patch('core.nuvio_projection.progress_keys_to_clear', AsyncMock(return_value=[])), \
                 patch.object(nuvio, 'refresh_session', AsyncMock(return_value=SimpleNamespace(
                     access_token='fixture', refresh_token='rotated'))), \
                 patch.object(nuvio, '_rpc', AsyncMock(side_effect=self.rpc)):

@@ -234,7 +234,7 @@ class NuvioVisibilityTests(unittest.IsolatedAsyncioTestCase):
             url='https://example.test', token='old', server_user_id='1')
         patches, started = _nuvio_call_patches(progress_rows=[synthetic, real],
             followup_rows=[real])
-        clear = patch('routers.sync._nuvio_progress_keys_to_clear', AsyncMock(return_value=['tt1_s1e1']))
+        clear = patch('core.nuvio_projection.progress_keys_to_clear', AsyncMock(return_value=['tt1_s1e1']))
         clear.start()
         try:
             await show_nuvio_next_up(db, conn, {

@@ -565,9 +565,9 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("routers.sync._select_in_chunks", AsyncMock(return_value=[movie])),
             patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
-            patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()),
-            patch("routers.sync._build_nuvio_library_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
-            patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
+            patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
+            patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
+            patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
             patch("routers.sync._push_nuvio_library_delta", library_push),
             patch.object(nuvio, "push_watched_items", watched_push),
             patch("routers.sync.refresh_stream_connection", AsyncMock()),

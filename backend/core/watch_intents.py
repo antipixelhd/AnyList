@@ -1,6 +1,7 @@
 """Durable watched-state delivery for Nuvio and Stremio connections."""
 from __future__ import annotations
 
+from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 from datetime import datetime
 import logging
@@ -109,30 +110,6 @@ async def _current_watch_event(db, user_id: int, media_id: int) -> WatchEvent | 
     ).order_by(WatchEvent.watched_at.desc().nulls_last(), WatchEvent.id.desc()).limit(1))).scalar_one_or_none()
 
 
-def _valid_imdb_id(value: object) -> str | None:
-    candidate = str(value or "").strip()
-    return candidate if candidate.startswith("tt") and candidate[2:].isdigit() else None
-
-
-def _content_id_for_connection(conn, baseline, media: Media, show: Show | None) -> str | None:
-    entity = show if media.media_type.value == "episode" else media
-    target_tmdb = getattr(entity, "tmdb_id", None)
-    mappings = (baseline.snapshot or {}).get("mappings", {}) if baseline else {}
-    matching = [str(key) for key, value in mappings.items() if target_tmdb is not None and str(value) == str(target_tmdb)]
-
-    data = getattr(entity, "tmdb_data", None) or {}
-    external = data.get("external_ids") if isinstance(data, dict) else {}
-    direct = _valid_imdb_id(
-        getattr(entity, "imdb_id", None)
-        or (data.get("imdb_id") if isinstance(data, dict) else None)
-        or (external.get("imdb_id") if isinstance(external, dict) else None)
-    )
-    if direct and direct in matching:
-        return direct
-    imdb_mapping = next((key for key in matching if _valid_imdb_id(key)), None)
-    return imdb_mapping or (matching[0] if matching else None) or direct
-
-
 async def _write_provider_watch_state(
     db,
     conn: MediaServerConnection,
@@ -164,18 +141,14 @@ async def _write_provider_watch_state(
     baseline = await db.get(StreamBaseline, conn.id)
     show = await db.get(Show, media.show_id) if media.show_id is not None else None
     from models.users import UserSettings
-    from routers.sync import (
-        _ensure_nuvio_imdb_ids,
-        _get_effective_tmdb_key,
-        _nuvio_watched_item,
-    )
+    from routers.sync import _get_effective_tmdb_key
 
     settings = (await db.execute(select(UserSettings).where(
         UserSettings.user_id == conn.user_id,
     ))).scalar_one_or_none()
     api_key = await _get_effective_tmdb_key(db, settings)
-    await _ensure_nuvio_imdb_ids([media], {show.id: show} if show else {}, api_key)
-    payload = _nuvio_watched_item(
+    await nuvio_projection.ensure_imdb_ids([media], {show.id: show} if show else {}, api_key)
+    payload = nuvio_payloads.watched_item(
         media,
         watched_at,
         show,
@@ -183,7 +156,7 @@ async def _write_provider_watch_state(
     )
     if payload is None:
         raise ValueError("content_id_unresolved")
-    mapped_id = _content_id_for_connection(conn, baseline, media, show)
+    mapped_id = nuvio_payloads.content_id_for_baseline(baseline, media, show)
     if mapped_id:
         payload["content_id"] = mapped_id
     if media.media_type.value == "episode" and (
@@ -360,7 +333,6 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
     for connection_id, batch in nuvio_visibility_batches.items():
         conn = await db.get(MediaServerConnection, connection_id)
         records = []
-        from routers.sync import _nuvio_imdb_id
         from core.nuvio_visibility import sync_next_up_visibility
         baseline = await db.get(StreamBaseline, conn.id)
         mappings = (baseline.snapshot or {}).get('mappings', {}) if baseline else {}
@@ -370,7 +342,7 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
             entity = show or media
             keys = {str(key) for key, value in mappings.items()
                 if entity.tmdb_id is not None and str(value) == str(entity.tmdb_id)}
-            for key in (_content_id_for_connection(conn, baseline, media, show), _nuvio_imdb_id(entity)):
+            for key in (nuvio_payloads.content_id_for_baseline(baseline, media, show), nuvio_payloads.imdb_id(entity)):
                 if key:
                     keys.add(key)
             for key in keys:

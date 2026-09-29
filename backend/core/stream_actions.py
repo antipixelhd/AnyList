@@ -1,4 +1,5 @@
 """Retryable playback actions; never mutates streaming library membership."""
+from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 import logging
 from datetime import datetime, timezone
@@ -566,8 +567,7 @@ async def show_nuvio_next_up(db, conn, record):
                 nuvio.parse_profile_id(conn.server_user_id))
             content_ids = await _nuvio_visibility_aliases(db, conn, record, rows)
             matching = [row for row in rows if str(row.get('content_id') or '') in content_ids]
-            from routers.sync import _nuvio_progress_keys_to_clear
-            clear_keys = await _nuvio_progress_keys_to_clear(db, conn.user_id, conn.id, matching)
+            clear_keys = await nuvio_projection.progress_keys_to_clear(db, conn.user_id, conn.id, matching)
             cleared_rows = [row for row in matching
                 if str(row.get('progress_key') or '') in set(clear_keys)]
             if clear_keys:
@@ -645,7 +645,6 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
             continue  # a newly attached empty account has no playback to dismiss
         if conn.type == 'nuvio':
             from core.nuvio_visibility import provider_content_ids
-            from routers.sync import _nuvio_imdb_id
             snapshot = baseline.snapshot or {}
             cached_records = [
                 *snapshot.get('records', {}).get('progress', []),
@@ -654,8 +653,7 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
             content_ids = provider_content_ids(media, baseline, records=cached_records)
             if not content_ids:
                 continue
-            from core.watch_intents import _content_id_for_connection
-            primary = _content_id_for_connection(conn, baseline, media, None)
+            primary = nuvio_payloads.content_id_for_baseline(baseline, media, None)
             if primary not in content_ids:
                 primary = content_ids[0]
             entry = (await db.execute(select(TrackedEntry).where(
@@ -667,7 +665,7 @@ async def _queue_dismissals(db, user_id, media, *, exclude_connection_id=None,
                 'content_ids': content_ids,
                 'content_type': media.media_type.value,
                 'tmdb_id': media.tmdb_id,
-                'imdb_id': _nuvio_imdb_id(media),
+                'imdb_id': nuvio_payloads.imdb_id(media),
                 'observed_at': _iso_utc(changed_at),
             }
             if conn.id == source_visibility_connection_id or not conn.push_playback:
@@ -810,8 +808,6 @@ async def _queue_nuvio_next_up_show(db, user_id, media, connections):
     if media.media_type != MediaType.series:
         return
     from core.nuvio_visibility import provider_content_ids
-    from core.watch_intents import _content_id_for_connection
-    from routers.sync import _nuvio_imdb_id
 
     for conn in connections:
         if conn.type != 'nuvio':
@@ -827,7 +823,7 @@ async def _queue_nuvio_next_up_show(db, user_id, media, connections):
         content_ids = provider_content_ids(media, baseline, records=cached_records)
         if not content_ids:
             continue
-        primary = _content_id_for_connection(conn, baseline, media, None)
+        primary = nuvio_payloads.content_id_for_baseline(baseline, media, None)
         if primary not in content_ids:
             primary = content_ids[0]
         payload = {
@@ -835,7 +831,7 @@ async def _queue_nuvio_next_up_show(db, user_id, media, connections):
             'content_ids': content_ids,
             'content_type': 'series',
             'tmdb_id': media.tmdb_id,
-            'imdb_id': _nuvio_imdb_id(media),
+            'imdb_id': nuvio_payloads.imdb_id(media),
             'next_up_only': True,
         }
         existing = (await db.execute(select(StreamAction).where(
@@ -884,12 +880,12 @@ async def queue_restorations(db, user_id, media):
         await _queue_nuvio_next_up_show(db, user_id, media, targets)
         return
     from models.users import UserSettings
-    from routers.sync import _ensure_nuvio_imdb_ids, _get_effective_tmdb_key, _nuvio_imdb_id
+    from routers.sync import _get_effective_tmdb_key
     show = await db.get(Show, record['episode_media'].show_id) if media.media_type == MediaType.series else None
     settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
     api_key = await _get_effective_tmdb_key(db, settings)
-    await _ensure_nuvio_imdb_ids([record['episode_media']], {show.id: show} if show else {}, api_key)
-    resolved_imdb_id = _nuvio_imdb_id(show or media)
+    await nuvio_projection.ensure_imdb_ids([record['episode_media']], {show.id: show} if show else {}, api_key)
+    resolved_imdb_id = nuvio_payloads.imdb_id(show or media)
     for conn in targets:
         if conn.type == 'nuvio' and not conn.push_playback:
             await _queue_nuvio_next_up_show(db, user_id, media, [conn])
@@ -1097,7 +1093,6 @@ async def dispatch_stream_actions(db, user_id):
                     raise RemotePlaybackChanged()
                 baseline_for_aliases = await db.get(StreamBaseline, conn.id)
                 from core.nuvio_visibility import provider_content_ids
-                from routers.sync import _nuvio_imdb_id
                 aliases = provider_content_ids(media, baseline_for_aliases,
                     records=(baseline_for_aliases.snapshot or {}).get('records', {}).get('progress', [])
                         + (baseline_for_aliases.snapshot or {}).get('records', {}).get('watched', [])
@@ -1106,7 +1101,7 @@ async def dispatch_stream_actions(db, user_id):
                     *(payload.get('content_ids') or []), *aliases, payload.get('content_id'),
                 ]))
                 payload['tmdb_id'] = media.tmdb_id
-                payload['imdb_id'] = _nuvio_imdb_id(media)
+                payload['imdb_id'] = nuvio_payloads.imdb_id(media)
             if conn.type == 'stremio':
                 # Share one per-connection lock with library pushes, provider
                 # pulls, and clear operations so datastore read/modify/write

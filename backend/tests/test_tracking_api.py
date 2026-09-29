@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
+from core import nuvio_payloads, nuvio_projection
 
 import httpx
 from fastapi import FastAPI
@@ -1868,7 +1869,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(delivery.state,'pending')
 
     async def test_library_action_tracks_partial_delivery_and_prevents_readding_removed_title(self):
-        from routers.sync import _build_nuvio_library_items
         from core import stremio, nuvio
 
         self.movie.tmdb_data={'external_ids':{'imdb_id':'tt1234567'}}
@@ -1942,7 +1942,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stremio_remove.await_args.args[1][0]['removed'])
         self.assertEqual(stremio_remove.await_args.args[1][0]['state']['custom'],'preserve')
         self.assertEqual(nuvio_remove.await_args.kwargs['removed_content_ids'],{'tt1234567'})
-        self.assertEqual([item['content_id'] for item in await _build_nuvio_library_items(
+        self.assertEqual([item['content_id'] for item in await nuvio_projection.build_library_items(
             self.db,self.owner.id)],[])
         sources=(await self.db.execute(select(CollectionFile.source).join(Collection,
             Collection.id==CollectionFile.collection_id).where(Collection.user_id==self.owner.id,
@@ -4740,7 +4740,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             {'tmdb:987650019', 'tt987650019'})
 
     async def test_nuvio_seed_cleanup_uses_show_identity_and_keeps_newer_playback(self):
-        from routers.sync import _nuvio_progress_keys_to_clear
         self.show.tmdb_id = 987650020
         self.show.imdb_id = 'tt987650020'
         canonical = Show(title='Cleanup fixture', tmdb_id=self.show.tmdb_id)
@@ -4762,11 +4761,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 snapshot={'mappings': {self.show.imdb_id: str(self.show.tmdb_id)},
                     'outbound': {self.show.imdb_id: prior}})])
         await self.db.commit()
-        self.assertEqual(await _nuvio_progress_keys_to_clear(self.db, self.owner.id, conn.id, [row]),
+        self.assertEqual(await nuvio_projection.progress_keys_to_clear(self.db, self.owner.id, conn.id, [row]),
             [row['progress_key']])
-        self.assertEqual(await _nuvio_progress_keys_to_clear(self.db, self.owner.id, conn.id,
+        self.assertEqual(await nuvio_projection.progress_keys_to_clear(self.db, self.owner.id, conn.id,
             [{**row, 'position': 18000, 'last_watched': row['last_watched']+10000}]), [])
-        self.assertEqual(await _nuvio_progress_keys_to_clear(self.db, self.owner.id, conn.id,
+        self.assertEqual(await nuvio_projection.progress_keys_to_clear(self.db, self.owner.id, conn.id,
             [{**row, 'last_watched': row['last_watched']+10000}]), [])
 
     async def test_watch_intent_retries_current_state_after_failed_write_and_rapid_rewatch(self):
@@ -5118,7 +5117,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_playback_only_clear_suppresses_old_nuvio_next_up_write(self):
         from core import nuvio
         from models.watch_intent import WatchIntent
-        from routers import sync as sync_router
         from core.watch_intents import dispatch_watch_intents
 
         self.movie.tmdb_id = 912347
@@ -5157,8 +5155,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(baseline.snapshot['playback_clear_watch_visibility_suppressed'], [self.movie.id])
 
         with (
-            patch.object(sync_router, '_ensure_nuvio_imdb_ids', AsyncMock()),
-            patch.object(sync_router, '_nuvio_watched_item', return_value={
+            patch.object(nuvio_projection, "ensure_imdb_ids", AsyncMock()),
+            patch.object(nuvio_payloads, "watched_item", return_value={
                 'content_id': 'tt0912347', 'content_type': 'movie',
             }),
             patch.object(nuvio, 'push_watched_items', AsyncMock()) as watched_write,

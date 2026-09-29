@@ -15,22 +15,12 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 from core import nuvio
 from models.base import MediaType
 from models.media import Media
-from models.playback_progress import PlaybackProgress
 from models.show import Show
 from models.sync import SyncStatus
 from routers.sync import (
-    _build_nuvio_progress_items,
-    _build_nuvio_watched_items,
     _fan_out_changes_to_other_connections,
     _apply_nuvio_watch_history,
-    _ensure_nuvio_imdb_ids,
     _normalize_nuvio_item,
-    _nuvio_library_item,
-    _nuvio_progress_item,
-    _nuvio_obsolete_progress_keys,
-    _nuvio_remap_payload,
-    _nuvio_progress_keys_to_clear,
-    _nuvio_watched_item,
     _push_nuvio_library_delta,
     _run_full_push,
 )
@@ -85,7 +75,6 @@ class _SessionCM:
 
     async def __aexit__(self, *exc_info):
         return False
-
 
 
 class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
@@ -704,44 +693,6 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_missing_imdb_ids_are_resolved_and_cached(self) -> None:
-        movie = Media(
-            id=10,
-            tmdb_id=550,
-            media_type=MediaType.movie,
-            title="Fight Club",
-            tmdb_data={},
-        )
-        episode = Media(
-            id=11,
-            media_type=MediaType.episode,
-            title="It's All Good",
-            show_id=5,
-            season_number=3,
-            episode_number=2,
-        )
-        show = Show(id=5, tmdb_id=125988, title="Silo", tmdb_data={})
-
-        async def external_ids(tmdb_id: int, media_type: str, api_key: str | None = None) -> dict:
-            self.assertEqual(api_key, "tmdb-token")
-            return {
-                "imdb_id": {
-                    ("movie", 550): "tt0137523",
-                    ("tv", 125988): "tt14688458",
-                }[(media_type, tmdb_id)]
-            }
-
-        with patch("routers.sync.tmdb.get_external_ids", side_effect=external_ids) as get_external_ids:
-            await _ensure_nuvio_imdb_ids(
-                [movie, episode],
-                {show.id: show},
-                "tmdb-token",
-            )
-
-        self.assertEqual(get_external_ids.await_count, 2)
-        self.assertEqual(movie.tmdb_data["external_ids"]["imdb_id"], "tt0137523")
-        self.assertEqual(show.tmdb_data["external_ids"]["imdb_id"], "tt14688458")
-
 
     async def test_merge_library_preserves_unrelated_remote_items(self) -> None:
         pushed_items: list[dict] = []
@@ -1115,46 +1066,6 @@ class NuvioNormalizationTests(unittest.TestCase):
         self.assertEqual(item["UserData"]["PlayCount"], 1)
         self.assertIsNotNone(item["UserData"]["LastPlayedDate"])
 
-    def test_series_library_item_uses_canonical_show_artwork(self) -> None:
-        media = Media(
-            id=20,
-            tmdb_id=4607,
-            media_type=MediaType.series,
-            title="Lost : Les Disparus",
-            poster_path="",
-            backdrop_path="",
-        )
-        show = Show(
-            id=5,
-            tmdb_id=4607,
-            title="Lost",
-            poster_path="https://image.tmdb.org/t/p/w500/poster.jpg",
-            backdrop_path="https://image.tmdb.org/t/p/w1280/background.jpg",
-            overview="A mysterious island.",
-            first_air_date="2004-09-22",
-            tmdb_rating=8.0,
-            tmdb_data={
-                "genres": [{"name": "Drama"}],
-                "external_ids": {"imdb_id": "tt0411008"},
-            },
-        )
-
-        item = _nuvio_library_item(
-            media,
-            datetime(2026, 7, 19, tzinfo=timezone.utc),
-            show,
-        )
-
-        self.assertIsNotNone(item)
-        self.assertEqual(item["content_id"], "tt0411008")
-        self.assertEqual(item["name"], "Lost : Les Disparus")
-        self.assertEqual(item["poster"], show.poster_path)
-        self.assertEqual(item["background"], show.backdrop_path)
-        self.assertEqual(item["description"], show.overview)
-        self.assertEqual(item["release_info"], "2004")
-        self.assertEqual(item["imdb_rating"], 8.0)
-        self.assertEqual(item["genres"], ["Drama"])
-
 
     def test_imdb_content_uses_resolved_tmdb_id(self) -> None:
         normalized = _normalize_nuvio_item(
@@ -1173,6 +1084,7 @@ class NuvioNormalizationTests(unittest.TestCase):
         self.assertEqual(item["Id"], "1:tt0411008")
         self.assertEqual(item["ProviderIds"], {"Tmdb": "4607"})
 
+
     def test_unsupported_content_identifier_is_skipped(self) -> None:
         self.assertIsNone(
             _normalize_nuvio_item(
@@ -1180,416 +1092,6 @@ class NuvioNormalizationTests(unittest.TestCase):
                 profile_id=1,
             )
         )
-
-    def test_progress_payload_maps_movies_and_episodes(self) -> None:
-        updated_at = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
-        progress = PlaybackProgress(
-            user_id=1,
-            media_id=10,
-            progress_seconds=1800,
-            progress_percent=0.25,
-            updated_at=updated_at,
-        )
-        movie = Media(
-            id=10,
-            tmdb_id=550,
-            media_type=MediaType.movie,
-            title="Fight Club",
-            runtime=120,
-            tmdb_data={"external_ids": {"imdb_id": "tt0137523"}},
-        )
-        self.assertEqual(
-            _nuvio_progress_item(progress, movie),
-            {
-                "content_id": "tt0137523",
-                "content_type": "movie",
-                "video_id": "tt0137523",
-                "position": 1800000,
-                "duration": 7200000,
-                "progress_key": "tt0137523",
-                "last_watched": int(updated_at.timestamp() * 1000),
-            },
-        )
-
-        episode = Media(
-            id=11,
-            media_type=MediaType.episode,
-            title="Pilot",
-            show_id=5,
-            season_number=1,
-            episode_number=1,
-        )
-        show = Show(
-            id=5,
-            tmdb_id=1396,
-            title="Breaking Bad",
-            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}},
-        )
-        self.assertEqual(
-            _nuvio_progress_item(progress, episode, show),
-            {
-                "content_id": "tt0903747",
-                "content_type": "series",
-                "video_id": "tt0903747:1:1",
-                "season": 1,
-                "episode": 1,
-                "position": 1800000,
-                "duration": 7200000,
-                "progress_key": "tt0903747_s1e1",
-                "last_watched": int(updated_at.timestamp() * 1000),
-            },
-        )
-
-    def test_watched_payload_uses_bare_imdb_ids(self) -> None:
-        watched_at = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
-        movie = Media(
-            id=10,
-            tmdb_id=550,
-            media_type=MediaType.movie,
-            title="Fight Club",
-            tmdb_data={"external_ids": {"imdb_id": "tt0137523"}},
-        )
-        self.assertEqual(
-            _nuvio_watched_item(movie, watched_at),
-            {
-                "content_id": "tt0137523",
-                "content_type": "movie",
-                "title": "Fight Club",
-                "watched_at": int(watched_at.timestamp() * 1000),
-            },
-        )
-
-        episode = Media(
-            id=11,
-            media_type=MediaType.episode,
-            title="It's All Good",
-            show_id=5,
-            season_number=3,
-            episode_number=2,
-        )
-        show = Show(
-            id=5,
-            tmdb_id=125988,
-            title="Silo",
-            tmdb_data={"external_ids": {"imdb_id": "tt14688458"}},
-        )
-        self.assertEqual(
-            _nuvio_watched_item(episode, watched_at, show),
-            {
-                "content_id": "tt14688458",
-                "content_type": "series",
-                "title": "It's All Good",
-                "season": 3,
-                "episode": 2,
-                "watched_at": int(watched_at.timestamp() * 1000),
-            },
-        )
-
-        tmdb_only_movie = Media(
-            id=12,
-            tmdb_id=550,
-            media_type=MediaType.movie,
-            title="Fight Club",
-        )
-        self.assertIsNone(_nuvio_watched_item(tmdb_only_movie, watched_at))
-
-
-class NuvioSyntheticProgressTests(unittest.IsolatedAsyncioTestCase):
-    async def test_full_push_clears_only_old_resume_for_same_watching_title(self) -> None:
-        desired=[{"content_id":"tt1234567","progress_key":"tt1234567_s1e4"}]
-        remote=[
-            {"content_id":"tt1234567","progress_key":"tt1234567_s1e3"},
-            {"content_id":"tt1234567","progress_key":"tt1234567_s1e4"},
-            {"content_id":"tt9999999","progress_key":"tt9999999_s1e1"},
-        ]
-        self.assertEqual(_nuvio_obsolete_progress_keys(remote, desired),
-            ["tt1234567_s1e3"])
-
-    async def test_full_push_history_omits_deleted_titles_but_keeps_listed_episodes(self) -> None:
-        now = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
-        old_show = Show(id=5, tmdb_id=1396, title="Removed",
-            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
-        kept_show = Show(id=6, tmdb_id=1400, title="Listed",
-            tmdb_data={"external_ids": {"imdb_id": "tt1234567"}})
-        old_episode = Media(id=21, media_type=MediaType.episode, title="Old", show_id=5,
-            season_number=1, episode_number=1)
-        kept_episode = Media(id=22, media_type=MediaType.episode, title="Kept", show_id=6,
-            season_number=1, episode_number=1)
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(21, now, now), (22, now, now)]),
-            _Result(scalars=[old_episode, kept_episode]),
-            _Result(scalars=[old_show, kept_show]),
-            _Result(rows=[(10, 1400, None, MediaType.series)]),
-        ]))
-
-        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_watched_items(db, user_id=7, tracked_only=True)
-
-        self.assertEqual([(item["content_id"], item["episode"]) for item in items],
-            [("tt1234567", 1)])
-
-    async def test_outbound_progress_uses_observed_nuvio_content_id(self) -> None:
-        movie = Media(id=10, tmdb_id=550, media_type=MediaType.movie,
-            title="Fight Club", imdb_id="tt0137523")
-        baseline = SimpleNamespace(snapshot={"mappings": {"tmdb:550": 550}})
-        payload = _nuvio_remap_payload({
-            "content_id": "tt0137523", "content_type": "movie",
-            "video_id": "tt0137523", "progress_key": "tt0137523",
-            "position": 1000, "duration": 120000,
-        }, movie, None, baseline)
-
-        self.assertEqual(payload["content_id"], "tmdb:550")
-        self.assertEqual(payload["video_id"], "tmdb:550")
-        self.assertEqual(payload["progress_key"], "tmdb:550")
-
-    async def test_watching_movie_without_fresh_local_progress_gets_one_second_resume(self) -> None:
-        status_changed_at = datetime(2026, 9, 20, 12, 0)
-        entry = SimpleNamespace(status="watching", status_changed_at=status_changed_at, updated_at=status_changed_at)
-        movie = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club", runtime=120,
-            imdb_id="tt0137523")
-        stale = PlaybackProgress(user_id=7, media_id=10, progress_seconds=900, progress_percent=0.1,
-            updated_at=datetime(2026, 9, 19, 12, 0))
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(entry, movie)]),
-            _Result(rows=[(stale, movie)]),
-        ]))
-
-        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(
-                db, user_id=7, next_up_for_watched_series=True,
-            )
-
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["content_id"], "tt0137523")
-        self.assertEqual(items[0]["position"], 1000)
-        self.assertEqual(items[0]["duration"], 7_200_000)
-        self.assertEqual(items[0]["progress_key"], "tt0137523")
-        self.assertEqual(items[0]["last_watched"], int(status_changed_at.replace(tzinfo=timezone.utc).timestamp() * 1000))
-
-    async def test_watching_series_uses_next_released_unwatched_episode_for_synthetic_resume(self) -> None:
-        status_changed_at = datetime(2026, 9, 20, 12, 0)
-        entry = SimpleNamespace(status="watching", status_changed_at=status_changed_at, updated_at=status_changed_at)
-        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
-        show = Show(id=5, tmdb_id=1396, title="Breaking Bad", tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
-        episodes = [
-            Media(id=21, media_type=MediaType.episode, title="Pilot", show_id=5, season_number=1,
-                episode_number=1, runtime=45, release_date="2008-01-20"),
-            Media(id=22, media_type=MediaType.episode, title="Upcoming", show_id=5, season_number=1,
-                episode_number=2, runtime=45, release_date="2099-01-01"),
-            Media(id=23, media_type=MediaType.episode, title="Next", show_id=5, season_number=1,
-                episode_number=3, runtime=45, release_date="2008-01-27"),
-        ]
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(entry, series)]),
-            _Result(scalars=[show]),
-            _Result(scalars=episodes),
-            _Result(rows=[]),
-            _Result(scalars=[]),
-            _Result(scalars=[show]),
-        ]))
-
-        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(
-                db, user_id=7, next_up_for_watched_series=True,
-            )
-
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["season"], 1)
-        self.assertEqual(items[0]["episode"], 1)
-        self.assertEqual(items[0]["position"], 1000)
-        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e1")
-
-    async def test_watching_series_with_episode_history_uses_next_up_without_synthetic_resume(self) -> None:
-        changed_at = datetime(2026, 9, 20, 12, 0)
-        entry = SimpleNamespace(status="watching", status_changed_at=changed_at, updated_at=changed_at)
-        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
-        show = Show(id=5, tmdb_id=1396, title="Breaking Bad",
-            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
-        episodes = [
-            Media(id=21, media_type=MediaType.episode, title="Watched", show_id=5,
-                season_number=1, episode_number=1, runtime=45, release_date="2008-01-20"),
-            Media(id=22, media_type=MediaType.episode, title="Next", show_id=5,
-                season_number=1, episode_number=2, runtime=45, release_date="2008-01-27"),
-        ]
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(entry, series)]),
-            _Result(scalars=[show]),
-            _Result(scalars=episodes),
-            _Result(rows=[]),
-            _Result(scalars=[21]),
-        ]))
-
-        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(
-                db, user_id=7, next_up_for_watched_series=True,
-            )
-
-        self.assertEqual(items, [])
-
-    async def test_watching_series_with_history_preserves_real_fractional_playback_position(self) -> None:
-        changed_at = datetime(2026, 9, 20, 12, 0)
-        entry = SimpleNamespace(status="watching", status_changed_at=changed_at, updated_at=changed_at)
-        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
-        show = Show(id=5, tmdb_id=1396, title="Breaking Bad",
-            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
-        watched_episode = Media(id=21, media_type=MediaType.episode, title="Watched", show_id=5,
-            season_number=1, episode_number=1, runtime=45, release_date="2008-01-20")
-        active_episode = Media(id=22, media_type=MediaType.episode, title="Current", show_id=5,
-            season_number=1, episode_number=2, runtime=45, release_date="2008-01-27")
-        progress = SimpleNamespace(progress_seconds=12.75, progress_percent=0.25,
-            updated_at=datetime(2026, 9, 21, 12, 0))
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(entry, series)]),
-            _Result(scalars=[show]),
-            _Result(scalars=[watched_episode, active_episode]),
-            _Result(rows=[(progress, active_episode)]),
-            _Result(scalars=[21]),
-            _Result(scalars=[show]),
-        ]))
-
-        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(
-                db, user_id=7, next_up_for_watched_series=True,
-            )
-
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e2")
-        self.assertEqual(items[0]["position"], 12_750)
-        self.assertNotIn("synthetic_resume", items[0])
-
-    async def test_completed_episode_progress_does_not_hide_next_episode(self) -> None:
-        changed_at = datetime(2026, 9, 20, 12, 0)
-        entry = SimpleNamespace(status="watching", status_changed_at=changed_at, updated_at=changed_at)
-        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
-        show = Show(id=5, tmdb_id=1396, title="Breaking Bad",
-            tmdb_data={"external_ids": {"imdb_id": "tt0903747"}})
-        episodes = [
-            Media(id=21 + index, media_type=MediaType.episode, title=f"Episode {index + 1}",
-                show_id=5, season_number=1, episode_number=index + 1, runtime=45,
-                release_date="2008-01-20")
-            for index in range(4)
-        ]
-        completed = PlaybackProgress(user_id=7, media_id=23, progress_seconds=2700,
-            progress_percent=1.0, updated_at=datetime(2026, 9, 21, 12, 0))
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(entry, series)]),
-            _Result(scalars=[show]),
-            _Result(scalars=episodes),
-            _Result(rows=[(completed, episodes[2])]),
-            _Result(scalars=[21, 22, 23]),
-            _Result(scalars=[show]),
-        ]))
-
-        with patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()):
-            items = await _build_nuvio_progress_items(db, user_id=7)
-
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["progress_key"], "tt0903747_s1e4")
-        self.assertEqual(items[0]["position"], 1000)
-
-    async def test_watching_series_without_episode_catalogue_is_not_silent_success(self) -> None:
-        entry = SimpleNamespace(status="watching", status_changed_at=None, updated_at=None)
-        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series, title="Breaking Bad")
-        db = SimpleNamespace(execute=AsyncMock(side_effect=[
-            _Result(rows=[(entry, series)]),
-            _Result(scalars=[]),
-            _Result(rows=[]),
-        ]))
-
-        with self.assertRaisesRegex(nuvio.NuvioAPIError, "Breaking Bad"):
-            await _build_nuvio_progress_items(db, user_id=7)
-
-    async def test_full_push_clear_resolves_manually_added_imdb_ids_and_keeps_remote_only_rows(self) -> None:
-        paused = Media(id=10, tmdb_id=550, media_type=MediaType.movie, title="Fight Club", imdb_id="tt0137523")
-        watching = Media(id=11, tmdb_id=603, media_type=MediaType.movie, title="The Matrix", imdb_id="tt0133093")
-        db = SimpleNamespace(
-            get=AsyncMock(return_value=None),
-            execute=AsyncMock(side_effect=[
-                _Result(rows=[(paused, "paused"), (watching, "watching")]),
-                _Result(rows=[]),
-            ]),
-        )
-        remote = [
-            {"content_id": "tt0137523", "content_type": "movie", "progress_key": "tt0137523"},
-            {"content_id": "tt0133093", "content_type": "movie", "progress_key": "tt0133093"},
-            {"content_id": "tt9999999", "content_type": "movie", "progress_key": "tt9999999"},
-        ]
-
-        keys = await _nuvio_progress_keys_to_clear(db, user_id=7, connection_id=44, remote_rows=remote)
-
-        self.assertEqual(keys, ["tt0137523"])
-
-    async def test_legacy_synthetic_series_resume_cleanup_normalizes_tv_and_checks_echo_time(self) -> None:
-        series = Media(id=10, tmdb_id=1396, media_type=MediaType.series,
-            title="Breaking Bad", imdb_id="tt0903747")
-        progress_key = "tt0903747_s1e2"
-        outbound = {
-            "action": "upsert", "synthetic_resume": True,
-            "progress_key": progress_key, "position": 1000, "duration": 2_700_000,
-            "season": 1, "episode": 2, "last_watched": 1_790_000_000_000,
-        }
-        baseline = SimpleNamespace(snapshot={
-            "mappings": {"tt0903747": "1396"},
-            "outbound": {"tt0903747": outbound},
-        })
-
-        async def clear_keys(remote_row):
-            db = SimpleNamespace(
-                get=AsyncMock(return_value=baseline),
-                execute=AsyncMock(side_effect=[
-                    _Result(rows=[(series, "watching")]),
-                    _Result(rows=[]),
-                    _Result(scalars=[Show(id=5, tmdb_id=1396)]),
-                    _Result(scalars=[5]),
-                ]),
-            )
-            return await _nuvio_progress_keys_to_clear(
-                db, user_id=7, connection_id=44, remote_rows=[remote_row],
-            )
-
-        echoed = {
-            "content_id": "tt0903747", "content_type": "tv", "progress_key": progress_key,
-            "position": 1000, "duration": 2_700_000, "season": 1, "episode": 2,
-            "last_watched": 1_790_000_000_000,
-        }
-        self.assertEqual(await clear_keys(echoed), [progress_key])
-        self.assertEqual(await clear_keys({**echoed, "last_watched": 1_790_000_000_001}), [])
-        self.assertEqual(await clear_keys({**echoed, "position": 1500}), [])
-
-
-class NuvioWatchedStateProjectionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_unknown_date_episode_uses_event_creation_time_for_nuvio(self) -> None:
-        episode = Media(
-            id=10,
-            media_type=MediaType.episode,
-            title="The Rescue",
-            show_id=5,
-            season_number=1,
-            episode_number=2,
-        )
-        show = Show(
-            id=5,
-            tmdb_id=123,
-            title="Fixture Show",
-            tmdb_data={"external_ids": {"imdb_id": "tt1234567"}},
-        )
-        created_at = datetime(2026, 9, 1, 12, 30)
-        db = SimpleNamespace(execute=AsyncMock(return_value=_Result(rows=[(episode.id, None, created_at)])))
-
-        with (
-            patch("routers.sync._select_in_chunks", AsyncMock(side_effect=[[episode], [show]])),
-            patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()),
-        ):
-            items = await _build_nuvio_watched_items(db, user_id=7, media_ids={episode.id})
-
-        self.assertEqual(items, [{
-            "content_id": "tt1234567",
-            "content_type": "series",
-            "title": "The Rescue",
-            "season": 1,
-            "episode": 2,
-            "watched_at": int(created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
-        }])
 
 
 class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
@@ -1638,7 +1140,8 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("routers.sync._select_in_chunks", selected),
-            patch("routers.sync._ensure_nuvio_imdb_ids", AsyncMock()),
+            patch("core.nuvio_projection.select_in_chunks", selected),
+            patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
             patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
             patch.object(nuvio, "push_watched_items", pushed),
@@ -1760,7 +1263,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         update_visibility = AsyncMock()
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
-            patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[watched_record])),
+            patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[watched_record])),
             patch("core.nuvio_visibility.next_up_visibility", visibility),
             patch.object(nuvio, "update_next_up_dismissals", update_visibility),
             patch.object(
@@ -1815,7 +1318,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         update_visibility = AsyncMock()
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
-            patch("routers.sync._build_nuvio_watched_items",
+            patch("core.nuvio_projection.build_watched_items",
                   AsyncMock(return_value=[already_watched, newly_watched])),
             patch("core.nuvio_visibility.next_up_visibility", visibility),
             patch.object(nuvio, "update_next_up_dismissals", update_visibility),
@@ -1859,7 +1362,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         update_visibility = AsyncMock()
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
-            patch("routers.sync._build_nuvio_watched_items", AsyncMock(return_value=[watched_record])),
+            patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[watched_record])),
             patch("core.nuvio_visibility.next_up_visibility", visibility),
             patch.object(nuvio, "update_next_up_dismissals", update_visibility),
             patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
@@ -1943,7 +1446,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 lambda *args, **kwargs: (lambda: _SessionCM(db)),
             ),
             patch(
-                "routers.sync._build_nuvio_library_items",
+                "core.nuvio_projection.build_library_items",
                 AsyncMock(return_value=[
                     {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
                 ]),
@@ -2017,7 +1520,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(handler)
         with (
             patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
-            patch("routers.sync._build_nuvio_library_items", AsyncMock(return_value=[
+            patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[
                 {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
             ])),
             patch.object(

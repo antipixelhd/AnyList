@@ -4,6 +4,7 @@ Observed collection files describe provider state. The intent is kept separately
 so a failed write, or another collection source, cannot silently reverse it.
 """
 
+from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 import logging
 from datetime import datetime, timezone
@@ -168,7 +169,6 @@ async def deliver_library_intent(user_id: int, media_id: int) -> None:
 
 
 async def _record_for_media(db: AsyncSession, user_id: int, media: Media) -> dict:
-    from routers.sync import _ensure_nuvio_imdb_ids, _nuvio_library_item, _nuvio_library_content_id
     from routers.media import get_user_tmdb_key
     from models.show import Show
 
@@ -176,10 +176,10 @@ async def _record_for_media(db: AsyncSession, user_id: int, media: Media) -> dic
     if media.media_type == MediaType.series and media.tmdb_id is not None:
         show = (await db.execute(select(Show).where(Show.tmdb_id == media.tmdb_id))).scalars().first()
     api_key = await get_user_tmdb_key(db, user_id)
-    await _ensure_nuvio_imdb_ids([media], {}, api_key,
+    await nuvio_projection.ensure_imdb_ids([media], {}, api_key,
         {media.tmdb_id: show} if show and media.tmdb_id is not None else {})
-    entity = show if show and _nuvio_library_content_id(media, show) else None
-    item = _nuvio_library_item(media, datetime.now(timezone.utc), entity)
+    entity = show if show and nuvio_payloads.library_content_id(media, show) else None
+    item = nuvio_payloads.library_item(media, datetime.now(timezone.utc), entity)
     if not item:
         raise ValueError("Missing IMDb ID for streaming library delivery")
     return item
@@ -205,8 +205,6 @@ async def _write_stremio(db: AsyncSession, conn: MediaServerConnection, item: di
 
 
 async def _write_nuvio(db: AsyncSession, conn: MediaServerConnection, item: dict, desired: bool) -> None:
-    from routers.sync import _nuvio_profile_id
-
     async def persist_refresh(session: nuvio.NuvioSession) -> None:
         conn.token = session.refresh_token
         # Keep dispatch_library_deliveries' user row lock held until every
@@ -216,7 +214,7 @@ async def _write_nuvio(db: AsyncSession, conn: MediaServerConnection, item: dict
     async with nuvio.connection_lock(conn.id):
         await refresh_stream_connection(db, conn)
         await nuvio.merge_library(
-            conn.url, conn.token, _nuvio_profile_id(conn),
+            conn.url, conn.token, nuvio_payloads.profile_id(conn),
             additions=[item] if desired else [],
             removed_content_ids=set() if desired else {item["content_id"]},
             on_refresh=persist_refresh,

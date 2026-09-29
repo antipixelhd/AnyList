@@ -220,10 +220,10 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(all=lambda:[(media,"paused")]),
             SimpleNamespace(scalars=lambda:SimpleNamespace(all=lambda:[])),
         ]), refresh=AsyncMock())
-        with patch("routers.sync._build_nuvio_library_items", AsyncMock(return_value=[{
+        with patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[{
                 "content_id":"tt0133093", "content_type":"movie", "title":"The Matrix",
             }])), \
-             patch("routers.sync._build_nuvio_progress_items", AsyncMock(return_value=[])), \
+             patch("core.nuvio_projection.build_progress_items", AsyncMock(return_value=[])), \
              patch.object(stremio, "datastore_get", AsyncMock(side_effect=[[remote],[cleared]])), \
              patch.object(stremio, "datastore_put", AsyncMock()) as write:
             await _push_stremio_connection(db, connection, 7, api_key=None)
@@ -392,7 +392,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.sync._build_nuvio_library_items",
+                "core.nuvio_projection.build_library_items",
                 AsyncMock(return_value=[local]),
             ),
             patch.object(
@@ -450,7 +450,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.sync._build_nuvio_library_items",
+                "core.nuvio_projection.build_library_items",
                 AsyncMock(return_value=[]),
             ),
             patch.object(
@@ -497,7 +497,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         datastore_put = AsyncMock()
         with (
             patch(
-                "routers.sync._build_nuvio_watched_items",
+                "core.nuvio_projection.build_watched_items",
                 AsyncMock(return_value=[record]),
             ) as build_watched,
             patch(
@@ -568,7 +568,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         datastore_put = AsyncMock()
         with (
             patch(
-                "routers.sync._build_nuvio_watched_items",
+                "core.nuvio_projection.build_watched_items",
                 AsyncMock(return_value=[]),
             ),
             patch(
@@ -621,7 +621,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         datastore_put = AsyncMock(side_effect=save_items)
         with (
             patch(
-                "routers.sync._build_nuvio_progress_items",
+                "core.nuvio_projection.build_progress_items",
                 AsyncMock(return_value=[progress]),
             ),
             patch.object(stremio, "datastore_get", AsyncMock(side_effect=[[], stored])),

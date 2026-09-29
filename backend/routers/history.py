@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, or_, select, desc, func, delete, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, aliased
+from core import nuvio_payloads, nuvio_projection
 from db import get_db, AsyncSessionLocal
 from models.media import Media
 from models.show import Show
@@ -280,17 +281,16 @@ async def _push_watch_state(
         if show_ids:
             show_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
             shows_by_id = {show.id: show for show in show_result.scalars().all()}
-        from routers.sync import _ensure_nuvio_imdb_ids, _nuvio_watched_item
 
         api_key = await get_user_tmdb_key(db, user_id)
-        await _ensure_nuvio_imdb_ids(media_items, shows_by_id, api_key)
+        await nuvio_projection.ensure_imdb_ids(media_items, shows_by_id, api_key)
 
         nuvio_items: list[dict] = []
         nuvio_keys: list[dict] = []
         for media in media_items:
             if is_unmapped_tvdb_episode(media):
                 continue
-            payload = _nuvio_watched_item(
+            payload = nuvio_payloads.watched_item(
                 media,
                 resolved_watched_at.get(media.id) if watched else datetime.utcnow(),
                 shows_by_id.get(media.show_id),

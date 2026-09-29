@@ -46,8 +46,8 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("routers.sync._get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
-            patch("routers.sync._ensure_nuvio_imdb_ids", new_callable=AsyncMock),
-            patch("routers.sync._nuvio_watched_item", return_value=payload),
+            patch("core.nuvio_projection.ensure_imdb_ids", new_callable=AsyncMock),
+            patch("core.nuvio_payloads.watched_item", return_value=payload),
             patch("core.nuvio.connection_lock", side_effect=self._unlocked),
             patch("core.nuvio.push_watched_items", new_callable=AsyncMock) as push,
         ):
@@ -77,8 +77,8 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("routers.sync._get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
-            patch("routers.sync._ensure_nuvio_imdb_ids", new_callable=AsyncMock),
-            patch("routers.sync._nuvio_watched_item", return_value=payload),
+            patch("core.nuvio_projection.ensure_imdb_ids", new_callable=AsyncMock),
+            patch("core.nuvio_payloads.watched_item", return_value=payload),
             patch("core.nuvio.connection_lock", side_effect=self._unlocked),
             patch("core.nuvio.push_watched_items", new_callable=AsyncMock) as push,
         ):
@@ -99,8 +99,8 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("routers.sync._get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
-            patch("routers.sync._ensure_nuvio_imdb_ids", new_callable=AsyncMock),
-            patch("routers.sync._nuvio_watched_item", return_value=payload),
+            patch("core.nuvio_projection.ensure_imdb_ids", new_callable=AsyncMock),
+            patch("core.nuvio_payloads.watched_item", return_value=payload),
             patch("core.nuvio.connection_lock", side_effect=self._unlocked),
             patch("core.nuvio.push_watched_items", new_callable=AsyncMock, side_effect=RuntimeError("provider error")),
         ):
