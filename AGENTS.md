@@ -1,11 +1,11 @@
+# Working rules
+
 Commit changes you made after each turn 
 
 if you make changes to the database apply the migration before ending the turn
-# Media Tracker
 
-Work within this repository. Sibling projects have separate instructions and checks.
-Preserve ../reference Repos/. The origin remote points to a local reference copy;
-do not push to origin. Check the intended remote before publishing.
+Avoid cluttering UIs with excessive micro-copy, subtitles, helper text, badges, and tiny metadata. Prefer clean layouts with strong hierarchy, spacing, and obvious controls. If text is not necessary for understanding or action, leave it out.
+
 
 ## Start with the task
 
@@ -20,11 +20,3 @@ Optional references:
 Treat docs/media-tracker/ as historical specifications and implementation records.
 Search a relevant section only when a requirement or past decision is unclear.
 Do not read the entire STATUS.md or phase plans by default.
-
-## Working rules
-
-- Check the current diff and preserve other work in progress.
-- Follow existing patterns and keep changes limited to the task.
-- Check the affected behavior; use focused checks before broader checks.
-- Update the short references only when a durable fact changes.
-- Keep handoffs short and limited to unfinished work.
