@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy import select
 
-from core.catalog_import import get_or_create_show
+from core.catalog_import import get_or_create_show, get_or_create_episode_media
 from models.show import Show
 
 
@@ -86,6 +86,52 @@ class CatalogueShowTests(unittest.IsolatedAsyncioTestCase):
         with patch("core.tmdb.get_show", AsyncMock(return_value={"name": "New"})):
             with self.assertRaisesRegex(RuntimeError, "database unavailable"):
                 await get_or_create_show(db, 15, "Fallback", None)
+
+
+class CatalogueEpisodeTests(unittest.IsolatedAsyncioTestCase):
+    def session(self):
+        db = MagicMock()
+        result = MagicMock()
+        result.scalars.return_value.first.return_value = None
+        db.execute = AsyncMock(return_value=result)
+        return db
+
+    async def test_database_write_failure_propagates_instead_of_becoming_a_missing_episode(self):
+        data = {"episodes": [{"episode_number": 1, "id": 51, "name": "Episode"}]}
+        with (
+            patch("core.tmdb.get_season", AsyncMock(return_value=data)),
+            patch("core.catalog_import.create_media_safely", AsyncMock(side_effect=RuntimeError("database unavailable"))),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+                await get_or_create_episode_media(self.session(), 4, 40, 1, 1, None)
+
+    async def test_external_failure_is_skipped_without_writing_or_poisoning_the_cache(self):
+        cache = {}
+        with (
+            patch("core.tmdb.get_season", AsyncMock(side_effect=OSError("offline"))),
+            patch("core.catalog_import.create_media_safely", AsyncMock()) as create,
+        ):
+            self.assertIsNone(await get_or_create_episode_media(self.session(), 4, 40, 1, 1, None, cache))
+        create.assert_not_awaited()
+        self.assertEqual(cache, {})
+
+    async def test_season_cache_reuses_remote_data_and_keeps_episode_metadata(self):
+        data = {"episodes": [
+            {"episode_number": 1, "id": 51, "name": "First", "runtime": 42},
+            {"episode_number": 2, "id": 52, "name": "Second", "runtime": 48},
+        ]}
+        cache = {}
+        with (
+            patch("core.tmdb.get_season", AsyncMock(return_value=data)) as fetch,
+            patch("core.catalog_import.create_media_safely", AsyncMock(return_value=(MagicMock(), True))) as create,
+        ):
+            await get_or_create_episode_media(self.session(), 4, 40, 1, 1, "key", cache)
+            await get_or_create_episode_media(self.session(), 4, 40, 1, 2, "key", cache)
+        fetch.assert_awaited_once_with(40, 1, api_key="key")
+        self.assertEqual([call.args[1] for call in create.await_args_list], [51, 52])
+        self.assertEqual([call.kwargs["runtime"] for call in create.await_args_list], [42, 48])
+        self.assertEqual(create.await_args_list[1].kwargs["show_id"], 4)
+        self.assertEqual(create.await_args_list[1].kwargs["episode_number"], 2)
 
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database")

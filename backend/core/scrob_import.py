@@ -20,6 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.catalog_import import (
+    get_or_create_episode_media,
     get_or_create_show as _get_or_create_show,
     get_or_create_movie_media as _get_or_create_movie_media,
     get_or_create_series_media as _get_or_create_series_media,
@@ -35,6 +36,7 @@ from models.media import Media
 from models.ratings import Rating, RatingChanges
 from models.scrobble_connection import ScrobbleConnection
 from models.show import Show
+from core.import_ratings import apply_imported_rating
 from core.rewatch import record_rewatch_progress
 from core.watch_dedup import get_dedup_window_minutes, is_duplicate_watch_time, load_existing_watch_times
 from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
@@ -227,7 +229,7 @@ async def apply_scrob_import(
     """Restores a Scrob data export into the current user's account.
 
     Reuses the same get-or-create-media / rating-application helpers as the
-    Trakt export import (routers/trakt.py) since the history/ratings/watchlist
+    cloud catalogue imports since the history/ratings/watchlist
     shapes are identical by design. Collection, comments, and the four
     secret-bearing categories have no Trakt-import equivalent and are applied
     here directly.
@@ -238,10 +240,6 @@ async def apply_scrob_import(
     stale exported one.
     """
     from core.sync_jobs import raise_if_cancelled
-    from routers.trakt import (
-        _apply_imported_rating,
-        _get_or_create_episode_media,
-    )
 
     stats = {
         "movies": 0, "episodes": 0, "ratings": 0, "collected": 0,
@@ -342,7 +340,7 @@ async def apply_scrob_import(
                         if not show:
                             stats["errors"] += 1
                             continue
-                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key, season_cache)
+                        media = await get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key, season_cache)
                         if not media:
                             stats["errors"] += 1
                             continue
@@ -406,12 +404,12 @@ async def apply_scrob_import(
                                         if show:
                                             shows_by_tmdb2[show_tmdb_id] = show
                                     if show:
-                                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, ep_data["season"], ep_data["number"], api_key, season_cache)
+                                        media = await get_or_create_episode_media(db, show.id, show_tmdb_id, ep_data["season"], ep_data["number"], api_key, season_cache)
 
                             if not media:
                                 stats["skipped"] += 1
                                 continue
-                            if _apply_imported_rating(db, user_id, media, season_number, entry, existing_ratings, _new_ratings):
+                            if apply_imported_rating(db, user_id, media, season_number, entry, existing_ratings, _new_ratings):
                                 stats["ratings"] += 1
                             else:
                                 stats["skipped"] += 1
@@ -476,7 +474,7 @@ async def apply_scrob_import(
                         if not show:
                             stats["errors"] += 1
                             continue
-                        media = await _get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key, season_cache)
+                        media = await get_or_create_episode_media(db, show.id, show_tmdb_id, season_number, episode_number, api_key, season_cache)
                         if media and await _add_to_collection(media, _parse_collected_at(entry)):
                             stats["collected"] += 1
                         else:

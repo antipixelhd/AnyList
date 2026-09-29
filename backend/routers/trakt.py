@@ -20,10 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import trakt as trakt_client
 from core.catalog_import import (
+    get_or_create_episode_media as _get_or_create_episode_media,
     get_or_create_show as _get_or_create_show,
     get_or_create_movie_media as _get_or_create_movie_media,
     get_or_create_series_media as _get_or_create_series_media,
 )
+from core.import_ratings import apply_imported_rating as _apply_imported_rating, optional_imported_rated_at
 from core.cloud_reconciliation import require_cloud_reconciliation
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
 from core.trakt_export import MAX_TOTAL_SIZE, TraktExportData, parse_trakt_export
@@ -49,7 +51,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-TMDB_CONCURRENCY = 10
 TRAKT_HISTORY_OVERLAP = timedelta(minutes=5)
 TRAKT_HISTORY_PUSH_BATCH_SIZE = 100
 TRAKT_RATINGS_PUSH_BATCH_SIZE = 100
@@ -404,123 +405,6 @@ async def _get_or_create_person_media(db: AsyncSession, tmdb_id: int, name: str,
         return None
 
 
-def _trakt_rated_at(value: str | None) -> datetime:
-    if not value:
-        return datetime.utcnow()
-    from dateutil import parser as dt_parser
-
-    parsed = dt_parser.isoparse(value)
-    if parsed.tzinfo:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
-
-
-def _optional_trakt_rated_at(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return _trakt_rated_at(value)
-
-
-def _apply_imported_rating(
-    db: AsyncSession,
-    user_id: int,
-    media: Media,
-    season_number: int | None,
-    item: dict,
-    existing: dict[tuple[int, int | None], Rating],
-    changed: RatingChanges,
-) -> bool:
-    rating_value = float(item["rating"])
-    rated_at = _trakt_rated_at(item.get("rated_at"))
-    key = (media.id, season_number)
-    current = existing.get(key)
-    from core.rating_projection import is_projected_echo
-    if current and (current.rating == rating_value or is_projected_echo(current.rating, rating_value)):
-        # A provider echo of a converted half-step must not erase local
-        # precision or advance its timestamp over the original edit.
-        return False
-    if current:
-        current.rating = rating_value
-        current.rated_at = rated_at
-    else:
-        current = Rating(
-            user_id=user_id,
-            media_id=media.id,
-            season_number=season_number,
-            rating=rating_value,
-            rated_at=rated_at,
-        )
-        db.add(current)
-        existing[key] = current
-    changed[key] = rating_value
-    return True
-
-
-async def _get_or_create_episode_media(
-    db: AsyncSession,
-    show_id: int,
-    show_tmdb_id: int,
-    season_number: int,
-    episode_number: int,
-    api_key: str | None,
-    season_cache: dict[tuple[int, int], dict] | None = None,
-) -> Media | None:
-    result = await db.execute(
-        select(Media).where(
-            Media.show_id == show_id,
-            Media.season_number == season_number,
-            Media.episode_number == episode_number,
-            Media.media_type == MediaType.episode,
-        )
-    )
-    media = result.scalars().first()
-    if media:
-        return media
-    from core import tmdb
-    # Fetch episode detail from TMDB
-    try:
-        cache_key = (show_tmdb_id, season_number)
-        if season_cache is not None and cache_key in season_cache:
-            season_data = season_cache[cache_key]
-        else:
-            semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
-            async with semaphore:
-                season_data = await tmdb.get_season(show_tmdb_id, season_number, api_key=api_key)
-            if season_cache is not None:
-                season_cache[cache_key] = season_data
-        ep_map = {ep["episode_number"]: ep for ep in season_data.get("episodes", [])}
-        ep = ep_map.get(episode_number)
-        if not ep:
-            # TMDB has no such episode (provider numbering mismatch, e.g. a Plex/Trakt
-            # special counted differently) — don't fabricate a placeholder row for it,
-            # since it can never be enriched and would show up as a broken/phantom
-            # episode (e.g. in Next Up) with no real metadata behind it.
-            logger.warning(
-                "Trakt episode s%se%s not found on TMDB for show tmdb=%s — skipping",
-                season_number, episode_number, show_tmdb_id,
-            )
-            return None
-        media, _created = await create_media_safely(
-            db,
-            ep["id"],
-            MediaType.episode,
-            title=ep["name"],
-            overview=ep.get("overview"),
-            poster_path=tmdb.poster_url(ep.get("still_path"), size="w500"),
-            release_date=ep.get("air_date"),
-            tmdb_rating=ep.get("vote_average"),
-            runtime=ep.get("runtime"),  # see #169
-            show_id=show_id,
-            season_number=season_number,
-            episode_number=episode_number,
-            tmdb_data={"runtime": ep.get("runtime"), "cast": []},
-        )
-        return media
-    except Exception as exc:
-        logger.warning("Could not fetch episode s%se%s for show tmdb=%s: %s", season_number, episode_number, show_tmdb_id, exc)
-        return None
-
-
 class LiveTraktSource:
     """Fetches watched history, ratings, and lists from the live Trakt API."""
 
@@ -866,7 +750,7 @@ async def _apply_trakt_import(
                                 media=media,
                                 season_number=season_number,
                                 remote_score=float(item["rating"]),
-                                remote_rated_at=_optional_trakt_rated_at(item.get("rated_at")),
+                                remote_rated_at=optional_imported_rated_at(item.get("rated_at")),
                                 existing=existing_ratings,
                                 changed=_new_ratings,
                             )
