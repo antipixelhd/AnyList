@@ -125,7 +125,3 @@ $records | ConvertTo-Json | Set-Content -LiteralPath $pidFile
 Write-Host 'Ready: http://localhost:7340'
 Write-Host 'Login details: .venv\LOCAL-LOGIN.txt'
 if (!$NoBrowser) { Start-Process 'http://localhost:7340/login' }
-
-
-
-

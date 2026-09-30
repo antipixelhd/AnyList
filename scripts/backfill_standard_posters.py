@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from core import tmdb  # noqa: E402
+from core.settings_store import get_user_tmdb_key  # noqa: E402
 from db import AsyncSessionLocal, engine  # noqa: E402
 from models.media import Media, MediaType  # noqa: E402
 from models.tracking import TrackedEntry  # noqa: E402
-from routers.media import get_user_tmdb_key  # noqa: E402
 
 
 async def run(media_id: int | None, limit: int | None) -> tuple[int, int, int]:
