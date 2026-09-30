@@ -702,19 +702,6 @@ async def set_season_rating(
         resp.raise_for_status()
 
 
-async def remove_season_rating(
-    client_id: str,
-    access_token: str,
-    season_tmdb_id: int,
-) -> None:
-    """Remove a season rating from Trakt."""
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(
-            f"{TRAKT_BASE}/sync/ratings/remove",
-            json={"seasons": [{"ids": {"tmdb": season_tmdb_id}}]},
-            headers=_headers(client_id, access_token),
-        )
-        resp.raise_for_status()
 
 
 

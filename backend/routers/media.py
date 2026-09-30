@@ -103,24 +103,6 @@ MOVIE_GENRE_NAMES: dict[int, str] = {v: k for k, v in MOVIE_GENRE_IDS.items()}
 TV_GENRE_NAMES: dict[int, str] = {v: k for k, v in TV_GENRE_IDS.items()}
 
 
-def _genre_weight(genre_ids: list[int], liked: set[str], disliked: set[str], name_map: dict[int, str]) -> float:
-    """Weighted random score for an item based on user genre preferences.
-
-    Liked genres add +2, disliked genres subtract 1.5.  Items with only
-    disliked genres get a near-zero weight; mixed items can still surface.
-    """
-    if not liked and not disliked:
-        return 1.0
-    score = 1.0
-    for gid in genre_ids:
-        name = name_map.get(gid)
-        if name in liked:
-            score += 2.0
-        elif name in disliked:
-            score -= 1.5
-    return max(0.05, score)
-
-
 def _filter_disliked(
     results: list[dict],
     disliked: set[str],

@@ -340,11 +340,6 @@ async def get_top_rated_shows(page: int = 1, api_key: str = None, language: str 
     return await _get(f"{TMDB_BASE}/tv/top_rated", headers=get_headers(api_key), params=params)
 
 
-async def search_multi(q: str, page: int = 1, api_key: str = None, language: str | None = None) -> dict:
-    params: dict = {"query": q, "include_adult": "false", "page": page}
-    if language:
-        params["language"] = language
-    return await _get(f"{TMDB_BASE}/search/multi", headers=get_headers(api_key), params=params)
 
 
 async def search_movies(q: str, page: int = 1, year: int | None = None, api_key: str = None, language: str | None = None) -> dict:

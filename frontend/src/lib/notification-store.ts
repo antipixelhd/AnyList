@@ -181,7 +181,3 @@ export function subscribeNotifications(listener: NotificationListener, {signal}:
   }
   return unsubscribe;
 }
-
-export function getNotificationSnapshot(): NotificationSnapshot | null {
-  return currentSnapshot;
-}

@@ -444,20 +444,6 @@ async def get_episode_order(
     return result.scalar_one_or_none()
 
 
-async def get_mappings_for_tvdb_season(
-    db: AsyncSession,
-    series_tmdb_id: int,
-    tvdb_season_number: int,
-) -> list[EpisodeOrderMapping]:
-    result = await db.execute(
-        select(EpisodeOrderMapping)
-        .where(
-            EpisodeOrderMapping.series_tmdb_id == series_tmdb_id,
-            EpisodeOrderMapping.tvdb_season_number == tvdb_season_number,
-        )
-        .order_by(EpisodeOrderMapping.tvdb_episode_number)
-    )
-    return list(result.scalars().all())
 
 
 async def get_mapping_by_tvdb_position(

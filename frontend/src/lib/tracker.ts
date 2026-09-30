@@ -76,8 +76,6 @@ export function activityAction(activity: any) {
   return '';
 }
 
-export const activityLabel = activityAction;
-
 export function activityTime(value: string, now = Date.now()) {
   const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`;
   const date = new Date(normalized);

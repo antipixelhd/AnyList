@@ -54,21 +54,6 @@ WATCHLIST_SLUG = "__watchlist__"
 WATCH_DEDUP_WINDOW = timedelta(minutes=10)
 
 
-def _utc_naive(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str) and value:
-        try:
-            parsed = dt_parser.isoparse(value)
-        except (TypeError, ValueError):
-            return datetime.utcnow()
-    else:
-        return datetime.utcnow()
-    if parsed.tzinfo:
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
-
-
 def _utc_naive_optional(value: Any) -> datetime | None:
     if value is None or value == "":
         return None

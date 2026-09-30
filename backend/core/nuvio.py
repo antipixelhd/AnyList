@@ -751,15 +751,6 @@ async def push_watched_items(
     )
 
 
-async def push_watch_progress(
-    url: str,
-    refresh_token: str,
-    profile_id: int,
-    items: list[dict[str, Any]],
-    *,
-    on_refresh: OnRefresh = None,
-) -> NuvioSession:
-    return await _push_sync_items(url, refresh_token, profile_id, progress_items=items, on_refresh=on_refresh)
 
 
 async def push_sync_items(
