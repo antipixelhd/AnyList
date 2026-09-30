@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       preview:
-        description: Slot already present in the installed, reviewed slots.json
+        description: Slot committed in beta's reviewed ops/preview/slots.json
         type: string
         required: true
 permissions:
