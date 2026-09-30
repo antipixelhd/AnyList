@@ -2,6 +2,8 @@
 <div class="offline-toast" data-offline-toast role="status" aria-live="polite" hidden></div>
 
 <script>
+  import { wirePasswordToggles } from '../lib/password-toggle';
+  wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number };
   type NavigationState = {

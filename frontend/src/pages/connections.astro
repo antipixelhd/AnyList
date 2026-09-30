@@ -2169,29 +2169,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     }
 
   }
-  function setupPasswordToggles() {
-    const toggles = document.querySelectorAll('.password-toggle');
-    toggles.forEach(toggle => {
-      toggle.addEventListener('click', () => {
-        const input = toggle.parentElement?.querySelector('input');
-        if (!input) return;
-
-        const isPassword = input.type === 'password';
-        input.type = isPassword ? 'text' : 'password';
-
-        const eyeIcon = toggle.querySelector('.eye-icon');
-        const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
-
-        if (isPassword) {
-          eyeIcon?.classList.add('hidden');
-          eyeSlashIcon?.classList.remove('hidden');
-        } else {
-          eyeIcon?.classList.remove('hidden');
-          eyeSlashIcon?.classList.add('hidden');
-        }
-      });
-    });
-  }
 
   function setupConnections() {
     const apiKey = (document.querySelector<HTMLInputElement>('#scrob_api_key'))?.value ?? '';
@@ -4055,7 +4032,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   setupActions();
-  setupPasswordToggles();
   setupConnections();
   setupScrobbleConnections();
   setupSettingsForm();
@@ -4071,7 +4047,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   document.addEventListener('astro:after-swap', () => {
     setupJobMonitoring();
     setupActions();
-    setupPasswordToggles();
     setupConnections();
     setupSettingsForm();
     setupApiKey();

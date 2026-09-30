@@ -604,29 +604,6 @@ if (me.totp_enabled) {
     }
   }
 
-  function setupPasswordToggles() {
-    const toggles = document.querySelectorAll('.password-toggle');
-    toggles.forEach(toggle => {
-      toggle.addEventListener('click', () => {
-        const input = toggle.parentElement?.querySelector('input');
-        if (!input) return;
-
-        const isPassword = input.type === 'password';
-        input.type = isPassword ? 'text' : 'password';
-
-        const eyeIcon = toggle.querySelector('.eye-icon');
-        const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
-
-        if (isPassword) {
-          eyeIcon?.classList.add('hidden');
-          eyeSlashIcon?.classList.remove('hidden');
-        } else {
-          eyeIcon?.classList.remove('hidden');
-          eyeSlashIcon?.classList.add('hidden');
-        }
-      });
-    });
-  }
 
   function applySavedAccent() {
     const saved = localStorage.getItem('accentTheme') || 'blue';
@@ -784,7 +761,6 @@ if (me.totp_enabled) {
 
   applySavedAccent();
   setupActions();
-  setupPasswordToggles();
   setupSettingsForm();
   setupPasswordForm();
 
@@ -801,7 +777,6 @@ if (me.totp_enabled) {
   document.addEventListener('astro:after-swap', () => {
     applySavedAccent();
     setupActions();
-    setupPasswordToggles();
     setupSettingsForm();
     setupPasswordForm();
     setupExportData();

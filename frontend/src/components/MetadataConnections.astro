@@ -169,13 +169,5 @@ const { settings } = Astro.props;
         }
       });
     });
-    form.querySelectorAll<HTMLButtonElement>('.metadata-password-toggle').forEach(button => {
-      button.addEventListener('click', () => {
-        const input = button.parentElement!.querySelector('input')!;
-        input.type = input.type === 'password' ? 'text' : 'password';
-        button.querySelector('.eye-icon')?.classList.toggle('hidden');
-        button.querySelector('.eye-slash-icon')?.classList.toggle('hidden');
-      });
-    });
   });
 </script>

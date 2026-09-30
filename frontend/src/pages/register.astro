@@ -273,32 +273,7 @@ const heroMinHeightClass = showNav
 </div>
 
 <script>
-  function setupPasswordToggles() {
-    const toggles = document.querySelectorAll('.password-toggle');
-    toggles.forEach(toggle => {
-      toggle.addEventListener('click', () => {
-        const input = toggle.parentElement?.querySelector('input');
-        if (!input) return;
 
-        const isPassword = input.type === 'password';
-        input.type = isPassword ? 'text' : 'password';
-
-        const eyeIcon = toggle.querySelector('.eye-icon');
-        const eyeSlashIcon = toggle.querySelector('.eye-slash-icon');
-
-        if (isPassword) {
-          eyeIcon?.classList.add('hidden');
-          eyeSlashIcon?.classList.remove('hidden');
-        } else {
-          eyeIcon?.classList.remove('hidden');
-          eyeSlashIcon?.classList.add('hidden');
-        }
-      });
-    });
-  }
-
-  setupPasswordToggles();
-  document.addEventListener('astro:after-swap', setupPasswordToggles);
 
   // ── Bootstrap restore ──
   const bootstrapFile = document.getElementById('bootstrap-restore-file') as HTMLInputElement | null;

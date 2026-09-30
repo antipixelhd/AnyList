@@ -578,6 +578,8 @@ const bottomNavItem = (active: boolean) =>
   </div>
 
   <script>
+    import { wirePasswordToggles } from '../lib/password-toggle';
+    wirePasswordToggles();
     // ── Theme toggle ───────────────────────────────────────────────────────────
     const themeToggle = document.getElementById('theme-toggle');
 

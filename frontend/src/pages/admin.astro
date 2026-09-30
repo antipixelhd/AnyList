@@ -843,17 +843,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     });
   });
 
-  // ── Password toggles ──
-  document.querySelectorAll('.password-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const input = btn.closest('.relative')?.querySelector('input') as HTMLInputElement | null;
-      if (!input) return;
-      input.type = input.type === 'password' ? 'text' : 'password';
-      btn.querySelector('.eye-icon')?.classList.toggle('hidden');
-      btn.querySelector('.eye-slash-icon')?.classList.toggle('hidden');
-    });
-  });
-
   // ── Test & Fetch ──
   const postIntegrationCredentials = (path: string, credentials: { url: string; token: string }) =>
     fetch(path, {
