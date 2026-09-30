@@ -35,10 +35,6 @@ class User(UserBase):
     class Config:
         from_attributes = True
 
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -545,22 +541,6 @@ class GlobalSettings(BaseModel):
     enable_logged_out_navigation: bool = False
     disable_comments            : bool = False
     show_anime                  : bool = False
-
-    class Config:
-        from_attributes = True
-
-
-class MediaRequestOut(BaseModel):
-    id          : int
-    user_id     : int
-    tmdb_id     : int
-    media_type  : str
-    title       : str
-    poster_path : Optional[str]
-    status      : str
-    reviewed_by : Optional[int]
-    created_at  : datetime
-    updated_at  : datetime
 
     class Config:
         from_attributes = True

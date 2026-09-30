@@ -685,26 +685,6 @@ async def set_show_rating(
         )
         resp.raise_for_status()
 
-async def set_season_rating(
-    client_id: str,
-    access_token: str,
-    season_tmdb_id: int,
-    rating: float,
-) -> None:
-    """Rate a season on Trakt using its TMDB season identifier."""
-    trakt_rating = integer_provider_score(rating)
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(
-            f"{TRAKT_BASE}/sync/ratings",
-            json={"seasons": [{"rating": trakt_rating, "ids": {"tmdb": season_tmdb_id}}]},
-            headers=_headers(client_id, access_token),
-        )
-        resp.raise_for_status()
-
-
-
-
-
 async def remove_show_rating(client_id: str, access_token: str, tmdb_id: int) -> None:
     """Remove a show rating on Trakt."""
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:

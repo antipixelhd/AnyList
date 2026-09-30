@@ -83,33 +83,3 @@ async def dispatch_local_tracking_delta(
         if delivery_job_id is not None:
             from core.tracking_delivery import finish_tracking_delivery_job
             await finish_tracking_delivery_job(delivery_job_id)
-
-
-async def dispatch_local_watch_rollback(user_id: int, media_ids: set[int], delivery_job_id: int | None = None) -> None:
-    if not media_ids:
-        return
-    from core import watch_delivery
-
-    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    try:
-        async with factory() as db:
-            if delivery_job_id is not None:
-                from core.tracking_delivery import start_tracking_delivery_job
-                await start_tracking_delivery_job(db, delivery_job_id)
-            from core.watch_intents import queue_watch_intents, dispatch_watch_intents
-            await queue_watch_intents(db, user_id, media_ids)
-            await db.commit()
-            await dispatch_watch_intents(db, user_id)
-            await watch_delivery.push_watch_state(
-                db, user_id, sorted(media_ids), watched=False,
-                skip_stream_watch_writes=True,
-            )
-    except Exception:
-        logger.exception("Local watch rollback delivery failed for user %s", user_id)
-        if delivery_job_id is not None:
-            from core.tracking_delivery import finish_tracking_delivery_job
-            await finish_tracking_delivery_job(delivery_job_id, error="dispatcher_error")
-    else:
-        if delivery_job_id is not None:
-            from core.tracking_delivery import finish_tracking_delivery_job
-            await finish_tracking_delivery_job(delivery_job_id)

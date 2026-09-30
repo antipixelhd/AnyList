@@ -1065,7 +1065,6 @@ class TraktRatingsPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTes
             patch.object(trakt_router.trakt_client, "set_ratings_batch", set_batch),
             patch.object(trakt_router.trakt_client, "set_movie_rating", per_item),
             patch.object(trakt_router.trakt_client, "set_show_rating", per_item),
-            patch.object(trakt_router.trakt_client, "set_season_rating", per_item),
             patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={})),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="k")),
             patch.object(trakt_router.asyncio, "sleep", AsyncMock()),

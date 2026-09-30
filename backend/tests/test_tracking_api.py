@@ -126,17 +126,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'core.local_outbound.dispatch_queued_tracking_actions', self.queued_tracking_dispatch,
         )
         self.queued_tracking_dispatch_patch.start()
-        self.local_rollback = AsyncMock()
-        self.local_rollback_patch = patch(
-            'core.local_outbound.dispatch_local_watch_rollback', self.local_rollback,
-        )
-        self.local_rollback_patch.start()
 
     async def asyncTearDown(self):
         self.delivery_patch.stop()
         self.local_outbound_patch.stop()
         self.queued_tracking_dispatch_patch.stop()
-        self.local_rollback_patch.stop()
         await self.client.aclose(); await self.db.close()
         await self.transaction.rollback(); await self.connection.close(); await self.engine.dispose()
 
@@ -2521,7 +2515,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.local_outbound.assert_awaited_once()
         self.assertEqual(self.local_outbound.await_args.args[1], episode_ids)
         self.assertEqual(self.local_outbound.await_args.kwargs['removed_watched_ids'], set())
-        self.local_rollback.assert_not_awaited()
         completion_job = (await self.db.execute(select(TrackingDeliveryJob).where(
             TrackingDeliveryJob.id == completed.json()['delivery_job_id'],
         ))).scalar_one()
@@ -2533,7 +2526,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.local_outbound.assert_awaited_once()
         self.assertEqual(self.local_outbound.await_args.args[1], set())
         self.assertEqual(self.local_outbound.await_args.kwargs['removed_watched_ids'], episode_ids)
-        self.local_rollback.assert_not_awaited()
         rollback_job = (await self.db.execute(select(TrackingDeliveryJob).where(
             TrackingDeliveryJob.id == reverted.json()['delivery_job_id'],
         ))).scalar_one()

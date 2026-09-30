@@ -26,16 +26,6 @@ class CommentUpdate(BaseModel):
     content: str
     is_spoiler: bool = False
 
-class CommentResponse(BaseModel):
-    id: int
-    user_id: int
-    username: str
-    display_name: str
-    user_is_public: bool
-    content: str
-    created_at: str
-    updated_at: Optional[str] = None
-
 @router.get("")
 async def list_comments(
     media_type: str,
