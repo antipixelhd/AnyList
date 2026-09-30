@@ -1,0 +1,26 @@
+name: Preview Operations
+on:
+  workflow_dispatch:
+    inputs:
+      preview:
+        type: choice
+        required: true
+        options: [beta, development-1, development-2]
+      operation:
+        type: choice
+        required: true
+        options: [status, restart, redeploy, reset-db-from-beta, recreate-preview]
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: anylist-preview-${{ inputs.preview }}
+  cancel-in-progress: false
+jobs:
+  operate:
+    if: vars.PREVIEW_ENABLED == 'true'
+    uses: ./.github/workflows/preview-remote.yml
+    with:
+      preview: ${{ inputs.preview }}
+      operation: ${{ inputs.operation }}
+    secrets: inherit
