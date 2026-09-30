@@ -9,8 +9,6 @@ on:
     secrets:
       TS_OAUTH_CLIENT_ID: {required: true}
       TS_AUDIENCE: {required: true}
-      PREVIEW_SSH_PRIVATE_KEY: {required: true}
-      PREVIEW_SSH_KNOWN_HOSTS: {required: true}
 permissions:
   contents: read
   id-token: write
@@ -31,8 +29,6 @@ jobs:
           PREVIEW_VPS_HOST: ${{ vars.PREVIEW_VPS_HOST }}
           CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           AUDIENCE: ${{ secrets.TS_AUDIENCE }}
-          SSH_KEY: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
-          KNOWN_HOSTS: ${{ secrets.PREVIEW_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -44,7 +40,7 @@ jobs:
                    os.environ['OPERATION'], os.environ['SHA'], os.environ['FORCED'])
           if not re.fullmatch(r'[a-z0-9][a-z0-9.-]*\.ts\.net', os.environ['PREVIEW_VPS_HOST']):
               raise SystemExit('Set PREVIEW_VPS_HOST to the private Tailscale FQDN')
-          for name in ['CLIENT_ID', 'AUDIENCE', 'SSH_KEY', 'KNOWN_HOSTS']:
+          for name in ['CLIENT_ID', 'AUDIENCE']:
               if not os.environ[name]: raise SystemExit('Missing preview configuration: ' + name)
           PY
       - name: Join temporary CI tailnet node with workload identity
@@ -59,41 +55,22 @@ jobs:
         run: |
           set -euo pipefail
           tailscale ping --timeout=30s "$HOST"
-          # Expansion belongs to the inner bash; HOST is passed as its positional argument.
-          # shellcheck disable=SC2016
-          timeout 15 bash -c 'exec 3<>/dev/tcp/$1/22' -- "$HOST"
       - name: Run installed preview entrypoint
         env:
           HOST: ${{ vars.PREVIEW_VPS_HOST }}
-          SSH_KEY: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
-          KNOWN_HOSTS: ${{ secrets.PREVIEW_SSH_KNOWN_HOSTS }}
           SLOT: ${{ inputs.preview }}
           OPERATION: ${{ inputs.operation }}
           SHA: ${{ inputs.sha }}
           FORCED: ${{ inputs.forced }}
         run: |
           set -euo pipefail
-          umask 077
-          key=$(mktemp)
-          hosts=$(mktemp)
-          trap 'rm -f "$key" "$hosts"' EXIT
-          printf '%s\n' "$SSH_KEY" > "$key"
-          printf '%s\n' "$KNOWN_HOSTS" > "$hosts"
           args=(preview "$OPERATION" "$SLOT")
           if [[ "$OPERATION" == deploy ]]; then args+=("$SHA" "$FORCED"); fi
-          ssh_options=(-T -i "$key" -o BatchMode=yes -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts"
-            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
           if [[ "$OPERATION" == provision ]]; then
-            # SSH options intentionally expand locally; command is a fixed literal.
-            # shellcheck disable=SC2029
-            ssh "${ssh_options[@]}" "anylist-preview-ci@$HOST" 'preview sync-config beta'
+            tailscale ssh "anylist-preview-ci@$HOST" preview sync-config beta
           fi
           result=0
-          # Validated remote arguments intentionally expand on this runner.
-          # shellcheck disable=SC2029
-          ssh "${ssh_options[@]}" \
-            "anylist-preview-ci@$HOST" "${args[*]}" | tee preview-result.log || result=$?
+          tailscale ssh "anylist-preview-ci@$HOST" "${args[@]}" | tee preview-result.log || result=$?
           {
             printf '### Preview %s — %s\n\n' "$SLOT" "$OPERATION"
             printf '```text\n'

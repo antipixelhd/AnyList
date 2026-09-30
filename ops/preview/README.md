@@ -8,9 +8,10 @@ This implementation does not configure Codex Cloud or change Docker publishing.
 ## Stage boundary
 
 Stage 1 supplies scripts, systemd/SSH templates, workflows, tests, documentation,
-and branches. It intentionally leaves the Tailscale client ID/audience, CI SSH
-key, pinned VPS host key, and actual private hostname unpopulated. Deployment jobs
-are skipped until repository variable `PREVIEW_ENABLED` is exactly `true`.
+and branches. It intentionally leaves the Tailscale client ID/audience and actual
+private hostname unpopulated. Tailscale SSH needs no CI private key or pinned
+known-hosts secret. Deployment jobs are skipped until repository variable
+`PREVIEW_ENABLED` is exactly `true`.
 
 Stage 2 installs infrastructure and configures access. Linux/systemd/PostgreSQL/
 Tailscale behavior must be exercised there; local unit tests do not substitute for
@@ -36,9 +37,11 @@ and is never restarted by deployment. Public URLs are
 The controller lives in root-owned `/opt/anylist-preview`, outside all branch
 checkouts. Root only validates inputs, manages fixed preview services/databases,
 and starts commands as the slot user. Git, npm, uv, Alembic, and all application
-Python/Node code execute as that slot user. CI uses `anylist-preview-ci`, a forced
-SSH command, root-controlled authorized keys, no PTY/forwarding, and sudo access
-only to the validated gateway. It has no interactive root/production shell.
+Python/Node code execute as that slot user. CI authenticates with Tailscale SSH as
+`anylist-preview-ci`. Its root-owned login shell accepts only validated preview
+commands, refuses interactive/PTY sessions, and never evaluates shell expressions.
+Its home is root-owned and it has sudo access only to the isolated Python gateway.
+OpenSSH explicitly denies this account. It has no interactive root/production shell.
 
 Only trusted repository contributors should push deployable branches. Application
 migrations run with their slot's DB owner permissions: a malicious migration could
@@ -138,13 +141,14 @@ review desired bypass/PR policies before enabling a ruleset.
 | --- | --- | --- |
 | Secret | TS_OAUTH_CLIENT_ID | Tailscale federated identity Client ID |
 | Secret | TS_AUDIENCE | Tailscale federated identity Audience |
-| Secret | PREVIEW_SSH_PRIVATE_KEY | Dedicated CI Ed25519 private key |
-| Secret | PREVIEW_SSH_KNOWN_HOSTS | Verified pinned OpenSSH host-key line for the private VPS hostname |
 | Variable | PREVIEW_VPS_HOST | Actual `<machine>.<tailnet>.ts.net`, no scheme/port |
 | Variable | PREVIEW_ENABLED | `true` only after bootstrap/configuration; unset or `false` during Stage 1 |
 
 No OAuth client secret, reusable auth key, GitHub PAT, production secret, or DB
-password is required in the repository. Public Git fetches use the public repository.
+password is required in the repository. `PREVIEW_SSH_PRIVATE_KEY` and
+`PREVIEW_SSH_KNOWN_HOSTS` are no longer required. `tailscale ssh` verifies host keys
+through Tailscale rather than a committed or manually pinned known-hosts file.
+Public Git fetches use the public repository.
 The actual hostname is written to `/etc/anylist-preview/hostname` during bootstrap.
 Per-slot app secrets/DB passwords are generated only on the VPS. Optional app settings
 belong in those root-owned env files; never commit populated files.
@@ -163,12 +167,16 @@ belong in those root-owned env files; never commit populated files.
    `tailscale/github-action@v4` with `id-token: write` and `tags: tag:ci`.
 3. Add minimum network grants: CI → preview VPS **TCP 22 only**. Review existing broad
    grants/ACLs: adding a restrictive rule does not override an existing allow-all rule.
-   Allow your reviewer identities → preview tag TCP 8001/8002/8003 separately. Use OS
-   SSH, not Tailscale SSH. Example fragment (merge into your existing policy):
+   Allow your reviewer identities → preview tag TCP 8001/8002/8003 separately. Add a
+   Tailscale SSH rule accepting only `tag:ci` → `tag:anylist-preview` → the explicit
+   `anylist-preview-ci` Unix account. Use `accept`, since tagged CI cannot use
+   interactive `check` mode. Do not allow root or `autogroup:nonroot` for CI.
+   Example fragment (merge into your existing policy):
 
    ```json
    {"tagOwners":{"tag:ci":["autogroup:admin"],"tag:anylist-preview":["autogroup:admin"]},
-    "grants":[{"src":["tag:ci"],"dst":["tag:anylist-preview"],"ip":["tcp:22"]}]}
+    "grants":[{"src":["tag:ci"],"dst":["tag:anylist-preview"],"ip":["tcp:22"]}],
+    "ssh":[{"action":"accept","src":["tag:ci"],"dst":["tag:anylist-preview"],"users":["anylist-preview-ci"]}]}
    ```
 
 4. Bootstrap using direct administrator access. Supported baseline: Ubuntu 24.04,
@@ -191,26 +199,31 @@ belong in those root-owned env files; never commit populated files.
    tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' | sudo tee /etc/anylist-preview/hostname
    ```
 
-5. On a trusted admin machine generate a dedicated identity:
+5. Enable Tailscale SSH on the VPS after the reviewed network/SSH rules are in place:
 
    ```bash
-   ssh-keygen -t ed25519 -f anylist-preview-ci -C anylist-preview-ci
-   gh secret set PREVIEW_SSH_PRIVATE_KEY --repo antipixelhd/AnyList < anylist-preview-ci
-   ```
-
-   Install **only its public key**, prefixed with `restrict`, in root-owned
-   `/etc/anylist-preview/ci_authorized_keys`. Bootstrap installs an sshd Match block
-   that forces `/usr/local/bin/anylist-preview-ci`, disables passwords/PTY/forwarding,
-   and uses that root-controlled key file. Verify `sudo sshd -t` and effective Match
-   settings, then `sudo systemctl reload ssh`. Verify the VPS Ed25519 host-key
-   fingerprint directly (`sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`), and
-   create the pinned known-hosts line with the actual Tailscale hostname and that
-   public key. Do not blindly trust an unauthenticated `ssh-keyscan` result.
-
-   ```bash
-   gh secret set PREVIEW_SSH_KNOWN_HOSTS --repo antipixelhd/AnyList < verified-known-hosts
+   sudo tailscale set --ssh
+   sudo sshd -t
+   sudo systemctl reload ssh
    gh variable set PREVIEW_VPS_HOST --repo antipixelhd/AnyList --body '<actual-private-FQDN>'
    ```
+
+   Run the GitHub variable command on your authenticated admin machine. No SSH key
+   generation, authorized-key installation, or known-hosts secret is needed.
+   Bootstrap installs `/usr/local/bin/anylist-preview-ci` as the CI account's login
+   shell, with isolated Python (`-I`), root-owned code/home, and a deny rule for
+   ordinary OpenSSH. Tailscale SSH runs that shell with `-c <remote-command>`;
+   the wrapper parses arguments and calls only the validated sudo gateway. It does
+   not use `SSH_ORIGINAL_COMMAND` or OpenSSH `ForceCommand`.
+
+   Keep SSH `acceptEnv` empty for CI; do not forward interpreter/loader environment
+   variables. Test the installed wrapper using Ubuntu's normal login/su path.
+   Tailscale's SFTP subsystem has an internal fallback that can bypass login shells:
+   do not assume OpenSSH subsystem/forwarding settings restrict Tailscale SSH.
+   The CI account therefore has no writable home, no slot-user group membership,
+   and no access to slot env files or production secrets. Verify file-transfer and
+   forwarding behavior and filesystem permissions during Stage 2; neither is used
+   by preview deployment. Interactive/PTY/exec requests must remain restricted.
 
 6. On the VPS, provision beta first, then development slots:
 
@@ -239,7 +252,11 @@ belong in those root-owned env files; never commit populated files.
    restart, explicit reset, and beta reset refusal. Record branch SHA and DB revision
    before/after. Test valid multiple heads/merge revisions using disposable data.
    Verify that disconnecting SSH leaves the systemd deployment running safely.
-   Confirm CI cannot reach production services and cannot get an interactive shell.
+   Confirm CI cannot reach production services or get an interactive shell. Test
+   arbitrary commands, shell injection, PTY requests, beta reset, SFTP/scp and
+   forwarding attempts. Confirm the CI account cannot read app/production secrets
+   or write installed controller/home files. Validate successful `tailscale ssh`
+   commands from the actual ephemeral GitHub runner, without interactive prompts.
 
 ## Adding development-3 later
 
@@ -291,6 +308,8 @@ are covered by `npm test`, `npm run check`, and `npm run build` in frontend.
 Implementation APIs were verified with Context7 against official docs:
 [Tailscale Action](https://tailscale.com/docs/integrations/github/github-action),
 [workload identity](https://tailscale.com/docs/features/workload-identity-federation),
+[Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh),
+[SSH CLI](https://tailscale.com/docs/reference/tailscale-cli),
 [Astro configuration](https://docs.astro.build/en/reference/configuration-reference/),
 [Astro environment migration](https://docs.astro.build/en/guides/upgrade-to/v6/),
 [Alembic branch graphs](https://alembic.sqlalchemy.org/en/latest/branches.html),

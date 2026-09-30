@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 
+sys.path.insert(0, "/opt/anylist-preview")
 from controller import load_slots, validate
 
 
@@ -19,7 +20,7 @@ def main():
     unit = "anylist-preview-job-" + uuid.uuid4().hex
     # No timeout/RuntimeMaxSec. Losing SSH or cancelling a runner cannot kill a migration.
     job = subprocess.Popen(["systemd-run", "--wait", "--unit", unit,
-                            "--property=Type=exec", "/usr/bin/python3", "-u",
+                            "--property=Type=exec", "/usr/bin/python3", "-I", "-u",
                             "/opt/anylist-preview/controller.py", *args])
     logs = subprocess.Popen(["journalctl", "--follow", "--unit", unit, "--output=cat", "--since=now"])
     try:

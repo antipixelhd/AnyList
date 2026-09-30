@@ -13,19 +13,16 @@ for name in controller.py migration_state.py gateway.py ci_entry.py slots.json b
   install -o root -g root -m 644 "$source_dir/$name" "/opt/anylist-preview/$name"
 done
 python3 -c "import sys; sys.path.insert(0, '/opt/anylist-preview'); from controller import load_slots; load_slots()"
-id anylist-preview-ci >/dev/null 2>&1 || useradd --system --create-home --shell /bin/sh anylist-preview-ci
-cat > /usr/local/bin/anylist-preview-ci <<'EOF'
-#!/bin/sh
-exec /usr/bin/python3 /opt/anylist-preview/ci_entry.py
-EOF
-chmod 755 /usr/local/bin/anylist-preview-ci
+install -o root -g root -m 755 "$source_dir/ci_entry.py" /usr/local/bin/anylist-preview-ci
+install -d -o root -g root -m 755 /var/empty/anylist-preview-ci
+id anylist-preview-ci >/dev/null 2>&1 || useradd --system --no-create-home \
+  --home-dir /var/empty/anylist-preview-ci --shell /usr/local/bin/anylist-preview-ci anylist-preview-ci
+usermod --home /var/empty/anylist-preview-ci --shell /usr/local/bin/anylist-preview-ci anylist-preview-ci
 cat > /etc/sudoers.d/anylist-preview-ci <<'EOF'
-anylist-preview-ci ALL=(root) NOPASSWD: /usr/bin/python3 /opt/anylist-preview/gateway.py *
+anylist-preview-ci ALL=(root) NOPASSWD: /usr/bin/python3 -I /opt/anylist-preview/gateway.py *
 EOF
 chmod 440 /etc/sudoers.d/anylist-preview-ci
 visudo -cf /etc/sudoers.d/anylist-preview-ci
 install -o root -g root -m 644 "$source_dir/sshd.conf" /etc/ssh/sshd_config.d/80-anylist-preview-ci.conf
-touch /etc/anylist-preview/ci_authorized_keys
-chmod 644 /etc/anylist-preview/ci_authorized_keys
 sshd -t
-echo 'Controller installed. Configure hostname + forced-command authorized key; provision beta first. See README.md.'
+echo 'Controller installed. Configure Tailscale SSH policy + hostname; provision beta first. See README.md.'
