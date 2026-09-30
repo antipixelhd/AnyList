@@ -1,4 +1,5 @@
 ---
+import { sessionCookieName } from "../lib/session-cookies";
 // Only allow POST to prevent logout CSRF via crafted GET links.
 // SameSite=Lax permits top-level cross-site navigations, so a GET logout
 // would allow any external site to log out the user by tricking them into
@@ -6,6 +7,6 @@
 if (Astro.request.method !== "POST") {
   return Astro.redirect("/login");
 }
-Astro.cookies.delete("token", { path: "/" });
+Astro.cookies.delete(sessionCookieName("token"), { path: "/" });
 return Astro.redirect("/login");
 ---

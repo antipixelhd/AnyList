@@ -1,10 +1,11 @@
 ---
+import { sessionCookieName } from "../../lib/session-cookies";
 import MediaCard from "../../components/MediaCard.astro";
 import { api, type MediaItem } from "../../lib/api";
 
 export const partial = true;
 
-const token = Astro.cookies.get("token")?.value;
+const token = Astro.cookies.get(sessionCookieName("token"))?.value;
 const personId = parseInt(Astro.url.searchParams.get("person_id") || "0");
 const page = parseInt(Astro.url.searchParams.get("page") || "1");
 const collectionParam = Astro.url.searchParams.get("collection");

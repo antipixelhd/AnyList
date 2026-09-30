@@ -1,0 +1,5 @@
+{
+  "beta": {"frontend_port": 8001, "backend_port": 8101, "database": "anylist_preview_beta", "persistent": true},
+  "development-1": {"frontend_port": 8002, "backend_port": 8102, "database": "anylist_preview_development_1", "persistent": false},
+  "development-2": {"frontend_port": 8003, "backend_port": 8103, "database": "anylist_preview_development_2", "persistent": false}
+}

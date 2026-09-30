@@ -1,4 +1,5 @@
 ---
+import { sessionCookieName, secureSessionCookie } from "../lib/session-cookies";
 import Base from "../layouts/Base.astro";
 import AuthHero from "../components/AuthHero.astro";
 import BrandMark from "../components/BrandMark.astro";
@@ -65,10 +66,10 @@ if (Astro.request.method === "POST") {
         showTotpStep = true;
         tempToken = result.temp_token;
       } else if (result.access_token) {
-        Astro.cookies.set("token", result.access_token, {
+        Astro.cookies.set(sessionCookieName("token"), result.access_token, {
           path: "/",
           httpOnly: true,
-          secure: import.meta.env.PROD,
+          secure: secureSessionCookie(import.meta.env.PROD),
           sameSite: "lax",
           maxAge: 60 * 60 * 24 * 7,
         });
@@ -83,10 +84,10 @@ if (Astro.request.method === "POST") {
     try {
       const result = await api.auth.totp2faVerifyLogin({ temp_token: submittedTempToken, code });
       if (result.access_token) {
-        Astro.cookies.set("token", result.access_token, {
+        Astro.cookies.set(sessionCookieName("token"), result.access_token, {
           path: "/",
           httpOnly: true,
-          secure: import.meta.env.PROD,
+          secure: secureSessionCookie(import.meta.env.PROD),
           sameSite: "lax",
           maxAge: 60 * 60 * 24 * 7,
         });
@@ -100,7 +101,7 @@ if (Astro.request.method === "POST") {
   }
 }
 
-const token = Astro.cookies.get("token")?.value;
+const token = Astro.cookies.get(sessionCookieName("token"))?.value;
 if (token) {
   return Astro.redirect(nextPath);
 }

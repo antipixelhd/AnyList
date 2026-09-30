@@ -1,8 +1,8 @@
 import { responsiveArtwork } from "./responsive-artwork";
 
 export async function tracker(path: string, token?: string) {
-  const port = import.meta.env.BACKEND_PORT ?? '7331';
-  const response = await fetch(`http://localhost:${port}/tracking/${path}`, {
+  const port = process.env.BACKEND_PORT ?? '7331';
+  const response = await fetch(`http://127.0.0.1:${port}/tracking/${path}`, {
     headers: token ? {Authorization: `Bearer ${token}`} : {},
   });
   if (!response.ok) throw new Error(response.status === 403 ? 'This profile is private.' : response.status === 404 ? 'Not found.' : 'Unable to load this page. Please try again.');

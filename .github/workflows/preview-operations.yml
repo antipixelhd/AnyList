@@ -1,4 +1,4 @@
-name: Preview Operations
+name: "preview: manual actions"
 on:
   workflow_dispatch:
     inputs:

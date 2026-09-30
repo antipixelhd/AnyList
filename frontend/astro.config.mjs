@@ -5,6 +5,14 @@ import tailwindcss from '@tailwindcss/vite';
 
 import node from '@astrojs/node';
 
+const previewHostname = process.env.PREVIEW_HOSTNAME;
+if (previewHostname && !/^[a-z0-9][a-z0-9.-]*$/i.test(previewHostname)) {
+  throw new Error('PREVIEW_HOSTNAME must be a hostname without scheme or port');
+}
+const allowedHosts = ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com',
+  ...(previewHostname ? [previewHostname] : [])];
+const previewUrl = previewHostname ? new URL(process.env.SERVER_URL || '') : undefined;
+
 // https://astro.build/config
 export default defineConfig({
   output: 'server',
@@ -18,6 +26,7 @@ export default defineConfig({
 
   server: {
     port: 7330,
+    allowedHosts,
   },
 
   vite: {
@@ -29,7 +38,12 @@ export default defineConfig({
       include: ['qrcode', 'chart.js/auto'],
     },
     server: {
-      allowedHosts: ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com'],
+      allowedHosts,
+      // Serve binds the same port on the Tailscale interface. Vite otherwise
+      // probes the wildcard address and silently moves to another port.
+      ...(previewHostname ? { host: '127.0.0.1', strictPort: true } : {}),
+      ...(previewHostname ? { hmr: { protocol: 'wss', host: previewHostname,
+        clientPort: Number(previewUrl?.port || 443) } } : {}),
     }
   },
 

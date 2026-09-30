@@ -1,7 +1,8 @@
 import type { APIRoute } from "astro";
+import { sessionCookieName } from "../../../lib/session-cookies.ts";
 
-const BACKEND_PORT = (import.meta.env?.BACKEND_PORT as string | undefined) ?? "7331";
-const BACKEND = `http://localhost:${BACKEND_PORT}`;
+const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
+const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
 
 // This proxy is a generic catch-all for every backend path, so a redirect
 // passed straight through to the browser must be pinned to hosts we actually
@@ -28,7 +29,8 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
       if (tokenQuery) {
         forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
       } else {
-        const tokenMatch = /(?:^|;\s*)token=([^;]+)/.exec(request.headers.get("Cookie") ?? "");
+        const tokenMatch = new RegExp(`(?:^|;\\s*)${sessionCookieName("token")}=([^;]+)`)
+          .exec(request.headers.get("Cookie") ?? "");
         if (tokenMatch) {
           forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
         }

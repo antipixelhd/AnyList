@@ -6,6 +6,28 @@ function context(method = 'GET', headers = {}, query = '') {
   return { params: { path: 'media/example' }, request: new Request(`http://localhost/api/proxy/media/example${query}`, { method, headers }) };
 }
 
+test('cookie authentication uses only the selected preview slot with production defaults preserved', async (t) => {
+  const previousSlot = process.env.PREVIEW_SLOT;
+  t.after(() => {
+    if (previousSlot === undefined) delete process.env.PREVIEW_SLOT;
+    else process.env.PREVIEW_SLOT = previousSlot;
+  });
+  const forwarded = [];
+  t.mock.method(globalThis, 'fetch', async (_, options) => {
+    forwarded.push(options.headers.get('Authorization'));
+    return new Response(null, { status: 204 });
+  });
+  const cookies = 'token=production; anylist_beta_token=beta; anylist_development_1_token=feature';
+  for (const slot of ['beta', 'development-1', undefined]) {
+    if (slot === undefined) delete process.env.PREVIEW_SLOT;
+    else process.env.PREVIEW_SLOT = slot;
+    await GET(context('GET', { Cookie: cookies }));
+  }
+  process.env.PREVIEW_SLOT = 'development-2';
+  await GET(context('GET', { Cookie: cookies }));
+  assert.deepEqual(forwarded, ['Bearer beta', 'Bearer feature', 'Bearer production', null]);
+});
+
 test('malformed credentials return 400 before contacting the backend', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('unexpected fetch'); });
   const response = await GET(context('GET', { Cookie: 'token=%ZZ' }));
