@@ -14,3 +14,48 @@ A self-hosted movie and TV tracker for personal lists and shared discoveries.
 - Share public or private profiles with lists, favorites, statistics, and activity. Follow people to compare lists and see their activity.
 - See series progress and upcoming season dates, with a notification inbox for new releases and connection changes that need review.
 - Connect media services and trackers including Stremio, Nuvio, ARVIO, Plex, Emby, Jellyfin, Kodi, Trakt, Simkl, MDBList, and Bingebase. Import Netflix viewing-history CSVs or exports from AnyList/Scrob, Trakt, and Yamtrack/Floppy. Available sync fields depend on the connected service.
+
+## Development
+
+Backend dependencies live in `backend/pyproject.toml` and `backend/uv.lock`;
+frontend dependencies live in `frontend/package.json` and `frontend/package-lock.json`.
+CI uses Python 3.13 and Node 22; the frontend requires Node 22.12 or newer.
+
+For Windows development, install Python, Node, uv, and Docker Desktop. Run this
+from the repository root in PowerShell:
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $PWD '.venv'
+uv sync --project backend --frozen --group dev
+npm --prefix frontend ci
+.\Run Local.ps1
+```
+
+The launcher expects the root `.venv`; uv's [project environment setting](https://docs.astral.sh/uv/concepts/projects/config/#project-environment-path)
+keeps installation aligned with it. The launcher starts the database, applies
+migrations, and serves the frontend on 7340 and backend on 7341. Local preview
+login details, when available, are in `.venv/LOCAL-LOGIN.txt`. Stop the web
+servers with `.\Run Local.ps1 -Stop`; saved database data is retained.
+On an empty database, create the first account at `/register`; it becomes an
+administrator.
+
+Run checks from the indicated directory. Keep `UV_PROJECT_ENVIRONMENT` set to
+the absolute root `.venv` path when using uv commands.
+
+| Directory | Command |
+| --- | --- |
+| `backend/` | `uv run --no-sync python -m unittest discover -s tests -q` |
+| `backend/` | `uvx ruff==0.16.8 check .` |
+| `frontend/` | `npm test` |
+| `frontend/` | `npm run check` |
+| `frontend/` | `npm run build` |
+
+Backend integration tests require a disposable PostgreSQL database. Set
+`SECRET_KEY`, `DATABASE_URL`, and `TRACKING_TEST_DATABASE_URL`, then initialize
+that database with `uv run --no-sync alembic upgrade head`. Database-dependent
+tests skip when their fixture URL is absent. [CI](.github/workflows/ci.yml)
+shows the complete isolated test setup.
+
+Start with [backend behavior and module locations](docs/agents/BACKEND.md),
+[frontend structure and commands](frontend/README.md), or
+[frontend styling conventions](docs/agents/FRONTEND-STYLES.md) for the affected area.
