@@ -39,6 +39,17 @@ servers with `.\Run Local.ps1 -Stop`; saved database data is retained.
 On an empty database, create the first account at `/register`; it becomes an
 administrator.
 
+Optional local preview tools run with the root virtual environment:
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/seed_local_preview.py` | Create the synthetic `preview` account and example lists in the local database |
+| `scripts/prepare_local_login.py` | Prepare login details for existing preview accounts; also run by the launcher |
+| `scripts/verify_local_preview.py` | Check available preview logins and read-only APIs; write `.venv/<username>-browser.json` for browser QA |
+
+After seeding, run login preparation before verification. Browser state contains
+session credentials and stays in the ignored `.venv` directory.
+
 Run checks from the indicated directory. Keep `UV_PROJECT_ENVIRONMENT` set to
 the absolute root `.venv` path when using uv commands.
 

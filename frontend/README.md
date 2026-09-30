@@ -23,3 +23,7 @@ its backend on 7341, and the local database. See scripts/local.ps1.
 
 Browser controllers must clean up requests and listeners on client navigation.
 Use neighbouring controllers and tests as the guide for page lifetimes.
+
+Local UI review pages at `/dev/cards` and `/dev/details` use synthetic data and
+procedural artwork. They are available only in development on loopback hosts;
+the card page renders the shared production components without a backend session.
