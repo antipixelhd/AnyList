@@ -1,5 +1,6 @@
 from core import outbound_sync, watch_echo, plex_watchlist
 from core import settings_store
+from core.catalog_import import get_or_create_series_media
 from core import stremio_payloads, stremio_delivery
 from core.db_queries import latest_watched_at as _latest_watched_at
 from core import nuvio_payloads, nuvio_projection
@@ -82,26 +83,6 @@ _MEDIA_BROWSER_ITEM_SOURCES = (
     CollectionSource.stremio,
     CollectionSource.arvio,
 )
-
-
-async def _get_or_create_series_rating_media(
-    db: AsyncSession,
-    tmdb_id: int,
-    title: str,
-    api_key: str | None,
-) -> Media:
-    result = await db.execute(
-        select(Media).where(
-            Media.tmdb_id == tmdb_id,
-            Media.media_type == MediaType.series,
-        )
-    )
-    media = result.scalars().first()
-    if media:
-        return media
-    media, _created = await create_media_safely(db, tmdb_id, MediaType.series, title=title)
-    await enrich_media(media, api_key=api_key)
-    return media
 
 
 def extract_watch_state(item: dict, source: CollectionSource) -> dict:
@@ -2136,7 +2117,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                 continue
                             try:
                                 async with db.begin_nested():
-                                    media = await _get_or_create_series_rating_media(
+                                    media = await get_or_create_series_media(
                                         db,
                                         show_tmdb_id,
                                         show_titles.get(parent_key, ""),
@@ -2169,7 +2150,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                 continue
                             try:
                                 async with db.begin_nested():
-                                    media = await _get_or_create_series_rating_media(
+                                    media = await get_or_create_series_media(
                                         db,
                                         show_tmdb_id,
                                         show_titles.get(show_key, ""),

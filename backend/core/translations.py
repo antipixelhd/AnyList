@@ -146,25 +146,8 @@ def _translated_poster(raw: str | None) -> str | None:
     return raw
 
 
-def apply_media_translations(items: list[dict], translations: dict[int, dict]) -> list[dict]:
-    """Overlay stored translations onto format_media() / _format_media_item() dicts."""
-    for item in items:
-        t = translations.get(item.get("id"))
-        if not t:
-            continue
-        if t.get("title"):
-            item["title"] = t["title"]
-        if t.get("overview"):
-            item["overview"] = t["overview"]
-        if t.get("tagline"):
-            item["tagline"] = t["tagline"]
-        if t.get("poster_path"):
-            item["poster_path"] = _translated_poster(t["poster_path"])
-    return items
-
-
-def apply_show_translations(items: list[dict], translations: dict[int, dict]) -> list[dict]:
-    """Overlay stored translations onto format_show() dicts."""
+def apply_translations(items: list[dict], translations: dict[int, dict]) -> list[dict]:
+    """Overlay stored translations onto formatted media or show dictionaries."""
     for item in items:
         t = translations.get(item.get("id"))
         if not t:

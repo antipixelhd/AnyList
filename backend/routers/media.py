@@ -46,7 +46,7 @@ from core.translations import (
     get_user_metadata_language,
     get_media_translations,
     upsert_media_translation,
-    apply_media_translations,
+    apply_translations,
 )
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID, require_admin
 from models.users import User, UserSettings
@@ -962,7 +962,7 @@ async def list_media(
     if lang:
         media_ids = [r["id"] for r in results if r.get("id")]
         translations = await get_media_translations(db, media_ids, lang)
-        apply_media_translations(results, translations)
+        apply_translations(results, translations)
     return {
         "page": page,
         "page_size": page_size,
@@ -1052,7 +1052,7 @@ async def _apply_search_translations(db: AsyncSession, user_id: int, items: list
         return
     media_ids = [i["id"] for i in items if i.get("id")]
     if media_ids:
-        apply_media_translations(items, await get_media_translations(db, media_ids, lang))
+        apply_translations(items, await get_media_translations(db, media_ids, lang))
 
 
 @router.get("/search")
@@ -1865,7 +1865,7 @@ async def recently_added(
     if lang:
         media_ids = [i["id"] for i in items if i.get("id")]
         translations = await get_media_translations(db, media_ids, lang)
-        apply_media_translations(items, translations)
+        apply_translations(items, translations)
     return {"results": items}
 
 

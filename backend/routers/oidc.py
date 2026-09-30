@@ -1,3 +1,4 @@
+from core.account_bootstrap import lock_account_bootstrap
 import secrets
 from urllib.parse import urlencode
 
@@ -16,17 +17,6 @@ from models.users import User
 
 router = APIRouter()
 
-
-async def _lock_account_bootstrap(db: AsyncSession) -> None:
-    """Serialize OIDC provisioning with password registration bootstrap."""
-    get_bind = getattr(db, "get_bind", None)
-    if get_bind is None:
-        return
-    bind = get_bind()
-    if getattr(getattr(bind, "dialect", None), "name", None) == "postgresql":
-        # Keep in sync with routers/auth.py. The xact lock is held through the
-        # account insert and commit, covering all self-service signup paths.
-        await db.execute(select(func.pg_advisory_xact_lock(1297371723, 1)))
 
 
 class OidcExchangeRequest(BaseModel):
@@ -168,7 +158,7 @@ async def oidc_exchange(
         # read-only lookup transaction first so even repeatable-read sessions
         # take a fresh snapshot after acquiring the lock.
         await db.rollback()
-        await _lock_account_bootstrap(db)
+        await lock_account_bootstrap(db)
         result = await db.execute(
             select(User).where(func.lower(User.email) == normalized_identifier)
         )

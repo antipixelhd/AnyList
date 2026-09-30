@@ -22,7 +22,7 @@ from routers.media import enrich_with_state, require_anon_nav_allowed
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
 from core.identity import find_media
 from core.translations import (
-    apply_media_translations,
+    apply_translations,
     get_media_translations,
     get_show_translations,
     get_user_metadata_language,
@@ -340,7 +340,7 @@ async def get_list(
         translations = await get_media_translations(
             db, [m["id"] for m in media_dicts if m.get("id")], lang
         )
-        apply_media_translations(media_dicts, translations)
+        apply_translations(media_dicts, translations)
 
         show_ids = {i.media.show_id for i in items_sorted if i.media.show_id}
         show_by_tmdb = {tmdb_id: s.id for tmdb_id, s in show_map.items()}

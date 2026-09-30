@@ -24,7 +24,7 @@ from models.ratings import Rating
 from models.tracking import TrackedEntry, TrackingDeletion
 from routers.media import enrich_with_state, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, normalize_order_key, is_aired_order
-from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations, get_show_translations
+from core.translations import get_user_metadata_language, get_media_translations, apply_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
 from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
 from core.enrichment import create_media_safely
@@ -253,7 +253,7 @@ async def get_now_playing(
             media_list = [s["media"] for s in sessions]
             media_ids = [m["id"] for m in media_list if m.get("id")]
             translations = await get_media_translations(db, media_ids, lang)
-            apply_media_translations(media_list, translations)
+            apply_translations(media_list, translations)
 
             show_ids = set(show_id_by_media_id.values())
             if show_ids:
@@ -1118,7 +1118,7 @@ async def get_next_up(
         if lang:
             media_ids = [i["id"] for i in items if i.get("id")]
             translations = await get_media_translations(db, media_ids, lang)
-            apply_media_translations(items, translations)
+            apply_translations(items, translations)
 
             # The featured/hero card (and every row here) displays show_title
             # - the show's own name, not this episode's - so MediaTranslation

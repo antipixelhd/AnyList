@@ -624,6 +624,14 @@ class RegisterRoleEscalationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AccountBootstrapLockTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lightweight_and_non_postgres_sessions_need_no_lock(self) -> None:
+        self.assertIs(auth.lock_account_bootstrap, oidc.lock_account_bootstrap)
+        for db in (SimpleNamespace(execute=AsyncMock()),
+                   SimpleNamespace(execute=AsyncMock(), get_bind=lambda: None),
+                   SimpleNamespace(execute=AsyncMock(), get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))):
+            await auth.lock_account_bootstrap(db)
+            db.execute.assert_not_awaited()
+
     async def test_password_and_oidc_signup_use_the_same_postgres_transaction_lock(self) -> None:
         class _PostgresSession:
             def __init__(self):
@@ -635,8 +643,8 @@ class AccountBootstrapLockTests(unittest.IsolatedAsyncioTestCase):
         auth_db = _PostgresSession()
         oidc_db = _PostgresSession()
 
-        await auth._lock_account_bootstrap(auth_db)
-        await oidc._lock_account_bootstrap(oidc_db)
+        await auth.lock_account_bootstrap(auth_db)
+        await oidc.lock_account_bootstrap(oidc_db)
 
         auth_stmt = auth_db.execute.await_args.args[0]
         oidc_stmt = oidc_db.execute.await_args.args[0]

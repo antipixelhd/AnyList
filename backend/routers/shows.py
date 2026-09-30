@@ -60,8 +60,7 @@ from core.translations import (
     get_show_translations,
     upsert_media_translation,
     upsert_show_translation,
-    apply_media_translations,
-    apply_show_translations,
+    apply_translations,
 )
 
 router = APIRouter()
@@ -382,7 +381,7 @@ async def list_shows(
     if lang:
         show_ids = [r["id"] for r in results if r.get("id")]
         translations = await get_show_translations(db, show_ids, lang)
-        apply_show_translations(results, translations)
+        apply_translations(results, translations)
     return {
         "page": page,
         "page_size": page_size,
@@ -1130,7 +1129,7 @@ async def get_show(
             if all_ep_ids:
                 ep_trans = await get_media_translations(db, all_ep_ids, metadata_lang)
                 for ep_list in seasons.values():
-                    apply_media_translations(ep_list, ep_trans)
+                    apply_translations(ep_list, ep_trans)
 
         rewatch_info = None
         if active_rewatch:
