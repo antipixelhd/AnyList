@@ -37,7 +37,7 @@ from models.season_override import ShowSeasonOverride
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
-from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
+from core import arvio_payloads, arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
 from core.jellyfin import get_jellyfin_tmdb_id
 from core.enrichment import (
     apply_media_change_safely,
@@ -3798,31 +3798,6 @@ async def save_connection_libraries(
         raise HTTPException(status_code=502, detail=f"Could not reach server: {e}")
 
 
-def _parse_arvio_timestamp(ts: Any) -> datetime | None:
-    if not ts:
-        return None
-    if isinstance(ts, (int, float)):
-        if ts > 1e11:
-            ts = ts / 1000.0
-        try:
-            return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
-        except (OverflowError, OSError, ValueError):
-            return None
-    if isinstance(ts, str):
-        try:
-            dt = parser.isoparse(ts)
-            if dt.tzinfo:
-                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-            return dt
-        except Exception:
-            try:
-                val = float(ts)
-                return _parse_arvio_timestamp(val)
-            except Exception:
-                return None
-    return None
-
-
 async def _apply_arvio_watched_movie(
     db: AsyncSession,
     user_id: int,
@@ -3846,7 +3821,7 @@ async def _apply_arvio_watched_movie(
     # continue-watching movie routed in via _apply_arvio_playback_progress's
     # high-completion branch may only carry that field, same as the episode
     # version of this fallback chain below.
-    watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs") or item.get("updatedAt"))
+    watched_at = arvio_payloads.parse_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs") or item.get("updatedAt"))
 
     result = await db.execute(
         select(Media).where(
@@ -3882,77 +3857,13 @@ async def _apply_arvio_watched_movie(
     return False
 
 
-def _parse_arvio_episode_info(item: dict[str, Any] | str | int) -> tuple[int, int, int] | None:
-    """Extract (show_tmdb_id, season, episode) from various ARVIO item representations."""
-    import re
-    if isinstance(item, (int, str)):
-        item_str = str(item).strip()
-        match = re.search(r"(?:tv:|series:|tmdb:)?(\d+)[:_\-\s]+(?:s|season)?(\d+)[:_\-\s]+(?:e|ep|episode)?(\d+)", item_str, re.IGNORECASE)
-        if match:
-            try:
-                return int(match.group(1)), int(match.group(2)), int(match.group(3))
-            except ValueError:
-                pass
-        try:
-            parsed = json.loads(item_str)
-            if isinstance(parsed, dict):
-                item = parsed
-        except json.JSONDecodeError:
-            return None
-
-    if isinstance(item, dict):
-        for field in ("id", "mediaId", "episodeId", "item_id", "itemId"):
-            val = item.get(field)
-            if isinstance(val, str):
-                match = re.search(r"(?:tv:|series:|tmdb:)?(\d+)[:_\-\s]+(?:s|season)?(\d+)[:_\-\s]+(?:e|ep|episode)?(\d+)", val, re.IGNORECASE)
-                if match:
-                    try:
-                        return int(match.group(1)), int(match.group(2)), int(match.group(3))
-                    except ValueError:
-                        pass
-
-        show_tmdb_id_raw = (
-            item.get("showTmdbId")
-            or item.get("show_tmdb_id")
-            or item.get("showId")
-            or item.get("seriesTmdbId")
-            or item.get("series_tmdb_id")
-            or item.get("seriesId")
-            or item.get("series_id")
-            or item.get("tmdbId")
-            or item.get("tmdb_id")
-        )
-        season_raw = (
-            item.get("season")
-            or item.get("seasonNumber")
-            or item.get("season_number")
-            or item.get("seasonIndex")
-            or item.get("s")
-        )
-        episode_raw = (
-            item.get("episode")
-            or item.get("episodeNumber")
-            or item.get("episode_number")
-            or item.get("episodeIndex")
-            or item.get("e")
-        )
-
-        if show_tmdb_id_raw is not None and season_raw is not None and episode_raw is not None:
-            try:
-                return int(show_tmdb_id_raw), int(season_raw), int(episode_raw)
-            except (TypeError, ValueError):
-                pass
-
-    return None
-
-
 async def _apply_arvio_watched_episode(
     db: AsyncSession,
     user_id: int,
     item: dict[str, Any] | int | str,
     tmdb_api_key: str | None,
 ) -> bool:
-    info = _parse_arvio_episode_info(item)
+    info = arvio_payloads.parse_episode_info(item)
     if not info:
         return False
 
@@ -3960,7 +3871,7 @@ async def _apply_arvio_watched_episode(
 
     watched_at = None
     if isinstance(item, dict):
-        watched_at = _parse_arvio_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs") or item.get("updatedAt"))
+        watched_at = arvio_payloads.parse_timestamp(item.get("watchedAt") or item.get("timestamp") or item.get("updatedAtMs") or item.get("updatedAt"))
 
     show_res = await db.execute(select(Show).where(Show.tmdb_id == show_tmdb_id))
     show = show_res.scalars().first()
@@ -4042,7 +3953,7 @@ async def _apply_arvio_playback_progress(
     is_completed = item.get("completed") is True or progress_pct >= 85.0
 
     if is_completed:
-        ep_info = _parse_arvio_episode_info(item)
+        ep_info = arvio_payloads.parse_episode_info(item)
         if ep_info:
             return await _apply_arvio_watched_episode(db, user_id, item, tmdb_api_key)
         else:
@@ -4067,19 +3978,19 @@ async def _apply_arvio_playback_progress(
     if position_seconds <= 0 and duration_seconds > 0 and progress_pct > 0:
         position_seconds = (progress_pct / 100.0) * duration_seconds
 
-    updated_at = _parse_arvio_timestamp(item.get("updatedAtMs") or item.get("updatedAt")) or datetime.now(timezone.utc).replace(tzinfo=None)
+    updated_at = arvio_payloads.parse_timestamp(item.get("updatedAtMs") or item.get("updatedAt")) or datetime.now(timezone.utc).replace(tzinfo=None)
 
     season_raw = item.get("season")
     episode_raw = item.get("episode")
     is_episode = (
         media_type_str in ("TV", "EPISODE", "SERIES")
         or (season_raw is not None and episode_raw is not None)
-        or _parse_arvio_episode_info(item) is not None
+        or arvio_payloads.parse_episode_info(item) is not None
     )
 
     media: Media | None = None
     if is_episode:
-        ep_info = _parse_arvio_episode_info(item)
+        ep_info = arvio_payloads.parse_episode_info(item)
         if not ep_info:
             return False
         show_tmdb_id, season, episode = ep_info

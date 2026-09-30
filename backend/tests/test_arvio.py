@@ -16,18 +16,11 @@ from routers.sync import (
     _apply_arvio_playback_progress,
     _apply_arvio_watched_episode,
     _apply_arvio_watched_movie,
-    _parse_arvio_timestamp,
-    _parse_arvio_episode_info,
 )
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 class ArvioJsonInputTests(unittest.IsolatedAsyncioTestCase):
-    def test_json_episode_identity_is_parsed(self):
-        item = {"showTmdbId": 42, "season": 2, "episode": 3}
-        self.assertEqual(_parse_arvio_episode_info(json.dumps(item)), (42, 2, 3))
-        self.assertIsNone(_parse_arvio_episode_info("invalid JSON"))
-
     async def test_json_completed_movie_reaches_watched_handler(self):
         item = {"mediaType": "MOVIE", "tmdbId": 550, "completed": True}
         db = object()
@@ -174,20 +167,6 @@ class ArvioClientTests(unittest.IsolatedAsyncioTestCase):
                     "ref-1",
                     "non-existent-profile",
                 )
-
-
-class ArvioNormalizationTests(unittest.TestCase):
-    def test_parse_arvio_timestamp(self) -> None:
-        dt1 = _parse_arvio_timestamp(1711600000000)
-        self.assertIsNotNone(dt1)
-        self.assertEqual(dt1.year, 2024)
-
-        dt2 = _parse_arvio_timestamp("2026-08-14T10:00:00Z")
-        self.assertIsNotNone(dt2)
-        self.assertEqual(dt2.year, 2026)
-
-        self.assertIsNone(_parse_arvio_timestamp(None))
-        self.assertIsNone(_parse_arvio_timestamp("invalid-date"))
 
 
 class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
