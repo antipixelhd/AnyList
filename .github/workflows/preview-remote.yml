@@ -112,7 +112,7 @@ jobs:
               echo 'Protected file unexpectedly readable through SFTP' >&2
               exit 1
             fi
-            grep -Eqi 'permission denied|Preview command refused|Connection closed' refused.log || {
+            grep -Eqi 'permission denied|not found|Preview command refused|Connection closed' refused.log || {
               cat refused.log
               exit 1
             }
