@@ -1,3 +1,4 @@
+from core import settings_store
 import asyncio
 import logging
 
@@ -116,9 +117,8 @@ async def sonarr_list(
 
     if unresolved:
         from core import tmdb as tmdb_core
-        from routers.media import get_user_tmdb_key
 
-        tmdb_key = await get_user_tmdb_key(db, user.id)
+        tmdb_key = await settings_store.get_user_tmdb_key(db, user.id)
         semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
 
         async def _lookup(idx: int, tmdb_id: int) -> tuple[int, int | None]:

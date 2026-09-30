@@ -97,8 +97,8 @@ class GetEpisodeDetailTvdbFallbackMappingTests(unittest.IsolatedAsyncioTestCase)
             tvdb_calls.append((tvdb_id, season_number, episode_number))
             return {"title": "the real episode"}
 
-        with patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="key")), \
-             patch("routers.shows.check_tmdb_key", lambda k: True), \
+        with patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")), \
+             patch("core.settings_store.check_tmdb_key", lambda k: True), \
              patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)), \
              patch("routers.shows.tmdb.get_episode", AsyncMock(side_effect=Exception("404 Not Found"))), \
              patch("routers.shows.get_tvdb_episode", fake_get_tvdb_episode):
@@ -113,8 +113,8 @@ class GetEpisodeDetailTvdbFallbackMappingTests(unittest.IsolatedAsyncioTestCase)
         # 3) EpisodeOrderMapping lookup (none found).
         db = _FakeSession([show, None, None])
 
-        with patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="key")), \
-             patch("routers.shows.check_tmdb_key", lambda k: True), \
+        with patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")), \
+             patch("core.settings_store.check_tmdb_key", lambda k: True), \
              patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)), \
              patch("routers.shows.tmdb.get_episode", AsyncMock(side_effect=Exception("404 Not Found"))), \
              patch("routers.shows.get_tvdb_episode", AsyncMock()) as tvdb_mock:
@@ -153,8 +153,8 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
 
         wrong_tvdb_ep = {"id": 999999, "seasonNumber": 1, "number": 1, "name": "WRONG Episode"}
 
-        with patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="key")), \
-             patch("routers.shows.check_tmdb_key", lambda k: True), \
+        with patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")), \
+             patch("core.settings_store.check_tmdb_key", lambda k: True), \
              patch("routers.shows.tmdb.get_show", AsyncMock(return_value=self._tmdb_show_data())), \
              patch("routers.shows.tmdb.get_season", AsyncMock(side_effect=Exception("temporary TMDB failure"))), \
              patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
@@ -182,8 +182,8 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
             "overview": "refreshed", "aired": "2020-01-01", "runtime": 25, "image": None,
         }
 
-        with patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value="key")), \
-             patch("routers.shows.check_tmdb_key", lambda k: True), \
+        with patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")), \
+             patch("core.settings_store.check_tmdb_key", lambda k: True), \
              patch("routers.shows.tmdb.get_show", AsyncMock(return_value=self._tmdb_show_data())), \
              patch("routers.shows.tmdb.get_season", AsyncMock(side_effect=Exception("temporary TMDB failure"))), \
              patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \

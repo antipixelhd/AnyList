@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import settings_store
 
 from models.base import MediaType
 from models.episode_order import ShowEpisodePosition
@@ -136,8 +137,8 @@ class TmdbListStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         base.update(kwargs)
         discover_shows = AsyncMock(return_value={"results": [], "page": 1, "total_pages": 1, "total_results": 0})
         discover_movies = AsyncMock(return_value={"results": [], "page": 1, "total_pages": 1, "total_results": 0})
-        with patch.object(media_router, "get_user_tmdb_key", AsyncMock(return_value="k")), \
-             patch.object(media_router, "check_tmdb_key", lambda _k: True), \
+        with patch.object(settings_store, "get_user_tmdb_key", AsyncMock(return_value="k")), \
+             patch.object(settings_store, "check_tmdb_key", lambda _k: True), \
              patch.object(media_router, "get_user_metadata_language", AsyncMock(return_value=None)), \
              patch.object(media_router, "enrich_with_state", AsyncMock(side_effect=lambda db, uid, items: items)), \
              patch.object(media_router.tmdb, "discover_shows", discover_shows), \
@@ -199,8 +200,8 @@ class SearchMetadataLanguageTests(unittest.IsolatedAsyncioTestCase):
         search_shows = AsyncMock(return_value={"results": [tmdb_show], "total_pages": 1, "total_results": 1})
         with (
             patch.object(media_router, "get_user_metadata_language", AsyncMock(return_value=lang)),
-            patch.object(media_router, "get_user_tmdb_key", AsyncMock(return_value="key")),
-            patch.object(media_router, "check_tmdb_key", return_value=True),
+            patch.object(settings_store, "get_user_tmdb_key", AsyncMock(return_value="key")),
+            patch.object(settings_store, "check_tmdb_key", return_value=True),
             patch.object(media_router, "enrich_with_state", AsyncMock()),
             patch.object(media_router.tmdb, "search_shows", search_shows),
         ):

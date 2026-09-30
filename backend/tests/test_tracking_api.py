@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
+from core import settings_store
 from core import nuvio_payloads, nuvio_projection
 
 import httpx
@@ -477,7 +478,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 return {'results':[{'id':102,'title':'The Odyssey','poster_path':'/odyssey.jpg','release_date':'2026-01-01'}]}
             return {'results':[]}
 
-        with (patch('routers.media.get_user_tmdb_key', AsyncMock(return_value='fixture-key')),
+        with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture-key')),
               patch.object(tmdb, 'search_movies', side_effect=search)):
             mutany = await self.client.get('/tracking/catalog', params={'media_type':'movie','q':'Mutany'})
             odyssey = await self.client.get('/tracking/catalog', params={'media_type':'movie','q':'Thee Odyssey'})
@@ -768,20 +769,23 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
         friend_profile.privacy_level=PrivacyLevel.public
         self.db.add(Follow(follower_id=self.owner.id,following_id=self.friend.id))
-        start=datetime.now(timezone.utc).replace(tzinfo=None,microsecond=0)-timedelta(minutes=10)
+        # Cursor replacement is within one daily card, including at UTC midnight.
+        start=datetime.now(timezone.utc).replace(tzinfo=None,hour=12,minute=0,second=0,microsecond=0)-timedelta(minutes=10)
         await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.movie.id,status='watching',score=None,
                                     status_changed=True,now=start)
         await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.show.id,status='watching',score=None,
                                     status_changed=True,now=start+timedelta(minutes=1))
         await self.db.commit()
 
-        initial=(await self.client.get('/tracking/activity')).json()
+        with patch('routers.tracking.datetime', wraps=datetime) as clock:
+            clock.now.return_value=(start+timedelta(minutes=2)).replace(tzinfo=timezone.utc)
+            initial=(await self.client.get('/tracking/activity')).json()
         self.assertEqual([row['media']['id'] for row in initial['results']],[self.show.id,self.movie.id])
         movie_key=next(row['key'] for row in initial['results'] if row['media']['id']==self.movie.id)
 
         await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.movie.id,status='completed',score=8,
                                     status_changed=True,rating_changed=True,
-                                    now=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(seconds=1))
+                                    now=start+timedelta(minutes=10,seconds=1))
         await self.db.commit()
         delta=(await self.client.get('/tracking/activity',params={'cursor':initial['cursor']})).json()
         self.assertEqual(len(delta['results']),1)
@@ -2788,7 +2792,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(sync, 'async_sessionmaker', return_value=session))
-            stack.enter_context(patch.object(sync, '_get_effective_tmdb_key', AsyncMock(return_value='fixture')))
+            stack.enter_context(patch.object(settings_store, 'get_effective_tmdb_key', AsyncMock(return_value='fixture')))
             stack.enter_context(patch.object(sync, '_resolve_nuvio_tmdb_ids',
                 AsyncMock(return_value={'tt-new-completion': self.movie.tmdb_id})))
             # Metadata is already in the fixture; exercise the real history,
@@ -2894,7 +2898,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                  'seasons':[{'season_number':1,'episode_count':2,'name':'Season 1','air_date':'2020-01-01'}]}
         season={'episodes':[{'id':987654310,'episode_number':1,'name':'First','air_date':'2020-01-01'},
                             {'id':987654311,'episode_number':2,'name':'Future','air_date':'2999-01-01'}]}
-        with patch('routers.media.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
+        with patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
              patch('core.tmdb.get_show',new=AsyncMock(return_value=details)), \
              patch('core.tmdb.get_season',new=AsyncMock(return_value=season)):
             res=await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
@@ -2941,7 +2945,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.show.tmdb_id=987654318
         await self.db.commit()
         media_id=self.show.id
-        with patch('routers.media.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
+        with patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
              patch('core.tmdb.get_show',new=AsyncMock(return_value={'seasons':[{'season_number':1,'episode_count':2}]})), \
              patch('core.tmdb.get_season',new=AsyncMock(return_value={'episodes':[]})):
             res=await self.client.post(f'/tracking/title/{media_id}/refresh-episodes')
@@ -2963,7 +2967,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             {'id': 7101, 'seasonNumber': 1, 'number': 1, 'name': 'One', 'aired': '2020-01-01'},
             {'id': 7102, 'seasonNumber': 1, 'number': 2, 'name': 'Two', 'aired': '2020-01-08'},
         ]
-        with patch('routers.media.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
+        with patch('core.settings_store.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
              patch('routers.shows.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
              patch('core.tvdb.get_series', new=AsyncMock(return_value=series)), \
              patch('core.tvdb.get_series_episodes', new=AsyncMock(return_value=episodes)):
@@ -2984,7 +2988,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         rows[0].season_number = 2
         await self.db.commit()
-        with patch('routers.media.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
+        with patch('core.settings_store.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
              patch('routers.shows.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
              patch('core.tvdb.get_series', new=AsyncMock(return_value=series)), \
              patch('core.tvdb.get_series_episodes', new=AsyncMock(return_value=episodes)):
@@ -4338,7 +4342,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         push = AsyncMock(return_value=1)
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
-             patch('routers.sync._get_effective_tmdb_key', AsyncMock(return_value='fixture')), \
+             patch('core.settings_store.get_effective_tmdb_key', AsyncMock(return_value='fixture')), \
              patch('core.stremio_delivery.push_connection', push):
             await dispatch_watch_intents(self.db, self.owner.id)
         self.assertEqual(push.await_count, 1)
@@ -5227,7 +5231,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(sync_router, 'async_sessionmaker', return_value=lambda: _SessionContext()),
-            patch.object(sync_router, '_get_effective_tmdb_key', AsyncMock(return_value='fixture-key')),
+            patch.object(settings_store, 'get_effective_tmdb_key', AsyncMock(return_value='fixture-key')),
             patch.object(sync_router, '_pull_stremio_items', AsyncMock(return_value=([], True, started_at))),
             patch.object(sync_router, '_stremio_records', AsyncMock(return_value=([], [], [], set()))),
             patch.object(sync_router, '_resolve_nuvio_tmdb_ids', AsyncMock(return_value={})),

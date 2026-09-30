@@ -224,15 +224,15 @@ class MaybeBackfillCreditsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_fresh_cache_skips_without_checking_the_key(self):
         db = _QueuedSession([_ScalarOneResult(datetime.utcnow())])
-        with patch("routers.media.get_user_tmdb_key", new_callable=AsyncMock) as get_key:
+        with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock) as get_key:
             await maybe_backfill_credits(db, user_id=1)
         get_key.assert_not_called()
         self.assertFalse(credits._importing)
 
     async def test_stale_cache_without_a_usable_key_does_not_import(self):
         db = _QueuedSession([_ScalarOneResult(datetime.utcnow() - CREDITS_TTL - timedelta(days=1))])
-        with patch("routers.media.get_user_tmdb_key", new_callable=AsyncMock, return_value=None), \
-             patch("routers.media.check_tmdb_key", return_value=False), \
+        with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value=None), \
+             patch("core.settings_store.check_tmdb_key", return_value=False), \
              patch("core.credits.asyncio.create_task") as create_task:
             await maybe_backfill_credits(db, user_id=1)
         create_task.assert_not_called()
@@ -240,8 +240,8 @@ class MaybeBackfillCreditsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stale_cache_with_a_key_schedules_exactly_one_import(self):
         db = _QueuedSession([_ScalarOneResult(None)])
-        with patch("routers.media.get_user_tmdb_key", new_callable=AsyncMock, return_value="key"), \
-             patch("routers.media.check_tmdb_key", return_value=True), \
+        with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value="key"), \
+             patch("core.settings_store.check_tmdb_key", return_value=True), \
              patch("core.credits.asyncio.create_task", side_effect=self._swallowing_create_task) as create_task:
             await maybe_backfill_credits(db, user_id=1)
         create_task.assert_called_once()
@@ -254,8 +254,8 @@ class MaybeBackfillCreditsTests(unittest.IsolatedAsyncioTestCase):
         # _importing == False and schedule its own duplicate import.
         db1 = _QueuedSession([_ScalarOneResult(None)])
         db2 = _QueuedSession([_ScalarOneResult(None)])
-        with patch("routers.media.get_user_tmdb_key", new_callable=AsyncMock, return_value="key"), \
-             patch("routers.media.check_tmdb_key", return_value=True), \
+        with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value="key"), \
+             patch("core.settings_store.check_tmdb_key", return_value=True), \
              patch("core.credits.asyncio.create_task", side_effect=self._swallowing_create_task) as create_task:
             await maybe_backfill_credits(db1, user_id=1)
             await maybe_backfill_credits(db2, user_id=2)

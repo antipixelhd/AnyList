@@ -1,3 +1,4 @@
+from core import settings_store
 from core import stremio_payloads, stremio_delivery
 from core.db_queries import latest_watched_at as _latest_watched_at
 from core import nuvio_payloads, nuvio_projection
@@ -34,7 +35,6 @@ from models.season_override import ShowSeasonOverride
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from models.base import MediaType, CollectionSource
-from models.global_settings import GlobalSettings
 from core import arvio, jellyfin, emby, plex, nuvio, stremio, tmdb
 from core.jellyfin import get_jellyfin_tmdb_id
 import core.trakt as trakt_client
@@ -57,14 +57,6 @@ from models.rewatch import ShowRewatch, RewatchProgress
 
 from dependencies import get_current_user, get_current_user_or_api_key
 logger = logging.getLogger("uvicorn.error")
-
-
-async def _get_effective_tmdb_key(db: AsyncSession, user_settings: UserSettings | None) -> str | None:
-    if user_settings and user_settings.tmdb_api_key:
-        return user_settings.tmdb_api_key
-    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-    gs = gs_result.scalar_one_or_none()
-    return gs.tmdb_api_key if gs else None
 
 
 async def _record_full_push_visibility_echo(db, conn, written) -> None:
@@ -874,7 +866,7 @@ async def _fan_out_changes_to_other_connections(
             for conn in push_candidates
         )
         nuvio_api_key = (
-            await _get_effective_tmdb_key(db, settings)
+            await settings_store.get_effective_tmdb_key(db, settings)
             if any(
                 conn.type == "nuvio" and (conn.push_watched or conn.push_collection)
                 for conn in push_candidates
@@ -882,7 +874,7 @@ async def _fan_out_changes_to_other_connections(
             else None
         )
         stremio_api_key = (
-            await _get_effective_tmdb_key(db, settings)
+            await settings_store.get_effective_tmdb_key(db, settings)
             if any(conn.type == "stremio" for conn in push_candidates)
             else None
         )
@@ -1146,7 +1138,7 @@ async def _fan_out_changes_to_other_connections(
             season_tmdb_ids = await _resolve_tmdb_season_ids(
                 media_by_id,
                 all_rating_keys,
-                await _get_effective_tmdb_key(db, settings),
+                await settings_store.get_effective_tmdb_key(db, settings),
             )
             for key, rating in new_ratings.items():
                 mid, season_number = key
@@ -2275,7 +2267,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
             settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
             settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
 
             # Load the specific connection (or oldest jellyfin connection for this user)
             conn_q = select(MediaServerConnection).where(
@@ -2506,7 +2498,7 @@ async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
             settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
             settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
 
             if not conn or not conn.url or not conn.token or not conn.server_user_id:
                 err = "Missing Emby connection (URL, Token, or User ID)"
@@ -3482,7 +3474,7 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
 
             settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
             settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
 
             if not conn or not conn.url or not conn.token:
                 err = "Missing Plex connection (URL or Token)"
@@ -4263,7 +4255,7 @@ async def _run_nuvio_sync(
 
             settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
             settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
 
             conn_query = select(MediaServerConnection).where(
                 MediaServerConnection.user_id == user_id,
@@ -4896,7 +4888,7 @@ async def _run_stremio_sync(
                 select(UserSettings).where(UserSettings.user_id == user_id)
             )
             settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
             conn_query = select(MediaServerConnection).where(
                 MediaServerConnection.user_id == user_id,
                 MediaServerConnection.type == "stremio",
@@ -5264,7 +5256,7 @@ async def trigger_library_scan(
                 select(UserSettings).where(UserSettings.user_id == current_user.id)
             )
             settings = settings_result.scalar_one_or_none()
-            if not await _get_effective_tmdb_key(db, settings):
+            if not await settings_store.get_effective_tmdb_key(db, settings):
                 raise HTTPException(status_code=400, detail="TMDB API key required")
             active_result = await db.execute(
                 select(SyncJob)
@@ -5779,7 +5771,7 @@ async def _run_arvio_sync(
 
             settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
             settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
 
             conn_query = select(MediaServerConnection).where(
                 MediaServerConnection.user_id == user_id,
@@ -5938,7 +5930,7 @@ async def sync_connection(
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    if not await _get_effective_tmdb_key(db, settings):
+    if not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
 
@@ -6032,7 +6024,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     select(UserSettings).where(UserSettings.user_id == user_id)
                 )
                 user_settings = settings_result.scalar_one_or_none()
-                api_key = await _get_effective_tmdb_key(db, user_settings)
+                api_key = await settings_store.get_effective_tmdb_key(db, user_settings)
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(current_step="Pushing to Stremio"))
                 await db.commit()
                 changed = await stremio_delivery.push_connection(
@@ -6068,7 +6060,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     select(UserSettings).where(UserSettings.user_id == user_id)
                 )
                 user_settings = settings_result.scalar_one_or_none()
-                api_key = await _get_effective_tmdb_key(db, user_settings)
+                api_key = await settings_store.get_effective_tmdb_key(db, user_settings)
                 library_items = (
                     await nuvio_projection.build_library_items(db, user_id, api_key=api_key, baseline=baseline)
                     if conn.push_collection
@@ -6287,7 +6279,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 wl_settings_result = await db.execute(
                     select(UserSettings).where(UserSettings.user_id == user_id)
                 )
-                wl_tmdb_key = await _get_effective_tmdb_key(db, wl_settings_result.scalar_one_or_none())
+                wl_tmdb_key = await settings_store.get_effective_tmdb_key(db, wl_settings_result.scalar_one_or_none())
                 await _reconcile_plex_watchlist(user_id, conn.id, wl_tmdb_key)
 
             watched_ids: set[int] = set()
@@ -6904,7 +6896,7 @@ async def sync_jellyfin(
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    if not await _get_effective_tmdb_key(db, settings):
+    if not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
     conn_result = await db.execute(
@@ -6935,7 +6927,7 @@ async def sync_emby(
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    if not await _get_effective_tmdb_key(db, settings):
+    if not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
     conn_result = await db.execute(
@@ -6966,7 +6958,7 @@ async def sync_plex(
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    if not await _get_effective_tmdb_key(db, settings):
+    if not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
     conn_result = await db.execute(
@@ -7022,10 +7014,10 @@ async def heal_metadata(
     """Re-enrich all collection items that are missing poster/date metadata."""
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = result.scalar_one_or_none()
-    if not await _get_effective_tmdb_key(db, settings):
+    if not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(status_code=400, detail="TMDB API key required")
 
-    effective_key = await _get_effective_tmdb_key(db, settings)
+    effective_key = await settings_store.get_effective_tmdb_key(db, settings)
     job = SyncJob(user_id=current_user.id, source=CollectionSource.tmdb, job_type="heal", status=SyncStatus.pending)
     db.add(job)
     await db.commit()
@@ -7409,7 +7401,7 @@ async def apply_season_override(
     if not override:
         raise HTTPException(status_code=404, detail="Override not found")
 
-    tmdb_api_key = await _get_effective_tmdb_key(db, None)
+    tmdb_api_key = await settings_store.get_effective_tmdb_key(db, None)
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
     if settings and settings.tmdb_api_key:
@@ -7837,7 +7829,7 @@ async def match_unmatched_show(
         # ── TMDB path (original behaviour) ────────────────────────────────
         settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
         settings = settings_result.scalar_one_or_none()
-        tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+        tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
         if not tmdb_api_key:
             raise HTTPException(status_code=400, detail="TMDB API key required")
 
@@ -8381,7 +8373,7 @@ async def match_unmatched_movie(
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    tmdb_api_key = await _get_effective_tmdb_key(db, settings)
+    tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
     if not tmdb_api_key:
         raise HTTPException(status_code=400, detail="TMDB API key required")
 

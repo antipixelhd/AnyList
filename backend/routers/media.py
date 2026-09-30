@@ -1,3 +1,4 @@
+from core import settings_store
 import asyncio
 import httpx
 import logging
@@ -249,7 +250,7 @@ async def enrich_with_state(
     # --- Radarr / Sonarr state (Request button logic) ---
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_q.scalar_one_or_none()
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
 
     monitored_status = {} # tmdb_id -> bool
     request_enabled_map = {} # tmdb_id -> bool
@@ -484,8 +485,8 @@ async def enrich_with_state(
         # We also need to get ALL episode TMDB IDs for these shows to correctly identify
         # watched episodes that might not have a show_id link.
         # This is expensive, so we only do it if the user has watched episodes.
-        tmdb_key = await get_user_tmdb_key(db, user_id)
-        if show_tmdb_ids and check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, user_id)
+        if show_tmdb_ids and settings_store.check_tmdb_key(tmdb_key):
             async def fetch_show_and_seasons(tid: int):
                 try:
                     data = await tmdb.get_show(tid, api_key=tmdb_key)
@@ -613,8 +614,8 @@ async def enrich_with_state(
             and show_status_map.get(tid, "") not in FINAL_STATUSES
         ]
         if needs_live_call:
-            tmdb_key = await get_user_tmdb_key(db, user_id)
-            if check_tmdb_key(tmdb_key):
+            tmdb_key = await settings_store.get_user_tmdb_key(db, user_id)
+            if settings_store.check_tmdb_key(tmdb_key):
                 async def fetch_last_aired(tid: int) -> tuple[int, dict | None]:
                     try:
                         return tid, await tmdb.get_show_light(tid, api_key=tmdb_key)
@@ -773,35 +774,15 @@ async def enrich_with_state(
     return items
 
 
-async def _get_global_settings(db: AsyncSession) -> GlobalSettings | None:
-    if "global_settings" not in db.info:
-        result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-        db.info["global_settings"] = result.scalar_one_or_none()
-    return db.info["global_settings"]
-
-
 async def require_anon_nav_allowed(db: AsyncSession) -> None:
     """Raise 401 unless the admin has enabled logged-out navigation and a
     global TMDB key is set. Called by read-only detail/list endpoints when
     their optional-auth dependency resolves to no user - re-checked here
     since these endpoints are reachable directly, not just through a page
     the frontend middleware already gated."""
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
     if not (gs and gs.enable_logged_out_navigation and gs.tmdb_api_key):
         raise HTTPException(status_code=401, detail="Not authenticated")
-
-
-async def get_user_tmdb_key(db: AsyncSession, user_id: int) -> str | None:
-    cache_key = f"tmdb_key_{user_id}"
-    if cache_key not in db.info:
-        result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
-        settings_row = result.scalar_one_or_none()
-        if settings_row and settings_row.tmdb_api_key:
-            db.info[cache_key] = settings_row.tmdb_api_key
-        else:
-            gs = await _get_global_settings(db)
-            db.info[cache_key] = gs.tmdb_api_key if gs else None
-    return db.info[cache_key]
 
 
 def _effective_radarr(user_settings: UserSettings | None, global_settings: GlobalSettings | None):
@@ -818,12 +799,6 @@ def _effective_sonarr(user_settings: UserSettings | None, global_settings: Globa
         if s and all([s.sonarr_url, s.sonarr_token, s.sonarr_root_folder, s.sonarr_quality_profile]):
             return s
     return None
-
-
-def check_tmdb_key(api_key: str | None) -> bool:
-    if api_key:
-        return True
-    return bool(getattr(tmdb.settings, "tmdb_api_key", None))
 
 
 def _extract_movie_certification(data: dict, country: str = "US") -> str | None:
@@ -1049,8 +1024,8 @@ async def find_by_imdb(
     imdb_id = imdb_id.strip()
     if not imdb_id.startswith("tt"):
         raise HTTPException(status_code=400, detail="Invalid IMDB ID — must start with 'tt'")
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         raise HTTPException(status_code=400, detail="TMDB API key required")
     try:
         data = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_key)
@@ -1118,8 +1093,8 @@ async def search_media(
 
     # Collection search: TMDB only, no local DB
     if type == "collection":
-        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-        if not check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+        if not settings_store.check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
         try:
             data = await tmdb.search_collection(q, page=page, api_key=tmdb_key)
@@ -1149,8 +1124,8 @@ async def search_media(
 
     # People search: TMDB only, no local DB
     if type == "person":
-        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-        if not check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+        if not settings_store.check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
         try:
             data = await tmdb.search_people(q, page=page, api_key=tmdb_key)
@@ -1180,8 +1155,8 @@ async def search_media(
     # Studio (production company) search: TMDB /search/company. Results link to
     # the /studio/{id} browse page.
     if type == "studio":
-        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-        if not check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+        if not settings_store.check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
         try:
             data = await tmdb.search_company(q, page=page, api_key=tmdb_key)
@@ -1315,10 +1290,10 @@ async def search_media(
             "results": formatted,
         }
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
 
     # No TMDB key: fall back to local title search
-    if not check_tmdb_key(tmdb_key):
+    if not settings_store.check_tmdb_key(tmdb_key):
         db_query = (
             select(Media)
             .options(joinedload(Media.show))
@@ -1507,7 +1482,7 @@ async def _sync_trending(
     api_key: str | None = None,
 ):
     """Fetch trending data from TMDB."""
-    if not check_tmdb_key(api_key):
+    if not settings_store.check_tmdb_key(api_key):
         return {"results": [], "page": 1, "total_pages": 1, "total_results": 0}
 
     try:
@@ -1531,7 +1506,7 @@ async def trending_movies(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
     data = await _sync_trending(MediaType.movie, page, api_key=tmdb_key)
     tmdb_results = data.get("results", [])
 
@@ -1585,7 +1560,7 @@ async def trending_shows(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
     data = await _sync_trending(MediaType.series, page, api_key=tmdb_key)
     tmdb_results = data.get("results", [])
 
@@ -1695,9 +1670,9 @@ async def public_poster_wall(request: Request, db: AsyncSession = Depends(get_db
     if _poster_wall_cache["data"] is not None and now - _poster_wall_cache["ts"] < _POSTER_WALL_TTL:
         return _poster_wall_cache["data"]
 
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
     api_key = gs.tmdb_api_key if gs else None
-    if not check_tmdb_key(api_key):
+    if not settings_store.check_tmdb_key(api_key):
         return {"posters": _FALLBACK_POSTERS}
 
     posters: list[dict] = []
@@ -1735,8 +1710,8 @@ async def on_air_today(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": [], "page": 1, "total_pages": 1, "total_results": 0}
     # No browser timezone to go on here (plain SSR fetch, unlike the homepage
     # widget) - use the server's configured TZ instead of defaulting to UTC.
@@ -1782,8 +1757,8 @@ async def airing_today_collected(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
 
     from routers.calendar import (
@@ -1929,8 +1904,8 @@ async def get_person_details(
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     try:
-        tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-        if not check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+        if not settings_store.check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="TMDB API Key not configured")
         data = await tmdb.get_person(person_id, api_key=tmdb_key)
         credits = data.get("combined_credits", {})
@@ -2077,8 +2052,8 @@ async def get_collection_details(
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
-        tmdb_key = await get_user_tmdb_key(db, current_user.id)
-        if not check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+        if not settings_store.check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="TMDB API Key not configured")
 
         data, genre_data = await asyncio.gather(
@@ -2175,8 +2150,8 @@ async def get_network_details(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         raise HTTPException(status_code=404, detail="TMDB API Key not configured")
     try:
         return _format_studio(await tmdb.get_network(network_id, api_key=tmdb_key))
@@ -2197,8 +2172,8 @@ async def get_company_details(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         raise HTTPException(status_code=404, detail="TMDB API Key not configured")
     try:
         return _format_studio(await tmdb.get_company(company_id, api_key=tmdb_key))
@@ -2305,14 +2280,14 @@ async def get_tmdb_list(
         # /profile/public-access-status, which the frontend middleware gates
         # page access on. Re-checked here since this endpoint is reachable
         # directly, not just through the page.
-        gs = await _get_global_settings(db)
+        gs = await settings_store.get_global_settings(db)
         if not (gs and gs.enable_logged_out_navigation and gs.tmdb_api_key):
             raise HTTPException(status_code=401, detail="Not authenticated")
         tmdb_key = gs.tmdb_api_key
         # No personal library/watch history to filter on without a user.
         collection, watch, arr = [], [], []
     else:
-        tmdb_key = await get_user_tmdb_key(db, current_user.id)
+        tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
 
     # with_networks is a TV-only discover constraint - a /network/{id} page only
     # ever wants shows regardless of what `type` the client passed.
@@ -2320,7 +2295,7 @@ async def get_tmdb_list(
         type = MediaType.series
 
     try:
-        if not check_tmdb_key(tmdb_key):
+        if not settings_store.check_tmdb_key(tmdb_key):
             return {"page": page, "total_pages": 1, "total_results": 0, "results": []}
 
         category_sort_map = {
@@ -2600,8 +2575,8 @@ async def now_playing(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_now_playing(api_key=tmdb_key)
@@ -2623,8 +2598,8 @@ async def trending_trailers(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_trending_movies(time_window="week", api_key=tmdb_key)
@@ -2667,8 +2642,8 @@ async def upcoming_movies(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_upcoming_movies(api_key=tmdb_key)
@@ -2690,8 +2665,8 @@ async def on_air_this_week(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_on_air_this_week(api_key=tmdb_key)
@@ -2715,8 +2690,8 @@ async def hidden_gems(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
     import random
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         page = random.randint(1, 5)
@@ -2756,8 +2731,8 @@ async def top_rated_movies(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_top_rated_movies(api_key=tmdb_key)
@@ -2779,8 +2754,8 @@ async def top_rated_shows(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_top_rated_shows(api_key=tmdb_key)
@@ -2808,8 +2783,8 @@ async def for_you(
     if cached and (_time.monotonic() - cached[0]) < _FOR_YOU_TTL:
         return cached[1]
 
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
 
     profile_q = await db.execute(
@@ -2927,8 +2902,8 @@ async def streaming(
     if current_user is None:
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         if type == MediaType.movie:
@@ -2962,8 +2937,8 @@ async def new_episodes(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
     try:
         data = await tmdb.get_on_air_this_week(api_key=tmdb_key)
@@ -2979,15 +2954,14 @@ async def new_episodes(
         return {"results": []}
 
 
-
 async def recommended(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     import random
     from models.profile import UserProfileData
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
 
     profile_q = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
@@ -3121,7 +3095,7 @@ async def manually_collect(
     current_user: User = Depends(get_current_user),
 ):
     """Manually add a movie to the user's collection."""
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     if not (body.tmdb_id or body.tvdb_id or body.media_id):
         raise HTTPException(status_code=400, detail="One of tmdb_id, tvdb_id or media_id is required")
 
@@ -3142,7 +3116,7 @@ async def manually_collect(
             media.show_id = show_link.id
 
     if not media:
-        if not check_tmdb_key(tmdb_key):
+        if not settings_store.check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="Media not found and no TMDB key configured")
         try:
             from core.enrichment import enrich_media, create_media_safely, enrich_media_safely
@@ -3332,7 +3306,7 @@ async def _resolve_season_episodes(
     - orphaned episodes (show_id=NULL) get adopted
     - already-linked episodes are returned as-is
     """
-    if not check_tmdb_key(tmdb_key):
+    if not settings_store.check_tmdb_key(tmdb_key):
         q = await db.execute(
             select(Media).where(
                 Media.show_id == show.id,
@@ -3511,12 +3485,12 @@ async def collect_season(
 ):
     """Manually add all episodes in a season to the user's collection."""
 
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
 
     show_q = await db.execute(select(ShowModel).where(ShowModel.tmdb_id == body.series_tmdb_id))
     show = show_q.scalar_one_or_none()
     if not show:
-        if not check_tmdb_key(tmdb_key):
+        if not settings_store.check_tmdb_key(tmdb_key):
             raise HTTPException(status_code=404, detail="Show not found and no TMDB key configured")
         show_data = await tmdb.get_show(body.series_tmdb_id, api_key=tmdb_key)
         show = ShowModel(
@@ -3622,8 +3596,8 @@ async def collect_show(
     current_user: User = Depends(get_current_user),
 ):
     """Manually collect all aired seasons/episodes for a show."""
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         raise HTTPException(status_code=400, detail="TMDB key required to collect a show")
 
     show_q = await db.execute(select(ShowModel).where(ShowModel.tmdb_id == body.tmdb_id))
@@ -3807,7 +3781,7 @@ async def get_request_status(
     """Check whether a movie/series is already monitored in Radarr/Sonarr."""
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_q.scalar_one_or_none()
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
 
     monitored = False
 
@@ -3839,7 +3813,7 @@ async def get_request_status(
                 tvdb_id = (show_row.tmdb_data.get("external_ids") or {}).get("tvdb_id")
             if not tvdb_id:
                 from core import tmdb as tmdb_core
-                tmdb_key = await get_user_tmdb_key(db, current_user.id)
+                tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
                 ext_ids = await tmdb_core.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
                 tvdb_id = ext_ids.get("tvdb_id")
             if tvdb_id:
@@ -3877,7 +3851,7 @@ async def get_customize_options(
         select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
     settings = settings_q.scalar_one_or_none()
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
 
     if type == MediaType.movie:
         radarr_cfg = _effective_radarr(settings, gs)
@@ -3959,7 +3933,7 @@ async def request_media(
         select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
     settings = settings_q.scalar_one_or_none()
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
 
     async def _upsert_request(media_type_str: str, title: str, poster_path: str | None) -> dict:
         """Create or update a pending media request, return 202 response."""
@@ -3995,7 +3969,7 @@ async def request_media(
 
         uses_global = gs and radarr_cfg is gs and not current_user.is_admin
         if uses_global and gs.radarr_require_approval:
-            tmdb_key = await get_user_tmdb_key(db, current_user.id)
+            tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
             title, poster = "", None
             try:
                 from core import tmdb as tmdb_core
@@ -4029,7 +4003,7 @@ async def request_media(
 
         uses_global = gs and sonarr_cfg is gs and not current_user.is_admin
         if uses_global and gs.sonarr_require_approval:
-            tmdb_key = await get_user_tmdb_key(db, current_user.id)
+            tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
             title, poster = "", None
             try:
                 from core import tmdb as tmdb_core
@@ -4043,7 +4017,7 @@ async def request_media(
 
         from core import sonarr, tmdb
         try:
-            tmdb_key = await get_user_tmdb_key(db, current_user.id)
+            tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
             ext_ids = await tmdb.get_external_ids(tmdb_id, "tv", api_key=tmdb_key)
             tvdb_id = ext_ids.get("tvdb_id")
 
@@ -4252,7 +4226,7 @@ async def refresh_movie_metadata(
     if not coll_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Movie not in your library")
 
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     # bypass_cache: this is the user explicitly asking for fresh data - see
     # the matching comment on enrich_media's bypass_cache parameter.
     await enrich_media(media, api_key=tmdb_key, bypass_cache=True)
@@ -4325,7 +4299,7 @@ async def get_where_to_watch(
             _add({"type": src.value, "name": name, "logo": None})
 
     # ── TMDB streaming providers ──────────────────────────────────────────────
-    if tmdb_key and check_tmdb_key(tmdb_key):
+    if tmdb_key and settings_store.check_tmdb_key(tmdb_key):
         try:
             profile_q = await db.execute(
                 select(UserProfileData).where(UserProfileData.user_id == user_id)
@@ -4357,7 +4331,6 @@ async def get_where_to_watch(
 def _srt_to_vtt(srt: str) -> str:
     vtt = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", srt)
     return "WEBVTT\n\n" + vtt.strip()
-
 
 
 @router.get("/playback/{type}/{tmdb_id}")
@@ -5240,8 +5213,8 @@ async def get_media_details(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         raise HTTPException(status_code=404, detail="TMDB API Key not configured")
     metadata_lang = await get_user_metadata_language(db, effective_user_id)
 
@@ -5547,8 +5520,8 @@ async def get_media_recommendations(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
 
     try:
@@ -5607,7 +5580,7 @@ async def pick_for_me(
     if type not in ("movie", "series"):
         raise HTTPException(status_code=400, detail="type must be 'movie' or 'series'")
 
-    tmdb_key = await get_user_tmdb_key(db, current_user.id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
 
     profile_q = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
     profile = profile_q.scalar_one_or_none()
@@ -5686,7 +5659,7 @@ async def pick_for_me(
 
     # ── Streaming pool (progressive fallback) ─────────────────────────────
     streaming_candidates: list[dict] = []
-    if streaming_ids and check_tmdb_key(tmdb_key):
+    if streaming_ids and settings_store.check_tmdb_key(tmdb_key):
         disliked: set[str] = set(profile.disliked_genres or []) if profile else set()
         user_genres = ((profile.movie_genres if type == "movie" else profile.show_genres) or []) if profile else []
         genre_map = MOVIE_GENRE_IDS if type == "movie" else TV_GENRE_IDS
@@ -5790,7 +5763,7 @@ async def pick_for_me(
 
     # ── Enrich pick: overview + watch providers ────────────────────────────
     sources: list[dict] = []
-    if check_tmdb_key(tmdb_key):
+    if settings_store.check_tmdb_key(tmdb_key):
         try:
             if not pick.get("overview") or not pick.get("genres"):
                 if type == "movie":
@@ -5886,7 +5859,7 @@ async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db
         # Poster/backdrop images carry no per-user data (just a TMDB path), so
         # once the admin opts into anonymous browsing, letting those pages
         # load images without a session is safe too.
-        gs = await _get_global_settings(db)
+        gs = await settings_store.get_global_settings(db)
         if gs and gs.enable_logged_out_navigation:
             return None
         raise credentials_exception

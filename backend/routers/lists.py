@@ -1,3 +1,4 @@
+from core import settings_store
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -495,11 +496,10 @@ async def _push_season_list_item_to_trakt(
     ):
         return
 
-    from routers.media import get_user_tmdb_key
     from core import tmdb
 
     try:
-        api_key = await get_user_tmdb_key(db, user_id)
+        api_key = await settings_store.get_user_tmdb_key(db, user_id)
         season_data = await tmdb.get_season(media.tmdb_id, season_number, api_key=api_key)
         season_tmdb_id = season_data.get("id")
     except Exception as exc:
@@ -585,7 +585,6 @@ async def _push_list_item_to_trakt(
         logger.warning("Failed to push list item to Trakt (slug=%s, remove=%s): %s", list_trakt_slug, remove, exc)
 
 
-
 async def _push_list_item_to_mdblist(
     db: AsyncSession,
     user_id: int,
@@ -647,10 +646,9 @@ async def add_list_item(
         load_show=True,
     )
 
-    from routers.media import get_user_tmdb_key
     from core import tmdb
 
-    api_key = await get_user_tmdb_key(db, current_user.id)
+    api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
 
     if not media and not body.tmdb_id:
         raise HTTPException(status_code=404, detail="Media not found")

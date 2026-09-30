@@ -8,6 +8,7 @@ once per TTL. The stats page triggers the backfill on view (own profile only)
 and the sections simply stay hidden until data is available.
 """
 
+from core import settings_store
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -158,10 +159,9 @@ async def maybe_backfill_credits(db: AsyncSession, user_id: int) -> None:
     newest = (await db.execute(select(func.max(TitleCredits.fetched_at)))).scalar_one_or_none()
     if newest and (datetime.utcnow() - newest) < CREDITS_TTL:
         return
-    from routers.media import check_tmdb_key, get_user_tmdb_key
 
-    api_key = await get_user_tmdb_key(db, user_id)
-    if not check_tmdb_key(api_key):
+    api_key = await settings_store.get_user_tmdb_key(db, user_id)
+    if not settings_store.check_tmdb_key(api_key):
         return
     # Re-check right before claiming: two concurrent callers can both pass the
     # checks above (each awaits a query in between), so the actual claim has to

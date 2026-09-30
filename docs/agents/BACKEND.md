@@ -11,6 +11,10 @@ Read only for backend changes or questions. Confirm details in the affected code
 - backend/migrations/: schema migrations; backend/tests/: existing behavior checks.
 - backend/core/config.py: settings. Never copy credentials into documentation.
 
+Shared credential resolution lives in core/settings_store.py. User TMDB keys
+precede global keys. Request lookups cache values (including misses) per database
+session; job lookups with an existing settings row refresh the global fallback.
+
 ## Behavior to preserve
 
 - List status, granular watch history, playback position, and streaming-library

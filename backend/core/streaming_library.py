@@ -4,6 +4,7 @@ Observed collection files describe provider state. The intent is kept separately
 so a failed write, or another collection source, cannot silently reverse it.
 """
 
+from core import settings_store
 from core import stremio_payloads
 from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
@@ -170,13 +171,12 @@ async def deliver_library_intent(user_id: int, media_id: int) -> None:
 
 
 async def _record_for_media(db: AsyncSession, user_id: int, media: Media) -> dict:
-    from routers.media import get_user_tmdb_key
     from models.show import Show
 
     show = None
     if media.media_type == MediaType.series and media.tmdb_id is not None:
         show = (await db.execute(select(Show).where(Show.tmdb_id == media.tmdb_id))).scalars().first()
-    api_key = await get_user_tmdb_key(db, user_id)
+    api_key = await settings_store.get_user_tmdb_key(db, user_id)
     await nuvio_projection.ensure_imdb_ids([media], {}, api_key,
         {media.tmdb_id: show} if show and media.tmdb_id is not None else {})
     entity = show if show and nuvio_payloads.library_content_id(media, show) else None

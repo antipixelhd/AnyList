@@ -1,3 +1,4 @@
+from core import settings_store
 from datetime import datetime
 from typing import Optional
 
@@ -30,7 +31,6 @@ class RatingIn(BaseModel):
     review: Optional[str] = None
     season_number: Optional[int] = None
     episode_order: Optional[str] = None
-
 
 
 def format_rating(rating: Rating, media: Media) -> dict:
@@ -83,9 +83,8 @@ async def submit_rating(
     if not media and not body.tmdb_id:
         raise HTTPException(status_code=404, detail="Media not found")
     if not media:
-        from routers.media import get_user_tmdb_key
         from core import tmdb
-        api_key = await get_user_tmdb_key(db, current_user.id)
+        api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
         try:
             if media_type == MediaType.movie:
                 data = await tmdb.get_movie(body.tmdb_id, api_key=api_key)

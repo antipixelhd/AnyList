@@ -45,7 +45,7 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
         payload = {"content_id": "provider-id-used-for-write", "type": "movie"}
 
         with (
-            patch("routers.sync._get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
+            patch("core.settings_store.get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
             patch("core.nuvio_projection.ensure_imdb_ids", new_callable=AsyncMock),
             patch("core.nuvio_payloads.watched_item", return_value=payload),
             patch("core.nuvio.connection_lock", side_effect=self._unlocked),
@@ -76,7 +76,7 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch("routers.sync._get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
+            patch("core.settings_store.get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
             patch("core.nuvio_projection.ensure_imdb_ids", new_callable=AsyncMock),
             patch("core.nuvio_payloads.watched_item", return_value=payload),
             patch("core.nuvio.connection_lock", side_effect=self._unlocked),
@@ -98,7 +98,7 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
         payload = {"content_id": "provider-id-that-failed", "type": "movie"}
 
         with (
-            patch("routers.sync._get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
+            patch("core.settings_store.get_effective_tmdb_key", new_callable=AsyncMock, return_value="tmdb-key"),
             patch("core.nuvio_projection.ensure_imdb_ids", new_callable=AsyncMock),
             patch("core.nuvio_payloads.watched_item", return_value=payload),
             patch("core.nuvio.connection_lock", side_effect=self._unlocked),

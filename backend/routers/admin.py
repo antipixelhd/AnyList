@@ -1,3 +1,4 @@
+from core import settings_store
 import gzip
 import io
 import json
@@ -270,11 +271,10 @@ async def admin_heal_metadata(
     """Re-enrich all collection items server-wide that are missing poster/date metadata."""
     # TMDB metadata isn't user-specific, so resolve the key the same way every
     # other TMDB path does: this admin's own key, then the global one (#336).
-    from routers.sync import _get_effective_tmdb_key
 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
-    effective_key = await _get_effective_tmdb_key(db, settings)
+    effective_key = await settings_store.get_effective_tmdb_key(db, settings)
     if not effective_key:
         raise HTTPException(
             status_code=400,
@@ -459,13 +459,13 @@ async def approve_request(
             raise HTTPException(status_code=500, detail=f"Radarr error: {e}")
 
     elif req.media_type == "series":
-        from routers.media import _effective_sonarr, get_user_tmdb_key
+        from routers.media import _effective_sonarr
         from core import sonarr as sonarr_core, tmdb as tmdb_core
         sonarr_cfg = _effective_sonarr(settings, gs)
         if not sonarr_cfg:
             raise HTTPException(status_code=400, detail="Sonarr not configured")
         try:
-            tmdb_key = await get_user_tmdb_key(db, current_user.id)
+            tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
             ext_ids = await tmdb_core.get_external_ids(req.tmdb_id, "tv", api_key=tmdb_key)
             tvdb_id = ext_ids.get("tvdb_id")
             if not tvdb_id:

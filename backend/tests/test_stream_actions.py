@@ -193,7 +193,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
             [],[entry],[connection],[],[77],episodes,[100,101,102],[],[],[],
         ],baseline)
 
-        with patch('routers.sync._get_effective_tmdb_key',AsyncMock(return_value=None)), \
+        with patch('core.settings_store.get_effective_tmdb_key',AsyncMock(return_value=None)), \
              patch('core.nuvio_projection.ensure_imdb_ids',AsyncMock()), \
              patch('core.nuvio_payloads.imdb_id',return_value='tt1234567'):
             await queue_restorations(db,1,series)
@@ -222,7 +222,7 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
             [],[entry],[connection],[],[77],episodes,[100],[],[],[],
         ],baseline)
 
-        with patch('routers.sync._get_effective_tmdb_key',AsyncMock(return_value=None)), \
+        with patch('core.settings_store.get_effective_tmdb_key',AsyncMock(return_value=None)), \
              patch('core.nuvio_projection.ensure_imdb_ids',AsyncMock()), \
              patch('core.nuvio_payloads.imdb_id',return_value='tt1234567'):
             await queue_restorations(db,1,series)

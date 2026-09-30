@@ -68,7 +68,7 @@ class AdminHealTmdbKeyResolutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_starts_with_a_per_user_key_when_no_global_key(self):
         with (
-            patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="user-key")),
+            patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="user-key")),
             patch("routers.admin.run_admin_heal", AsyncMock()),
         ):
             res = await self.client.post("/admin/maintenance/heal")
@@ -82,14 +82,14 @@ class AdminHealTmdbKeyResolutionTests(unittest.IsolatedAsyncioTestCase):
             captured["key"] = args[0]
 
         with (
-            patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="resolved-key")),
+            patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="resolved-key")),
             patch("routers.admin.run_admin_heal", side_effect=_capture),
         ):
             await self.client.post("/admin/maintenance/heal")
         self.assertEqual(captured["key"], "resolved-key")
 
     async def test_400_only_when_no_key_at_all(self):
-        with patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value=None)):
+        with patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value=None)):
             res = await self.client.post("/admin/maintenance/heal")
         self.assertEqual(res.status_code, 400)
         detail = res.json()["detail"]

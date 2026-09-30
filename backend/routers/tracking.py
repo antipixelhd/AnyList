@@ -1,5 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
+from core import settings_store
 import base64
 import binascii
 import re
@@ -1333,9 +1334,8 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
     results = [media_data(m) for m in rows]
     notice = None
     if term:
-        from routers.media import get_user_tmdb_key
         from core import tmdb
-        key = await get_user_tmdb_key(db, viewer.id if viewer else -1)
+        key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
         if key:
             try:
                 search = tmdb.search_movies if media_type == 'movie' else tmdb.search_shows
@@ -1373,9 +1373,8 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
 async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    from routers.media import get_user_tmdb_key
     from core.enrichment import create_media_safely, enrich_media
-    key = await get_user_tmdb_key(db, viewer.id)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id)
     if not key:
         raise HTTPException(409, 'A TMDB key is required to load this title')
     media = (await db.execute(select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType(media_type)))).scalar_one_or_none()
@@ -1438,13 +1437,12 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
 
 @router.post('/title/{media_id}/refresh-episodes')
 async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    from routers.media import get_user_tmdb_key
     from routers.shows import get_user_tvdb_key
     from core.tracking_metadata import hydrate_tracking_episodes
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
         raise HTTPException(404, 'Series not found')
-    key = await get_user_tmdb_key(db, viewer.id)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id)
     tvdb_key = await get_user_tvdb_key(db, viewer.id)
     if not key and not tvdb_key:
         raise HTTPException(409, 'Add a metadata provider key in Settings, or ask your administrator, to load episodes')

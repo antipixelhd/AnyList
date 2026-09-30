@@ -512,7 +512,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         })()
         with (
             patch("routers.sync._select_in_chunks", AsyncMock(return_value=[movie])),
-            patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.stremio_delivery.push_connection", AsyncMock()) as push,
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
@@ -564,7 +564,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         watched_push = AsyncMock()
         with (
             patch("routers.sync._select_in_chunks", AsyncMock(return_value=[movie])),
-            patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
             patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
             patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),

@@ -9,6 +9,7 @@ Endpoints:
                                      data export zip (no VIP / API app required)
 """
 
+from core import settings_store
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -1753,12 +1754,12 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                     ))
 
             if settings.trakt_push_ratings and ratings_map:
-                from routers.sync import _get_effective_tmdb_key, _resolve_tmdb_season_ids
+                from routers.sync import _resolve_tmdb_season_ids
 
                 season_tmdb_ids = await _resolve_tmdb_season_ids(
                     media_by_id,
                     set(ratings_map),
-                    await _get_effective_tmdb_key(db, settings),
+                    await settings_store.get_effective_tmdb_key(db, settings),
                 )
 
                 # Dedup against what Trakt already has, keyed by (kind, tmdb id,

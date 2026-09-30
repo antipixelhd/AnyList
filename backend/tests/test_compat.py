@@ -59,7 +59,7 @@ class MissingYearTests(unittest.IsolatedAsyncioTestCase):
         lst = SimpleNamespace(user_id=1)
         db = _FakeSession(lst, [(_series_media(), None, None)])
 
-        with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value=None)), \
+        with patch("core.settings_store.get_user_tmdb_key", new=AsyncMock(return_value=None)), \
              patch("core.tmdb.get_external_ids", new=AsyncMock(return_value={})):
             result = await compat.sonarr_list(list_id=1, user=user, db=db)
 
@@ -104,7 +104,7 @@ class SonarrTvdbResolutionTests(unittest.IsolatedAsyncioTestCase):
         async def fake_external_ids(tmdb_id, type, api_key=None):
             return {"tvdb_id": 393926} if tmdb_id == 93870 else {}
 
-        with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+        with patch("core.settings_store.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
              patch("core.tmdb.get_external_ids", side_effect=fake_external_ids) as m:
             result = await compat.sonarr_list(list_id=1, user=user, db=db)
 
@@ -135,7 +135,7 @@ class SonarrTvdbResolutionTests(unittest.IsolatedAsyncioTestCase):
                 in_flight -= 1
             return {"tvdb_id": tmdb_id}
 
-        with patch("routers.media.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
+        with patch("core.settings_store.get_user_tmdb_key", new=AsyncMock(return_value="k")), \
              patch("core.tmdb.get_external_ids", side_effect=fake_external_ids):
             result = await compat.sonarr_list(list_id=1, user=user, db=db)
 

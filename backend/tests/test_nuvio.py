@@ -904,7 +904,7 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.sync._get_effective_tmdb_key",
+                "core.settings_store.get_effective_tmdb_key",
                 AsyncMock(return_value="tmdb-token"),
             ),
             patch(
@@ -1142,7 +1142,7 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
             patch("routers.sync._select_in_chunks", selected),
             patch("core.nuvio_projection.select_in_chunks", selected),
             patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
-            patch("routers.sync._get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
+            patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
             patch.object(nuvio, "push_watched_items", pushed),
         ):

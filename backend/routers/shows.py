@@ -1,3 +1,4 @@
+from core import settings_store
 import asyncio
 from datetime import datetime, date, timezone
 from pydantic import BaseModel
@@ -20,7 +21,7 @@ from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import RewatchProgress
-from routers.media import format_media, get_user_tmdb_key, check_tmdb_key, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, _get_global_settings, require_anon_nav_allowed
+from routers.media import format_media, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, require_anon_nav_allowed
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID
 from core import tmdb
@@ -723,12 +724,12 @@ async def get_episode_orders(
         select(ShowModel).where(ShowModel.tmdb_id == series_tmdb_id)
     )).scalar_one_or_none()
     tmdb_api_key, tvdb_api_key = await asyncio.gather(
-        get_user_tmdb_key(db, current_user.id),
+        settings_store.get_user_tmdb_key(db, current_user.id),
         get_user_tvdb_key(db, current_user.id),
     )
     orders = await list_available_orders(
         db, series_tmdb_id, show,
-        tmdb_api_key if check_tmdb_key(tmdb_api_key) else None,
+        tmdb_api_key if settings_store.check_tmdb_key(tmdb_api_key) else None,
         tvdb_api_key,
     )
     return {
@@ -763,10 +764,10 @@ async def set_show_episode_order(
         }
 
     tmdb_api_key, tvdb_api_key = await asyncio.gather(
-        get_user_tmdb_key(db, current_user.id),
+        settings_store.get_user_tmdb_key(db, current_user.id),
         get_user_tvdb_key(db, current_user.id),
     )
-    if not check_tmdb_key(tmdb_api_key):
+    if not settings_store.check_tmdb_key(tmdb_api_key):
         raise HTTPException(status_code=400, detail="TMDB API key not configured")
     if order_key.startswith("tvdb:") and not tvdb_api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
@@ -875,9 +876,9 @@ async def get_show(
         recommendations = []
         cast = []
         tmdb_extra: dict | None = None
-        api_key = await get_user_tmdb_key(db, effective_user_id)
+        api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
         metadata_lang = await get_user_metadata_language(db, effective_user_id)
-        if check_tmdb_key(api_key):
+        if settings_store.check_tmdb_key(api_key):
             try:
                 tmdb_extra = await tmdb.get_show(series_tmdb_id, api_key=api_key, language=metadata_lang)
                 networks = [
@@ -1200,8 +1201,8 @@ async def get_show(
     # 2. If not local, fetch from TMDB - pass the viewer's metadata language so
     # list-only / non-library shows are translated too (in-library shows use the
     # stored ShowTranslation instead; see the `if show:` branch above). #235.
-    api_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(api_key):
+    api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(api_key):
         raise HTTPException(
             status_code=404, detail="Show not found and TMDB key not configured"
         )
@@ -1350,8 +1351,8 @@ async def get_show_recommendations(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    tmdb_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(tmdb_key):
+    tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(tmdb_key):
         return {"results": []}
 
     try:
@@ -1401,10 +1402,10 @@ async def get_show_season(
     ordered_season: tuple[dict, set[tuple[int, int]]] | None = None
 
     # 2. Always fetch full season data from TMDB for consistent metadata
-    api_key = await get_user_tmdb_key(db, effective_user_id)
+    api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
     metadata_lang = await get_user_metadata_language(db, effective_user_id)
 
-    if show and not is_aired_order(order_key) and check_tmdb_key(api_key):
+    if show and not is_aired_order(order_key) and settings_store.check_tmdb_key(api_key):
         season_art = await _tvdb_season_art(
             db, effective_user_id, order_key,
             (order_pref_row.tvdb_id if order_pref_row else None)
@@ -1437,7 +1438,7 @@ async def get_show_season(
         local_episodes = ep_result.scalars().all()
 
     try:
-        if check_tmdb_key(api_key):
+        if settings_store.check_tmdb_key(api_key):
             import asyncio
 
             # Fetch season and show info (if not local) in parallel
@@ -1814,8 +1815,8 @@ async def get_episode_detail(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    api_key = await get_user_tmdb_key(db, effective_user_id)
-    if not check_tmdb_key(api_key):
+    api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
+    if not settings_store.check_tmdb_key(api_key):
         raise HTTPException(status_code=404, detail="TMDB API Key not configured")
     metadata_lang = await get_user_metadata_language(db, effective_user_id)
 
@@ -2093,8 +2094,8 @@ async def refresh_show_metadata(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    api_key = await get_user_tmdb_key(db, current_user.id)
-    if not check_tmdb_key(api_key):
+    api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+    if not settings_store.check_tmdb_key(api_key):
         raise HTTPException(status_code=400, detail="TMDB API key not configured")
 
     show_result = await db.execute(
@@ -2288,7 +2289,7 @@ async def get_tvdb_show(
     show = show_result.scalar_one_or_none()
     if show is None:
         if series_tmdb_id:
-            tmdb_api_key_for_show = await get_user_tmdb_key(db, effective_user_id)
+            tmdb_api_key_for_show = await settings_store.get_user_tmdb_key(db, effective_user_id)
             from routers.webhooks import _find_or_create_show
             show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
         else:
@@ -2337,7 +2338,7 @@ async def get_tvdb_show(
         )
     ) if series_tmdb_id else None
     mappings = list(mapping_result.scalars().all()) if mapping_result else []
-    tmdb_api_key = await get_user_tmdb_key(db, effective_user_id)
+    tmdb_api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
     show_data["seasons"], tmdb_show = await _enrich_tvdb_seasons(
         show_data["seasons"],
         mappings,
@@ -2481,7 +2482,7 @@ async def get_tvdb_show(
     watch_started = any(v["watch_started"] for sn, v in season_states.items() if sn != 0)
 
     # Sonarr state
-    gs = await _get_global_settings(db)
+    gs = await settings_store.get_global_settings(db)
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == effective_user_id))
     settings = settings_q.scalar_one_or_none()
     sonarr_cfg = _effective_sonarr(settings, gs)
@@ -2628,7 +2629,7 @@ async def get_tvdb_season(
     show = show_result.scalar_one_or_none()
     if show is None:
         if series_tmdb_id:
-            tmdb_api_key_for_show = await get_user_tmdb_key(db, effective_user_id)
+            tmdb_api_key_for_show = await settings_store.get_user_tmdb_key(db, effective_user_id)
             from routers.webhooks import _find_or_create_show
             show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
         else:
@@ -2686,7 +2687,7 @@ async def get_tvdb_season(
         ),
         {},
     )
-    tmdb_api_key = await get_user_tmdb_key(db, effective_user_id)
+    tmdb_api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
     enriched_seasons, _ = await _enrich_tvdb_seasons(
         [base_season_meta] if base_season_meta else [],
         mappings,
@@ -2993,7 +2994,7 @@ async def get_tvdb_episode(
     show = show_result.scalar_one_or_none()
     if show is None:
         if series_tmdb_id:
-            tmdb_api_key = await get_user_tmdb_key(db, effective_user_id)
+            tmdb_api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
             from routers.webhooks import _find_or_create_show
             show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key)
         else:
@@ -3274,8 +3275,8 @@ async def refresh_tvdb_show_metadata(
     tvdb_lang = tvdb_client.tvdb_language(metadata_lang)
 
     if show.tmdb_id:
-        tmdb_api_key = await get_user_tmdb_key(db, current_user.id)
-        if not check_tmdb_key(tmdb_api_key):
+        tmdb_api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+        if not settings_store.check_tmdb_key(tmdb_api_key):
             raise HTTPException(status_code=400, detail="TMDB API key not configured")
         try:
             mapping = await ensure_episode_order_mapping(

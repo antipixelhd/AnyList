@@ -16,6 +16,7 @@ that must render instantly) never waits on TMDB: it serves whatever cache
 exists and warms it in the background otherwise.
 """
 
+from core import settings_store
 import asyncio
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -107,7 +108,6 @@ async def _candidate_shows(db: AsyncSession, user_id: int) -> list[Show]:
 async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
     from core import tmdb as tmdb_client
     from core.translations import get_user_metadata_language
-    from routers.media import check_tmdb_key, get_user_tmdb_key
 
     # Handed back in the payload too, so the frontend's Today/Yesterday/
     # Tomorrow labels use this same reference instead of the viewer's own
@@ -116,8 +116,8 @@ async def compute_calendar(db: AsyncSession, user_id: int) -> dict:
 
     candidates = await _candidate_shows(db, user_id)
 
-    api_key = await get_user_tmdb_key(db, user_id)
-    if not check_tmdb_key(api_key) or not candidates:
+    api_key = await settings_store.get_user_tmdb_key(db, user_id)
+    if not settings_store.check_tmdb_key(api_key) or not candidates:
         return {
             "schema": CALENDAR_SCHEMA, "generated_at": datetime.utcnow().isoformat(),
             "today": today.isoformat(), "shows_checked": 0, "entries": [],

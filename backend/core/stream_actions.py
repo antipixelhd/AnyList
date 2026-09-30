@@ -1,5 +1,6 @@
 """Retryable playback actions; never mutates streaming library membership."""
 from core import stremio_payloads
+from core import settings_store
 from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
 import logging
@@ -880,10 +881,9 @@ async def queue_restorations(db, user_id, media):
         await _queue_nuvio_next_up_show(db, user_id, media, targets)
         return
     from models.users import UserSettings
-    from routers.sync import _get_effective_tmdb_key
     show = await db.get(Show, record['episode_media'].show_id) if media.media_type == MediaType.series else None
     settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
-    api_key = await _get_effective_tmdb_key(db, settings)
+    api_key = await settings_store.get_effective_tmdb_key(db, settings)
     await nuvio_projection.ensure_imdb_ids([record['episode_media']], {show.id: show} if show else {}, api_key)
     resolved_imdb_id = nuvio_payloads.imdb_id(show or media)
     for conn in targets:

@@ -424,7 +424,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")),
             patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)),
-            patch("routers.shows.get_user_tmdb_key", AsyncMock(return_value=None)),
+            patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value=None)),
             patch("routers.shows.tvdb_client.get_series", AsyncMock(return_value=raw_series)),
             patch("routers.shows.tvdb_client.get_series_episodes", AsyncMock(return_value=raw_episodes)),
             patch("routers.shows.tvdb_client.get_season", AsyncMock(return_value={})),

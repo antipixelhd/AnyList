@@ -461,7 +461,7 @@ class StreamNextUpRefreshTests(unittest.IsolatedAsyncioTestCase):
         session = _FakeSession(rows)
         apply_calls = []
         return session, apply_calls, (
-            patch("routers.history.check_tmdb_key", lambda k: bool(k)),
+            patch("core.settings_store.check_tmdb_key", lambda k: bool(k)),
             patch("routers.history.AsyncSessionLocal", lambda: session),
             patch("routers.history.tmdb.get_show", get_show),
             patch("routers.shows.apply_show_metadata", lambda show, data: apply_calls.append(show.tmdb_id)),

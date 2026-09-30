@@ -1,3 +1,4 @@
+from core import settings_store
 import asyncio
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -645,7 +646,6 @@ async def _show_metadata_refresher():
         from core import tmdb as tmdb_client
         from core.tracking_metadata import refresh_tracked_catalogues, refresh_tracked_tvdb_show_summaries
         from core.season_releases import refresh_season_release_notifications
-        from routers.media import check_tmdb_key
         from routers.shows import apply_show_metadata
     except Exception as e:
         log.error(f"Show metadata refresher: failed to import dependencies: {e}")
@@ -693,14 +693,14 @@ async def _show_metadata_refresher():
                 api_key = gs.tmdb_api_key if gs else None
                 tvdb_key = gs.tvdb_api_key if gs else None
                 tvdb_pin = gs.tvdb_subscriber_pin if gs else None
-                if not check_tmdb_key(api_key):
+                if not settings_store.check_tmdb_key(api_key):
                     api_key = (await db.execute(
                         select(UserSettings.tmdb_api_key)
                         .join(User, User.id == UserSettings.user_id)
                         .where(UserSettings.tmdb_api_key.isnot(None), User.is_admin.is_(True))
                         .limit(1)
                     )).scalar_one_or_none()
-                if not check_tmdb_key(api_key):
+                if not settings_store.check_tmdb_key(api_key):
                     api_key = (await db.execute(
                         select(UserSettings.tmdb_api_key)
                         .where(UserSettings.tmdb_api_key.isnot(None))
@@ -726,7 +726,7 @@ async def _show_metadata_refresher():
                 if tvdb_key:
                     from core import tvdb as tvdb_client
                     tvdb_client.set_subscriber_pin(tvdb_key, tvdb_pin)
-                if not check_tmdb_key(api_key) and not tvdb_key:
+                if not settings_store.check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     # Cached confirmed dates can still reach their premiere
                     # while the metadata provider is temporarily unavailable.
@@ -735,7 +735,7 @@ async def _show_metadata_refresher():
 
                 all_shows = (
                     (await db.execute(select(Show).where(Show.tmdb_id.isnot(None)))).scalars().all()
-                    if check_tmdb_key(api_key) else []
+                    if settings_store.check_tmdb_key(api_key) else []
                 )
                 shows = [
                     s for s in all_shows

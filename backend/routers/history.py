@@ -1,3 +1,4 @@
+from core import settings_store
 import asyncio
 import json
 import logging
@@ -23,7 +24,7 @@ from models.connections import MediaServerConnection
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from models.tracking import TrackedEntry, TrackingDeletion
-from routers.media import enrich_with_state, get_user_tmdb_key, check_tmdb_key, _attach_episode_order_fields
+from routers.media import enrich_with_state, _attach_episode_order_fields
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, apply_media_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
@@ -283,7 +284,7 @@ async def _push_watch_state(
             show_result = await db.execute(select(Show).where(Show.id.in_(show_ids)))
             shows_by_id = {show.id: show for show in show_result.scalars().all()}
 
-        api_key = await get_user_tmdb_key(db, user_id)
+        api_key = await settings_store.get_user_tmdb_key(db, user_id)
         await nuvio_projection.ensure_imdb_ids(media_items, shows_by_id, api_key)
 
         nuvio_items: list[dict] = []
@@ -343,9 +344,8 @@ async def _push_watch_state(
         if conn.type == "stremio" and not skip_stream_watch_writes
     ]
     if stremio_connections:
-        from routers.sync import _get_effective_tmdb_key
 
-        api_key = await _get_effective_tmdb_key(db, settings)
+        api_key = await settings_store.get_effective_tmdb_key(db, settings)
         # Exclude episodes enriched from TVDB (no real TMDB counterpart, see
         # #101) — their tmdb_id is a disguised TVDB episode id, not safe to
         # resolve against Stremio's TMDB/IMDb-keyed content ids.
@@ -1095,8 +1095,8 @@ async def _next_up_remaining_stats(
     ]
     last_ep_by_show: dict[int, dict] = {}
     if needs_last_ep:
-        tmdb_key = await get_user_tmdb_key(db, user_id)
-        if check_tmdb_key(tmdb_key):
+        tmdb_key = await settings_store.get_user_tmdb_key(db, user_id)
+        if settings_store.check_tmdb_key(tmdb_key):
             # Next Up's full-page view (unlike the home widget) has no limit,
             # so needs_last_ep can be every still-airing show a user follows -
             # cap fan-out concurrency instead of firing one request per show
@@ -1256,8 +1256,8 @@ async def get_next_up(
     # only the on-demand computation is skipped for it.
     missing_show_ids = set(last_per_show) - set(next_per_show) - dropped_show_ids
     if missing_show_ids:
-        api_key = await get_user_tmdb_key(db, current_user.id)
-        if check_tmdb_key(api_key):
+        api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
+        if settings_store.check_tmdb_key(api_key):
             shows_result = await db.execute(select(Show).where(Show.id.in_(missing_show_ids)))
             shows_by_id = {s.id: s for s in shows_result.scalars().all()}
 
@@ -1544,7 +1544,7 @@ async def _stream_next_up_refresh(user_id: int, api_key: str):
     or, when there's nothing to do:
         {"total": 0, "complete": true[, "error": "no_tmdb_key"]}
     """
-    if not check_tmdb_key(api_key):
+    if not settings_store.check_tmdb_key(api_key):
         yield json.dumps({"total": 0, "complete": True, "error": "no_tmdb_key"}) + "\n"
         return
 
@@ -1620,7 +1620,7 @@ async def refresh_next_up(
     watches (see _stream_next_up_refresh). The client reloads Next Up when the
     stream completes; the refreshed snapshots are what let a previously-missing
     show surface on that reload."""
-    api_key = await get_user_tmdb_key(db, current_user.id)
+    api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     return StreamingResponse(
         _stream_next_up_refresh(current_user.id, api_key),
         media_type="application/x-ndjson",
@@ -1742,8 +1742,7 @@ async def _resolve_movie_media_id(
         return existing.id
     if not create:
         return None
-    from routers.media import get_user_tmdb_key
-    api_key = await get_user_tmdb_key(db, user_id)
+    api_key = await settings_store.get_user_tmdb_key(db, user_id)
     try:
         data = await tmdb.get_movie(tmdb_id, api_key=api_key)
     except Exception as e:
@@ -2074,10 +2073,9 @@ async def mark_as_watched(
     )
 
     if episode_has_context:
-        from routers.media import get_user_tmdb_key
         from routers.webhooks import _find_or_create_show
 
-        api_key = await get_user_tmdb_key(db, current_user.id)
+        api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
         if event_in.series_tmdb_id is not None:
             try:
                 show = await _find_or_create_show(db, event_in.series_tmdb_id, api_key)
@@ -2137,9 +2135,8 @@ async def mark_as_watched(
     # 2. If not, create Media record from TMDB
     if not media:
         if api_key is None:
-            from routers.media import get_user_tmdb_key
 
-            api_key = await get_user_tmdb_key(db, current_user.id)
+            api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
 
         try:
             if event_in.media_type == MediaType.movie:
@@ -2551,9 +2548,9 @@ async def mark_season_watched(
     show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
     show = show_q.scalar_one_or_none()
     
-    api_key = await get_user_tmdb_key(db, current_user.id)
+    api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     if not show:
-        if not check_tmdb_key(api_key):
+        if not settings_store.check_tmdb_key(api_key):
             raise HTTPException(status_code=404, detail="Show not found and TMDB key not configured")
         data = await tmdb.get_show(body.series_tmdb_id, api_key=api_key)
         show = Show(
@@ -2842,9 +2839,9 @@ async def mark_show_watched(
     show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
     show = show_q.scalar_one_or_none()
     
-    api_key = await get_user_tmdb_key(db, current_user.id)
+    api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     if not show:
-        if not check_tmdb_key(api_key):
+        if not settings_store.check_tmdb_key(api_key):
             raise HTTPException(status_code=404, detail="Show not found and TMDB key not configured")
         data = await tmdb.get_show(body.series_tmdb_id, api_key=api_key)
         show = Show(
@@ -3196,12 +3193,12 @@ async def _get_or_create_media_for_session(
         if media:
             return media
 
-    api_key = await get_user_tmdb_key(db, user_id)
+    api_key = await settings_store.get_user_tmdb_key(db, user_id)
 
     if body.media_type == MediaType.movie:
         if not body.tmdb_id:
             raise HTTPException(status_code=400, detail="tmdb_id required for movies")
-        if not check_tmdb_key(api_key):
+        if not settings_store.check_tmdb_key(api_key):
             raise HTTPException(status_code=404, detail="Movie not in library and TMDB key not configured")
         try:
             data = await tmdb.get_movie(body.tmdb_id, api_key=api_key)
@@ -3227,7 +3224,7 @@ async def _get_or_create_media_for_session(
         if body.show_tmdb_id:
             show_q = await db.execute(select(Show).where(Show.tmdb_id == body.show_tmdb_id))
             show = show_q.scalar_one_or_none()
-            if not show and check_tmdb_key(api_key):
+            if not show and settings_store.check_tmdb_key(api_key):
                 from routers.webhooks import _find_or_create_show
                 try:
                     show = await _find_or_create_show(db, body.show_tmdb_id, api_key)

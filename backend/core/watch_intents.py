@@ -1,6 +1,8 @@
 """Durable watched-state delivery for Nuvio and Stremio connections."""
 from __future__ import annotations
 
+from core import settings_store
+
 from core import stremio_delivery
 from core import nuvio_payloads, nuvio_projection
 from core.connection_identity import refresh_stream_connection
@@ -120,12 +122,11 @@ async def _write_provider_watch_state(
 ) -> None:
     if conn.type == "stremio":
         from models.users import UserSettings
-        from routers.sync import _get_effective_tmdb_key
 
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == conn.user_id,
         ))).scalar_one_or_none()
-        api_key = await _get_effective_tmdb_key(db, settings)
+        api_key = await settings_store.get_effective_tmdb_key(db, settings)
         await stremio_delivery.push_connection(
             db,
             conn,
@@ -142,12 +143,11 @@ async def _write_provider_watch_state(
     baseline = await db.get(StreamBaseline, conn.id)
     show = await db.get(Show, media.show_id) if media.show_id is not None else None
     from models.users import UserSettings
-    from routers.sync import _get_effective_tmdb_key
 
     settings = (await db.execute(select(UserSettings).where(
         UserSettings.user_id == conn.user_id,
     ))).scalar_one_or_none()
-    api_key = await _get_effective_tmdb_key(db, settings)
+    api_key = await settings_store.get_effective_tmdb_key(db, settings)
     await nuvio_projection.ensure_imdb_ids([media], {show.id: show} if show else {}, api_key)
     payload = nuvio_payloads.watched_item(
         media,
@@ -282,11 +282,10 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
                 row.attempts += 1
             try:
                 from models.users import UserSettings
-                from routers.sync import _get_effective_tmdb_key
                 settings = (await db.execute(select(UserSettings).where(
                     UserSettings.user_id == user_id))).scalar_one_or_none()
                 await stremio_delivery.push_connection(db, conn, user_id,
-                    api_key=await _get_effective_tmdb_key(db, settings),
+                    api_key=await settings_store.get_effective_tmdb_key(db, settings),
                     watch_overrides=overrides, watch_only=True)
             except Exception as error:
                 for row in batch:

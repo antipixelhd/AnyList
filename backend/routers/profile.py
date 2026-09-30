@@ -1,3 +1,4 @@
+from core import settings_store
 import asyncio
 from collections import defaultdict
 
@@ -248,8 +249,7 @@ async def start_translation_backfill(
 
     language = profile.metadata_language
 
-    from routers.media import get_user_tmdb_key
-    tmdb_key = await get_user_tmdb_key(db, user_id)
+    tmdb_key = await settings_store.get_user_tmdb_key(db, user_id)
     if not tmdb_key:
         raise HTTPException(status_code=400, detail="TMDB API key not configured")
 
