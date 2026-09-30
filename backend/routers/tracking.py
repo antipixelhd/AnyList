@@ -1178,13 +1178,12 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
 
 @router.post('/title/{media_id}/refresh-episodes')
 async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    from routers.shows import get_user_tvdb_key
     from core.tracking_metadata import hydrate_tracking_episodes
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
         raise HTTPException(404, 'Series not found')
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
-    tvdb_key = await get_user_tvdb_key(db, viewer.id)
+    tvdb_key = await settings_store.get_user_tvdb_key(db, viewer.id)
     if not key and not tvdb_key:
         raise HTTPException(409, 'Add a metadata provider key in Settings, or ask your administrator, to load episodes')
     try:

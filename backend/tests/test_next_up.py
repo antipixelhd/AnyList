@@ -389,7 +389,7 @@ class ApplyShowMetadataSnapshotTests(unittest.TestCase):
             self.tmdb_data = None
 
     def test_snapshot_carries_gating_fields(self):
-        from routers.shows import apply_show_metadata
+        from core.show_metadata import apply_show_metadata
 
         show = self._Show()
         next_ep = {"air_date": "2026-04-01", "season_number": 2, "episode_number": 1}
@@ -405,7 +405,7 @@ class ApplyShowMetadataSnapshotTests(unittest.TestCase):
         # absent as "never snapshotted, fetch once" - so a rebuild for a show
         # TMDB reports no seasons for must still write the key, or that show
         # would be re-fetched on every load forever.
-        from routers.shows import apply_show_metadata
+        from core.show_metadata import apply_show_metadata
 
         show = self._Show()
         apply_show_metadata(show, {"name": "New", "status": "Ended"})
@@ -464,7 +464,7 @@ class StreamNextUpRefreshTests(unittest.IsolatedAsyncioTestCase):
             patch("core.settings_store.check_tmdb_key", lambda k: bool(k)),
             patch("routers.history.AsyncSessionLocal", lambda: session),
             patch("routers.history.tmdb.get_show", get_show),
-            patch("routers.shows.apply_show_metadata", lambda show, data: apply_calls.append(show.tmdb_id)),
+            patch("core.show_metadata.apply_show_metadata", lambda show, data: apply_calls.append(show.tmdb_id)),
         )
 
     async def test_no_tmdb_key_emits_single_terminal_line(self):

@@ -1,3 +1,4 @@
+from core import show_metadata
 from core import outbound_sync
 from core import settings_store
 import asyncio
@@ -643,7 +644,6 @@ async def _show_metadata_refresher():
         from core import tmdb as tmdb_client
         from core.tracking_metadata import refresh_tracked_catalogues, refresh_tracked_tvdb_show_summaries
         from core.season_releases import refresh_season_release_notifications
-        from routers.shows import apply_show_metadata
     except Exception as e:
         log.error(f"Show metadata refresher: failed to import dependencies: {e}")
         return
@@ -752,7 +752,7 @@ async def _show_metadata_refresher():
                             data = await tmdb_client.get_show(show.tmdb_id, api_key=api_key, cache_ttl=None)
                         except Exception:
                             return
-                    apply_show_metadata(show, data)
+                    show_metadata.apply_show_metadata(show, data)
                     refreshed += 1
                     if was_final and data.get("status") not in FINAL_STATUSES:
                         revived += 1

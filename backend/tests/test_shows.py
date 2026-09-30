@@ -157,7 +157,7 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
              patch("core.settings_store.check_tmdb_key", lambda k: True), \
              patch("routers.shows.tmdb.get_show", AsyncMock(return_value=self._tmdb_show_data())), \
              patch("routers.shows.tmdb.get_season", AsyncMock(side_effect=Exception("temporary TMDB failure"))), \
-             patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
+             patch("core.settings_store.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
              patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)), \
              patch("routers.shows.tvdb_client.get_series_episodes", AsyncMock(return_value=[wrong_tvdb_ep])), \
              patch("routers.shows.refresh_technical_data", AsyncMock()):
@@ -186,7 +186,7 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
              patch("core.settings_store.check_tmdb_key", lambda k: True), \
              patch("routers.shows.tmdb.get_show", AsyncMock(return_value=self._tmdb_show_data())), \
              patch("routers.shows.tmdb.get_season", AsyncMock(side_effect=Exception("temporary TMDB failure"))), \
-             patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
+             patch("core.settings_store.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
              patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)), \
              patch("routers.shows.tvdb_client.get_series_episodes", AsyncMock(return_value=[raw_tvdb_ep])), \
              patch("routers.shows.refresh_technical_data", AsyncMock()):
@@ -263,7 +263,7 @@ class TvdbSeasonArtTests(unittest.IsolatedAsyncioTestCase):
     ]}
 
     async def _art(self, order_key, key="tvdb-key", tvdb_id=366924):
-        with patch("routers.shows.get_user_tvdb_key", AsyncMock(return_value=key)), \
+        with patch("core.settings_store.get_user_tvdb_key", AsyncMock(return_value=key)), \
              patch("routers.shows.tvdb_client.get_series", AsyncMock(return_value=self._RAW)):
             return await shows._tvdb_season_art(MagicMock(), 7, order_key, tvdb_id)
 

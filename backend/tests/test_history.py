@@ -105,7 +105,7 @@ class ManualEpisodeWatchTests(unittest.IsolatedAsyncioTestCase):
         push_state = AsyncMock()
         patches = (
             patch("core.settings_store.get_user_tmdb_key", get_key),
-            patch("routers.webhooks._find_or_create_show", find_show),
+            patch("core.show_metadata.find_or_create_show", find_show),
             patch("routers.history.tmdb.get_episode", get_episode),
             patch("routers.history.enrich_media", enrich),
             # Some call sites (e.g. the orphan-repair branch) go through
@@ -748,7 +748,7 @@ class ManualSessionEpisodeShowLinkTests(unittest.IsolatedAsyncioTestCase):
         new_show = SimpleNamespace(id=99, tmdb_id=9999, title="The Murder Detective", poster_path="/show.jpg")
         media_stub = SimpleNamespace(id=10, show_id=None)
         with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value="k"), \
-             patch("routers.webhooks._find_or_create_show", new_callable=AsyncMock, return_value=new_show) as find_or_create, \
+             patch("core.show_metadata.find_or_create_show", new_callable=AsyncMock, return_value=new_show) as find_or_create, \
              patch("routers.history.create_media_safely", new_callable=AsyncMock, return_value=(media_stub, True)) as create_media:
             media = await history._get_or_create_media_for_session(db, self._body(), user_id=1)
 
@@ -761,7 +761,7 @@ class ManualSessionEpisodeShowLinkTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([None, existing_show])
         media_stub = SimpleNamespace(id=10, show_id=None)
         with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value="k"), \
-             patch("routers.webhooks._find_or_create_show", new_callable=AsyncMock) as find_or_create, \
+             patch("core.show_metadata.find_or_create_show", new_callable=AsyncMock) as find_or_create, \
              patch("routers.history.create_media_safely", new_callable=AsyncMock, return_value=(media_stub, True)) as create_media:
             media = await history._get_or_create_media_for_session(db, self._body(), user_id=1)
 
@@ -774,7 +774,7 @@ class ManualSessionEpisodeShowLinkTests(unittest.IsolatedAsyncioTestCase):
         media_stub = SimpleNamespace(id=10, show_id=None)
         with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value=None), \
              patch("core.settings_store.check_tmdb_key", return_value=False), \
-             patch("routers.webhooks._find_or_create_show", new_callable=AsyncMock) as find_or_create, \
+             patch("core.show_metadata.find_or_create_show", new_callable=AsyncMock) as find_or_create, \
              patch("routers.history.create_media_safely", new_callable=AsyncMock, return_value=(media_stub, True)):
             media = await history._get_or_create_media_for_session(db, self._body(), user_id=1)
 
@@ -788,7 +788,7 @@ class ManualSessionEpisodeShowLinkTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeSession([None])
         media_stub = SimpleNamespace(id=10, show_id=None)
         with patch("core.settings_store.get_user_tmdb_key", new_callable=AsyncMock, return_value="k"), \
-             patch("routers.webhooks._find_or_create_show", new_callable=AsyncMock) as find_or_create, \
+             patch("core.show_metadata.find_or_create_show", new_callable=AsyncMock) as find_or_create, \
              patch("routers.history.create_media_safely", new_callable=AsyncMock, return_value=(media_stub, True)) as create_media:
             media = await history._get_or_create_media_for_session(db, self._body(show_tmdb_id=None), user_id=1)
 

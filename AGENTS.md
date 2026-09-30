@@ -15,7 +15,6 @@ No phase or historical document is mandatory reading.
 Optional references:
 - docs/agents/BACKEND.md: backend structure and important behavior.
 - docs/agents/FRONTEND-STYLES.md: shared styles and layout conventions.
-- docs/agents/HANDOFF.md: how to continue unfinished work.
 
 Treat docs/media-tracker/ as historical specifications and implementation records.
 Search a relevant section only when a requirement or past decision is unclear.

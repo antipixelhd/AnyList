@@ -17,6 +17,29 @@ def session(*rows):
 
 
 class MetadataCredentialTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tvdb_personal_key_registers_its_pin_without_global_lookup(self):
+        db = session(SimpleNamespace(tvdb_api_key="personal", tvdb_subscriber_pin="own-pin"))
+        with patch("core.tvdb.set_subscriber_pin") as register:
+            self.assertEqual(await settings_store.get_user_tvdb_key(db, 7), "personal")
+        register.assert_called_once_with("personal", "own-pin")
+        self.assertEqual(db.execute.await_count, 1)
+
+    async def test_tvdb_global_fallback_registers_pin_and_refreshes_each_lookup(self):
+        db = session(None, SimpleNamespace(tvdb_api_key="global", tvdb_subscriber_pin="server-pin"),
+                     SimpleNamespace(tvdb_api_key="new-personal", tvdb_subscriber_pin=None))
+        with patch("core.tvdb.set_subscriber_pin") as register:
+            self.assertEqual(await settings_store.get_user_tvdb_key(db, 7), "global")
+            self.assertEqual(await settings_store.get_user_tvdb_key(db, 7), "new-personal")
+        self.assertEqual(register.call_args_list, [unittest.mock.call("global", "server-pin"),
+                                                 unittest.mock.call("new-personal", None)])
+        self.assertEqual(db.execute.await_count, 3)
+
+    async def test_missing_tvdb_key_does_not_register_pin(self):
+        db = session(SimpleNamespace(tvdb_api_key=None), None)
+        with patch("core.tvdb.set_subscriber_pin") as register:
+            self.assertIsNone(await settings_store.get_user_tvdb_key(db, 7))
+        register.assert_not_called()
+
     async def test_fresh_user_lookup_ignores_request_cache_without_overwriting_it(self):
         db = session(SimpleNamespace(tmdb_api_key="new-user-key"), None,
                      SimpleNamespace(tmdb_api_key="new-global-key"))

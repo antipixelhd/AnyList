@@ -44,3 +44,22 @@ async def get_user_tmdb_key(db: AsyncSession, user_id: int, *, cached: bool = Tr
 def check_tmdb_key(api_key: str | None) -> bool:
     """The provider client can also use the configured environment fallback."""
     return bool(api_key or getattr(settings, "tmdb_api_key", None))
+
+
+async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
+    """Resolve the effective TVDB key (personal override, else server-wide) and
+    register its subscriber PIN with the TVDB client so every downstream request
+    for that key sends it on /login (#322/#325)."""
+    from core import tvdb
+    from models.global_settings import GlobalSettings
+    result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+    s = result.scalar_one_or_none()
+    if s and s.tvdb_api_key:
+        tvdb.set_subscriber_pin(s.tvdb_api_key, s.tvdb_subscriber_pin)
+        return s.tvdb_api_key
+    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+    gs = gs_result.scalar_one_or_none()
+    if gs and gs.tvdb_api_key:
+        tvdb.set_subscriber_pin(gs.tvdb_api_key, gs.tvdb_subscriber_pin)
+        return gs.tvdb_api_key
+    return None

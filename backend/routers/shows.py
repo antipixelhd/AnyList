@@ -1,3 +1,4 @@
+from core import show_metadata
 from core import settings_store
 import asyncio
 from datetime import datetime, date, timezone
@@ -64,25 +65,6 @@ from core.translations import (
 )
 
 router = APIRouter()
-
-
-async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
-    """Resolve the effective TVDB key (personal override, else server-wide) and
-    register its subscriber PIN with the TVDB client so every downstream request
-    for that key sends it on /login (#322/#325)."""
-    from core import tvdb
-    from models.global_settings import GlobalSettings
-    result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
-    s = result.scalar_one_or_none()
-    if s and s.tvdb_api_key:
-        tvdb.set_subscriber_pin(s.tvdb_api_key, s.tvdb_subscriber_pin)
-        return s.tvdb_api_key
-    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-    gs = gs_result.scalar_one_or_none()
-    if gs and gs.tvdb_api_key:
-        tvdb.set_subscriber_pin(gs.tvdb_api_key, gs.tvdb_subscriber_pin)
-        return gs.tvdb_api_key
-    return None
 
 
 async def _enrich_tvdb_seasons(
@@ -560,7 +542,7 @@ async def _tvdb_season_art(
     treat it as an optional overlay."""
     if not order_key.startswith("tvdb:") or not tvdb_id:
         return {}
-    tvdb_api_key = await get_user_tvdb_key(db, user_id)
+    tvdb_api_key = await settings_store.get_user_tvdb_key(db, user_id)
     if not tvdb_api_key:
         return {}
     try:
@@ -724,7 +706,7 @@ async def get_episode_orders(
     )).scalar_one_or_none()
     tmdb_api_key, tvdb_api_key = await asyncio.gather(
         settings_store.get_user_tmdb_key(db, current_user.id),
-        get_user_tvdb_key(db, current_user.id),
+        settings_store.get_user_tvdb_key(db, current_user.id),
     )
     orders = await list_available_orders(
         db, series_tmdb_id, show,
@@ -764,7 +746,7 @@ async def set_show_episode_order(
 
     tmdb_api_key, tvdb_api_key = await asyncio.gather(
         settings_store.get_user_tmdb_key(db, current_user.id),
-        get_user_tvdb_key(db, current_user.id),
+        settings_store.get_user_tvdb_key(db, current_user.id),
     )
     if not settings_store.check_tmdb_key(tmdb_api_key):
         raise HTTPException(status_code=400, detail="TMDB API key not configured")
@@ -2031,62 +2013,6 @@ async def get_episode_detail(
         raise HTTPException(status_code=404, detail=f"Episode not found: {e}")
 
 
-def apply_show_metadata(show: ShowModel, data: dict) -> None:
-    """Writes TMDB show-detail fields onto a local Show row. Shared by the
-    manual 'Refresh Metadata' action below, the daily metadata sweep
-    (main.py's _show_metadata_refresher), and Next Up's on-demand self-heal
-    (routers/history.py), so all keep exactly the same field mapping.
-
-    Never call this with TMDB data for a show whose tmdb_data snapshot is
-    TVDB-sourced (tmdb_data.source == "tvdb") - its season layout is
-    TVDB-shaped (#335) and would be clobbered."""
-    show.title = data.get("name") or show.title
-    show.original_title = data.get("original_name")
-    show.overview = data.get("overview")
-    show.poster_path = tmdb.poster_url(data.get("poster_path"))
-    show.backdrop_path = tmdb.poster_url(data.get("backdrop_path"), size="w1280")
-    show.tmdb_rating = data.get("vote_average")
-    show.status = data.get("status")
-    show.tagline = data.get("tagline")
-    show.first_air_date = data.get("first_air_date")
-    show.last_air_date = data.get("last_air_date")
-    show.tmdb_data = {
-        "genres": [g["name"] for g in data.get("genres", [])],
-        "external_ids": data.get("external_ids", {}),
-        "original_language": data.get("original_language"),
-        # Kept so capped_season_episode_counts() can exclude unaired episodes
-        # from cache-only callers like Next Up, which have no tmdb_extra (#296).
-        "last_episode_to_air": data.get("last_episode_to_air"),
-        # Kept so Next Up's missing-episode fallback can tell from the DB alone
-        # whether a new episode can have aired since this snapshot was written
-        # (routers/history.py's _next_up_needs_live_fetch, #332).
-        "next_episode_to_air": data.get("next_episode_to_air"),
-        # When this snapshot was written - the daily metadata sweep and Next Up
-        # use it to bound how stale the snapshot may get before re-fetching.
-        "refreshed_at": datetime.now(timezone.utc).isoformat(),
-        "seasons": [
-            {
-                "season_number": s["season_number"],
-                "poster_path": tmdb.poster_url(s.get("poster_path")),
-                "episode_count": s["episode_count"],
-                "name": s["name"],
-                "air_date": s.get("air_date"),
-                "overview": s.get("overview"),
-            }
-            for s in data.get("seasons", [])
-        ],
-        "networks": [
-            {
-                "id": n.get("id"),
-                "name": n.get("name"),
-                "logo_path": n.get("logo_path"),
-                "origin_country": n.get("origin_country"),
-            }
-            for n in data.get("networks", [])
-        ],
-    }
-
-
 @router.post("/{series_tmdb_id}/refresh")
 async def refresh_show_metadata(
     series_tmdb_id: int,
@@ -2113,7 +2039,7 @@ async def refresh_show_metadata(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TMDB fetch failed: {e}")
 
-    apply_show_metadata(show, data)
+    show_metadata.apply_show_metadata(show, data)
 
     # Re-enrich all local episodes linked to this show
     ep_result = await db.execute(
@@ -2165,7 +2091,7 @@ async def refresh_show_metadata(
     tvdb_lang = None
     tvdb_season_data: dict[int, dict[int, dict]] = {}
     if show.tvdb_id:
-        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        tvdb_api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
         if tvdb_api_key:
             tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
 
@@ -2260,7 +2186,7 @@ async def get_tvdb_show(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    api_key = await get_user_tvdb_key(db, effective_user_id)
+    api_key = await settings_store.get_user_tvdb_key(db, effective_user_id)
     if not api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
 
@@ -2289,8 +2215,7 @@ async def get_tvdb_show(
     if show is None:
         if series_tmdb_id:
             tmdb_api_key_for_show = await settings_store.get_user_tmdb_key(db, effective_user_id)
-            from routers.webhooks import _find_or_create_show
-            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
+            show = await show_metadata.find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
         else:
             # Show has no TMDB presence at all — mirrors the "resolve an
             # unmatched show to TVDB" flow in routers/sync.py.
@@ -2597,7 +2522,7 @@ async def get_tvdb_season(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    api_key = await get_user_tvdb_key(db, effective_user_id)
+    api_key = await settings_store.get_user_tvdb_key(db, effective_user_id)
     if not api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
 
@@ -2629,8 +2554,7 @@ async def get_tvdb_season(
     if show is None:
         if series_tmdb_id:
             tmdb_api_key_for_show = await settings_store.get_user_tmdb_key(db, effective_user_id)
-            from routers.webhooks import _find_or_create_show
-            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
+            show = await show_metadata.find_or_create_show(db, series_tmdb_id, tmdb_api_key_for_show)
         else:
             # Show has no TMDB presence at all — mirrors the "resolve an
             # unmatched show to TVDB" flow in routers/sync.py.
@@ -2959,7 +2883,7 @@ async def get_tvdb_episode(
         await require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
-    api_key = await get_user_tvdb_key(db, effective_user_id)
+    api_key = await settings_store.get_user_tvdb_key(db, effective_user_id)
     if not api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
 
@@ -2994,8 +2918,7 @@ async def get_tvdb_episode(
     if show is None:
         if series_tmdb_id:
             tmdb_api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
-            from routers.webhooks import _find_or_create_show
-            show = await _find_or_create_show(db, series_tmdb_id, tmdb_api_key)
+            show = await show_metadata.find_or_create_show(db, series_tmdb_id, tmdb_api_key)
         else:
             # Show has no TMDB presence at all — mirrors the "resolve an
             # unmatched show to TVDB" flow in routers/sync.py.
@@ -3016,7 +2939,7 @@ async def get_tvdb_episode(
             db.add(show)
             await db.flush()
 
-    # Link this Show to its TVDB id (found-via-tmdb_id and _find_or_create_show
+    # Link this Show to its TVDB id (found-via-tmdb_id and show_metadata.find_or_create_show
     # both leave it unset) so mark-as-watched/collect endpoints — which only
     # ever look shows up by tmdb_id — can still fall back to TVDB for episodes
     # TMDB doesn't have (see #101). Also backfill poster/backdrop/overview
@@ -3254,7 +3177,7 @@ async def refresh_tvdb_show_metadata(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    api_key = await get_user_tvdb_key(db, current_user.id)
+    api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
     if not api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
 

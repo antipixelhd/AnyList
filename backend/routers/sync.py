@@ -1,3 +1,4 @@
+from core import show_metadata
 from core import outbound_sync, watch_echo, plex_watchlist
 from core import settings_store
 from core.catalog_import import get_or_create_series_media
@@ -466,9 +467,8 @@ async def batch_enrich_items(
         )
         tvdb_id_by_stid = {row[0]: row[1] for row in shows_result.all()}
         if tvdb_id_by_stid:
-            from routers.shows import get_user_tvdb_key
 
-            tvdb_api_key = await get_user_tvdb_key(db, user_id)
+            tvdb_api_key = await settings_store.get_user_tvdb_key(db, user_id)
             if tvdb_api_key:
                 tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, user_id))
 
@@ -5336,7 +5336,6 @@ async def heal_metadata(
 
 async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
     from models.show import Show
-    from routers.webhooks import _find_or_create_show
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         async def _update_job(**kwargs):
@@ -5439,7 +5438,7 @@ async def run_heal(user_id: int, api_key: str, job_id: int | None = None):
                         if not series_tmdb_raw:
                             continue
                         series_tmdb_id = int(series_tmdb_raw)
-                        show = await _find_or_create_show(db, series_tmdb_id, api_key)
+                        show = await show_metadata.find_or_create_show(db, series_tmdb_id, api_key)
                         orphan_media.show_id = show.id
                         orphan_media = await enrich_media_safely(db, orphan_media, api_key=api_key, series_tmdb_id=series_tmdb_id)
                         recovered += 1
@@ -5745,9 +5744,8 @@ async def apply_season_override(
         # that only line up under TVDB's numbering, not TMDB's, so the remap
         # target needs to be able to point at a TVDB show too. ──────────────
         from core import tvdb as tvdb_client
-        from routers.shows import get_user_tvdb_key
 
-        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        tvdb_api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
         if not tvdb_api_key:
             raise HTTPException(status_code=400, detail="TVDB API key required")
         tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
@@ -6037,9 +6035,8 @@ async def match_unmatched_show(
     if body.tvdb_id:
         # ── TVDB path ──────────────────────────────────────────────────────
         from core import tvdb as tvdb_client
-        from routers.shows import get_user_tvdb_key
 
-        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        tvdb_api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
         if not tvdb_api_key:
             raise HTTPException(status_code=400, detail="TVDB API key required")
         tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))

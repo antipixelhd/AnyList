@@ -1031,10 +1031,9 @@ async def search_tvdb(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
-    from routers.shows import get_user_tvdb_key
     from core import tvdb as tvdb_client
 
-    api_key = await get_user_tvdb_key(db, current_user.id)
+    api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
     if not api_key:
         raise HTTPException(status_code=400, detail="TVDB API key not configured")
 
@@ -3524,10 +3523,9 @@ async def collect_season(
             )
             if _collect_order != "tvdb:official" or season_on_tmdb or not show.tvdb_id:
                 raise HTTPException(status_code=400, detail="This episode order is not available for this show")
-            from routers.shows import get_user_tvdb_key
             import core.tvdb as tvdb_client
 
-            tvdb_key = await get_user_tvdb_key(db, current_user.id)
+            tvdb_key = await settings_store.get_user_tvdb_key(db, current_user.id)
             if not tvdb_key:
                 raise HTTPException(status_code=400, detail="TVDB API key not configured")
             tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
@@ -3636,10 +3634,9 @@ async def collect_show(
     # Seasons TVDB has but TMDB doesn't (see #101) — only reachable once this
     # show is linked to a TVDB id (set once the user visits its TVDB page).
     if show.tvdb_id:
-        from routers.shows import get_user_tvdb_key
         import core.tvdb as tvdb_client
 
-        tvdb_key = await get_user_tvdb_key(db, current_user.id)
+        tvdb_key = await settings_store.get_user_tvdb_key(db, current_user.id)
         if tvdb_key:
             tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
             tmdb_season_numbers = set(season_numbers)

@@ -1,3 +1,5 @@
+from core import enrichment
+from core import show_metadata
 from core import scrobble_delivery, settings_store, outbound_sync, watch_echo, webhook_payloads
 import json
 import re
@@ -26,7 +28,6 @@ from models.playback_session import PlaybackSession
 from models.playback_progress import PlaybackProgress
 from models.library_selections import PlexLibrarySelection, JellyfinLibrarySelection, EmbyLibrarySelection
 from core.enrichment import create_media_safely, enrich_media, enrich_media_safely
-from core.identity import coerce_id, link_show_ids, show_tvdb_id_is_free
 from core.episode_order import (
     ensure_episode_order_mapping_for_season,
     get_episode_order,
@@ -37,8 +38,6 @@ from core.rewatch import record_rewatch_progress, get_active_rewatch
 from core.watch_dedup import DEFAULT_DEDUP_WINDOW_MINUTES, dedup_window_from_settings, find_duplicate_watch_event
 from models.rewatch import RewatchProgress
 from core import tmdb
-from core import tvdb as tvdb_client
-from core.translations import get_user_metadata_language
 
 router = APIRouter()
 
@@ -97,63 +96,6 @@ async def _duplicated_by_full_connection(db: AsyncSession, source: str, user_id:
     full_key = f"{source}:{user_id}:{raw_session_id}"
     result = await db.execute(select(PlaybackSession.id).where(PlaybackSession.session_key == full_key))
     return result.scalar_one_or_none() is not None
-
-
-async def _find_or_create_show(db: AsyncSession, series_tmdb_id: int, api_key: str = None) -> Show:
-    result = await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))
-    show = result.scalar_one_or_none()
-    if show:
-        # Backfill the TVDB cross-reference TMDB already told us about, so a
-        # TMDB-matched show also carries its tvdb_id (dual identity, step 1).
-        ext_tvdb = coerce_id(((show.tmdb_data or {}).get("external_ids") or {}).get("tvdb_id"))
-        if ext_tvdb and not show.tvdb_id:
-            if await link_show_ids(db, show, tvdb_id=ext_tvdb):
-                await db.flush()
-        return show
-    if not show:
-        show_data = await tmdb.get_show(series_tmdb_id, api_key=api_key)
-        ext_tvdb = coerce_id((show_data.get("external_ids") or {}).get("tvdb_id"))
-        if ext_tvdb and not await show_tvdb_id_is_free(db, ext_tvdb):
-            ext_tvdb = None
-        show = Show(
-            tmdb_id=series_tmdb_id,
-            tvdb_id=ext_tvdb,
-            title=show_data.get("name", ""),
-            original_title=show_data.get("original_name"),
-            overview=show_data.get("overview"),
-            poster_path=tmdb.poster_url(show_data.get("poster_path")),
-            backdrop_path=tmdb.poster_url(show_data.get("backdrop_path"), size="w1280"),
-            tmdb_rating=show_data.get("vote_average"),
-            status=show_data.get("status"),
-            tagline=show_data.get("tagline"),
-            first_air_date=show_data.get("first_air_date"),
-            last_air_date=show_data.get("last_air_date"),
-            tmdb_data={
-                "genres": [g["name"] for g in show_data.get("genres", [])],
-                "external_ids": show_data.get("external_ids", {}),
-                "seasons": [
-                    {
-                        "season_number": s["season_number"],
-                        "poster_path": tmdb.poster_url(s.get("poster_path")),
-                        "episode_count": s["episode_count"],
-                        "name": s["name"],
-                    }
-                    for s in show_data.get("seasons", [])
-                ],
-                "networks": [
-                    {
-                        "id": n.get("id"),
-                        "name": n.get("name"),
-                        "logo_path": n.get("logo_path"),
-                        "origin_country": n.get("origin_country"),
-                    }
-                    for n in show_data.get("networks", [])
-                ],
-            },
-        )
-        db.add(show)
-        await db.flush()
-    return show
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -447,32 +389,6 @@ async def _handle_unwatch_toggle(db: AsyncSession, user_id: int, media: Media) -
 # ── Jellyfin ───────────────────────────────────────────────────────────────────
 
 
-async def _resolve_tvdb_fallback(
-    db: AsyncSession, show: Show | None, user_id: int | None
-) -> tuple[int | None, str | None, str | None]:
-    """(tvdb_id, tvdb_api_key, tvdb_lang) for enrich_media's TVDB fallback -
-    only worth a DB round-trip when the show actually has a TVDB match to
-    fall back to (#162, #186).
-
-    Used from webhook processing, which - same as enrich_media itself - must
-    never fail the whole request over an enrichment nicety: a lookup failure
-    here just means no TVDB fallback is attempted, same as if this feature
-    didn't exist, not a crashed webhook.
-    """
-    if not (user_id and show and show.tvdb_id):
-        return None, None, None
-    try:
-        from routers.shows import get_user_tvdb_key
-
-        tvdb_api_key = await get_user_tvdb_key(db, user_id)
-        if not tvdb_api_key:
-            return show.tvdb_id, None, None
-        tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, user_id))
-        return show.tvdb_id, tvdb_api_key, tvdb_lang
-    except Exception:
-        return None, None, None
-
-
 async def _resolve_tvdb_episode_to_tmdb_position(
     db: AsyncSession, show: Show, season_number: int, episode_number: int,
     tmdb_api_key: str | None, tvdb_api_key: str | None,
@@ -495,7 +411,7 @@ async def _resolve_tvdb_episode_to_tmdb_position(
     TVDB id, no TVDB key configured, or the position genuinely doesn't exist
     on TMDB's side (real TVDB-only content, #101).
 
-    Never raises - same contract as _resolve_tvdb_fallback: an enrichment/
+    Never raises - same contract as enrichment.resolve_tvdb_fallback: an enrichment/
     identity nicety failing must not fail the webhook.
     """
     if not (show.tvdb_id and tmdb_api_key and tvdb_api_key):
@@ -571,7 +487,7 @@ async def _translate_plex_tvdb_episode_position(
         ).scalar_one_or_none()
         if not show_row or not show_row.tvdb_id:
             return
-        _, tvdb_api_key, _ = await _resolve_tvdb_fallback(db, show_row, user_id)
+        _, tvdb_api_key, _ = await enrichment.resolve_tvdb_fallback(db, show_row, user_id)
         canonical = await _resolve_tvdb_episode_to_tmdb_position(
             db, show_row, data["season_number"], data["episode_number"],
             tmdb_api_key, tvdb_api_key,
@@ -643,7 +559,7 @@ async def _resolve_show_for_episode(
 
     if data["media_type"] == "episode" and series_tmdb_id:
         try:
-            show = await _find_or_create_show(db, series_tmdb_id, api_key)
+            show = await show_metadata.find_or_create_show(db, series_tmdb_id, api_key)
         except Exception:
             pass
 
@@ -686,7 +602,7 @@ async def find_or_create_media_jellyfin(
                 show, series_tmdb_id = await _resolve_show_for_episode(data, db, api_key)
                 if show:
                     media.show_id = show.id
-                    tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+                    tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
                     await enrich_media(
                         media, api_key=api_key, series_tmdb_id=series_tmdb_id,
                         tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -709,7 +625,7 @@ async def find_or_create_media_jellyfin(
         if media:
             if media.media_type == MediaType.episode and media.show_id is None and show:
                 media.show_id = show.id
-                tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+                tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
                 await enrich_media(
                     media, api_key=api_key, series_tmdb_id=series_tmdb_id,
                     tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -758,7 +674,7 @@ async def find_or_create_media_jellyfin(
     #     an episode that already has a canonical TMDB-numbered one from
     #     Trakt import or any other TMDB-native tracking path.
     if show and data["media_type"] == "episode" and data["season_number"] is not None and data["episode_number"] is not None:
-        _, tvdb_api_key, _ = await _resolve_tvdb_fallback(db, show, user_id)
+        _, tvdb_api_key, _ = await enrichment.resolve_tvdb_fallback(db, show, user_id)
         canonical_position = await _resolve_tvdb_episode_to_tmdb_position(
             db, show, data["season_number"], data["episode_number"], api_key, tvdb_api_key,
         )
@@ -796,7 +712,7 @@ async def find_or_create_media_jellyfin(
         show_id=show.id if show else None,
     )
     if show and series_tmdb_id:
-        tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+        tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
         media = await enrich_media_safely(
             db, media, api_key=api_key, series_tmdb_id=series_tmdb_id,
             tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -1939,7 +1855,7 @@ async def find_or_create_media_plex(
             if media.media_type == MediaType.episode and media.show_id is None and series_tmdb_id:
                 # Backfill show context if this episode record was created without it
                 try:
-                    show = await _find_or_create_show(db, series_tmdb_id, api_key)
+                    show = await show_metadata.find_or_create_show(db, series_tmdb_id, api_key)
                     media.show_id = show.id
                 except Exception as e:
                     print(f"  Could not backfill show context for episode: {e}")
@@ -1958,7 +1874,7 @@ async def find_or_create_media_plex(
                 # leaving the existing row exactly as it was rather than
                 # raising or blanking anything out.
                 try:
-                    tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+                    tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
                     media = await enrich_media_safely(
                         db, media, api_key=api_key, series_tmdb_id=series_tmdb_id or show.tmdb_id,
                         tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -2043,9 +1959,9 @@ async def find_or_create_media_plex(
 
     if media.media_type == MediaType.episode and series_tmdb_id:
         try:
-            show = await _find_or_create_show(db, series_tmdb_id, api_key)
+            show = await show_metadata.find_or_create_show(db, series_tmdb_id, api_key)
             media.show_id = show.id
-            tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+            tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
             media = await enrich_media_safely(
                 db, media, api_key=api_key, series_tmdb_id=series_tmdb_id,
                 tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -2620,7 +2536,7 @@ async def find_or_create_media_kodi(
             candidate_show = local.scalars().first()
             if candidate_show is not None:
                 series_tmdb_id = candidate
-                # Already fetched the row above - _find_or_create_show below
+                # Already fetched the row above - show_metadata.find_or_create_show below
                 # would only repeat this exact query and hit its found-branch
                 # again, never its create-from-TMDB one, since a match is
                 # what was just confirmed.
@@ -2628,7 +2544,7 @@ async def find_or_create_media_kodi(
 
     if series_tmdb_id and show is None:
         try:
-            show = await _find_or_create_show(db, series_tmdb_id, api_key)
+            show = await show_metadata.find_or_create_show(db, series_tmdb_id, api_key)
         except Exception:
             pass
 
@@ -2648,7 +2564,7 @@ async def find_or_create_media_kodi(
         if media:
             if media.media_type == MediaType.episode and media.show_id is None and show:
                 media.show_id = show.id
-                tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+                tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
                 await enrich_media(
                     media, api_key=api_key, series_tmdb_id=series_tmdb_id,
                     tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -2733,7 +2649,7 @@ async def find_or_create_media_kodi(
         show_id=show.id if show else None,
     )
     if show and series_tmdb_id:
-        tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, user_id)
+        tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, user_id)
         media = await enrich_media_safely(
             db, media, api_key=api_key, series_tmdb_id=series_tmdb_id,
             tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,

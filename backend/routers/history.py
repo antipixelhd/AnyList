@@ -1,3 +1,5 @@
+from core import enrichment
+from core import show_metadata
 from core import watch_delivery
 from core import trakt_auth
 from core import settings_store
@@ -967,7 +969,6 @@ async def get_next_up(
                     fetch_results = []
                 fetched_by_show = {sid: data for sid, data in fetch_results if data}
 
-            from routers.shows import apply_show_metadata
 
             for show_id in missing_show_ids:
                 show = shows_by_id.get(show_id)
@@ -980,7 +981,7 @@ async def get_next_up(
                     # the next load - committed together with the speculative
                     # episode rows below. Safe to write: TVDB-sourced
                     # snapshots are never in live_fetch_ids (#335).
-                    apply_show_metadata(show, fresh_show_data)
+                    show_metadata.apply_show_metadata(show, fresh_show_data)
                     seasons = fresh_show_data.get("seasons", [])
                 else:
                     seasons = (show.tmdb_data or {}).get("seasons", [])
@@ -1016,9 +1017,8 @@ async def get_next_up(
                     async with db.begin_nested():
                         db.add(media)
                         await db.flush()
-                        from routers.webhooks import _resolve_tvdb_fallback
 
-                        tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, current_user.id)
+                        tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, current_user.id)
                         await enrich_media(
                             media, api_key=api_key, series_tmdb_id=show.tmdb_id,
                             tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -1217,7 +1217,7 @@ async def _stream_next_up_refresh(user_id: int, api_key: str):
     async with AsyncSessionLocal() as db:
         # Shows the user has actually watched an episode of, that carry a TMDB
         # identity. TVDB-sourced snapshots are excluded: their season layout is
-        # TVDB-shaped (#335) and apply_show_metadata would clobber it.
+        # TVDB-shaped (#335) and show_metadata.apply_show_metadata would clobber it.
         watched_show_ids = (
             select(Media.show_id)
             .join(WatchEvent, WatchEvent.media_id == Media.id)
@@ -1239,7 +1239,6 @@ async def _stream_next_up_refresh(user_id: int, api_key: str):
             yield json.dumps({"done": 0, "total": 0, "complete": True}) + "\n"
             return
 
-        from routers.shows import apply_show_metadata
 
         sem = asyncio.Semaphore(_NEXT_UP_REFRESH_CONCURRENCY)
         queue: asyncio.Queue = asyncio.Queue()
@@ -1250,7 +1249,7 @@ async def _stream_next_up_refresh(user_id: int, api_key: str):
                     # cache_ttl=None: the whole point of the button is that the
                     # cached/snapshotted data is behind, so don't reuse it.
                     data = await tmdb.get_show(show.tmdb_id, api_key=api_key, cache_ttl=None)
-                    apply_show_metadata(show, data)
+                    show_metadata.apply_show_metadata(show, data)
                 except Exception:
                     pass
             await queue.put(1)
@@ -1738,12 +1737,11 @@ async def mark_as_watched(
     )
 
     if episode_has_context:
-        from routers.webhooks import _find_or_create_show
 
         api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
         if event_in.series_tmdb_id is not None:
             try:
-                show = await _find_or_create_show(db, event_in.series_tmdb_id, api_key)
+                show = await show_metadata.find_or_create_show(db, event_in.series_tmdb_id, api_key)
             except Exception as e:
                 raise HTTPException(status_code=404, detail=f"TMDB Media not found: {e}")
         else:
@@ -1789,9 +1787,8 @@ async def mark_as_watched(
         media.season_number = event_in.season_number
         media.episode_number = event_in.episode_number
         if not media.poster_path or media.tmdb_data is None:
-            from routers.webhooks import _resolve_tvdb_fallback
 
-            tvdb_id, tvdb_api_key, tvdb_lang = await _resolve_tvdb_fallback(db, show, current_user.id)
+            tvdb_id, tvdb_api_key, tvdb_lang = await enrichment.resolve_tvdb_fallback(db, show, current_user.id)
             media = await enrich_media_safely(
                 db, media, api_key=api_key, series_tmdb_id=event_in.series_tmdb_id,
                 tvdb_id=tvdb_id, tvdb_api_key=tvdb_api_key, tvdb_lang=tvdb_lang,
@@ -1838,10 +1835,9 @@ async def mark_as_watched(
                 elif show.tvdb_id:
                     # Not on TMDB (e.g. TMDB is sparse for this show, see #101)
                     # — fall back to TVDB, which this show is also linked to.
-                    from routers.shows import get_user_tvdb_key
                     import core.tvdb as tvdb_client
 
-                    tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+                    tvdb_api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
                     if not tvdb_api_key:
                         raise HTTPException(status_code=404, detail="Episode not found on TMDB, and no TVDB key configured to check TVDB")
                     tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
@@ -2265,10 +2261,9 @@ async def mark_season_watched(
             )
             if _watch_order != "tvdb:official" or season_on_tmdb or not show.tvdb_id:
                 raise HTTPException(status_code=400, detail="This episode order is not available for this show")
-            from routers.shows import get_user_tvdb_key
             import core.tvdb as tvdb_client
 
-            tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+            tvdb_api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
             if not tvdb_api_key:
                 raise HTTPException(status_code=400, detail="TVDB API key not configured")
             tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
@@ -2634,10 +2629,9 @@ async def mark_show_watched(
     # but sourced from TVDB, only reachable if this show is also linked to a
     # TVDB id (set once the user visits its TVDB-numbered page).
     if show.tvdb_id:
-        from routers.shows import get_user_tvdb_key
         import core.tvdb as tvdb_client
 
-        tvdb_api_key = await get_user_tvdb_key(db, current_user.id)
+        tvdb_api_key = await settings_store.get_user_tvdb_key(db, current_user.id)
         if tvdb_api_key:
             tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, current_user.id))
             tmdb_season_numbers = {s["season_number"] for s in show.tmdb_data.get("seasons", [])}
@@ -2890,9 +2884,8 @@ async def _get_or_create_media_for_session(
             show_q = await db.execute(select(Show).where(Show.tmdb_id == body.show_tmdb_id))
             show = show_q.scalar_one_or_none()
             if not show and settings_store.check_tmdb_key(api_key):
-                from routers.webhooks import _find_or_create_show
                 try:
-                    show = await _find_or_create_show(db, body.show_tmdb_id, api_key)
+                    show = await show_metadata.find_or_create_show(db, body.show_tmdb_id, api_key)
                 except Exception:
                     show = None
         media, _created = await create_media_safely(

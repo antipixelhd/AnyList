@@ -510,3 +510,30 @@ async def enrich_media_safely(
             tvdb_lang=tvdb_lang,
         ),
     )
+
+
+async def resolve_tvdb_fallback(
+    db: AsyncSession, show: Show | None, user_id: int | None
+) -> tuple[int | None, str | None, str | None]:
+    """(tvdb_id, tvdb_api_key, tvdb_lang) for enrich_media's TVDB fallback -
+    only worth a DB round-trip when the show actually has a TVDB match to
+    fall back to (#162, #186).
+
+    Used from webhook processing, which - same as enrich_media itself - must
+    never fail the whole request over an enrichment nicety: a lookup failure
+    here just means no TVDB fallback is attempted, same as if this feature
+    didn't exist, not a crashed webhook.
+    """
+    if not (user_id and show and show.tvdb_id):
+        return None, None, None
+    try:
+        from core.translations import get_user_metadata_language
+        from core.settings_store import get_user_tvdb_key
+
+        tvdb_api_key = await get_user_tvdb_key(db, user_id)
+        if not tvdb_api_key:
+            return show.tvdb_id, None, None
+        tvdb_lang = tvdb_client.tvdb_language(await get_user_metadata_language(db, user_id))
+        return show.tvdb_id, tvdb_api_key, tvdb_lang
+    except Exception:
+        return None, None, None

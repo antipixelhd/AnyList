@@ -2846,7 +2846,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             {'id': 7102, 'seasonNumber': 1, 'number': 2, 'name': 'Two', 'aired': '2020-01-08'},
         ]
         with patch('core.settings_store.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
-             patch('routers.shows.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
+             patch('core.settings_store.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
              patch('core.tvdb.get_series', new=AsyncMock(return_value=series)), \
              patch('core.tvdb.get_series_episodes', new=AsyncMock(return_value=episodes)):
             response = await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
@@ -2867,7 +2867,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         rows[0].season_number = 2
         await self.db.commit()
         with patch('core.settings_store.get_user_tmdb_key', new=AsyncMock(return_value=None)), \
-             patch('routers.shows.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
+             patch('core.settings_store.get_user_tvdb_key', new=AsyncMock(return_value='tvdb-key')), \
              patch('core.tvdb.get_series', new=AsyncMock(return_value=series)), \
              patch('core.tvdb.get_series_episodes', new=AsyncMock(return_value=episodes)):
             rejected = await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')

@@ -326,7 +326,7 @@ class FindOrCreateMediaPlexRefreshTests(IsolatedAsyncioTestCase):
         db = _FakeDB(queued_scalars=[existing])
 
         with (
-            patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)),
+            patch("core.show_metadata.find_or_create_show", AsyncMock(return_value=show)),
             patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=refreshed)) as enrich_safely,
         ):
             result = await find_or_create_media_plex(self._payload(), db, api_key="tmdb-key", user_id=7)
@@ -453,7 +453,7 @@ class ResolveShowForEpisodeYearTests(IsolatedAsyncioTestCase):
         old = SimpleNamespace(id=1, tmdb_id=67557, first_air_date="2016-05-13")
         new = SimpleNamespace(id=2, tmdb_id=329471, first_air_date="2026-01-01")
         created = SimpleNamespace(id=2, tmdb_id=329471)
-        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=created)) as find_show:
+        with patch("core.show_metadata.find_or_create_show", AsyncMock(return_value=created)) as find_show:
             show, series_tmdb_id = await webhooks._resolve_show_for_episode(self._data(), self._db([old, new]))
         self.assertEqual(series_tmdb_id, 329471)
         self.assertIs(show, created)
@@ -462,7 +462,7 @@ class ResolveShowForEpisodeYearTests(IsolatedAsyncioTestCase):
     async def test_no_series_year_keeps_the_first_row(self):
         old = SimpleNamespace(id=1, tmdb_id=67557, first_air_date="2016-05-13")
         new = SimpleNamespace(id=2, tmdb_id=329471, first_air_date="2026-01-01")
-        with patch("routers.webhooks._find_or_create_show",
+        with patch("core.show_metadata.find_or_create_show",
                    AsyncMock(return_value=SimpleNamespace(id=1, tmdb_id=67557))):
             _, series_tmdb_id = await webhooks._resolve_show_for_episode(
                 self._data(series_year=None), self._db([old, new])
@@ -472,7 +472,7 @@ class ResolveShowForEpisodeYearTests(IsolatedAsyncioTestCase):
     async def test_tmdb_search_fallback_is_year_scoped_first(self):
         search = AsyncMock(return_value={"results": [{"id": 329471}]})
         with patch("routers.webhooks.tmdb.search_shows", search), \
-             patch("routers.webhooks._find_or_create_show",
+             patch("core.show_metadata.find_or_create_show",
                    AsyncMock(return_value=SimpleNamespace(id=9, tmdb_id=329471))):
             _, series_tmdb_id = await webhooks._resolve_show_for_episode(self._data(), self._db([]))
         self.assertEqual(series_tmdb_id, 329471)
@@ -614,7 +614,7 @@ class FindOrCreateMediaJellyfinBackfillShowLinkageTests(IsolatedAsyncioTestCase)
         db = _FastPathDB(episode)
 
         with patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(show, 555))), \
-             patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))), \
+             patch("core.enrichment.resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))), \
              patch("routers.webhooks.enrich_media", AsyncMock()) as enrich_mock:
             result = await find_or_create_media_jellyfin(self._episode_data(), db, api_key="key")
 
@@ -785,7 +785,7 @@ class TranslatePlexTvdbEpisodePositionTests(IsolatedAsyncioTestCase):
         data = self._data(season_number=2, episode_number=1)
         with (
             patch("routers.webhooks.get_episode_order", AsyncMock(return_value=SimpleNamespace(episode_order="tvdb"))),
-            patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(42, "tvdb-key", None))),
+            patch("core.enrichment.resolve_tvdb_fallback", AsyncMock(return_value=(42, "tvdb-key", None))),
             patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=(1, 25))),
         ):
             await _translate_plex_tvdb_episode_position(data, db, 100, 1, "tmdb-key")
@@ -797,7 +797,7 @@ class TranslatePlexTvdbEpisodePositionTests(IsolatedAsyncioTestCase):
         data = self._data(season_number=0, episode_number=7)
         with (
             patch("routers.webhooks.get_episode_order", AsyncMock(return_value=SimpleNamespace(episode_order="tvdb"))),
-            patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(42, "tvdb-key", None))),
+            patch("core.enrichment.resolve_tvdb_fallback", AsyncMock(return_value=(42, "tvdb-key", None))),
             patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=None)),
         ):
             await _translate_plex_tvdb_episode_position(data, db, 100, 1, "tmdb-key")
@@ -838,7 +838,7 @@ class FindOrCreateMediaJellyfinTvdbTranslationTests(IsolatedAsyncioTestCase):
 
         with (
             patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(show, 100))),
-            patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(389597, "tvdb-key", "en"))),
+            patch("core.enrichment.resolve_tvdb_fallback", AsyncMock(return_value=(389597, "tvdb-key", "en"))),
             patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=(1, 25))),
         ):
             result = await find_or_create_media_jellyfin(data, db, api_key="tmdb-key")
@@ -857,7 +857,7 @@ class FindOrCreateMediaJellyfinTvdbTranslationTests(IsolatedAsyncioTestCase):
 
         with (
             patch("routers.webhooks._resolve_show_for_episode", AsyncMock(return_value=(show, 100))),
-            patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),
+            patch("core.enrichment.resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),
             patch("routers.webhooks._resolve_tvdb_episode_to_tmdb_position", AsyncMock(return_value=None)) as resolve_mock,
         ):
             result = await find_or_create_media_jellyfin(data, db, api_key="tmdb-key")
@@ -1321,7 +1321,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         show = SimpleNamespace(id=1, tmdb_id=214546)
         db = _QueuedResultDB([SimpleNamespace(tmdb_id=214546), wrong, right])
 
-        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)):
+        with patch("core.show_metadata.find_or_create_show", AsyncMock(return_value=show)):
             result = await find_or_create_media_kodi(self._episode_data(), db)
 
         self.assertIs(result, right)
@@ -1332,7 +1332,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         show = SimpleNamespace(id=1, tmdb_id=999)
         db = _QueuedResultDB([SimpleNamespace(tmdb_id=999), episode])
 
-        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)):
+        with patch("core.show_metadata.find_or_create_show", AsyncMock(return_value=show)):
             result = await find_or_create_media_kodi(self._episode_data(), db)
 
         self.assertIs(result, episode)
@@ -1345,7 +1345,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
         show = SimpleNamespace(id=1, tmdb_id=214546)
         db = _QueuedResultDB([show, None, episode])
 
-        with patch("routers.webhooks._find_or_create_show", AsyncMock()) as find_show:
+        with patch("core.show_metadata.find_or_create_show", AsyncMock()) as find_show:
             result = await find_or_create_media_kodi(self._episode_data(series_name=None), db)
 
         self.assertIs(result, episode)
@@ -1360,7 +1360,7 @@ class FindOrCreateMediaKodiShowIdTests(IsolatedAsyncioTestCase):
                                   season_number=3, episode_number=6)
         db = _QueuedResultDB([SimpleNamespace(tmdb_id=214546), None, None])
 
-        with patch("routers.webhooks._find_or_create_show", AsyncMock(return_value=show)),              patch("routers.webhooks._resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),              patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=created)),              patch("routers.webhooks.create_media_safely",
+        with patch("core.show_metadata.find_or_create_show", AsyncMock(return_value=show)),              patch("core.enrichment.resolve_tvdb_fallback", AsyncMock(return_value=(None, None, None))),              patch("routers.webhooks.enrich_media_safely", AsyncMock(return_value=created)),              patch("routers.webhooks.create_media_safely",
                    AsyncMock(return_value=(created, True))) as create_mock:
             await find_or_create_media_kodi(self._episode_data(), db)
 
