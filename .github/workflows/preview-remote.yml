@@ -117,14 +117,17 @@ jobs:
               exit 1
             }
           done
-          if timeout 20s tailscale ssh "anylist-preview-ci@$HOST" -W 127.0.0.1:5432 </dev/null >refused.log 2>&1; then
-            echo 'SSH forwarding unexpectedly succeeded' >&2
-            exit 1
-          fi
-          grep -Eqi 'prohibited|not permitted|disabled|unsupported|does not permit' refused.log || {
-            cat refused.log
-            exit 1
-          }
+          python3 - <<'PY'
+          import os, struct, subprocess
+          result = subprocess.run(['tailscale', 'ssh', 'anylist-preview-ci@' + os.environ['HOST'],
+                                   '-W', '127.0.0.1:5432'], input=struct.pack('!II', 8, 80877103),
+                                  capture_output=True, timeout=20)
+          if result.stdout[:1] in (b'S', b'N'):
+              raise SystemExit('SSH forwarding reached PostgreSQL; isolation is incomplete')
+          if b'prohibited' not in result.stderr.lower() and b'not permitted' not in result.stderr.lower():
+              print(result.stderr.decode(errors='replace'))
+              raise SystemExit('Forwarding denial was not verified')
+          PY
           echo 'Restricted commands, accounts, interactive login, protected SFTP reads and forwarding verified.'
       - name: Run installed preview entrypoint
         env:
