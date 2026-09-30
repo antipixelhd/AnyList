@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncIterator
 import re
 import httpx
 from datetime import datetime
@@ -149,80 +150,57 @@ async def get_libraries(url: str, token: str, user_id: str) -> list:
     return data.get("Items", [])
 
 
-async def get_movies(library_id: str, url: str, token: str, user_id: str) -> list:
-    all_items = []
+async def _item_pages(url: str, token: str, path: str, params: dict) -> AsyncIterator[list[dict]]:
+    """Page through items until the reported end or an empty page."""
     start = 0
     page_size = 500
-
     while True:
-        data = await _get(url, token, f"Users/{user_id}/Items", params={
-            "ParentId": library_id,
-            "IncludeItemTypes": "Movie",
-            "Recursive": True,
-            "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,OfficialRating,RunTimeTicks,PremiereDate,UserData,DateCreated",
-            "Limit": page_size,
-            "StartIndex": start,
-        })
+        data = await _get(url, token, path, params={**params, "Limit": page_size, "StartIndex": start})
         items = data.get("Items", [])
-        all_items.extend(items)
-
-        total = data.get("TotalRecordCount", 0)
+        yield items
         start += page_size
-        if start >= total:
+        if start >= data.get("TotalRecordCount", 0) or not items:
             break
+
+
+async def get_movies(library_id: str, url: str, token: str, user_id: str) -> list:
+    all_items = []
+    async for items in _item_pages(url, token, f"Users/{user_id}/Items", params={
+        "ParentId": library_id,
+        "IncludeItemTypes": "Movie",
+        "Recursive": True,
+        "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,OfficialRating,RunTimeTicks,PremiereDate,UserData,DateCreated",
+    }):
+        all_items.extend(items)
 
     return all_items
 
 async def get_shows(library_id: str, url: str, token: str, user_id: str) -> list:
     all_items = []
-    start = 0
-    page_size = 500
-
-    while True:
-        data = await _get(url, token, f"Users/{user_id}/Items", params={
-            "ParentId": library_id,
-            "IncludeItemTypes": "Series",
-            "Recursive": True,
-            "Fields": "ProviderIds",
-            "Limit": page_size,
-            "StartIndex": start,
-        })
-        items = data.get("Items", [])
+    async for items in _item_pages(url, token, f"Users/{user_id}/Items", params={
+        "ParentId": library_id,
+        "IncludeItemTypes": "Series",
+        "Recursive": True,
+        "Fields": "ProviderIds",
+    }):
         all_items.extend(items)
-
-        total = data.get("TotalRecordCount", 0)
-        start += page_size
-        if start >= total:
-            break
 
     return all_items
 
 async def get_episodes(library_id: str, url: str, token: str, user_id: str) -> list:
     all_items = []
-    start = 0
-    page_size = 500
-
-    while True:
-        data = await _get(url, token, f"Users/{user_id}/Items", params={
-            "ParentId": library_id,
-            "IncludeItemTypes": "Episode",
-            "Recursive": True,
-            # Jellyfin returns virtual records for missing episodes unless they
-            # are explicitly excluded. They have no local media file and must
-            # never be imported into a user's collection.
-            "ExcludeLocationTypes": "Virtual",
-            "IsMissing": False,
-            "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,RunTimeTicks,PremiereDate,UserData,DateCreated",
-            "Limit": page_size,
-            "StartIndex": start,
-        })
-        items = data.get("Items", [])
+    async for items in _item_pages(url, token, f"Users/{user_id}/Items", params={
+        "ParentId": library_id,
+        "IncludeItemTypes": "Episode",
+        "Recursive": True,
+        # Jellyfin returns virtual records for missing episodes unless they
+        # are explicitly excluded. They have no local media file and must
+        # never be imported into a user's collection.
+        "ExcludeLocationTypes": "Virtual",
+        "IsMissing": False,
+        "Fields": "ProviderIds,MediaStreams,Overview,Genres,CommunityRating,RunTimeTicks,PremiereDate,UserData,DateCreated",
+    }):
         all_items.extend(items)
-
-        total = data.get("TotalRecordCount", 0)
-        start += page_size
-        if start >= total:
-            break
 
     return all_items
 
@@ -285,24 +263,15 @@ async def _scan_for_tmdb_match(url: str, token: str, item_type: str, tmdb_id: in
     match (#300). Paging the whole library once and matching ProviderIds
     client-side is the only way to find it when that happens.
     """
-    start = 0
-    page_size = 500
-    while True:
-        data = await _get(url, token, "Items", params={
-            "Recursive": True,
-            "IncludeItemTypes": item_type,
-            "Fields": "ProviderIds",
-            "Limit": page_size,
-            "StartIndex": start,
-        })
-        items = data.get("Items", [])
+    async for items in _item_pages(url, token, "Items", params={
+        "Recursive": True,
+        "IncludeItemTypes": item_type,
+        "Fields": "ProviderIds",
+    }):
         match = next((i for i in items if get_jellyfin_tmdb_id(i.get("ProviderIds", {})) == tmdb_id), None)
         if match:
             return match
-        total = data.get("TotalRecordCount", 0)
-        start += page_size
-        if start >= total or not items:
-            return None
+    return None
 
 
 async def find_movie_by_tmdb_id(url: str, token: str, tmdb_id: int, user_id: Optional[str] = None) -> Optional[Dict]:
@@ -407,25 +376,15 @@ async def build_tmdb_index(url: str, token: str, item_type: str) -> Dict[int, st
     scan (#300) - with exactly one paged scan for the whole job.
     """
     index: Dict[int, str] = {}
-    start = 0
-    page_size = 500
-    while True:
-        data = await _get(url, token, "Items", params={
-            "Recursive": True,
-            "IncludeItemTypes": item_type,
-            "Fields": "ProviderIds",
-            "Limit": page_size,
-            "StartIndex": start,
-        })
-        items = data.get("Items", [])
+    async for items in _item_pages(url, token, "Items", params={
+        "Recursive": True,
+        "IncludeItemTypes": item_type,
+        "Fields": "ProviderIds",
+    }):
         for item in items:
             tid = get_jellyfin_tmdb_id(item.get("ProviderIds", {}))
             if tid is not None and tid not in index:
                 index[tid] = item["Id"]
-        total = data.get("TotalRecordCount", 0)
-        start += page_size
-        if start >= total or not items:
-            break
     return index
 
 

@@ -1,6 +1,6 @@
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -93,6 +93,52 @@ class JellyfinShowQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(requests), 3)
         self.assertEqual([r["StartIndex"] for r in requests], ["0", "500", "1000"])
         self.assertEqual(requests[0]["IncludeItemTypes"], "Series")
+
+
+class JellyfinPaginationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_each_library_reader_keeps_page_order_and_offsets(self):
+        for reader in (jellyfin.get_movies, jellyfin.get_shows, jellyfin.get_episodes):
+            with self.subTest(reader=reader.__name__):
+                pages = [{"Items": [{"Id": str(i)}], "TotalRecordCount": 1200} for i in range(3)]
+                with patch.object(jellyfin, "_get", AsyncMock(side_effect=pages)) as fetch:
+                    items = await reader("library", "url", "token", "user")
+                self.assertEqual(items, [{"Id": "0"}, {"Id": "1"}, {"Id": "2"}])
+                self.assertEqual([call.kwargs["params"]["StartIndex"] for call in fetch.call_args_list], [0, 500, 1000])
+                self.assertTrue(all(call.kwargs["params"]["Limit"] == 500 for call in fetch.call_args_list))
+                self.assertTrue(all(call.args == ("url", "token", "Users/user/Items") for call in fetch.call_args_list))
+
+    async def test_empty_page_stops_library_readers_despite_stale_total(self):
+        for reader in (jellyfin.get_movies, jellyfin.get_shows, jellyfin.get_episodes):
+            with self.subTest(reader=reader.__name__):
+                pages = [{"Items": [{"Id": "one"}], "TotalRecordCount": 5000},
+                         {"Items": [], "TotalRecordCount": 5000}]
+                with patch.object(jellyfin, "_get", AsyncMock(side_effect=pages)) as fetch:
+                    self.assertEqual(await reader("library", "url", "token", "user"), [{"Id": "one"}])
+                self.assertEqual(fetch.await_count, 2)
+
+    async def test_missing_total_keeps_first_page_without_requesting_more(self):
+        with patch.object(jellyfin, "_get", AsyncMock(return_value={"Items": [{"Id": "one"}]})) as fetch:
+            self.assertEqual(await jellyfin.get_shows("library", "url", "token", "user"), [{"Id": "one"}])
+        fetch.assert_awaited_once()
+
+    async def test_lookup_stops_at_match_and_index_keeps_first_duplicate(self):
+        first = {"Id": "first", "ProviderIds": {"Tmdb": "42"}}
+        second = {"Id": "second", "ProviderIds": {"Tmdb": "43"}}
+        pages = [{"Items": [first], "TotalRecordCount": 1500},
+                 {"Items": [{"Id": "duplicate", "ProviderIds": {"Tmdb": "42"}}, second], "TotalRecordCount": 1500},
+                 {"Items": [], "TotalRecordCount": 1500}]
+        with patch.object(jellyfin, "_get", AsyncMock(side_effect=pages)) as fetch:
+            self.assertEqual(await jellyfin._scan_for_tmdb_match("url", "token", "Movie", 43), second)
+        self.assertEqual(fetch.await_count, 2)
+        with patch.object(jellyfin, "_get", AsyncMock(side_effect=pages)) as fetch:
+            self.assertEqual(await jellyfin.build_tmdb_index("url", "token", "Movie"), {42: "first", 43: "second"})
+        self.assertEqual(fetch.await_count, 3)
+
+    async def test_later_page_errors_propagate_instead_of_returning_partial_library(self):
+        pages = [{"Items": [{"Id": "one"}], "TotalRecordCount": 1000}, RuntimeError("offline")]
+        with patch.object(jellyfin, "_get", AsyncMock(side_effect=pages)):
+            with self.assertRaisesRegex(RuntimeError, "offline"):
+                await jellyfin.get_movies("library", "url", "token", "user")
 
 
 class JellyfinSetRatingTests(unittest.IsolatedAsyncioTestCase):
