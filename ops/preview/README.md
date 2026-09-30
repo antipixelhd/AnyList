@@ -22,6 +22,14 @@ simultaneously. GitHub deployment is enabled. The initial beta database is empty
 and migrated; development databases were copied from it. Private addresses,
 identity values, and the deployment verification report are kept outside Git.
 
+Use **Actions → Preview Operations → Run workflow** for status, restart, redeploy,
+development DB reset and runtime reconstruction. Push `beta` for single-stream
+work, or either development branch for parallel work; **Preview Deploy** handles
+deployment automatically. Rebase a development branch onto beta, force-push with
+lease, and its disposable DB is refreshed from beta. Test there, integrate into
+beta and test the combined state. Production promotion remains your separate
+beta-to-main process.
+
 ## Slots and runtime
 
 `slots.json` is the single privileged mapping. Branch names are slot names.
@@ -285,6 +293,9 @@ Add `development-3` to beta's `slots.json`, e.g. ports 8004/8104 and DB
 `anylist_preview_development_3`, `persistent: false`. Create its branch from beta.
 Add its branch to the automatic workflow filter and manual preview choices on main
 and your development branches; add reviewer access for its HTTPS port in Tailscale.
+Provisioning refuses a port already owned by an unrelated Serve listener or one
+with Funnel enabled, before creating the slot's resources. Existing slots are
+immutable through configuration synchronization.
 Run **Preview Provision** with `development-3`. The workflow installs only additive,
 validated mapping changes and provisions everything through the stable controller.
 No routine VPS SSH is needed. Existing port/DB/persistence mappings are immutable
