@@ -974,6 +974,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
+  import { readTrackingServiceSettings } from '../lib/tracking-service-settings';
   import { wireCancelButton } from '../lib/sync-controls';
   import { createSyncJobMonitor } from '../lib/sync-job-monitor';
   import { createSyncProgressRenderer } from '../lib/sync-progress';
@@ -1538,6 +1539,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           let method = 'POST';
           let requestBody: Record<string, string> | undefined;
           let syncConnId: string | null = null; // set for sync/push actions to start progress poller
+          const trackingSettings = readTrackingServiceSettings(action);
 
           if (action === 'test_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
@@ -1672,108 +1674,17 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             }
             showMessage('Saved.');
             return;
-          } else if (action === 'save_trakt_settings') {
-            const body: Record<string, any> = {
-              trakt_client_id: (document.querySelector<HTMLInputElement>('#trakt_client_id'))?.value || null,
-              trakt_client_secret: (document.querySelector<HTMLInputElement>('#trakt_client_secret'))?.value || null,
-              trakt_auto_sync_interval: (() => {
-                const v = (document.querySelector('[name="trakt_auto_sync_interval"]') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
-            };
-            const traktSyncKeys = [
-              'trakt_sync_watched', 'trakt_sync_ratings', 'trakt_sync_lists', 'trakt_sync_dropped', 'trakt_watchlist_split',
-              'trakt_push_watched', 'trakt_push_ratings', 'trakt_push_collection', 'trakt_push_lists', 'trakt_push_dropped', 'trakt_scrobble',
-            ];
-            for (const key of traktSyncKeys) {
-              const el = document.getElementById(key) as HTMLInputElement | null;
-              if (el) body[key] = el.checked;
-            }
-            const traktRes = await fetch('/api/proxy/auth/settings', {
+          } else if (trackingSettings) {
+            const response = await fetch('/api/proxy/auth/settings', {
               method: 'PATCH',
               headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
+              body: JSON.stringify(trackingSettings.body),
             });
-            if (!traktRes.ok) {
-              const err = await traktRes.json();
-              throw new Error(err.detail || 'Failed to save Trakt settings');
+            if (!response.ok) {
+              const err = await response.json();
+              throw new Error(err.detail || `Failed to save ${trackingSettings.name} settings`);
             }
-            showMessage('Trakt settings saved.');
-            return;
-          } else if (action === 'save_simkl_settings') {
-            const body: Record<string, any> = {
-              simkl_client_id: (document.querySelector<HTMLInputElement>('#simkl_client_id'))?.value || null,
-              simkl_auto_sync_interval: (() => {
-                const v = (document.querySelector('[name="simkl_auto_sync_interval"]') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
-            };
-            const simklSyncKeys = [
-              'simkl_sync_watched', 'simkl_sync_ratings', 'simkl_sync_lists',
-              'simkl_push_watched', 'simkl_push_ratings', 'simkl_scrobble',
-            ];
-            for (const key of simklSyncKeys) {
-              const el = document.getElementById(key) as HTMLInputElement | null;
-              if (el) body[key] = el.checked;
-            }
-            const simklRes = await fetch('/api/proxy/auth/settings', {
-              method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-            });
-            if (!simklRes.ok) {
-              const err = await simklRes.json();
-              throw new Error(err.detail || 'Failed to save Simkl settings');
-            }
-            showMessage('Simkl settings saved.');
-            return;
-          } else if (action === 'save_mdblist_settings') {
-            const body: Record<string, any> = {
-              mdblist_api_key: (document.querySelector<HTMLInputElement>('#mdblist_api_key'))?.value || null,
-              mdblist_auto_sync_interval: (() => {
-                const v = (document.querySelector('[name="mdblist_auto_sync_interval"]') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
-            };
-            const mdblistSyncKeys = [
-              'mdblist_sync_watched', 'mdblist_sync_ratings', 'mdblist_sync_watchlist', 'mdblist_sync_dropped',
-              'mdblist_push_watched', 'mdblist_push_ratings', 'mdblist_push_watchlist', 'mdblist_push_collection', 'mdblist_push_dropped', 'mdblist_scrobble',
-            ];
-            for (const key of mdblistSyncKeys) {
-              const el = document.getElementById(key) as HTMLInputElement | null;
-              if (el) body[key] = el.checked;
-            }
-            const mdblistRes = await fetch('/api/proxy/auth/settings', {
-              method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-            });
-            if (!mdblistRes.ok) {
-              const err = await mdblistRes.json();
-              throw new Error(err.detail || 'Failed to save MDBList settings');
-            }
-            showMessage('MDBList settings saved.');
-            return;
-          } else if (action === 'save_bingebase_settings') {
-            const body: Record<string, any> = {
-              bingebase_webhook_url: (document.querySelector<HTMLInputElement>('#bingebase_webhook_url'))?.value || null,
-              bingebase_api_key: (document.querySelector<HTMLInputElement>('#bingebase_api_key'))?.value || null,
-            };
-            const bingebaseKeys = ['bingebase_scrobble', 'bingebase_push_watched', 'bingebase_push_ratings'];
-            for (const key of bingebaseKeys) {
-              const el = document.getElementById(key) as HTMLInputElement | null;
-              if (el) body[key] = el.checked;
-            }
-            const bingebaseRes = await fetch('/api/proxy/auth/settings', {
-              method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-            });
-            if (!bingebaseRes.ok) {
-              const err = await bingebaseRes.json();
-              throw new Error(err.detail || 'Failed to save Bingebase settings');
-            }
-            showMessage('Bingebase settings saved.');
+            showMessage(`${trackingSettings.name} settings saved.`);
             return;
           } else if (action === 'push_bingebase') {
             const pushRes = await fetch('/api/proxy/bingebase/push', {
