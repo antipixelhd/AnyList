@@ -2,6 +2,9 @@
 
 from zipfile import BadZipFile, ZipFile
 
+MAX_ENTRY_SIZE = 100 * 1024 * 1024
+MAX_TOTAL_SIZE = 500 * 1024 * 1024
+
 
 class BoundedZipReader:
     def __init__(self, archive: ZipFile, *, max_entry_size: int, max_total_size: int, chunk_size: int):

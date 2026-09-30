@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from core.scrob_import import MAX_TOTAL_SIZE
+from core.archive_reader import MAX_TOTAL_SIZE
 
 
 _HEADER_ALIASES = {
@@ -648,6 +648,219 @@ async def _await_call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return value
 
 
+def _finalize_title_matches(
+    movie_rows: dict[str, list[NetflixWatch]],
+    show_rows: dict[str, list[NetflixWatch]],
+    shows: list[dict[str, Any]],
+    unresolved_show_titles: set[str],
+    search_cache: dict[tuple[str, str], list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build movie matches, apply whole-title fallbacks, and retain review rows."""
+    movies: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = []
+
+    # Colon-form rows that did not make a confidently identified show are
+    # considered for whole-title movie search, but cannot become a movie if
+    # Netflix explicitly supplied a season marker.
+    for normalized_title, observations in movie_rows.items():
+        source_title = observations[0].source_title
+        if source_title.lstrip().startswith(":"):
+            # Some Netflix exports contain anonymous ": Episode N" rows.
+            # A film search produces unrelated namesakes; keep the rows
+            # available for manual show/episode remapping instead.
+            unmatched.append({
+                "id": _stable_id("show", normalized_title),
+                "kind": "show",
+                "source_title": source_title,
+                "dates": sorted({row.watched_at for row in observations}),
+                "source_rows": sum(len(row.source_rows) for row in observations),
+                "tmdb_id": None,
+                "title": None,
+                "media_type": None,
+                "confidence": "low",
+                "status": "review",
+                "reason": "Netflix omitted this episode's show title. Choose the show and episode manually, or skip it.",
+                "episodes": [{
+                    "season_number": None,
+                    "episode_number": None,
+                    "title": row.source_title.lstrip(": ").strip(),
+                    "source_title": row.source_title,
+                    "source_episode_title": row.source_title.lstrip(": ").strip(),
+                    "watched_dates": [row.watched_at],
+                    "source_rows": list(row.source_rows),
+                    "matched": False,
+                    "confidence": "low",
+                    "reason": "The show title is missing from this Netflix row.",
+                } for row in observations],
+                "seasons": [],
+                "suggestions": [],
+            })
+            continue
+        candidates = search_cache.get(("movie", normalized_title), [])
+        exact = [candidate for candidate in candidates if candidate.get("_exact")]
+        dominant = _dominant_exact_movie(exact, [row.watched_at for row in observations])
+        candidate = exact[0] if len(exact) == 1 else dominant or (candidates[0] if candidates else None)
+        confidence = "high" if candidate and (len(exact) == 1 or dominant is not None) else "medium" if candidate and candidate.get("_similarity", 0) >= 0.60 else "low"
+        reason = (
+            "Exact movie title match." if len(exact) == 1 else
+            "Exact title with a clearly dominant TMDB audience match." if dominant else
+            "Possible movie match; confirm the title." if candidate else "No matching movie was found."
+        )
+        item = {
+            "id": _stable_id("movie", normalized_title),
+            "kind": "movie",
+            "source_title": source_title,
+            "dates": sorted({row.watched_at for row in observations}),
+            "source_rows": sum(len(row.source_rows) for row in observations),
+            "tmdb_id": candidate.get("tmdb_id") if candidate else None,
+            "title": candidate.get("title") if candidate else None,
+            "year": candidate.get("year") if candidate else None,
+            "poster_path": candidate.get("poster_path") if candidate else None,
+            "media_type": "movie" if candidate else None,
+            "is_anime": is_anime_candidate(candidate),
+            "confidence": confidence,
+            "reason": reason,
+            "status": "matched" if confidence == "high" else "review",
+            "suggestions": [
+                _visible_candidate(row, "high" if row.get("_exact") else "medium", "Movie title search candidate")
+                for row in candidates[:5]
+            ],
+        }
+        (movies if candidate else unmatched).append(item)
+
+    # Weak colon-shaped rows that have no unique episode evidence could also
+    # be movies (e.g. a film with a colon in its title). Promote only an exact
+    # unique movie title, and only if the show matcher did not get exact episode
+    # evidence. The source observation is left intact for the review queue.
+    promoted_source_rows: set[int] = set()
+    for normalized_show, observations in show_rows.items():
+        if any(row.season_label for row in observations):
+            continue
+        show_item = next((item for item in shows if item["id"] == _stable_id("show", normalized_show)), None)
+        if show_item and any(ep.get("resolution") == "exact" for ep in show_item.get("episodes", [])):
+            continue
+        for observation in observations:
+            query_key = _norm_text(observation.source_title)
+            candidates = search_cache.get(("movie", query_key), [])
+            exact = [candidate for candidate in candidates if candidate.get("_exact")]
+            dominant = _dominant_exact_movie(exact, [observation.watched_at])
+            if len(exact) == 1 or dominant:
+                candidate = exact[0] if len(exact) == 1 else dominant
+                item = {
+                    "id": _stable_id("movie", query_key),
+                    "kind": "movie",
+                    "source_title": observation.source_title,
+                    "dates": [observation.watched_at],
+                    "source_rows": len(observation.source_rows),
+                    "tmdb_id": candidate.get("tmdb_id"),
+                    "title": candidate.get("title"),
+                    "year": candidate.get("year"),
+                    "poster_path": candidate.get("poster_path"),
+                    "media_type": "movie",
+                    "is_anime": is_anime_candidate(candidate),
+                    "confidence": "high",
+                    "reason": "Exact movie title match; the possible episode candidate did not match.",
+                    "status": "matched",
+                    "suggestions": [_visible_candidate(candidate, "high", "Exact movie title match")],
+                }
+                movies.append(item)
+                promoted_source_rows.update(observation.source_rows)
+            elif show_item:
+                show_item["confidence"] = "medium" if show_item["tmdb_id"] else "low"
+                show_item["status"] = "review"
+                show_item["reason"] = "The colon-form entry could be a movie or an episode; confirm the correct match."
+                show_item.setdefault("unresolved_source_rows", []).extend(observation.source_rows)
+
+    def _group_is_fully_promoted(observations: list[NetflixWatch]) -> bool:
+        source_row_ids = {source_row for row in observations for source_row in row.source_rows}
+        return bool(source_row_ids) and source_row_ids.issubset(promoted_source_rows)
+
+    shows = [item for item in shows if not _group_is_fully_promoted(show_rows.get(_norm_text(item["source_title"]), []))]
+
+    # Any title that looks like a show but yielded no TMDB search results still
+    # appears as a review item; it must not disappear from the summary.
+    for normalized_show in sorted(unresolved_show_titles):
+        observations = show_rows[normalized_show]
+        if _group_is_fully_promoted(observations):
+            continue
+        source_title = observations[0].show_title or observations[0].source_title
+        unmatched.append({
+            "id": _stable_id("show", normalized_show),
+            "kind": "show",
+            "source_title": source_title,
+            "dates": sorted({row.watched_at for row in observations}),
+            "source_rows": sum(len(row.source_rows) for row in observations),
+            "tmdb_id": None,
+            "title": None,
+            "year": None,
+            "poster_path": None,
+            "media_type": None,
+            "confidence": "low",
+            "reason": "No matching show was found.",
+            "status": "review",
+            "episodes": [
+                {
+                    "season_number": row.season_number,
+                    "episode_number": None,
+                    "title": row.episode_title,
+                    "source_title": row.source_title,
+                    "source_episode_title": row.episode_title,
+                    "season_label": row.season_label,
+                    "watched_dates": [row.watched_at],
+                    "source_rows": list(row.source_rows),
+                    "matched": False,
+                    "confidence": "low",
+                    "evidence": "No show metadata candidate was found.",
+                    "reason": "No show metadata candidate was found.",
+                }
+                for row in observations
+            ],
+            "seasons": [],
+            "suggestions": [],
+        })
+
+    # If a colon-form show suggestion had no episode evidence and no exact
+    # whole-film match, its TV item remains the single review entry.
+    known_ids = {item["id"] for item in [*movies, *shows, *unmatched]}
+    for normalized_show, observations in show_rows.items():
+        if _stable_id("show", normalized_show) not in known_ids:
+            if _group_is_fully_promoted(observations):
+                continue
+            source_title = observations[0].show_title or observations[0].source_title
+            unmatched.append({
+                "id": _stable_id("show", normalized_show),
+                "kind": "show",
+                "source_title": source_title,
+                "dates": sorted({row.watched_at for row in observations}),
+                "source_rows": sum(len(row.source_rows) for row in observations),
+                "tmdb_id": None,
+                "title": None,
+                "year": None,
+                "poster_path": None,
+                "media_type": None,
+                "confidence": "low",
+                "reason": "Could not identify the source entry as a show or movie.",
+                "status": "review",
+                "episodes": [],
+                "seasons": [],
+                "suggestions": [],
+            })
+
+    # Merge any duplicate movie records created from both the ordinary movie
+    # path and the colon-title fallback, keeping each viewing date once.
+    merged_movies: dict[str, dict[str, Any]] = {}
+    for item in movies:
+        current = merged_movies.get(item["id"])
+        if current is None:
+            merged_movies[item["id"]] = item
+        else:
+            current["dates"] = sorted(set(current["dates"]) | set(item["dates"]))
+            current["source_rows"] += item["source_rows"]
+    movies = list(merged_movies.values())
+
+    return movies, shows, unmatched
+
+
 async def prepare_netflix_import(
     history: ParsedNetflixHistory | dict[str, Any] | bytes | str,
     *,
@@ -1213,7 +1426,7 @@ async def prepare_netflix_import(
             "tvdb_id": best.get("tvdb_id"),
             "episodes": best["episodes"],
             "seasons": best["seasons"],
-                "catalog_episodes": best["catalog_episodes"],
+            "catalog_episodes": best["catalog_episodes"],
             "suggestions": [
                 _visible_candidate(
                     result["candidate"], result["confidence"], result["reason"],
@@ -1223,207 +1436,9 @@ async def prepare_netflix_import(
         }
         shows.append(output)
 
-    movies: list[dict[str, Any]] = []
-    unmatched: list[dict[str, Any]] = []
-
-    # Colon-form rows that did not make a confidently identified show are
-    # considered for whole-title movie search, but cannot become a movie if
-    # Netflix explicitly supplied a season marker.
-    for normalized_title, observations in movie_rows.items():
-        source_title = observations[0].source_title
-        if source_title.lstrip().startswith(":"):
-            # Some Netflix exports contain anonymous ": Episode N" rows.
-            # A film search produces unrelated namesakes; keep the rows
-            # available for manual show/episode remapping instead.
-            unmatched.append({
-                "id": _stable_id("show", normalized_title),
-                "kind": "show",
-                "source_title": source_title,
-                "dates": sorted({row.watched_at for row in observations}),
-                "source_rows": sum(len(row.source_rows) for row in observations),
-                "tmdb_id": None,
-                "title": None,
-                "media_type": None,
-                "confidence": "low",
-                "status": "review",
-                "reason": "Netflix omitted this episode's show title. Choose the show and episode manually, or skip it.",
-                "episodes": [{
-                    "season_number": None,
-                    "episode_number": None,
-                    "title": row.source_title.lstrip(": ").strip(),
-                    "source_title": row.source_title,
-                    "source_episode_title": row.source_title.lstrip(": ").strip(),
-                    "watched_dates": [row.watched_at],
-                    "source_rows": list(row.source_rows),
-                    "matched": False,
-                    "confidence": "low",
-                    "reason": "The show title is missing from this Netflix row.",
-                } for row in observations],
-                "seasons": [],
-                "suggestions": [],
-            })
-            continue
-        candidates = search_cache.get(("movie", normalized_title), [])
-        exact = [candidate for candidate in candidates if candidate.get("_exact")]
-        dominant = _dominant_exact_movie(exact, [row.watched_at for row in observations])
-        candidate = exact[0] if len(exact) == 1 else dominant or (candidates[0] if candidates else None)
-        confidence = "high" if candidate and (len(exact) == 1 or dominant is not None) else "medium" if candidate and candidate.get("_similarity", 0) >= 0.60 else "low"
-        reason = (
-            "Exact movie title match." if len(exact) == 1 else
-            "Exact title with a clearly dominant TMDB audience match." if dominant else
-            "Possible movie match; confirm the title." if candidate else "No matching movie was found."
-        )
-        item = {
-            "id": _stable_id("movie", normalized_title),
-            "kind": "movie",
-            "source_title": source_title,
-            "dates": sorted({row.watched_at for row in observations}),
-            "source_rows": sum(len(row.source_rows) for row in observations),
-            "tmdb_id": candidate.get("tmdb_id") if candidate else None,
-            "title": candidate.get("title") if candidate else None,
-            "year": candidate.get("year") if candidate else None,
-            "poster_path": candidate.get("poster_path") if candidate else None,
-            "media_type": "movie" if candidate else None,
-            "is_anime": is_anime_candidate(candidate),
-            "confidence": confidence,
-            "reason": reason,
-            "status": "matched" if confidence == "high" else "review",
-            "suggestions": [
-                _visible_candidate(row, "high" if row.get("_exact") else "medium", "Movie title search candidate")
-                for row in candidates[:5]
-            ],
-        }
-        (movies if candidate else unmatched).append(item)
-
-    # Weak colon-shaped rows that have no unique episode evidence could also
-    # be movies (e.g. a film with a colon in its title). Promote only an exact
-    # unique movie title, and only if the show matcher did not get exact episode
-    # evidence. The source observation is left intact for the review queue.
-    promoted_source_rows: set[int] = set()
-    for normalized_show, observations in show_rows.items():
-        if any(row.season_label for row in observations):
-            continue
-        show_item = next((item for item in shows if item["id"] == _stable_id("show", normalized_show)), None)
-        if show_item and any(ep.get("resolution") == "exact" for ep in show_item.get("episodes", [])):
-            continue
-        for observation in observations:
-            query_key = _norm_text(observation.source_title)
-            candidates = search_cache.get(("movie", query_key), [])
-            exact = [candidate for candidate in candidates if candidate.get("_exact")]
-            dominant = _dominant_exact_movie(exact, [observation.watched_at])
-            if len(exact) == 1 or dominant:
-                candidate = exact[0] if len(exact) == 1 else dominant
-                item = {
-                    "id": _stable_id("movie", query_key),
-                    "kind": "movie",
-                    "source_title": observation.source_title,
-                    "dates": [observation.watched_at],
-                    "source_rows": len(observation.source_rows),
-                    "tmdb_id": candidate.get("tmdb_id"),
-                    "title": candidate.get("title"),
-                    "year": candidate.get("year"),
-                    "poster_path": candidate.get("poster_path"),
-                    "media_type": "movie",
-                    "is_anime": is_anime_candidate(candidate),
-                    "confidence": "high",
-                    "reason": "Exact movie title match; the possible episode candidate did not match.",
-                    "status": "matched",
-                    "suggestions": [_visible_candidate(candidate, "high", "Exact movie title match")],
-                }
-                movies.append(item)
-                promoted_source_rows.update(observation.source_rows)
-            elif show_item:
-                show_item["confidence"] = "medium" if show_item["tmdb_id"] else "low"
-                show_item["status"] = "review"
-                show_item["reason"] = "The colon-form entry could be a movie or an episode; confirm the correct match."
-                show_item.setdefault("unresolved_source_rows", []).extend(observation.source_rows)
-
-    def _group_is_fully_promoted(observations: list[NetflixWatch]) -> bool:
-        source_row_ids = {source_row for row in observations for source_row in row.source_rows}
-        return bool(source_row_ids) and source_row_ids.issubset(promoted_source_rows)
-
-    shows = [item for item in shows if not _group_is_fully_promoted(show_rows.get(_norm_text(item["source_title"]), []))]
-
-    # Any title that looks like a show but yielded no TMDB search results still
-    # appears as a review item; it must not disappear from the summary.
-    for normalized_show in sorted(unresolved_show_titles):
-        observations = show_rows[normalized_show]
-        if _group_is_fully_promoted(observations):
-            continue
-        source_title = observations[0].show_title or observations[0].source_title
-        unmatched.append({
-            "id": _stable_id("show", normalized_show),
-            "kind": "show",
-            "source_title": source_title,
-            "dates": sorted({row.watched_at for row in observations}),
-            "source_rows": sum(len(row.source_rows) for row in observations),
-            "tmdb_id": None,
-            "title": None,
-            "year": None,
-            "poster_path": None,
-            "media_type": None,
-            "confidence": "low",
-            "reason": "No matching show was found.",
-            "status": "review",
-            "episodes": [
-                {
-                    "season_number": row.season_number,
-                    "episode_number": None,
-                    "title": row.episode_title,
-                    "source_title": row.source_title,
-                    "source_episode_title": row.episode_title,
-                    "season_label": row.season_label,
-                    "watched_dates": [row.watched_at],
-                    "source_rows": list(row.source_rows),
-                    "matched": False,
-                    "confidence": "low",
-                    "evidence": "No show metadata candidate was found.",
-                    "reason": "No show metadata candidate was found.",
-                }
-                for row in observations
-            ],
-            "seasons": [],
-            "suggestions": [],
-        })
-
-    # If a colon-form show suggestion had no episode evidence and no exact
-    # whole-film match, its TV item remains the single review entry.
-    known_ids = {item["id"] for item in [*movies, *shows, *unmatched]}
-    for normalized_show, observations in show_rows.items():
-        if _stable_id("show", normalized_show) not in known_ids:
-            if _group_is_fully_promoted(observations):
-                continue
-            source_title = observations[0].show_title or observations[0].source_title
-            unmatched.append({
-                "id": _stable_id("show", normalized_show),
-                "kind": "show",
-                "source_title": source_title,
-                "dates": sorted({row.watched_at for row in observations}),
-                "source_rows": sum(len(row.source_rows) for row in observations),
-                "tmdb_id": None,
-                "title": None,
-                "year": None,
-                "poster_path": None,
-                "media_type": None,
-                "confidence": "low",
-                "reason": "Could not identify the source entry as a show or movie.",
-                "status": "review",
-                "episodes": [],
-                "seasons": [],
-                "suggestions": [],
-            })
-
-    # Merge any duplicate movie records created from both the ordinary movie
-    # path and the colon-title fallback, keeping each viewing date once.
-    merged_movies: dict[str, dict[str, Any]] = {}
-    for item in movies:
-        current = merged_movies.get(item["id"])
-        if current is None:
-            merged_movies[item["id"]] = item
-        else:
-            current["dates"] = sorted(set(current["dates"]) | set(item["dates"]))
-            current["source_rows"] += item["source_rows"]
-    movies = list(merged_movies.values())
+    movies, shows, unmatched = _finalize_title_matches(
+        movie_rows, show_rows, shows, unresolved_show_titles, search_cache,
+    )
 
     return {
         "movies": movies,

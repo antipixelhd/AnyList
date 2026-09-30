@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import zipfile
-from core.archive_reader import BoundedZipReader
+from core.archive_reader import BoundedZipReader, MAX_ENTRY_SIZE, MAX_TOTAL_SIZE
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -45,8 +45,6 @@ from models.users import UserSettings
 
 logger = logging.getLogger(__name__)
 
-MAX_ENTRY_SIZE = 100 * 1024 * 1024
-MAX_TOTAL_SIZE = 500 * 1024 * 1024
 _READ_CHUNK_SIZE = 1024 * 1024
 
 WATCHLIST_SLUG = "__watchlist__"

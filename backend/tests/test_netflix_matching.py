@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 import unittest
 from unittest.mock import AsyncMock
 
@@ -8,9 +10,24 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
 from core.netflix_import import parse_netflix_csv, prepare_netflix_import, resolve_netflix_episodes
+from core.netflix_import import NetflixWatch, _finalize_title_matches, _norm_text, _stable_id
 
 
 class NetflixCsvParserTests(unittest.TestCase):
+    def test_parser_import_does_not_require_database_or_app_configuration(self) -> None:
+        environment = {key: value for key, value in os.environ.items() if key not in {"SECRET_KEY", "DATABASE_URL"}}
+        result = subprocess.run(
+            [sys.executable, "-c", (
+                "import sys; from core.netflix_import import parse_netflix_csv; "
+                "assert parse_netflix_csv('Title,Date\\nMovie,1/1/26\\n').total_rows == 1; "
+                "assert 'core.scrob_import' not in sys.modules; "
+                "assert 'sqlalchemy' not in sys.modules; "
+                "assert 'core.config' not in sys.modules"
+            )],
+            env=environment, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_english_export_preserves_quoted_colons_and_collapses_duplicate_events(self) -> None:
         csv_text = (
             "\ufeffTitle,Date\r\n"
@@ -264,6 +281,51 @@ class NetflixEpisodeResolutionTests(unittest.TestCase):
         self.assertEqual(sum(episode["resolution"] in {"discarded", "covered"} for episode in episodes), 1)
         self.assertEqual(len({(episode.get("season_number"), episode.get("episode_number"))
                               for episode in episodes if episode.get("matched")}), 2)
+
+
+class NetflixTitleReviewTests(unittest.TestCase):
+    def test_colon_movie_fallback_merges_with_ordinary_matches_without_losing_dates(self):
+        title = 'Story: Movie'
+        key = _norm_text(title)
+        candidate = {'tmdb_id': 42, 'title': title, '_exact': True}
+        ordinary = NetflixWatch(1, title, '2024-01-01', source_rows=[1])
+        colon = NetflixWatch(2, title, '2024-02-01', show_title='Story', episode_title='Movie', source_rows=[2])
+        movies, shows, unmatched = _finalize_title_matches(
+            {key: [ordinary]}, {'story': [colon]}, [], {'story'}, {('movie', key): [candidate]},
+        )
+        self.assertEqual(len(movies), 1)
+        self.assertEqual(movies[0]['tmdb_id'], 42)
+        self.assertEqual(movies[0]['dates'], ['2024-01-01', '2024-02-01'])
+        self.assertEqual(movies[0]['source_rows'], 2)
+        self.assertEqual(shows, [])
+        self.assertEqual(unmatched, [])
+
+    def test_exact_episode_evidence_prevents_a_whole_title_movie_fallback(self):
+        row = NetflixWatch(1, 'Story: Pilot', '2024-01-01', show_title='Story', episode_title='Pilot', source_rows=[1])
+        show = {'id': _stable_id('show', 'story'), 'source_title': 'Story', 'episodes': [{'resolution': 'exact'}]}
+        movies, shows, unmatched = _finalize_title_matches(
+            {}, {'story': [row]}, [show], set(),
+            {('movie', _norm_text(row.source_title)): [{'tmdb_id': 42, 'title': row.source_title, '_exact': True}]},
+        )
+        self.assertEqual(movies, [])
+        self.assertEqual(shows, [show])
+        self.assertEqual(unmatched, [])
+
+    def test_explicit_season_marker_keeps_unresolved_episode_rows_for_review(self):
+        row = NetflixWatch(3, 'Story: Season 1: Pilot', '2024-01-01', show_title='Story',
+                           season_label='Season 1', season_number=1, episode_title='Pilot', source_rows=[3, 4])
+        movies, shows, unmatched = _finalize_title_matches(
+            {}, {'story': [row]}, [], {'story'},
+            {('movie', _norm_text(row.source_title)): [{'tmdb_id': 42, 'title': row.source_title, '_exact': True}]},
+        )
+        self.assertEqual(movies, [])
+        self.assertEqual(shows, [])
+        self.assertEqual(len(unmatched), 1)
+        review = unmatched[0]
+        self.assertEqual((review['kind'], review['status'], review['source_rows']), ('show', 'review', 2))
+        self.assertEqual(review['episodes'][0]['season_number'], 1)
+        self.assertEqual(review['episodes'][0]['source_rows'], [3, 4])
+        self.assertEqual(review['episodes'][0]['watched_dates'], ['2024-01-01'])
 
 
 class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
