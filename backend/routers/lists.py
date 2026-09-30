@@ -1,3 +1,4 @@
+from core import media_presentation
 from core import trakt_auth
 from core import settings_store
 import logging
@@ -18,7 +19,7 @@ from dependencies import get_current_user_or_api_key, get_optional_user_or_api_k
 from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings
-from routers.media import enrich_with_state, require_anon_nav_allowed
+
 from core.enrichment import is_unmapped_tvdb_episode, create_media_safely
 from core.identity import find_media
 from core.translations import (
@@ -178,7 +179,7 @@ async def get_public_lists(
         # real (paginated-ish) browse of every public list, not a 3-item
         # random sample - there's no "self" to exclude and no follows to
         # union in either. Gated the same way as the other read-only pages.
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
         result = await db.execute(
             select(ListModel, User.username)
             .join(User, User.id == ListModel.user_id)
@@ -329,7 +330,7 @@ async def get_list(
 
     media_dicts = [item["media"] for item in formatted_items]
     if current_user:
-        await enrich_with_state(db, current_user.id, media_dicts)
+        await media_presentation.enrich_with_state(db, current_user.id, media_dicts)
 
     # Apply the viewer's metadata language, same as detail pages and history
     # do - list items were the one place translations never reached (#221).
@@ -744,7 +745,7 @@ async def add_list_item(
     )
     formatted = _format_item(item_result.scalar_one())
     await _attach_season_show_info(db, formatted["media"])
-    await enrich_with_state(db, current_user.id, [formatted["media"]])
+    await media_presentation.enrich_with_state(db, current_user.id, [formatted["media"]])
     return formatted
 
 

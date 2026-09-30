@@ -11,6 +11,23 @@ Read only for backend changes or questions. Confirm details in the affected code
 - backend/migrations/: schema migrations; backend/tests/: existing behavior checks.
 - backend/core/config.py: settings. Never copy credentials into documentation.
 
+Application jobs belong in core, independently of HTTP endpoints:
+
+- core/scheduler.py owns periodic loops and task startup/shutdown.
+- core/server_sync.py owns media server pulls, full pushes, and repair jobs.
+- core/trakt_sync.py, simkl_sync.py, and mdblist_sync.py own cloud import/export jobs.
+- core/netflix_sessions.py owns Netflix import preparation, application, and recovery.
+- core/manual_sessions.py and playback_sessions.py own playback session completion/commits.
+
+Media HTTP routes are grouped by responsibility: routers/media.py owns local catalog,
+collection, requests, details, and images; media_discovery.py owns feeds and external
+catalog browsing; media_playback.py owns streams, subtitles, and session reports.
+Shared serialization and state enrichment live in core/media_presentation.py;
+calendar computation lives in core/calendar_service.py.
+
+Import core services directly. Routers must not import other routers, and core must
+not import routers; test_architecture.py checks this boundary. main.py composes routers.
+
 Shared credential resolution lives in core/settings_store.py. User TMDB keys
 precede global keys. Request lookups cache values (including misses) per database
 session; job lookups with an existing settings row refresh the global fallback.
@@ -55,7 +72,7 @@ dates, and season notices share core/season_releases.py.
 Plex watchlist persistence and delivery live in core/plex_watchlist.py;
 core/watchlist_reconcile.py owns the pure three-way reconciliation plan.
 
-Jellyfin and Emby pulls share `_run_media_browser_sync` in routers/sync.py;
+Jellyfin and Emby pulls share `_run_media_browser_sync` in core/server_sync.py;
 provider adapters, library selections, and validation remain provider-specific.
 
 ## Implementation anchors
@@ -95,7 +112,7 @@ intents; provider rollback and exclusion rules do not depend on HTTP routes.
 
 For Nuvio outbound state, inspect core/nuvio_payloads.py for wire formatting and
 identity selection, and core/nuvio_projection.py for library, watch-history, and
-Continue Watching queries. core/nuvio.py owns provider transport; routers/sync.py
+Continue Watching queries. core/nuvio.py owns provider transport; core/server_sync.py
 orchestrates sync jobs and full pushes. Payload and projection tests live in
 backend/tests/test_nuvio_payloads.py and test_nuvio_projection.py.
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
+from core import server_sync
 
 from core import nuvio
 from core.nuvio_settings import MobileSettings, TVSettings, next_up_seeds
@@ -315,7 +316,7 @@ class ProfileSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('old42|-1|-1', MobileSettings.dismissals(self.blobs['mobile']))
 
     async def test_scheduled_push_projects_both_platforms_from_shared_history(self):
-        from routers.sync import _run_full_push
+
         from tests.test_nuvio import _Result, _SessionCM, _approved_stream_gate_results
         media = Media(id=1, title='Dropped', media_type=MediaType.series, tmdb_id=42,
             imdb_id='tt42', tmdb_data={})
@@ -329,13 +330,13 @@ class ProfileSettingsTests(unittest.IsolatedAsyncioTestCase):
         ]), commit=AsyncMock(), refresh=AsyncMock(),
             get=AsyncMock(return_value=SimpleNamespace(approved=True, snapshot={'mappings': {'tt42': 42}})))
         self.watched = [{'content_id': 'tt42', 'content_type': 'series', 'season': 2, 'episode': 7}]
-        with patch('routers.sync.async_sessionmaker', lambda *args, **kwargs: lambda: _SessionCM(db)), \
+        with patch('core.server_sync.async_sessionmaker', lambda *args, **kwargs: lambda: _SessionCM(db)), \
                 patch('core.nuvio_projection.build_progress_items', AsyncMock(return_value=[])), \
                 patch('core.nuvio_projection.progress_keys_to_clear', AsyncMock(return_value=[])), \
                 patch.object(nuvio, 'refresh_session', AsyncMock(return_value=SimpleNamespace(
                     access_token='fixture', refresh_token='rotated'))), \
                 patch.object(nuvio, '_rpc', AsyncMock(side_effect=self.rpc)):
-            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+            await server_sync._run_full_push(user_id=7, connection_id=4, job_id=99)
         self.assertEqual(self.writes(), ['tv', 'mobile'])
         self.assertEqual(TVSettings.dismissals(self.blobs['tv']), {'tt1|1|2', 'other', 'tt42', 'tmdb:42'})
         self.assertEqual(MobileSettings.dismissals(self.blobs['mobile']),

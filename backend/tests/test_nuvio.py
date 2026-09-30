@@ -11,6 +11,7 @@ import httpx
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 from core import outbound_sync
 
 from core import nuvio
@@ -18,7 +19,7 @@ from models.base import MediaType
 from models.media import Media
 from models.show import Show
 from models.sync import SyncStatus
-from routers.sync import _apply_nuvio_watch_history, _normalize_nuvio_item, _run_full_push
+
 from schemas import MediaServerConnectionResponse
 
 
@@ -903,7 +904,7 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value="tmdb-token"),
             ),
             patch(
-                "routers.sync.outbound_sync.push_nuvio_library_delta",
+                "core.server_sync.outbound_sync.push_nuvio_library_delta",
                 AsyncMock(return_value=True),
             ) as push_delta,
             patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()),
@@ -1018,7 +1019,7 @@ class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        added = await _apply_nuvio_watch_history(
+        added = await server_sync._apply_nuvio_watch_history(
             db,
             user_id=7,
             rows=rows,
@@ -1038,7 +1039,7 @@ class NuvioWatchHistoryTests(unittest.IsolatedAsyncioTestCase):
 
 class NuvioNormalizationTests(unittest.TestCase):
     def test_episode_history_maps_to_tmdb_series_and_watch_state(self) -> None:
-        normalized = _normalize_nuvio_item(
+        normalized = server_sync._normalize_nuvio_item(
             {
                 "content_id": "tmdb:1396",
                 "content_type": "series",
@@ -1063,7 +1064,7 @@ class NuvioNormalizationTests(unittest.TestCase):
 
 
     def test_imdb_content_uses_resolved_tmdb_id(self) -> None:
-        normalized = _normalize_nuvio_item(
+        normalized = server_sync._normalize_nuvio_item(
             {
                 "content_id": "tt0411008",
                 "content_type": "series",
@@ -1082,7 +1083,7 @@ class NuvioNormalizationTests(unittest.TestCase):
 
     def test_unsupported_content_identifier_is_skipped(self) -> None:
         self.assertIsNone(
-            _normalize_nuvio_item(
+            server_sync._normalize_nuvio_item(
                 {"content_id": "imdb:tt0137523", "content_type": "movie"},
                 profile_id=1,
             )
@@ -1172,7 +1173,7 @@ class LocalTrackingRollbackDispatchTests(unittest.IsolatedAsyncioTestCase):
         finish_job = AsyncMock()
         with (
             patch("core.local_outbound.async_sessionmaker", return_value=lambda: _SessionCM(db)),
-            patch("routers.sync.outbound_sync.fan_out_changes", fan_out),
+            patch("core.server_sync.outbound_sync.fan_out_changes", fan_out),
             patch("core.watch_delivery.push_watch_state", push_watch_state),
             patch("core.watch_intents.queue_watch_intents", AsyncMock()),
             patch("core.watch_intents.dispatch_watch_intents", AsyncMock()),
@@ -1257,7 +1258,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         visibility = AsyncMock(return_value=([], [], {}))
         update_visibility = AsyncMock()
         with (
-            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("core.server_sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[watched_record])),
             patch("core.nuvio_visibility.next_up_visibility", visibility),
             patch.object(nuvio, "update_next_up_dismissals", update_visibility),
@@ -1267,7 +1268,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
             ),
         ):
-            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+            await server_sync._run_full_push(user_id=7, connection_id=4, job_id=99)
 
         self.assertEqual(pushed_items, [watched_record])
         self.assertEqual(pushed_items[0]["watched_at"], int(created_at.timestamp() * 1000))
@@ -1312,7 +1313,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         visibility = AsyncMock(return_value=([], [], {}))
         update_visibility = AsyncMock()
         with (
-            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("core.server_sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("core.nuvio_projection.build_watched_items",
                   AsyncMock(return_value=[already_watched, newly_watched])),
             patch("core.nuvio_visibility.next_up_visibility", visibility),
@@ -1320,7 +1321,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
             patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
                 _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)),
         ):
-            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+            await server_sync._run_full_push(user_id=7, connection_id=4, job_id=99)
 
         self.assertEqual(pushed_items, [newly_watched])
         visibility.assert_awaited_once()
@@ -1356,14 +1357,14 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         visibility = AsyncMock(return_value=([], [], {}))
         update_visibility = AsyncMock()
         with (
-            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("core.server_sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[watched_record])),
             patch("core.nuvio_visibility.next_up_visibility", visibility),
             patch.object(nuvio, "update_next_up_dismissals", update_visibility),
             patch.object(nuvio.httpx, "AsyncClient", side_effect=lambda **kwargs:
                 _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)),
         ):
-            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+            await server_sync._run_full_push(user_id=7, connection_id=4, job_id=99)
 
         self.assertTrue(any(
             getattr(value, "value", None) == SyncStatus.failed
@@ -1437,7 +1438,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.sync.async_sessionmaker",
+                "core.server_sync.async_sessionmaker",
                 lambda *args, **kwargs: (lambda: _SessionCM(db)),
             ),
             patch(
@@ -1452,7 +1453,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
             ),
         ):
-            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+            await server_sync._run_full_push(user_id=7, connection_id=4, job_id=99)
 
         # The remote-only item ("tt9999999", never known locally) must survive
         # the push alongside the locally-known item, instead of being wiped by
@@ -1514,7 +1515,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.MockTransport(handler)
         with (
-            patch("routers.sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
+            patch("core.server_sync.async_sessionmaker", lambda *args, **kwargs: (lambda: _SessionCM(db))),
             patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[
                 {"content_id": "tmdb:1", "content_type": "movie", "name": "Local movie"},
             ])),
@@ -1524,7 +1525,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
             ),
         ):
-            await _run_full_push(user_id=7, connection_id=4, job_id=99)
+            await server_sync._run_full_push(user_id=7, connection_id=4, job_id=99)
 
         self.assertEqual(
             {item["content_id"] for item in pushed_items},

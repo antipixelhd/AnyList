@@ -9,6 +9,7 @@ import httpx
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from core import stremio_payloads
 from core import stremio
@@ -17,7 +18,6 @@ from models.media import Media
 from schemas import MediaServerConnectionResponse, StremioLinkPollRequest
 from routers import auth
 from core import watch_delivery
-from routers.sync import _apply_nuvio_watch_history, _pull_stremio_items, _stremio_records
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -129,7 +129,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=[{"_id": "tt-recent"}]),
             ) as datastore_get,
         ):
-            items, complete_snapshot, started_at = await _pull_stremio_items(
+            items, complete_snapshot, started_at = await server_sync._pull_stremio_items(
                 connection,
                 full_resync=False,
             )
@@ -168,7 +168,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             "get_cinemeta_series",
             AsyncMock(return_value={"videos": videos}),
         ):
-            library, watched_records, progress, removed = await _stremio_records([item])
+            library, watched_records, progress, removed = await server_sync._stremio_records([item])
 
         self.assertEqual([record["content_id"] for record in library], ["tt0944947"])
         self.assertEqual(
@@ -193,7 +193,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch.object(stremio, "get_cinemeta_series", AsyncMock(return_value={"videos": videos})):
-            library, watched_records, progress, removed = await _stremio_records([item])
+            library, watched_records, progress, removed = await server_sync._stremio_records([item])
 
         self.assertEqual(len(watched_records), 1)
         self.assertEqual((watched_records[0]["season"], watched_records[0]["episode"]), (1, 2))
@@ -215,7 +215,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        library, watched_records, progress, removed = await _stremio_records([item])
+        library, watched_records, progress, removed = await server_sync._stremio_records([item])
 
         self.assertEqual(library, [])
         self.assertEqual(
@@ -262,7 +262,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             "get_cinemeta_series",
             AsyncMock(return_value={"videos": videos}),
         ):
-            library, watched_records, progress, removed = await _stremio_records([item])
+            library, watched_records, progress, removed = await server_sync._stremio_records([item])
 
         self.assertEqual(library, [])
         self.assertEqual(
@@ -307,7 +307,7 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
             "get_cinemeta_series",
             AsyncMock(return_value={"videos": videos}),
         ) as get_series:
-            library, watched_records, progress, removed = await _stremio_records([item])
+            library, watched_records, progress, removed = await server_sync._stremio_records([item])
 
         get_series.assert_awaited_once_with("tt34866681")
         self.assertEqual(library, [])
@@ -347,7 +347,7 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             commit=AsyncMock(),
         )
 
-        added = await _apply_nuvio_watch_history(
+        added = await server_sync._apply_nuvio_watch_history(
             db,
             user_id=7,
             rows=[
@@ -584,7 +584,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
             commit=AsyncMock(),
         )
 
-        added = await _apply_nuvio_watch_history(
+        added = await server_sync._apply_nuvio_watch_history(
             db,
             user_id=7,
             rows=[
@@ -630,7 +630,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
         )
 
         expected_watched_at = datetime(2026, 8, 15, 11, 0, 0)
-        added = await _apply_nuvio_watch_history(
+        added = await server_sync._apply_nuvio_watch_history(
             db,
             user_id=7,
             rows=[

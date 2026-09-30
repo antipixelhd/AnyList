@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -114,17 +115,17 @@ class PlexSyncNeedsLibraryScanTests(unittest.TestCase):
 
     def test_watchlist_only_does_not_need_a_scan(self):
         conn = SimpleNamespace(sync_collection=False, sync_watched=False, sync_ratings=False, plex_sync_watchlist=True)
-        self.assertFalse(sync.plex_sync_needs_library_scan(conn))
+        self.assertFalse(server_sync.plex_sync_needs_library_scan(conn))
 
     def test_any_single_category_needs_a_scan(self):
         base = dict(sync_collection=False, sync_watched=False, sync_ratings=False)
         for field in ("sync_collection", "sync_watched", "sync_ratings"):
             conn = SimpleNamespace(**{**base, field: True})
-            self.assertTrue(sync.plex_sync_needs_library_scan(conn), f"{field} alone should trigger a scan")
+            self.assertTrue(server_sync.plex_sync_needs_library_scan(conn), f"{field} alone should trigger a scan")
 
     def test_nothing_selected_at_all_does_not_need_a_scan(self):
         conn = SimpleNamespace(sync_collection=False, sync_watched=False, sync_ratings=False, plex_sync_watchlist=False)
-        self.assertFalse(sync.plex_sync_needs_library_scan(conn))
+        self.assertFalse(server_sync.plex_sync_needs_library_scan(conn))
 
 
 class _PlexHistoryFakeDB:
@@ -190,11 +191,11 @@ class BackfillPlexWatchHistoryDedupTests(unittest.IsolatedAsyncioTestCase):
         db = _PlexHistoryFakeDB(conn, existing_watch_rows, pending_push_rows)
 
         with (
-            patch.object(sync, "async_sessionmaker", return_value=lambda *a, **k: db),
-            patch.object(sync.plex, "get_history", AsyncMock(return_value=history_entries)),
-            patch.object(sync, "record_rewatch_progress", AsyncMock()),
+            patch.object(server_sync, "async_sessionmaker", return_value=lambda *a, **k: db),
+            patch.object(server_sync.plex, "get_history", AsyncMock(return_value=history_entries)),
+            patch.object(server_sync, "record_rewatch_progress", AsyncMock()),
         ):
-            new_events, reconciled, unmatched = await sync._backfill_plex_watch_history(
+            new_events, reconciled, unmatched = await server_sync._backfill_plex_watch_history(
                 user_id=1,
                 connection_id=1,
                 p_url="http://plex",
@@ -397,8 +398,8 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         file = SimpleNamespace(id=1, collection_id=10, source_id="rk-1")
         db = _StaleCollectionFakeDB(rows=[(file, 100)], remaining_counts=[0])
 
-        removed = await sync._remove_stale_collection_files(
-            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+        removed = await server_sync._remove_stale_collection_files(
+            db, user_id=1, source=server_sync.CollectionSource.plex, connection_id=5,
             seen_source_ids=set(),  # nothing seen this run - rk-1 is gone
         )
 
@@ -410,8 +411,8 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         file = SimpleNamespace(id=1, collection_id=10, source_id="rk-1")
         db = _StaleCollectionFakeDB(rows=[(file, 100)], remaining_counts=[])
 
-        removed = await sync._remove_stale_collection_files(
-            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+        removed = await server_sync._remove_stale_collection_files(
+            db, user_id=1, source=server_sync.CollectionSource.plex, connection_id=5,
             seen_source_ids={"rk-1"},
         )
 
@@ -426,8 +427,8 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         file = SimpleNamespace(id=1, collection_id=10, source_id="rk-1")
         db = _StaleCollectionFakeDB(rows=[(file, 100)], remaining_counts=[1])
 
-        removed = await sync._remove_stale_collection_files(
-            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+        removed = await server_sync._remove_stale_collection_files(
+            db, user_id=1, source=server_sync.CollectionSource.plex, connection_id=5,
             seen_source_ids=set(),
         )
 
@@ -449,8 +450,8 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         seen = {"rk-0", "rk-1"}
         db = _StaleCollectionFakeDB(rows=rows, remaining_counts=[])
 
-        removed = await sync._remove_stale_collection_files(
-            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+        removed = await server_sync._remove_stale_collection_files(
+            db, user_id=1, source=server_sync.CollectionSource.plex, connection_id=5,
             seen_source_ids=seen,
         )
 
@@ -468,8 +469,8 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         seen = {f"rk-{i}" for i in range(2, 12)}
         db = _StaleCollectionFakeDB(rows=rows, remaining_counts=[0, 0])
 
-        removed = await sync._remove_stale_collection_files(
-            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+        removed = await server_sync._remove_stale_collection_files(
+            db, user_id=1, source=server_sync.CollectionSource.plex, connection_id=5,
             seen_source_ids=seen,
         )
 
@@ -486,8 +487,8 @@ class RemoveStaleCollectionFilesTests(unittest.IsolatedAsyncioTestCase):
         ]
         db = _StaleCollectionFakeDB(rows=rows, remaining_counts=[0, 0, 0])
 
-        removed = await sync._remove_stale_collection_files(
-            db, user_id=1, source=sync.CollectionSource.plex, connection_id=5,
+        removed = await server_sync._remove_stale_collection_files(
+            db, user_id=1, source=server_sync.CollectionSource.plex, connection_id=5,
             seen_source_ids=set(),
         )
 
@@ -502,8 +503,8 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
     def test_combined_episode_file_is_expanded_per_episode(self):
         item = {"Id": "file-1", "IndexNumber": 1, "IndexNumberEnd": 2, "Name": "Ep 1-2"}
 
-        expanded = sync._expand_multi_episode_items(
-            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        expanded = server_sync._expand_multi_episode_items(
+            [item], server_sync.MediaType.episode, server_sync.CollectionSource.jellyfin,
         )
 
         self.assertEqual(len(expanded), 2)
@@ -515,8 +516,8 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
     def test_three_episode_span_expands_to_three(self):
         item = {"Id": "file-2", "IndexNumber": 5, "IndexNumberEnd": 7}
 
-        expanded = sync._expand_multi_episode_items(
-            [item], sync.MediaType.episode, sync.CollectionSource.emby,
+        expanded = server_sync._expand_multi_episode_items(
+            [item], server_sync.MediaType.episode, server_sync.CollectionSource.emby,
         )
 
         self.assertEqual([e["IndexNumber"] for e in expanded], [5, 6, 7])
@@ -524,8 +525,8 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
     def test_single_episode_item_is_returned_as_is(self):
         item = {"Id": "file-3", "IndexNumber": 4, "IndexNumberEnd": None}
 
-        expanded = sync._expand_multi_episode_items(
-            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        expanded = server_sync._expand_multi_episode_items(
+            [item], server_sync.MediaType.episode, server_sync.CollectionSource.jellyfin,
         )
 
         self.assertEqual(expanded, [item])
@@ -533,8 +534,8 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
     def test_equal_start_and_end_is_not_expanded(self):
         item = {"Id": "file-4", "IndexNumber": 4, "IndexNumberEnd": 4}
 
-        expanded = sync._expand_multi_episode_items(
-            [item], sync.MediaType.episode, sync.CollectionSource.jellyfin,
+        expanded = server_sync._expand_multi_episode_items(
+            [item], server_sync.MediaType.episode, server_sync.CollectionSource.jellyfin,
         )
 
         self.assertEqual(expanded, [item])
@@ -544,8 +545,8 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
         # gate alone must be enough to skip this entirely.
         item = {"Id": "movie-1", "IndexNumber": 1, "IndexNumberEnd": 2}
 
-        expanded = sync._expand_multi_episode_items(
-            [item], sync.MediaType.movie, sync.CollectionSource.jellyfin,
+        expanded = server_sync._expand_multi_episode_items(
+            [item], server_sync.MediaType.movie, server_sync.CollectionSource.jellyfin,
         )
 
         self.assertEqual(expanded, [item])
@@ -554,8 +555,8 @@ class ExpandMultiEpisodeItemsTests(unittest.TestCase):
         # Scoped to Jellyfin/Emby only - Plex doesn't expose this field at all.
         item = {"ratingKey": "1", "index": 1, "IndexNumberEnd": 2}
 
-        expanded = sync._expand_multi_episode_items(
-            [item], sync.MediaType.episode, sync.CollectionSource.plex,
+        expanded = server_sync._expand_multi_episode_items(
+            [item], server_sync.MediaType.episode, server_sync.CollectionSource.plex,
         )
 
         self.assertEqual(expanded, [item])
@@ -651,45 +652,45 @@ class ProviderAddedAtTests(unittest.TestCase):
     like every other timestamp Scrob stores."""
 
     def test_plex_epoch_seconds(self):
-        got = sync.provider_added_at({"addedAt": 1754179200}, sync.CollectionSource.plex)
+        got = server_sync.provider_added_at({"addedAt": 1754179200}, server_sync.CollectionSource.plex)
         self.assertEqual(got, datetime(2025, 8, 3, 0, 0, 0))
 
     def test_plex_accepts_the_value_as_a_string(self):
-        got = sync.provider_added_at({"addedAt": "1754179200"}, sync.CollectionSource.plex)
+        got = server_sync.provider_added_at({"addedAt": "1754179200"}, server_sync.CollectionSource.plex)
         self.assertEqual(got, datetime(2025, 8, 3, 0, 0, 0))
 
     def test_jellyfin_iso_with_dotnet_fractional_seconds(self):
-        got = sync.provider_added_at(
-            {"DateCreated": "2026-08-01T09:30:00.0000000Z"}, sync.CollectionSource.jellyfin
+        got = server_sync.provider_added_at(
+            {"DateCreated": "2026-08-01T09:30:00.0000000Z"}, server_sync.CollectionSource.jellyfin
         )
         self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
         self.assertIsNone(got.tzinfo)
 
     def test_emby_iso_is_converted_to_utc(self):
-        got = sync.provider_added_at(
-            {"DateCreated": "2026-08-01T11:30:00+02:00"}, sync.CollectionSource.emby
+        got = server_sync.provider_added_at(
+            {"DateCreated": "2026-08-01T11:30:00+02:00"}, server_sync.CollectionSource.emby
         )
         self.assertEqual(got, datetime(2026, 8, 1, 9, 30, 0))
 
     def test_sources_without_a_library_date_return_none(self):
         # Nuvio and Stremio items are synthesized with a fixed key set, so they
         # must never be read as if they were a media browser payload.
-        for source in (sync.CollectionSource.nuvio, sync.CollectionSource.stremio):
+        for source in (server_sync.CollectionSource.nuvio, server_sync.CollectionSource.stremio):
             self.assertIsNone(
-                sync.provider_added_at({"DateCreated": "2026-08-01T09:30:00Z"}, source)
+                server_sync.provider_added_at({"DateCreated": "2026-08-01T09:30:00Z"}, source)
             )
 
     def test_missing_or_unusable_values_return_none(self):
         cases = [
-            ({}, sync.CollectionSource.plex),
-            ({"addedAt": None}, sync.CollectionSource.plex),
-            ({"addedAt": "not-a-number"}, sync.CollectionSource.plex),
-            ({}, sync.CollectionSource.jellyfin),
-            ({"DateCreated": ""}, sync.CollectionSource.jellyfin),
-            ({"DateCreated": "yesterday"}, sync.CollectionSource.jellyfin),
+            ({}, server_sync.CollectionSource.plex),
+            ({"addedAt": None}, server_sync.CollectionSource.plex),
+            ({"addedAt": "not-a-number"}, server_sync.CollectionSource.plex),
+            ({}, server_sync.CollectionSource.jellyfin),
+            ({"DateCreated": ""}, server_sync.CollectionSource.jellyfin),
+            ({"DateCreated": "yesterday"}, server_sync.CollectionSource.jellyfin),
         ]
         for item, source in cases:
-            self.assertIsNone(sync.provider_added_at(item, source), (item, source))
+            self.assertIsNone(server_sync.provider_added_at(item, source), (item, source))
 
 
 class CollectionAddedAtHealTests(unittest.TestCase):
@@ -697,7 +698,7 @@ class CollectionAddedAtHealTests(unittest.TestCase):
     is why the comparison happens in SQL rather than in Python."""
 
     def test_statement_takes_the_lesser_of_stored_and_provider_dates(self):
-        rendered = str(sync.collection_added_at_heal_stmt().compile(dialect=_pg.dialect()))
+        rendered = str(server_sync.collection_added_at_heal_stmt().compile(dialect=_pg.dialect()))
         self.assertIn("UPDATE collections SET added_at=least(collections.added_at,", rendered)
         self.assertIn("WHERE collections.id =", rendered)
 
@@ -936,7 +937,7 @@ class SyncItemsPartialWatchFanOutTests(_PartialWatchDB):
             media_id = media.id
 
             new_watched_ids: set[int] = set()
-            await sync.sync_items(
+            await server_sync.sync_items(
                 items=[{
                     "Id": "jf-1",
                     "Name": "The Matrix",
@@ -997,7 +998,7 @@ class SyncItemsPartialWatchFanOutTests(_PartialWatchDB):
             changes = {}
             for expected in ({(media.id, None): 8.0}, {}):
                 changes.clear()
-                await sync.sync_items(
+                await server_sync.sync_items(
                     items=[item], media_type=MediaType.movie,
                     source=CollectionSource.jellyfin, db=db,
                     stats={"movies": 0, "episodes": 0, "skipped": 0, "errors": 0},
@@ -1023,7 +1024,7 @@ class SyncItemsPartialWatchFanOutTests(_PartialWatchDB):
             ))
             await db.commit()
             observed = {}
-            await sync.sync_items(
+            await server_sync.sync_items(
                 items=[{
                     "Id": "jf-1", "Name": "The Matrix", "ProviderIds": {"Tmdb": "603"},
                     "UserData": {"Rating": 8},
@@ -1096,11 +1097,11 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         # Neither is played on the server (the started one only has a resume
         # position), so the #302 check waves both through.
         watched_state = AsyncMock(return_value={"jf-finished": False, "jf-started": False})
-        with patch.object(sync, "engine", self.engine), \
-             patch.object(sync.jellyfin, "mark_watched", mark_watched), \
-             patch.object(sync.jellyfin, "get_items_watched_state", watched_state), \
+        with patch.object(server_sync, "engine", self.engine), \
+             patch.object(server_sync.jellyfin, "mark_watched", mark_watched), \
+             patch.object(server_sync.jellyfin, "get_items_watched_state", watched_state), \
              patch("core.watch_echo.mark_pushed_watched") as mark_pushed:
-            await sync._run_full_push(1, connection_id, job_id)
+            await server_sync._run_full_push(1, connection_id, job_id)
         return mark_watched, mark_pushed, job_id
 
     async def _job(self, job_id: int):
@@ -1184,11 +1185,11 @@ class FullPushEchoTokenTimingTests(_PartialWatchDB):
         connection_id, job_id = await self._seed()
         mark_watched = AsyncMock(return_value=True)
         watched_state = AsyncMock(return_value={"jf-new": False, "jf-already": True})
-        with patch.object(sync, "engine", self.engine), \
-             patch.object(sync.jellyfin, "mark_watched", mark_watched), \
-             patch.object(sync.jellyfin, "get_items_watched_state", watched_state), \
+        with patch.object(server_sync, "engine", self.engine), \
+             patch.object(server_sync.jellyfin, "mark_watched", mark_watched), \
+             patch.object(server_sync.jellyfin, "get_items_watched_state", watched_state), \
              patch("core.watch_echo.mark_pushed_watched") as mark_pushed:
-            await sync._run_full_push(1, connection_id, job_id)
+            await server_sync._run_full_push(1, connection_id, job_id)
 
         pushed_source_ids = [call.args[3] for call in mark_watched.await_args_list]
         self.assertEqual(pushed_source_ids, ["jf-new"])
@@ -1201,39 +1202,39 @@ class WatchedLookupFailedWarningTests(unittest.TestCase):
     does not render them as unmatched TMDB (unknown reason, Match-as-show)."""
 
     def test_copies_title_and_media_type_value(self):
-        for media_type in (sync.MediaType.movie, sync.MediaType.episode):
+        for media_type in (server_sync.MediaType.movie, server_sync.MediaType.episode):
             with self.subTest(media_type=media_type):
                 media = SimpleNamespace(title="Any Title", media_type=media_type)
                 self.assertEqual(
-                    sync.watched_lookup_failed_warning(1, media),
+                    server_sync.watched_lookup_failed_warning(1, media),
                     {
                         "type": "watched_lookup_failed",
                         "media_id": 1,
                         "title": "Any Title",
                         "media_type": media_type.value,
                         "series_name": None,
-                        "reason": sync.WATCHED_LOOKUP_FAILED_REASON,
+                        "reason": server_sync.WATCHED_LOOKUP_FAILED_REASON,
                     },
                 )
 
     def test_missing_media_still_has_type_and_reason(self):
-        warning = sync.watched_lookup_failed_warning(1, None)
+        warning = server_sync.watched_lookup_failed_warning(1, None)
         self.assertEqual(warning["type"], "watched_lookup_failed")
         self.assertEqual(warning["media_id"], 1)
         self.assertIsNone(warning["title"])
         self.assertIsNone(warning["media_type"])
         self.assertIsNone(warning["series_name"])
-        self.assertEqual(warning["reason"], sync.WATCHED_LOOKUP_FAILED_REASON)
+        self.assertEqual(warning["reason"], server_sync.WATCHED_LOOKUP_FAILED_REASON)
 
     def test_series_name_only_carried_for_episodes(self):
         # #400: lets Connections group these by show - a movie has no show to
         # group under, so series_name must stay None even if one is passed.
-        movie = SimpleNamespace(title="A Movie", media_type=sync.MediaType.movie)
-        self.assertIsNone(sync.watched_lookup_failed_warning(1, movie, series_name="Some Show")["series_name"])
+        movie = SimpleNamespace(title="A Movie", media_type=server_sync.MediaType.movie)
+        self.assertIsNone(server_sync.watched_lookup_failed_warning(1, movie, series_name="Some Show")["series_name"])
 
-        episode = SimpleNamespace(title="Pilot", media_type=sync.MediaType.episode)
+        episode = SimpleNamespace(title="Pilot", media_type=server_sync.MediaType.episode)
         self.assertEqual(
-            sync.watched_lookup_failed_warning(1, episode, series_name="Some Show")["series_name"],
+            server_sync.watched_lookup_failed_warning(1, episode, series_name="Some Show")["series_name"],
             "Some Show",
         )
 
@@ -1306,8 +1307,8 @@ class MatchUnmatchedShowDisplacedTmdbIdTests(_PartialWatchDB):
         )
         current_user = SimpleNamespace(id=1)
 
-        with patch.object(sync.tmdb, "get_show", AsyncMock(return_value=show_data)), \
-             patch.object(sync.tmdb, "get_season", AsyncMock(return_value=season_data)):
+        with patch.object(server_sync.tmdb, "get_show", AsyncMock(return_value=show_data)), \
+             patch.object(server_sync.tmdb, "get_season", AsyncMock(return_value=season_data)):
             async with self.Session() as db:
                 result = await sync.match_unmatched_show(body, db, current_user)
 
@@ -1391,8 +1392,8 @@ class MatchUnmatchedShowDisplacedTmdbIdTests(_PartialWatchDB):
         body = sync.MatchUnmatchedBody(
             show_title="Edgar Allan Poe's Murder Mystery Dinner Party", tmdb_id=327463,
         )
-        with patch.object(sync.tmdb, "get_show", AsyncMock(return_value=show_data)), \
-             patch.object(sync.tmdb, "get_season", AsyncMock(return_value=season_data)):
+        with patch.object(server_sync.tmdb, "get_show", AsyncMock(return_value=show_data)), \
+             patch.object(server_sync.tmdb, "get_season", AsyncMock(return_value=season_data)):
             async with self.Session() as db:
                 await sync.match_unmatched_show(body, db, SimpleNamespace(id=1))
 

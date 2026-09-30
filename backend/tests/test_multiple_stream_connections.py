@@ -569,7 +569,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
             patch("core.outbound_sync.push_nuvio_library_delta", library_push),
             patch.object(nuvio, "push_watched_items", watched_push),
-            patch("routers.sync.refresh_stream_connection", AsyncMock()),
+            patch("core.server_sync.refresh_stream_connection", AsyncMock()),
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
         ):

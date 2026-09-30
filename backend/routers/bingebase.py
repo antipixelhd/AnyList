@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from db import get_db
 from models import CollectionSource, SyncJob, SyncStatus, User, UserSettings, WatchEvent
-from routers.auth import get_current_user
+from dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 

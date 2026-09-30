@@ -3,13 +3,13 @@ import unittest
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from routers import media_discovery
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
 
 from models.collection import Collection
 from models.media import Media
-from routers.media import recently_added_order
 
 
 def _rendered_order_by():
@@ -19,7 +19,7 @@ def _rendered_order_by():
         .subquery()
         .c.max_added
     )
-    query = select(Media).order_by(*recently_added_order(max_added))
+    query = select(Media).order_by(*media_discovery.recently_added_order(max_added))
     return str(query.compile(dialect=postgresql.dialect())).split("ORDER BY")[1]
 
 

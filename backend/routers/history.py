@@ -1,3 +1,4 @@
+from core import media_presentation
 from core import enrichment
 from core import show_metadata
 from core import watch_delivery
@@ -24,7 +25,7 @@ from models.users import UserSettings
 from models.rewatch import ShowRewatch, RewatchProgress
 from models.ratings import Rating
 from models.tracking import TrackedEntry, TrackingDeletion
-from routers.media import enrich_with_state, _attach_episode_order_fields
+
 from core.episode_order import get_order_keys_for_series, get_positions_for_series, canonical_pairs_for_display_season, normalize_order_key, is_aired_order
 from core.translations import get_user_metadata_language, get_media_translations, apply_translations, get_show_translations
 from core.rewatch import get_active_rewatch, record_rewatch_progress, get_already_watched_for_bulk_mark, capped_season_episode_counts
@@ -159,10 +160,10 @@ async def get_history(
 
     result = await db.execute(query)
     rows = result.all()
-    
+
     events = [format_event(e, m) for e, m in rows]
     if events:
-        await enrich_with_state(db, current_user.id, [e["media"] for e in events])
+        await media_presentation.enrich_with_state(db, current_user.id, [e["media"] for e in events])
         lang = await get_user_metadata_language(db, current_user.id)
         if lang:
             media_ids = [e["media"]["id"] for e in events if e["media"].get("id")]
@@ -285,7 +286,7 @@ async def get_now_playing(
                 for (cs, ce), pos in canon_map.items():
                     order_positions[(sid, cs, ce)] = pos
         for s in sessions:
-            _attach_episode_order_fields(s["media"], order_keys, order_positions)
+            media_presentation._attach_episode_order_fields(s["media"], order_keys, order_positions)
 
     return {"now_playing": sessions}
 
@@ -414,7 +415,7 @@ async def get_continue_watching(
         # Only ever true for movies - episodes have no drop concept.
         item["media"]["dropped"] = item["media"]["id"] in dropped_movie_ids
     if items:
-        await enrich_with_state(db, current_user.id, [i["media"] for i in items])
+        await media_presentation.enrich_with_state(db, current_user.id, [i["media"] for i in items])
         lang = await get_user_metadata_language(db, current_user.id)
         if lang:
             media_ids = [i["media"]["id"] for i in items if i["media"].get("id")]
@@ -1113,7 +1114,7 @@ async def get_next_up(
             item["episodes_left"] = show_stats["episodes_left"]
             item["remaining_runtime"] = show_stats["remaining_runtime"]
     if items:
-        await enrich_with_state(db, current_user.id, items)
+        await media_presentation.enrich_with_state(db, current_user.id, items)
         lang = await get_user_metadata_language(db, current_user.id)
         if lang:
             media_ids = [i["id"] for i in items if i.get("id")]
@@ -2208,7 +2209,7 @@ async def mark_season_watched(
     # 1. Ensure show exists
     show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
     show = show_q.scalar_one_or_none()
-    
+
     api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     if not show:
         if not settings_store.check_tmdb_key(api_key):
@@ -2391,7 +2392,7 @@ async def mark_season_watched(
                 all_season_episodes.append(new_ep)
 
     await db.flush() # Get IDs for new episodes
-    
+
     # 4. Mark all as watched
     if not all_season_episodes:
         return {"status": "ok", "count": 0}
@@ -2498,7 +2499,7 @@ async def mark_show_watched(
     # 1. Ensure show exists and get its metadata
     show_q = await db.execute(select(Show).where(Show.tmdb_id == body.series_tmdb_id))
     show = show_q.scalar_one_or_none()
-    
+
     api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
     if not show:
         if not settings_store.check_tmdb_key(api_key):
@@ -2574,7 +2575,7 @@ async def mark_show_watched(
             )
         )
         existing_map = {m.episode_number: m for m in existing_q.scalars().all()}
-        
+
         season_eps_to_watch = []
         for ep in season_data.get("episodes", []):
             air_date_str = ep.get("air_date")
@@ -2583,7 +2584,7 @@ async def mark_show_watched(
                 air_date = datetime.strptime(air_date_str, "%Y-%m-%d").date()
                 if air_date > today: continue
             except Exception: continue
-            
+
             ep_num = ep["episode_number"]
             if ep_num in existing_map:
                 season_eps_to_watch.append(existing_map[ep_num])
@@ -2601,9 +2602,9 @@ async def mark_show_watched(
                     tmdb_rating=ep.get("vote_average"),
                 )
                 season_eps_to_watch.append(new_ep)
-        
+
         await db.flush()
-        
+
         if not season_eps_to_watch: continue
 
         already_watched = await get_already_watched_for_bulk_mark(
@@ -3026,53 +3027,6 @@ async def dismiss_session(
     )
     await db.commit()
     return {"status": "ok"}
-
-
-async def auto_complete_manual_sessions(db: AsyncSession) -> None:
-    """Complete any manual sessions where enough time has elapsed since the last heartbeat."""
-    now = datetime.utcnow()
-    result = await db.execute(
-        select(PlaybackSession, Media)
-        .join(Media, Media.id == PlaybackSession.media_id)
-        .where(PlaybackSession.source == "manual", PlaybackSession.state == "playing")
-    )
-    completed: list[tuple[int, int]] = []  # (user_id, media_id)
-    new_events: list[WatchEvent] = []
-    for session, media in result.all():
-        runtime_seconds = (media.runtime or 0) * 60
-        if runtime_seconds <= 0:
-            continue
-        elapsed = session.progress_seconds + (now - session.updated_at).total_seconds()
-        if elapsed < runtime_seconds:
-            continue
-        await db.execute(delete(PlaybackSession).where(PlaybackSession.id == session.id))
-        await db.execute(
-            delete(PlaybackProgress).where(
-                PlaybackProgress.user_id == session.user_id,
-                PlaybackProgress.media_id == session.media_id,
-            )
-        )
-        window_minutes = await get_dedup_window_minutes(db, session.user_id)
-        if await find_duplicate_watch_event(db, session.user_id, session.media_id, now, window_minutes) is not None:
-            continue
-        event = WatchEvent(
-            user_id=session.user_id,
-            media_id=session.media_id,
-            watched_at=now,
-            completed=True,
-            play_count=1,
-            progress_percent=1.0,
-        )
-        db.add(event)
-        new_events.append(event)
-        completed.append((session.user_id, session.media_id))
-    if completed:
-        await db.commit()
-        for event in new_events:
-            await record_rewatch_progress(db, event.user_id, event.media_id, event.id)
-        await db.commit()
-        for user_id, media_id in completed:
-            await watch_delivery.push_watch_state(db, user_id, [media_id], watched=True)
 
 
 @router.post("/session/{session_key}/complete")

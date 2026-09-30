@@ -11,7 +11,7 @@ scoped to Plex-collected media (see the migration) and for the actual DELETE.
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-# Mirrors routers.sync.PLEX_WEBHOOK_RECONCILE_WINDOW: how long a webhook's
+# Mirrors core.server_sync.PLEX_WEBHOOK_RECONCILE_WINDOW: how long a webhook's
 # receipt-time estimate can plausibly lag Plex's own authoritative viewedAt
 # for the same play. Kept as a separate constant (rather than importing
 # routers.sync here) so this module stays free of FastAPI/DB-engine imports —

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from sqlalchemy.sql.dml import Delete
 
@@ -22,7 +23,6 @@ from models.rewatch import ShowRewatch
 from models.show import Show
 from routers import history
 from routers.webhooks import _handle_unwatch_toggle
-from routers.sync import is_fresh_rewatch_play
 
 
 class CappedSeasonEpisodeCountsTests(unittest.TestCase):
@@ -494,34 +494,34 @@ class IsFreshRewatchPlayTests(unittest.TestCase):
         # sync_items already lets a never-before-seen play through on its own -
         # this helper must not also claim it, or it'd double-count.
         rewatch = ShowRewatch(id=1, show_id=55, started_at=datetime(2026, 1, 1))
-        self.assertFalse(is_fresh_rewatch_play(False, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2026, 1, 2)))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(False, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2026, 1, 2)))
 
     def test_false_for_movies(self):
-        self.assertFalse(is_fresh_rewatch_play(True, MediaType.movie, None, 1, {}, set(), datetime(2026, 1, 2)))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(True, MediaType.movie, None, 1, {}, set(), datetime(2026, 1, 2)))
 
     def test_false_without_show_id(self):
-        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, None, 1, {}, set(), datetime(2026, 1, 2)))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(True, MediaType.episode, None, 1, {}, set(), datetime(2026, 1, 2)))
 
     def test_false_without_active_rewatch_for_show(self):
-        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {}, set(), datetime(2026, 1, 2)))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {}, set(), datetime(2026, 1, 2)))
 
     def test_false_when_already_progressed_this_cycle(self):
         rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
-        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, {1}, datetime(2026, 1, 2)))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, {1}, datetime(2026, 1, 2)))
 
     def test_false_without_a_last_played_date(self):
         rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
-        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), None))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), None))
 
     def test_false_when_last_played_predates_the_rewatch(self):
         # The server's played flag stays true forever - an old play must not
         # be mistaken for a fresh rewatch play just because progress is empty.
         rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
-        self.assertFalse(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2025, 6, 1)))
+        self.assertFalse(server_sync.is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2025, 6, 1)))
 
     def test_true_when_last_played_is_after_the_rewatch_started(self):
         rewatch = ShowRewatch(id=7, show_id=55, started_at=datetime(2026, 1, 1))
-        self.assertTrue(is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2026, 1, 2)))
+        self.assertTrue(server_sync.is_fresh_rewatch_play(True, MediaType.episode, 55, 1, {55: rewatch}, set(), datetime(2026, 1, 2)))
 
 
 class GetAlreadyWatchedForBulkMarkTests(unittest.IsolatedAsyncioTestCase):

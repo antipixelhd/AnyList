@@ -1,3 +1,5 @@
+from core import media_presentation
+from core import arr_settings
 from core import show_metadata
 from core import settings_store
 import asyncio
@@ -22,7 +24,7 @@ from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
 from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import RewatchProgress
-from routers.media import format_media, enrich_with_state, refresh_technical_data, _extract_show_content_rating, get_where_to_watch, _effective_sonarr, require_anon_nav_allowed
+
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID
 from core import tmdb
@@ -358,7 +360,7 @@ async def list_shows(
 
     result = await db.execute(q.limit(page_size).offset(offset))
     results = [format_show(s) for s in result.scalars().all()]
-    await enrich_with_state(db, current_user.id, results)
+    await media_presentation.enrich_with_state(db, current_user.id, results)
     lang = await get_user_metadata_language(db, current_user.id)
     if lang:
         show_ids = [r["id"] for r in results if r.get("id")]
@@ -805,7 +807,7 @@ async def get_show(
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == effective_user_id))
@@ -848,7 +850,7 @@ async def get_show(
             season_poster = (
                 seasons_meta.get(s_num, {}).get("poster_path") or show.poster_path
             )
-            ep_formatted = format_media(ep)
+            ep_formatted = media_presentation.format_media(ep)
             ep_formatted["poster_path"] = ep.poster_path or season_poster
             seasons.setdefault(s_num, []).append(ep_formatted)
 
@@ -895,7 +897,7 @@ async def get_show(
                         :12
                     ]
                 ]
-                await enrich_with_state(db, effective_user_id, recommendations)
+                await media_presentation.enrich_with_state(db, effective_user_id, recommendations)
                 cast = [
                     {
                         "tmdb_id": c.get("id"),
@@ -925,7 +927,7 @@ async def get_show(
         # doesn't make a redundant second TMDB call for the same data.
         if tmdb_extra and tmdb_extra.get("last_episode_to_air"):
             state_item["_last_episode_to_air"] = tmdb_extra["last_episode_to_air"]
-        await enrich_with_state(db, effective_user_id, [state_item])
+        await media_presentation.enrich_with_state(db, effective_user_id, [state_item])
 
         # While a rewatch is active, "watched" for this show reads from that
         # rewatch's progress instead of full history - computed once here and
@@ -1101,7 +1103,7 @@ async def get_show(
             for s in base_seasons_meta
         ]
 
-        where_to_watch = await get_where_to_watch(
+        where_to_watch = await media_presentation.get_where_to_watch(
             db, effective_user_id, series_tmdb_id, MediaType.series, show=show, tmdb_key=api_key
         )
 
@@ -1147,7 +1149,7 @@ async def get_show(
             ),
             "seasons_meta": enhanced_seasons_meta,
             "original_language": (show.tmdb_data or {}).get("original_language") or (tmdb_extra or {}).get("original_language"),
-            "age_rating": _extract_show_content_rating(tmdb_extra) if tmdb_extra else None,
+            "age_rating": media_presentation._extract_show_content_rating(tmdb_extra) if tmdb_extra else None,
             "imdb_id": (tmdb_extra or show.tmdb_data or {}).get("external_ids", {}).get("imdb_id"),
             "adult": (tmdb_extra or show.tmdb_data or {}).get("adult", False),
             "in_library": state_item.get("collection_pct", 0) > 0 if state_item else False,
@@ -1215,9 +1217,9 @@ async def get_show(
         ]
 
         state_item_tmdb: dict = {"tmdb_id": series_tmdb_id, "type": "series"}
-        await enrich_with_state(db, effective_user_id, [state_item_tmdb])
+        await media_presentation.enrich_with_state(db, effective_user_id, [state_item_tmdb])
 
-        where_to_watch = await get_where_to_watch(
+        where_to_watch = await media_presentation.get_where_to_watch(
             db, effective_user_id, series_tmdb_id, MediaType.series, tmdb_key=api_key
         )
 
@@ -1277,7 +1279,7 @@ async def get_show(
             "last_air_date": data.get("last_air_date"),
             "genres": [g["name"] for g in data.get("genres", [])],
             "original_language": data.get("original_language"),
-            "age_rating": _extract_show_content_rating(data),
+            "age_rating": media_presentation._extract_show_content_rating(data),
             "imdb_id": data.get("external_ids", {}).get("imdb_id"),
             "adult": data.get("adult", False),
             "in_library": state_item_tmdb.get("collection_pct", 0) > 0,
@@ -1329,7 +1331,7 @@ async def get_show_recommendations(
 ):
     """Fetch series recommendations from TMDB and enrich with state."""
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     tmdb_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
@@ -1354,7 +1356,7 @@ async def get_show_recommendations(
             }
             for r in recs_raw
         ]
-        await enrich_with_state(db, effective_user_id, recommendations)
+        await media_presentation.enrich_with_state(db, effective_user_id, recommendations)
         return {"results": recommendations}
     except Exception:
         return {"results": []}
@@ -1368,7 +1370,7 @@ async def get_show_season(
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     # 1. Try to find show and local episodes for this season
@@ -1626,7 +1628,7 @@ async def get_show_season(
                     pass
 
             show_state: dict = {"tmdb_id": series_tmdb_id, "type": "series"}
-            await enrich_with_state(db, effective_user_id, [show_state])
+            await media_presentation.enrich_with_state(db, effective_user_id, [show_state])
 
             # Season-level stats: watched, in_library, collection_pct, user_rating
             collected_in_season = 0
@@ -1666,7 +1668,7 @@ async def get_show_season(
                         .distinct()
                     )
                     null_show_ep_nums = {r[0] for r in null_show_coll_q.all()}
-                    
+
                     # Merge: avoid double-counting episodes already found via show_id.
                     already_by_show_q = await db.execute(
                         select(Media.episode_number)
@@ -1773,7 +1775,7 @@ async def get_show_season(
             return {
                 "season_number": season_number,
                 "name": f"Season {season_number}",
-                "episodes": [format_media(ep) for ep in local_episodes],
+                "episodes": [media_presentation.format_media(ep) for ep in local_episodes],
                 "show": format_show(show),
             }
         else:
@@ -1793,7 +1795,7 @@ async def get_episode_detail(
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
@@ -1894,7 +1896,7 @@ async def get_episode_detail(
                 .where(Media.episode_number == episode_number)
             )
             local_ep = local_result.scalars().first()
-            
+
             if local_ep:
                 coll_q = (
                     select(CollectionFile)
@@ -1974,7 +1976,7 @@ async def get_episode_detail(
 
         ep_tmdb_id = ep_data.get("id")
         ep_state: dict = {"tmdb_id": ep_tmdb_id, "type": "episode"}
-        await enrich_with_state(db, effective_user_id, [ep_state])
+        await media_presentation.enrich_with_state(db, effective_user_id, [ep_state])
 
         return {
             "id": local_ep.id if local_ep else None,
@@ -2165,7 +2167,7 @@ async def refresh_show_metadata(
         orphan_ids.append(media.id)
 
     all_media_ids = episode_ids + orphan_ids
-    await refresh_technical_data(db, all_media_ids, current_user.id)
+    await media_presentation.refresh_technical_data(db, all_media_ids, current_user.id)
 
     await db.commit()
     from core.season_releases import refresh_season_release_notifications
@@ -2183,7 +2185,7 @@ async def get_tvdb_show(
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     api_key = await settings_store.get_user_tvdb_key(db, effective_user_id)
@@ -2409,7 +2411,7 @@ async def get_tvdb_show(
     gs = await settings_store.get_global_settings(db)
     settings_q = await db.execute(select(UserSettings).where(UserSettings.user_id == effective_user_id))
     settings = settings_q.scalar_one_or_none()
-    sonarr_cfg = _effective_sonarr(settings, gs)
+    sonarr_cfg = arr_settings._effective_sonarr(settings, gs)
     is_monitored = False
     request_enabled = sonarr_cfg is not None
     if sonarr_cfg:
@@ -2430,7 +2432,7 @@ async def get_tvdb_show(
             pass
 
     where_to_watch = (
-        await get_where_to_watch(
+        await media_presentation.get_where_to_watch(
             db,
             effective_user_id,
             series_tmdb_id,
@@ -2476,7 +2478,7 @@ async def get_tvdb_show(
     in_lists: list = []
     if series_tmdb_id:
         show_state: dict = {"tmdb_id": series_tmdb_id, "type": "series"}
-        await enrich_with_state(db, effective_user_id, [show_state])
+        await media_presentation.enrich_with_state(db, effective_user_id, [show_state])
         in_lists = show_state.get("in_lists", [])
 
     return {
@@ -2519,7 +2521,7 @@ async def get_tvdb_season(
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     api_key = await settings_store.get_user_tvdb_key(db, effective_user_id)
@@ -2880,7 +2882,7 @@ async def get_tvdb_episode(
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     if current_user is None:
-        await require_anon_nav_allowed(db)
+        await media_presentation.require_anon_nav_allowed(db)
     effective_user_id = current_user.id if current_user else ANON_USER_ID
 
     api_key = await settings_store.get_user_tvdb_key(db, effective_user_id)
@@ -3124,7 +3126,7 @@ async def get_tvdb_episode(
     in_lists: list = []
     if resolved_tmdb_id:
         ep_state: dict = {"tmdb_id": resolved_tmdb_id, "type": "episode"}
-        await enrich_with_state(db, effective_user_id, [ep_state])
+        await media_presentation.enrich_with_state(db, effective_user_id, [ep_state])
         in_lists = ep_state.get("in_lists", [])
     elif local_ep_id:
         # TVDB-only episode: no tmdb_id to enrich by, but list items reference

@@ -1,3 +1,6 @@
+from core import server_sync
+from core import security
+from core import arr_settings
 from core import settings_store
 import gzip
 import io
@@ -106,7 +109,7 @@ async def create_user(
     vouching for the account - so the user can sign in right away."""
     from core.security import get_password_hash
     from models.base import UserRole
-    from routers.auth import _generate_api_key
+
 
     username = body.username.strip()
     email = body.email.strip().lower()
@@ -124,7 +127,7 @@ async def create_user(
         username=username,
         email=email,
         password_hash=get_password_hash(body.password) if body.password else None,
-        api_key=_generate_api_key(),
+        api_key=security.generate_opaque_token(),
         role=UserRole.admin if body.is_admin else UserRole.user,
         is_admin=body.is_admin,
         email_confirmed=True,
@@ -290,7 +293,7 @@ async def admin_heal_metadata(
 
 async def run_admin_heal(api_key: str, user_id: int | None = None, job_id: int | None = None):
     from models.show import Show
-    from routers.sync import batch_enrich_items
+
     from core.enrichment import is_unmapped_tvdb_episode
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
@@ -341,7 +344,7 @@ async def run_admin_heal(api_key: str, user_id: int | None = None, job_id: int |
             ]
 
             await _update_job(total_items=len(to_enrich), processed_items=0)
-            await batch_enrich_items(db, to_enrich, api_key=api_key, user_id=user_id)
+            await server_sync.batch_enrich_items(db, to_enrich, api_key=api_key, user_id=user_id)
             await db.commit()
             await _update_job(processed_items=len(to_enrich), status=SyncStatus.completed, stats={"healed": True})
             print(f"Admin heal complete: processed {len(to_enrich)} items")
@@ -440,9 +443,9 @@ async def approve_request(
     settings = settings_q.scalar_one_or_none()
 
     if req.media_type == "movie":
-        from routers.media import _effective_radarr
+
         from core import radarr as radarr_core
-        radarr_cfg = _effective_radarr(settings, gs)
+        radarr_cfg = arr_settings._effective_radarr(settings, gs)
         if not radarr_cfg:
             raise HTTPException(status_code=400, detail="Radarr not configured")
         try:
@@ -459,9 +462,9 @@ async def approve_request(
             raise HTTPException(status_code=500, detail=f"Radarr error: {e}")
 
     elif req.media_type == "series":
-        from routers.media import _effective_sonarr
+
         from core import sonarr as sonarr_core, tmdb as tmdb_core
-        sonarr_cfg = _effective_sonarr(settings, gs)
+        sonarr_cfg = arr_settings._effective_sonarr(settings, gs)
         if not sonarr_cfg:
             raise HTTPException(status_code=400, detail="Sonarr not configured")
         try:

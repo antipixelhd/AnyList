@@ -9,8 +9,9 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql+asyncpg://test:test@localhost/test",
 )
-
-from routers import mdblist, simkl, trakt
+from core import trakt_sync
+from core import simkl_sync
+from core import mdblist_sync
 
 
 class _Result:
@@ -32,7 +33,7 @@ class _Session:
 
 
 class CloudPushRunnerGateTests(unittest.IsolatedAsyncioTestCase):
-    async def _assert_runner_is_gated(self, module, runner, factory_name: str) -> None:
+    async def _assert_runner_is_gated(self, module, runner, factory_name: str, provider: str) -> None:
         session = _Session()
         gate = AsyncMock(
             side_effect=HTTPException(
@@ -47,7 +48,7 @@ class CloudPushRunnerGateTests(unittest.IsolatedAsyncioTestCase):
         ):
             await runner(user_id=7, job_id=19)
 
-        gate.assert_awaited_once_with(session, 7, module.__name__.split(".")[-1])
+        gate.assert_awaited_once_with(session, 7, provider)
         # The only database write after denial records the failed job; no settings
         # or payload query can run before reconciliation is approved.
         self.assertEqual(session.execute.await_count, 1)
@@ -55,21 +56,24 @@ class CloudPushRunnerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_trakt_background_runner_cannot_bypass_reconciliation(self) -> None:
         await self._assert_runner_is_gated(
-            trakt,
-            trakt._run_trakt_push,
+            trakt_sync,
+            trakt_sync._run_trakt_push,
             "async_sessionmaker",
+            "trakt",
         )
 
     async def test_simkl_background_runner_cannot_bypass_reconciliation(self) -> None:
         await self._assert_runner_is_gated(
-            simkl,
-            simkl._run_simkl_push,
+            simkl_sync,
+            simkl_sync._run_simkl_push,
             "async_sessionmaker",
+            "simkl",
         )
 
     async def test_mdblist_background_runner_cannot_bypass_reconciliation(self) -> None:
         await self._assert_runner_is_gated(
-            mdblist,
-            mdblist.run_mdblist_push,
+            mdblist_sync,
+            mdblist_sync.run_mdblist_push,
             "async_sessionmaker",
+            "mdblist",
         )

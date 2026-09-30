@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
+from core import server_sync
+from core import scheduler
 from core import outbound_sync
 from core import settings_store
 from core import nuvio_payloads, nuvio_projection
@@ -1686,7 +1688,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_library_delivery_retries_without_another_provider_pull(self):
         from core import stremio
-        import main
 
         self.movie.tmdb_data={'external_ids':{'imdb_id':'tt987650031'}}
         conn=MediaServerConnection(user_id=self.owner.id,type='stremio',name='Retry Stremio',
@@ -1709,7 +1710,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             class _Context:
                 async def __aenter__(self): return request_db
                 async def __aexit__(self,*_args): return False
-            await main._dispatch_pending_stream_actions_once(lambda: _Context())
+            await scheduler._dispatch_pending_stream_actions_once(lambda: _Context())
 
         await self.db.refresh(delivery)
         self.assertEqual((delivery.state,delivery.attempts,delivery.last_error),('applied',2,None))
@@ -1950,7 +1951,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unfollow.status_code,200,unfollow.text)
 
     async def test_stream_library_removal_is_scoped_to_the_observed_connection(self):
-        from routers.sync import _remove_stream_collection_sources
+
 
         nuvio_connection = MediaServerConnection(
             user_id=self.owner.id,
@@ -1988,7 +1989,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ])
         await self.db.commit()
 
-        removed = await _remove_stream_collection_sources(
+        removed = await server_sync._remove_stream_collection_sources(
             self.db,
             self.owner.id,
             nuvio_connection.id,
@@ -2004,7 +2005,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         )).scalars().all()
         self.assertEqual([row.source for row in files], [CollectionSource.stremio])
 
-        removed = await _remove_stream_collection_sources(
+        removed = await server_sync._remove_stream_collection_sources(
             self.db,
             self.owner.id,
             stremio_connection.id,
@@ -2114,7 +2115,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_provider_library_delta_retries_failed_peer_without_another_pull(self):
         from core import stremio, nuvio
-        import main
 
         source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio source',
             url='https://nuvio.invalid', token='source-token', server_user_id='1')
@@ -2160,7 +2160,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             ))).scalar_one()
             self.assertEqual((delivery.state, delivery.attempts), ('pending', 1))
 
-            await main._dispatch_pending_stream_actions_once(lambda: _Context(self.db))
+            await scheduler._dispatch_pending_stream_actions_once(lambda: _Context(self.db))
 
         await self.db.refresh(delivery)
         self.assertEqual((delivery.state, delivery.attempts, delivery.last_error), ('applied', 2, None))
@@ -2584,7 +2584,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def _assert_regular_sync_accepts_changed_watch_date(self, provider):
         from core.tracking_snapshot import observe_stream_snapshot, changed_watch_rows_from_source
-        from routers.sync import _apply_nuvio_watch_history
+
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         old_date = now - timedelta(days=2)
@@ -2611,7 +2611,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         mappings = {'tt-repeat-watch': self.movie.tmdb_id}
         history = await changed_watch_rows_from_source(self.db, conn, [fresh])
         self.assertEqual(history, [fresh])
-        added = await _apply_nuvio_watch_history(
+        added = await server_sync._apply_nuvio_watch_history(
             self.db, self.owner.id, history, {}, mappings, include_unknown_dates=True)
         self.assertEqual(added, {self.movie.id})
         accepted = await observe_stream_snapshot(
@@ -2643,7 +2643,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def _assert_new_stream_completion_follows_through(self, provider):
         from contextlib import asynccontextmanager, ExitStack
-        from routers import sync
         from models.watch_intent import WatchIntent
 
         self.movie.tmdb_id = 987654397
@@ -2669,27 +2668,27 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             yield self.db
 
         with ExitStack() as stack:
-            stack.enter_context(patch.object(sync, 'async_sessionmaker', return_value=session))
+            stack.enter_context(patch.object(server_sync, 'async_sessionmaker', return_value=session))
             stack.enter_context(patch.object(settings_store, 'get_effective_tmdb_key', AsyncMock(return_value='fixture')))
-            stack.enter_context(patch.object(sync, '_resolve_nuvio_tmdb_ids',
+            stack.enter_context(patch.object(server_sync, '_resolve_nuvio_tmdb_ids',
                 AsyncMock(return_value={'tt-new-completion': self.movie.tmdb_id})))
             # Metadata is already in the fixture; exercise the real history,
             # reconciliation, notification and durable outbound queue together.
-            stack.enter_context(patch.object(sync, 'sync_items', AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(server_sync, 'sync_items', AsyncMock(return_value=[])))
             stack.enter_context(patch('core.stream_actions.dispatch_stream_actions', AsyncMock()))
             dispatch = stack.enter_context(patch('core.watch_intents.dispatch_watch_intents', AsyncMock()))
             fanout = stack.enter_context(patch.object(outbound_sync, 'fan_out_changes', AsyncMock()))
             stack.enter_context(patch('core.streaming_library.retry_pending_library_deliveries', AsyncMock()))
-            stack.enter_context(patch.object(sync, 'pre_cache_all_collected_bg', AsyncMock()))
+            stack.enter_context(patch.object(server_sync, 'pre_cache_all_collected_bg', AsyncMock()))
             if provider == 'nuvio':
-                stack.enter_context(patch.object(sync.nuvio, 'pull_sync_data', AsyncMock(return_value=(None, data))))
-                run = sync._run_nuvio_sync
+                stack.enter_context(patch.object(server_sync.nuvio, 'pull_sync_data', AsyncMock(return_value=(None, data))))
+                run = server_sync._run_nuvio_sync
             else:
-                stack.enter_context(patch.object(sync, '_pull_stremio_items',
+                stack.enter_context(patch.object(server_sync, '_pull_stremio_items',
                     AsyncMock(side_effect=lambda *a, **k: ([{'_id': row['content_id']}], True, datetime.now(timezone.utc).replace(tzinfo=None)))))
-                stack.enter_context(patch.object(sync, '_stremio_records',
+                stack.enter_context(patch.object(server_sync, '_stremio_records',
                     AsyncMock(return_value=([], [row], [], set()))))
-                run = sync._run_stremio_sync
+                run = server_sync._run_stremio_sync
             await run(self.owner.id, job.id, 0, 0, connection_id=source.id)
             await self.db.refresh(job)
             self.assertEqual(job.status, SyncStatus.completed, job.error_message)
@@ -2924,7 +2923,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(review.state, review.proposed_status) for review in reviews], [('pending', 'dropped')])
 
     async def test_new_pull_only_connection_preserves_local_continue_watching(self):
-        from routers.sync import _apply_nuvio_progress
+
         from models.playback_progress import PlaybackProgress
 
         self.movie.tmdb_id = 987654303
@@ -2938,7 +2937,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         stale = {'content_id': 'tt-stale-progress', 'content_type': 'movie',
                  'position': 20_000, 'duration': 100_000}
-        await _apply_nuvio_progress(self.db, self.owner.id, [stale], {},
+        await server_sync._apply_nuvio_progress(self.db, self.owner.id, [stale], {},
             {'tt-stale-progress': self.movie.tmdb_id}, conn)
         await self.db.refresh(progress)
         self.assertEqual((progress.progress_percent, progress.progress_seconds), (0.8, 80))
@@ -2947,7 +2946,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 {**stale, 'position': 10_000},
             ]}}))
         await self.db.commit()
-        await _apply_nuvio_progress(self.db, self.owner.id, [stale], {},
+        await server_sync._apply_nuvio_progress(self.db, self.owner.id, [stale], {},
             {'tt-stale-progress': self.movie.tmdb_id}, conn)
         await self.db.refresh(progress)
         self.assertEqual((progress.progress_percent, progress.progress_seconds), (0.8, 80))
@@ -3534,7 +3533,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(precision,[3])
 
     async def test_shared_watch_dates_rank_below_estimates_and_episode_evidence(self):
-        from routers.sync import _apply_nuvio_watch_history
+
         self.show.tmdb_id=987654392
         self.show.tmdb_data={'tracking_catalogue_refreshed_at':'2026-01-01'}
         canonical=Show(title='Date hierarchy',tmdb_id=self.show.tmdb_id)
@@ -3551,7 +3550,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         shared=datetime(2026,1,1,10)
         rows=[{'content_id':'tt-hierarchy','content_type':'series','season':1,'episode':i,
             'watched_at':shared.isoformat(),'date_shared':True} for i in range(1,4)]
-        added=await _apply_nuvio_watch_history(self.db,self.owner.id,rows,{'tt-hierarchy':canonical.id},
+        added=await server_sync._apply_nuvio_watch_history(self.db,self.owner.id,rows,{'tt-hierarchy':canonical.id},
             {'tt-hierarchy':self.show.tmdb_id},dedupe_by_media_id_only=True)
         self.assertEqual(added,{episodes[2].id})
         events=(await self.db.execute(select(WatchEvent).where(WatchEvent.user_id==self.owner.id,
@@ -3559,12 +3558,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.watched_at for e in events],[estimate,precise,shared])
         self.assertEqual([e.date_shared for e in events],[False,False,True])
         # A Nuvio echo of the shared timestamp we pushed is still shared.
-        await _apply_nuvio_watch_history(self.db,self.owner.id,[{**rows[2],'date_shared':False}],
+        await server_sync._apply_nuvio_watch_history(self.db,self.owner.id,[{**rows[2],'date_shared':False}],
             {'tt-hierarchy':canonical.id},{'tt-hierarchy':self.show.tmdb_id},dedupe_by_media_id_only=True)
         self.assertTrue(events[2].date_shared)
         self.assertTrue(events[2].date_inferred)
         exact=datetime(2026,1,2,14,30)
-        await _apply_nuvio_watch_history(self.db,self.owner.id,[{**rows[0],'date_shared':False,'watched_at':exact.isoformat()}],
+        await server_sync._apply_nuvio_watch_history(self.db,self.owner.id,[{**rows[0],'date_shared':False,'watched_at':exact.isoformat()}],
             {'tt-hierarchy':canonical.id},{'tt-hierarchy':self.show.tmdb_id},dedupe_by_media_id_only=True)
         self.assertEqual(events[0].watched_at,exact)
         self.assertFalse(events[0].date_inferred)
@@ -4118,7 +4117,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_approved_nuvio_null_dated_episode_watch_propagates_with_watch_only_sync(self):
         from core.tracking_snapshot import observe_stream_snapshot
-        from routers.sync import _apply_nuvio_watch_history
+
 
         self.show.tmdb_id = 987654399
         self.show.tmdb_data = {'tracking_catalogue_refreshed_at': datetime.now().isoformat()}
@@ -4143,7 +4142,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         key = 'tt-nuvio-episode'
         row = {'content_id': key, 'content_type': 'series', 'season': 1,
                'episode': 1, 'watched_at': None}
-        added = await _apply_nuvio_watch_history(
+        added = await server_sync._apply_nuvio_watch_history(
             self.db, self.owner.id, [row], {key: canonical_show.id},
             {key: self.show.tmdb_id}, include_unknown_dates=True,
         )
@@ -4180,7 +4179,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         # A later provider history entry with a confident date updates this
         # estimate in place instead of adding a duplicate play.
         confident_date = datetime(2024, 5, 6, 12, 30)
-        corrected = await _apply_nuvio_watch_history(
+        corrected = await server_sync._apply_nuvio_watch_history(
             self.db, self.owner.id, [{**row, 'watched_at': confident_date.isoformat()}],
             {key: canonical_show.id}, {key: self.show.tmdb_id}, include_unknown_dates=True,
         )
@@ -5051,7 +5050,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(watch_intent.state, 'applied')
 
     async def test_stremio_full_resync_rebuilds_empty_baseline_without_removal_and_keeps_local_truth(self):
-        from routers import sync as sync_router
         from models.tracking import StreamBaseline
 
         started_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -5107,15 +5105,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         with (
-            patch.object(sync_router, 'async_sessionmaker', return_value=lambda: _SessionContext()),
+            patch.object(server_sync, 'async_sessionmaker', return_value=lambda: _SessionContext()),
             patch.object(settings_store, 'get_effective_tmdb_key', AsyncMock(return_value='fixture-key')),
-            patch.object(sync_router, '_pull_stremio_items', AsyncMock(return_value=([], True, started_at))),
-            patch.object(sync_router, '_stremio_records', AsyncMock(return_value=([], [], [], set()))),
-            patch.object(sync_router, '_resolve_nuvio_tmdb_ids', AsyncMock(return_value={})),
-            patch.object(sync_router, '_stamp_matched_show_warnings', AsyncMock(side_effect=lambda _db, _uid, warnings: warnings)),
-            patch.object(sync_router, 'pre_cache_all_collected_bg', new=no_cache),
+            patch.object(server_sync, '_pull_stremio_items', AsyncMock(return_value=([], True, started_at))),
+            patch.object(server_sync, '_stremio_records', AsyncMock(return_value=([], [], [], set()))),
+            patch.object(server_sync, '_resolve_nuvio_tmdb_ids', AsyncMock(return_value={})),
+            patch.object(server_sync, '_stamp_matched_show_warnings', AsyncMock(side_effect=lambda _db, _uid, warnings: warnings)),
+            patch.object(server_sync, 'pre_cache_all_collected_bg', new=no_cache),
         ):
-            await sync_router._run_stremio_sync(
+            await server_sync._run_stremio_sync(
                 self.owner.id, job.id, 0, 0, conn.id, full_resync=True,
             )
 
@@ -5136,7 +5134,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_fresh_nuvio_import_preserves_existing_local_playback_position(self):
         from models.playback_progress import PlaybackProgress
         from models.tracking import StreamBaseline
-        from routers.sync import _apply_nuvio_progress
+
 
         self.movie.tmdb_id = 912346
         conn = MediaServerConnection(
@@ -5159,7 +5157,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         ))
         await self.db.commit()
 
-        await _apply_nuvio_progress(
+        await server_sync._apply_nuvio_progress(
             self.db, self.owner.id,
             [{'content_id': 'tt-local', 'content_type': 'movie',
               'position': 20_000, 'duration': 100_000, 'last_watched': 1_800_000_000_000}],

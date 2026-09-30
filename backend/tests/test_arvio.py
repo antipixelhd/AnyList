@@ -8,15 +8,12 @@ import httpx
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from core import arvio
 from models.playback_progress import PlaybackProgress
 from models.events import WatchEvent
-from routers.sync import (
-    _apply_arvio_playback_progress,
-    _apply_arvio_watched_episode,
-    _apply_arvio_watched_movie,
-)
+
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
@@ -24,8 +21,8 @@ class ArvioJsonInputTests(unittest.IsolatedAsyncioTestCase):
     async def test_json_completed_movie_reaches_watched_handler(self):
         item = {"mediaType": "MOVIE", "tmdbId": 550, "completed": True}
         db = object()
-        with patch("routers.sync._apply_arvio_watched_movie", new_callable=AsyncMock, return_value=True) as watched:
-            self.assertTrue(await _apply_arvio_playback_progress(db, 7, json.dumps(item), "tmdb-key"))
+        with patch("core.server_sync._apply_arvio_watched_movie", new_callable=AsyncMock, return_value=True) as watched:
+            self.assertTrue(await server_sync._apply_arvio_playback_progress(db, 7, json.dumps(item), "tmdb-key"))
         watched.assert_awaited_once_with(db, 7, item, "tmdb-key")
 
 class _Result:
@@ -181,7 +178,7 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[]),  # WatchEvent search
         ])
 
-        added = await _apply_arvio_watched_movie(
+        added = await server_sync._apply_arvio_watched_movie(
             db,
             user_id=1,
             item={"tmdbId": 550, "title": "Fight Club", "watchedAt": "2026-08-10T12:00:00Z"},
@@ -206,7 +203,7 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[]),  # WatchEvent search
         ])
 
-        added = await _apply_arvio_watched_movie(
+        added = await server_sync._apply_arvio_watched_movie(
             db,
             user_id=1,
             item={"tmdbId": 550, "title": "Fight Club", "updatedAt": "2026-08-10T12:00:00Z"},
@@ -228,7 +225,7 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[]),  # WatchEvent search
         ])
 
-        added = await _apply_arvio_watched_episode(
+        added = await server_sync._apply_arvio_watched_episode(
             db,
             user_id=1,
             item={
@@ -250,7 +247,7 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[]),  # PlaybackProgress search
         ])
 
-        added = await _apply_arvio_playback_progress(
+        added = await server_sync._apply_arvio_playback_progress(
             db,
             user_id=1,
             item={
@@ -277,7 +274,7 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
             _Result(scalars=[]),  # WatchEvent search
         ])
 
-        added = await _apply_arvio_watched_movie(
+        added = await server_sync._apply_arvio_watched_movie(
             db,
             user_id=1,
             item=550,
@@ -309,7 +306,7 @@ class ArvioApplyTests(unittest.IsolatedAsyncioTestCase):
         ])
 
         # Test string format "94997:3:1"
-        added = await _apply_arvio_watched_episode(
+        added = await server_sync._apply_arvio_watched_episode(
             db,
             user_id=1,
             item="94997:3:1",

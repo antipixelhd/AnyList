@@ -50,7 +50,8 @@ dev = [
 ]
 
 [tool.ruff.lint]
-select = ["F"]
+# Start with correctness rules; expand without enforcing arbitrary complexity.
+select = ["F", "B012", "B018", "UP008"]
 
 [tool.ruff.lint.per-file-ignores]
 # Historical migration templates intentionally retain standard imports.

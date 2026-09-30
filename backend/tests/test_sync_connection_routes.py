@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from fastapi import BackgroundTasks, HTTPException
 from models.base import CollectionSource
@@ -29,14 +30,14 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(provider=provider):
                 db = session(SimpleNamespace(), SimpleNamespace(id=7))
                 tasks = BackgroundTasks()
-                with patch.object(sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
+                with patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
                     response = await getattr(sync, f"sync_{provider}")(tasks, 3, 5, db, SimpleNamespace(id=2))
                 job = db.add.call_args.args[0]
                 self.assertEqual((job.user_id, job.source, job.status), (2, CollectionSource(provider), SyncStatus.pending))
                 self.assertEqual(response, {"status": "started", "job_id": 19,
                                           "message": f"{provider.capitalize()} sync is running in the background"})
                 self.assertEqual(len(tasks.tasks), 1)
-                self.assertIs(tasks.tasks[0].func, getattr(sync, f"run_{provider}_sync"))
+                self.assertIs(tasks.tasks[0].func, getattr(server_sync, f"run_{provider}_sync"))
                 self.assertEqual(tasks.tasks[0].args, (2, 19, 3, 5))
                 query = db.execute.call_args.args[0]
                 self.assertIn(provider, query.compile().params.values())
@@ -51,7 +52,7 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(provider=provider, detail=detail):
                     db = session(SimpleNamespace(), connection)
                     tasks = BackgroundTasks()
-                    with patch.object(sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=key)):
+                    with patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=key)):
                         with self.assertRaises(HTTPException) as raised:
                             await getattr(sync, f"sync_{provider}")(tasks, 0, 0, db, SimpleNamespace(id=2))
                     self.assertEqual((raised.exception.status_code, raised.exception.detail), (400, detail))

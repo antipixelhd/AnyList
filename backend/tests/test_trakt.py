@@ -12,6 +12,8 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql+asyncpg://test:test@localhost/test",
 )
+from core import trakt_sync
+from core import catalog_import
 
 import httpx
 
@@ -32,7 +34,7 @@ class _ApprovedCloudPushMixin:
     def setUp(self) -> None:
         super().setUp()
         patcher = patch.object(
-            trakt_router,
+            trakt_sync,
             "require_cloud_reconciliation",
             AsyncMock(return_value=None),
         )
@@ -586,11 +588,11 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
         cursor = datetime(2026, 7, 21, 10, 0, 0)
         cutoff = datetime(2026, 7, 21, 11, 0, 0)
 
-        start_at, end_at = trakt_router._history_window(cursor, False, cutoff)
+        start_at, end_at = trakt_sync._history_window(cursor, False, cutoff)
         self.assertEqual(start_at, cursor - timedelta(minutes=5))
         self.assertEqual(end_at, cutoff)
         self.assertEqual(
-            trakt_router._history_window(cursor, True, cutoff),
+            trakt_sync._history_window(cursor, True, cutoff),
             (None, cutoff),
         )
 
@@ -614,22 +616,22 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
 
         with (
             patch.object(
-                trakt_router,
+                trakt_sync,
                 "async_sessionmaker",
                 return_value=lambda: session,
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "validate_token",
                 AsyncMock(return_value=True),
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_movies",
                 get_movies,
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_episodes",
                 get_episodes,
             ),
@@ -638,7 +640,7 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
                 AsyncMock(),
             ),
         ):
-            await trakt_router.run_trakt_sync(user_id=1, job_id=21)
+            await trakt_sync.run_trakt_sync(user_id=1, job_id=21)
 
         self.assertGreater(settings.trakt_history_cursor_at, original_cursor)
         self.assertEqual(
@@ -672,22 +674,22 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
 
         with (
             patch.object(
-                trakt_router,
+                trakt_sync,
                 "async_sessionmaker",
                 return_value=lambda: session,
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "validate_token",
                 AsyncMock(return_value=True),
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_movies",
                 AsyncMock(side_effect=RuntimeError("Trakt unavailable")),
             ),
         ):
-            await trakt_router.run_trakt_sync(user_id=1, job_id=22)
+            await trakt_sync.run_trakt_sync(user_id=1, job_id=22)
 
         self.assertEqual(settings.trakt_history_cursor_at, original_cursor)
 
@@ -718,28 +720,28 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
 
         with (
             patch.object(
-                trakt_router,
+                trakt_sync,
                 "async_sessionmaker",
                 return_value=lambda: session,
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_movies",
                 AsyncMock(side_effect=[[], [remote_movie]]),
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_episodes",
                 AsyncMock(side_effect=[[], []]),
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "add_to_history_batch",
                 add_batch,
             ),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=11)
-            await trakt_router._run_trakt_push(user_id=1, job_id=12)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=11)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=12)
 
         add_batch.assert_awaited_once_with(
             "client-id",
@@ -776,27 +778,27 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
 
         with (
             patch.object(
-                trakt_router,
+                trakt_sync,
                 "async_sessionmaker",
                 return_value=lambda: session,
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_movies",
                 AsyncMock(return_value=[]),
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "get_history_episodes",
                 AsyncMock(return_value=[]),
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "add_to_history_batch",
                 add_batch,
             ),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=13)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=13)
 
         add_batch.assert_awaited_once_with(
             "client-id",
@@ -833,27 +835,27 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
 
         with (
             patch.object(
-                trakt_router,
+                trakt_sync,
                 "async_sessionmaker",
                 return_value=lambda: session,
             ),
             patch.object(
-                trakt_router.trakt_client,
+                trakt_sync.trakt_client,
                 "add_to_history_batch",
                 add_batch,
             ),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=14)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=14)
 
         add_batch.assert_not_awaited()
 
     def test_normalize_history_time_preserves_none(self) -> None:
-        self.assertIsNone(trakt_router._normalize_history_time(None))
+        self.assertIsNone(trakt_sync._normalize_history_time(None))
 
     def test_parse_trakt_datetime_treats_unknown_sentinel_as_none(self) -> None:
-        self.assertIsNone(trakt_router._parse_trakt_datetime("unknown"))
-        self.assertIsNone(trakt_router._parse_trakt_datetime(None))
-        self.assertIsNone(trakt_router._parse_trakt_datetime(""))
+        self.assertIsNone(trakt_sync._parse_trakt_datetime("unknown"))
+        self.assertIsNone(trakt_sync._parse_trakt_datetime(None))
+        self.assertIsNone(trakt_sync._parse_trakt_datetime(""))
 
     def test_parse_trakt_datetime_treats_unix_epoch_as_none(self) -> None:
         """Regression test: verified against the live Trakt API — a history
@@ -861,11 +863,11 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
         literal string on read, it comes back as 1970-01-01T00:00:00.000Z.
         That must be recognized as unknown too, or a pulled/deduped entry
         would silently get a fabricated real (wrong) watch date."""
-        self.assertIsNone(trakt_router._parse_trakt_datetime("1970-01-01T00:00:00.000Z"))
-        self.assertIsNone(trakt_router._parse_trakt_datetime("1970-01-01T00:00:00Z"))
+        self.assertIsNone(trakt_sync._parse_trakt_datetime("1970-01-01T00:00:00.000Z"))
+        self.assertIsNone(trakt_sync._parse_trakt_datetime("1970-01-01T00:00:00Z"))
         # A genuine (if extremely unlikely) play at a non-zero time on that
         # same date is not the sentinel and must still parse normally.
-        self.assertIsNotNone(trakt_router._parse_trakt_datetime("1970-01-01T00:00:01.000Z"))
+        self.assertIsNotNone(trakt_sync._parse_trakt_datetime("1970-01-01T00:00:01.000Z"))
 
     def test_remote_history_times_includes_unknown_dated_entries(self) -> None:
         # Covers both shapes: the literal sentinel (documented write value,
@@ -883,7 +885,7 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
             "episode": {"season": 1, "number": 3},
         }]
 
-        times = trakt_router._remote_history_times(remote_movies, remote_episodes)
+        times = trakt_sync._remote_history_times(remote_movies, remote_episodes)
 
         self.assertEqual(times[("movie", 550)], [None])
         self.assertEqual(times[("movie", 13)], [None])
@@ -892,19 +894,19 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
     def test_history_play_seen_absorbs_second_level_drift_but_not_a_rewatch(self) -> None:
         remote = {("episode", 1396, 1, 3): [datetime(2024, 3, 28, 6, 40, 0)]}
         # 12s off - Trakt's receipt time vs the media server's - is the same watch.
-        self.assertTrue(trakt_router._history_play_seen(
+        self.assertTrue(trakt_sync._history_play_seen(
             remote, ("episode", 1396, 1, 3), datetime(2024, 3, 28, 6, 40, 12)
         ))
         # Hours later is a genuine rewatch and must still be pushed.
-        self.assertFalse(trakt_router._history_play_seen(
+        self.assertFalse(trakt_sync._history_play_seen(
             remote, ("episode", 1396, 1, 3), datetime(2024, 3, 28, 21, 0, 0)
         ))
         # Unknown-dated local watch matches any remote play of the same item.
-        self.assertTrue(trakt_router._history_play_seen(
+        self.assertTrue(trakt_sync._history_play_seen(
             remote, ("episode", 1396, 1, 3), None
         ))
         # Nothing remote for this item.
-        self.assertFalse(trakt_router._history_play_seen(
+        self.assertFalse(trakt_sync._history_play_seen(
             remote, ("movie", 999), datetime(2024, 3, 28, 6, 40, 0)
         ))
 
@@ -936,15 +938,15 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
 
         with (
             patch.object(
-                trakt_router,
+                trakt_sync,
                 "async_sessionmaker",
                 return_value=lambda: session,
             ),
-            patch.object(trakt_router.trakt_client, "get_history_movies", get_movies),
-            patch.object(trakt_router.trakt_client, "get_history_episodes", get_episodes),
-            patch.object(trakt_router.trakt_client, "add_to_history_batch", add_batch),
+            patch.object(trakt_sync.trakt_client, "get_history_movies", get_movies),
+            patch.object(trakt_sync.trakt_client, "get_history_episodes", get_episodes),
+            patch.object(trakt_sync.trakt_client, "add_to_history_batch", add_batch),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=15)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=15)
 
         add_batch.assert_awaited_once_with(
             "client-id",
@@ -977,13 +979,13 @@ class TraktDroppedReconcileTests(_ApprovedCloudPushMixin, unittest.IsolatedAsync
             dropped_shows_with_history=watched_tmdb,
         )
         with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch.object(trakt_router.trakt_client, "get_dropped_shows",
+            patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_sync.trakt_client, "get_dropped_shows",
                          AsyncMock(return_value=remote_dropped)),
-            patch.object(trakt_router.trakt_client, "add_to_hidden_batch", add_hidden),
-            patch.object(trakt_router.asyncio, "sleep", AsyncMock()),
+            patch.object(trakt_sync.trakt_client, "add_to_hidden_batch", add_hidden),
+            patch.object(trakt_sync.asyncio, "sleep", AsyncMock()),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=50)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=50)
 
     async def test_pushes_only_the_dropped_shows_trakt_is_missing(self):
         add_hidden = AsyncMock()
@@ -1024,13 +1026,13 @@ class TraktDroppedReconcileTests(_ApprovedCloudPushMixin, unittest.IsolatedAsync
         session = _FakeSession(self._settings(), [], [], [(95479,)],
                                dropped_shows_with_history={95479})
         with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch.object(trakt_router.trakt_client, "get_dropped_shows",
+            patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_sync.trakt_client, "get_dropped_shows",
                          AsyncMock(side_effect=RuntimeError("429"))),
-            patch.object(trakt_router.trakt_client, "add_to_hidden_batch", add_hidden),
-            patch.object(trakt_router.asyncio, "sleep", AsyncMock()),
+            patch.object(trakt_sync.trakt_client, "add_to_hidden_batch", add_hidden),
+            patch.object(trakt_sync.asyncio, "sleep", AsyncMock()),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=52)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=52)
         add_hidden.assert_not_awaited()
         self.assertEqual(session.job_updates[-1]["status"], SyncStatus.completed)
 
@@ -1060,16 +1062,16 @@ class TraktRatingsPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTes
         session = _FakeSession(self._settings(), [], self._media(), [], rating_rows=rating_rows)
         per_item = AsyncMock(side_effect=AssertionError("per-item rating call must not happen"))
         with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch.object(trakt_router.trakt_client, "get_ratings", AsyncMock(return_value=remote)),
-            patch.object(trakt_router.trakt_client, "set_ratings_batch", set_batch),
-            patch.object(trakt_router.trakt_client, "set_movie_rating", per_item),
-            patch.object(trakt_router.trakt_client, "set_show_rating", per_item),
+            patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_sync.trakt_client, "get_ratings", AsyncMock(return_value=remote)),
+            patch.object(trakt_sync.trakt_client, "set_ratings_batch", set_batch),
+            patch.object(trakt_sync.trakt_client, "set_movie_rating", per_item),
+            patch.object(trakt_sync.trakt_client, "set_show_rating", per_item),
             patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={})),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="k")),
-            patch.object(trakt_router.asyncio, "sleep", AsyncMock()),
+            patch.object(trakt_sync.asyncio, "sleep", AsyncMock()),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=40)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=40)
 
     async def test_ratings_are_sent_in_one_batched_request(self):
         set_batch = AsyncMock()
@@ -1136,7 +1138,7 @@ class RemoteCollectionKeyTests(unittest.TestCase):
                 "seasons": [{"number": 1, "episodes": [{"number": 1}, {"number": 2}]}],
             }],
         }
-        keys = trakt_router._remote_collection_keys(collection)
+        keys = trakt_sync._remote_collection_keys(collection)
         self.assertEqual(keys, {
             ("movie", 550),
             ("episode", 1399, 1, 1),
@@ -1161,13 +1163,13 @@ class TraktCollectionPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncio
             self._settings(), [], media, list(shows), collection_rows=collection_rows,
         )
         with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch.object(trakt_router.trakt_client, "get_collection",
+            patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_sync.trakt_client, "get_collection",
                          AsyncMock(return_value=remote_collection)),
-            patch.object(trakt_router.trakt_client, "add_to_collection_batch", add_batch),
-            patch.object(trakt_router.asyncio, "sleep", AsyncMock()),
+            patch.object(trakt_sync.trakt_client, "add_to_collection_batch", add_batch),
+            patch.object(trakt_sync.asyncio, "sleep", AsyncMock()),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=60)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=60)
 
     async def test_only_items_missing_from_trakt_are_pushed(self):
         add_batch = AsyncMock()
@@ -1203,13 +1205,13 @@ class TraktCollectionPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncio
             [], collection_rows=[(10,)],
         )
         with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch.object(trakt_router.trakt_client, "get_collection",
+            patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_sync.trakt_client, "get_collection",
                          AsyncMock(side_effect=RuntimeError("500"))),
-            patch.object(trakt_router.trakt_client, "add_to_collection_batch", add_batch),
-            patch.object(trakt_router.asyncio, "sleep", AsyncMock()),
+            patch.object(trakt_sync.trakt_client, "add_to_collection_batch", add_batch),
+            patch.object(trakt_sync.asyncio, "sleep", AsyncMock()),
         ):
-            await trakt_router._run_trakt_push(user_id=1, job_id=61)
+            await trakt_sync._run_trakt_push(user_id=1, job_id=61)
         add_batch.assert_awaited_once()
         _cid, _tok, movies, _episodes = add_batch.await_args.args
         self.assertEqual(movies, [550])
@@ -1217,19 +1219,19 @@ class TraktCollectionPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncio
 
 class TraktSourceAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_source_delegates_to_trakt_client(self) -> None:
-        source = trakt_router.LiveTraktSource("client-id", "access-token")
+        source = trakt_sync.LiveTraktSource("client-id", "access-token")
         start = datetime(2026, 1, 1)
         end = datetime(2026, 1, 2)
 
-        with patch.object(trakt_router.trakt_client, "get_history_movies", AsyncMock(return_value=["m"])) as m:
+        with patch.object(trakt_sync.trakt_client, "get_history_movies", AsyncMock(return_value=["m"])) as m:
             self.assertEqual(await source.get_history_movies(start, end), ["m"])
             m.assert_awaited_once_with("client-id", "access-token", start_at=start, end_at=end)
 
-        with patch.object(trakt_router.trakt_client, "get_ratings", AsyncMock(return_value={"movies": []})) as m:
+        with patch.object(trakt_sync.trakt_client, "get_ratings", AsyncMock(return_value={"movies": []})) as m:
             self.assertEqual(await source.get_ratings(), {"movies": []})
             m.assert_awaited_once_with("client-id", "access-token")
 
-        with patch.object(trakt_router.trakt_client, "get_list_items", AsyncMock(return_value=["item"])) as m:
+        with patch.object(trakt_sync.trakt_client, "get_list_items", AsyncMock(return_value=["item"])) as m:
             self.assertEqual(await source.get_list_items("my-list"), ["item"])
             m.assert_awaited_once_with("client-id", "access-token", "my-list")
 
@@ -1242,7 +1244,7 @@ class TraktSourceAdapterTests(unittest.IsolatedAsyncioTestCase):
             lists=[{"name": "x"}],
             list_items={"x": [{"type": "show"}]},
         )
-        source = trakt_router.ExportTraktSource(data)
+        source = trakt_sync.ExportTraktSource(data)
 
         self.assertEqual(await source.get_history_movies(None, datetime(2026, 1, 1)), data.history_movies)
         self.assertEqual(await source.get_history_episodes(None, datetime(2026, 1, 1)), data.history_episodes)
@@ -1333,8 +1335,8 @@ class TraktExportSyncTests(unittest.IsolatedAsyncioTestCase):
         session = _FakeSession(settings, [], [], [])
         export_data = TraktExportData(history_movies=[], history_episodes=[])
 
-        with patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session):
-            await trakt_router.run_trakt_export_sync(user_id=1, job_id=30, export_data=export_data)
+        with patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session):
+            await trakt_sync.run_trakt_export_sync(user_id=1, job_id=30, export_data=export_data)
 
         # The job reaching status=completed (rather than failed/cancelled) means
         # it ran the whole success path rather than failing early. An import only
@@ -1376,17 +1378,17 @@ class TraktExportSyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with (
-            patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
-            patch.object(trakt_router, "_apply_trakt_import", fake_apply),
+            patch.object(trakt_sync, "async_sessionmaker", return_value=lambda: session),
+            patch.object(trakt_sync, "_apply_trakt_import", fake_apply),
             patch("core.outbound_sync.fan_out_changes", AsyncMock()),
         ):
             # Defaults (as when the endpoint isn't given explicit form values).
-            await trakt_router.run_trakt_export_sync(user_id=1, job_id=31, export_data=export_data)
+            await trakt_sync.run_trakt_export_sync(user_id=1, job_id=31, export_data=export_data)
             self.assertEqual(captured, {"sync_watched": True, "sync_ratings": True, "sync_lists": True})
 
             # An explicit partial selection (e.g. the user unchecked "Lists" in
             # the import modal) must be honored exactly, not overridden.
-            await trakt_router.run_trakt_export_sync(
+            await trakt_sync.run_trakt_export_sync(
                 user_id=1, job_id=32, export_data=export_data,
                 sync_watched=True, sync_ratings=False, sync_lists=False,
             )
@@ -1403,7 +1405,7 @@ class GetOrCreateEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
         season_data = {"episodes": [{"episode_number": 1, "id": 1, "name": "Ep 1"}]}
 
         with patch("core.tmdb.get_season", AsyncMock(return_value=season_data)):
-            media = await trakt_router._get_or_create_episode_media(
+            media = await catalog_import.get_or_create_episode_media(
                 session, show_id=1, show_tmdb_id=999, season_number=3, episode_number=11, api_key=None,
             )
 
@@ -1415,7 +1417,7 @@ class GetOrCreateEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
         season_data = {"episodes": [{"episode_number": 11, "id": 555, "name": "The Real Episode 11"}]}
 
         with patch("core.tmdb.get_season", AsyncMock(return_value=season_data)):
-            media = await trakt_router._get_or_create_episode_media(
+            media = await catalog_import.get_or_create_episode_media(
                 session, show_id=1, show_tmdb_id=999, season_number=3, episode_number=11, api_key=None,
             )
 
@@ -1447,11 +1449,11 @@ class ApplyTraktImportEpisodeRatingsTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         with (
-            patch.object(trakt_router, "_get_or_create_show", AsyncMock(return_value=show_stub)) as show_mock,
-            patch.object(trakt_router, "_get_or_create_episode_media", AsyncMock(return_value=media_stub)) as media_mock,
-            patch.object(trakt_router, "_apply_imported_rating", side_effect=_fake_apply_rating),
+            patch.object(trakt_sync, "_get_or_create_show", AsyncMock(return_value=show_stub)) as show_mock,
+            patch.object(catalog_import, 'get_or_create_episode_media', AsyncMock(return_value=media_stub)) as media_mock,
+            patch.object(trakt_sync, "_apply_imported_rating", side_effect=_fake_apply_rating),
         ):
-            stats, processed, had_errors, new_watched, new_ratings = await trakt_router._apply_trakt_import(
+            stats, processed, had_errors, new_watched, new_ratings = await trakt_sync._apply_trakt_import(
                 db=_RatingsFakeDB(),
                 job_id=1,
                 user_id=7,
@@ -1500,7 +1502,7 @@ class TraktListImportSeasonEpisodePersonTests(unittest.IsolatedAsyncioTestCase):
             patch("core.tmdb.get_person", AsyncMock(return_value={"name": "Person One"})),
             patch("core.tmdb.get_season", AsyncMock(return_value={"episodes": [{"episode_number": 2, "id": 999, "name": "Ep 2"}]})),
         ):
-            stats, *_ = await trakt_router._apply_trakt_import(
+            stats, *_ = await trakt_sync._apply_trakt_import(
                 db=session,
                 job_id=1,
                 user_id=1,
@@ -1540,7 +1542,7 @@ class TraktListImportSeasonEpisodePersonTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("core.tmdb.get_show", AsyncMock(return_value={"name": "Same Show"})):
-            stats, *_ = await trakt_router._apply_trakt_import(
+            stats, *_ = await trakt_sync._apply_trakt_import(
                 db=session,
                 job_id=1,
                 user_id=1,
@@ -1567,7 +1569,7 @@ class GetOrCreatePersonMediaTests(unittest.IsolatedAsyncioTestCase):
         person_data = {"id": 123, "name": "Jane Doe", "profile_path": "/x.jpg", "biography": "bio"}
 
         with patch("core.tmdb.get_person", AsyncMock(return_value=person_data)):
-            media = await trakt_router._get_or_create_person_media(session, tmdb_id=123, name="Jane Doe", api_key=None)
+            media = await trakt_sync._get_or_create_person_media(session, tmdb_id=123, name="Jane Doe", api_key=None)
 
         self.assertIsNotNone(media)
         self.assertEqual(media.tmdb_id, 123)
@@ -1579,7 +1581,7 @@ class GetOrCreatePersonMediaTests(unittest.IsolatedAsyncioTestCase):
         session = _FakeSession(settings=None, watch_rows=[], media=[existing], shows=[])
 
         with patch("core.tmdb.get_person", AsyncMock(side_effect=AssertionError("should not be called"))):
-            media = await trakt_router._get_or_create_person_media(session, tmdb_id=123, name="Jane Doe", api_key=None)
+            media = await trakt_sync._get_or_create_person_media(session, tmdb_id=123, name="Jane Doe", api_key=None)
 
         self.assertIs(media, existing)
 

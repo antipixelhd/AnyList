@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from routers import media_discovery
+from core import media_presentation
 from core import settings_store
 
 from models.base import MediaType
 from models.episode_order import ShowEpisodePosition
 from routers import media as media_router
-from routers.media import _attach_episode_order_fields, _resolve_add_overrides, RequestOverrides
+from routers.media import _resolve_add_overrides, RequestOverrides
 
 
 def _pos(sid, canon_season, canon_episode, display_season, display_episode, order_key="tvdb:dvd"):
@@ -29,7 +31,7 @@ class AttachEpisodeOrderFieldsTests(unittest.TestCase):
 
     def test_episode_gets_display_position(self) -> None:
         item = {"type": "episode", "show_tmdb_id": 100, "season_number": 4, "episode_number": 12}
-        _attach_episode_order_fields(
+        media_presentation._attach_episode_order_fields(
             item, {100: "tvdb:dvd"}, {(100, 4, 12): _pos(100, 4, 12, 3, 8)},
         )
         self.assertEqual(item["show_episode_order"], "tvdb:dvd")
@@ -41,7 +43,7 @@ class AttachEpisodeOrderFieldsTests(unittest.TestCase):
             "type": "episode", "show_tmdb_id": 100,
             "season_number": 4, "episode_number": 12, "tvdb_sourced": True,
         }
-        _attach_episode_order_fields(
+        media_presentation._attach_episode_order_fields(
             item, {100: "tvdb:dvd"}, {(100, 4, 12): _pos(100, 4, 12, 9, 99)},
         )
         self.assertEqual(item["show_episode_order"], "tvdb:dvd")
@@ -50,13 +52,13 @@ class AttachEpisodeOrderFieldsTests(unittest.TestCase):
 
     def test_episode_with_no_positions_only_sets_key(self) -> None:
         item = {"type": "episode", "show_tmdb_id": 100, "season_number": 4, "episode_number": 12}
-        _attach_episode_order_fields(item, {100: "tmdb:group:abc"}, {})
+        media_presentation._attach_episode_order_fields(item, {100: "tmdb:group:abc"}, {})
         self.assertEqual(item["show_episode_order"], "tmdb:group:abc")
         self.assertNotIn("display_season_number", item)
 
     def test_aired_key_is_a_noop(self) -> None:
         item = {"type": "episode", "show_tmdb_id": 100, "season_number": 4, "episode_number": 12}
-        _attach_episode_order_fields(
+        media_presentation._attach_episode_order_fields(
             item, {100: "tmdb:aired"}, {(100, 4, 12): _pos(100, 4, 12, 3, 8)},
         )
         self.assertNotIn("show_episode_order", item)
@@ -64,12 +66,12 @@ class AttachEpisodeOrderFieldsTests(unittest.TestCase):
 
     def test_episode_with_no_key_is_a_noop(self) -> None:
         item = {"type": "episode", "show_tmdb_id": 100, "season_number": 4, "episode_number": 12}
-        _attach_episode_order_fields(item, {}, {})
+        media_presentation._attach_episode_order_fields(item, {}, {})
         self.assertNotIn("show_episode_order", item)
 
     def test_season_list_item_picks_lowest_episode_numbers_display_season(self) -> None:
         item = {"type": "series", "tmdb_id": 100, "season_number": 4}
-        _attach_episode_order_fields(item, {100: "tvdb:dvd"}, {
+        media_presentation._attach_episode_order_fields(item, {100: "tvdb:dvd"}, {
             (100, 4, 5): _pos(100, 4, 5, 3, 1),
             (100, 4, 1): _pos(100, 4, 1, 3, 9),
             (100, 5, 1): _pos(100, 5, 1, 4, 1),
@@ -81,13 +83,13 @@ class AttachEpisodeOrderFieldsTests(unittest.TestCase):
 
     def test_whole_show_item_sets_key_without_season_fields(self) -> None:
         item = {"type": "series", "tmdb_id": 100}
-        _attach_episode_order_fields(item, {100: "tvdb:dvd"}, {(100, 4, 12): _pos(100, 4, 12, 3, 8)})
+        media_presentation._attach_episode_order_fields(item, {100: "tvdb:dvd"}, {(100, 4, 12): _pos(100, 4, 12, 3, 8)})
         self.assertEqual(item["show_episode_order"], "tvdb:dvd")
         self.assertNotIn("display_season_number", item)
 
     def test_movie_item_is_a_noop(self) -> None:
         item = {"type": "movie", "tmdb_id": 550}
-        _attach_episode_order_fields(item, {550: "tvdb:dvd"}, {})
+        media_presentation._attach_episode_order_fields(item, {550: "tvdb:dvd"}, {})
         self.assertNotIn("show_episode_order", item)
 class ResolveAddOverridesTests(unittest.TestCase):
     """The customize-on-add popup lets an admin override the root folder/
@@ -139,11 +141,11 @@ class TmdbListStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         discover_movies = AsyncMock(return_value={"results": [], "page": 1, "total_pages": 1, "total_results": 0})
         with patch.object(settings_store, "get_user_tmdb_key", AsyncMock(return_value="k")), \
              patch.object(settings_store, "check_tmdb_key", lambda _k: True), \
-             patch.object(media_router, "get_user_metadata_language", AsyncMock(return_value=None)), \
-             patch.object(media_router, "enrich_with_state", AsyncMock(side_effect=lambda db, uid, items: items)), \
-             patch.object(media_router.tmdb, "discover_shows", discover_shows), \
-             patch.object(media_router.tmdb, "discover_movies", discover_movies):
-            await media_router.get_tmdb_list(**base)
+             patch.object(media_discovery, "get_user_metadata_language", AsyncMock(return_value=None)), \
+             patch.object(media_presentation, "enrich_with_state", AsyncMock(side_effect=lambda db, uid, items: items)), \
+             patch.object(media_presentation.tmdb, "discover_shows", discover_shows), \
+             patch.object(media_presentation.tmdb, "discover_movies", discover_movies):
+            await media_discovery.get_tmdb_list(**base)
         return discover_shows, discover_movies
 
     async def test_network_forces_series_and_zero_vote_floor(self) -> None:
@@ -202,8 +204,8 @@ class SearchMetadataLanguageTests(unittest.IsolatedAsyncioTestCase):
             patch.object(media_router, "get_user_metadata_language", AsyncMock(return_value=lang)),
             patch.object(settings_store, "get_user_tmdb_key", AsyncMock(return_value="key")),
             patch.object(settings_store, "check_tmdb_key", return_value=True),
-            patch.object(media_router, "enrich_with_state", AsyncMock()),
-            patch.object(media_router.tmdb, "search_shows", search_shows),
+            patch.object(media_presentation, "enrich_with_state", AsyncMock()),
+            patch.object(media_presentation.tmdb, "search_shows", search_shows),
         ):
             result = await media_router.search_media(
                 q="Surveillant", type="series", year=None, page=1, in_library=False,
@@ -223,7 +225,7 @@ class SearchMetadataLanguageTests(unittest.IsolatedAsyncioTestCase):
     async def test_library_item_takes_the_localized_title(self):
         item = {"id": 7, "title": "Discipline and Punish", "overview": "en overview", "poster_path": None}
         db = self._fake_db()
-        with patch.object(media_router, "format_media", return_value=item):
+        with patch.object(media_presentation, "format_media", return_value=item):
             # First query is the local-library lookup; later ones find nothing.
             db.execute = AsyncMock(side_effect=[
                 SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [
@@ -240,7 +242,7 @@ class SearchMetadataLanguageTests(unittest.IsolatedAsyncioTestCase):
     async def test_stored_translation_wins_for_library_items(self):
         item = {"id": 7, "title": "Discipline and Punish", "overview": "x", "poster_path": None}
         db = self._fake_db()
-        with patch.object(media_router, "format_media", return_value=item):
+        with patch.object(media_presentation, "format_media", return_value=item):
             db.execute = AsyncMock(side_effect=[
                 SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [
                     SimpleNamespace(tmdb_id=42, media_type=MediaType.series, id=7),

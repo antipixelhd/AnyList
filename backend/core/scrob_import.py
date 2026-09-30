@@ -265,7 +265,7 @@ async def apply_scrob_import(
         window_minutes = await get_dedup_window_minutes(db, user_id)
 
         def _is_duplicate_play(media_id: int, watched_at: datetime | None) -> bool:
-            # See routers.trakt._apply_trakt_import's _is_duplicate_play: an
+            # See core.trakt_sync._apply_trakt_import's _is_duplicate_play: an
             # unknown-dated play matches any existing play of the same item.
             if watched_at is None:
                 return bool(existing_times.get(media_id))

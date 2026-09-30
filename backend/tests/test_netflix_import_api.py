@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 os.environ.setdefault("SECRET_KEY", "local-tests-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import netflix_sessions
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -22,20 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from models import Media, NetflixImportSession, Rating, User, WatchEvent
 from models.base import MediaType
 from models.tracking import TrackedEntry
-from routers.netflix_import import (
-    _apply_staged_rating,
-    _apply_import,
-    _default_show_status,
-    _existing_state,
-    _normalise_groups,
-    _summary,
-    _show_import_positions,
-    _get_or_create_episode,
-    _public_session,
-    _prepare_remapped_item,
-    _resolve_draft_items,
-    update_netflix_import_item,
-)
+from routers.netflix_import import _summary, _public_session, _prepare_remapped_item, update_netflix_import_item
 
 
 def _episode(number, *, watched=False, watched_date="2020-01-03"):
@@ -119,12 +107,12 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             payload={"items": [item], "errors": [], "counts": {}},
         )
         with (
-            patch("routers.netflix_import._get_or_create_show_root", new=AsyncMock(return_value=(show, root))),
-            patch("routers.netflix_import._get_or_create_episode", new=AsyncMock(side_effect=get_episode)),
-            patch("routers.netflix_import._has_completed_event", new=AsyncMock(return_value=False)),
-            patch("routers.netflix_import._track_imported_root", new=AsyncMock(return_value=(SimpleNamespace(), True))),
+            patch("core.netflix_sessions._get_or_create_show_root", new=AsyncMock(return_value=(show, root))),
+            patch("core.netflix_sessions._get_or_create_episode", new=AsyncMock(side_effect=get_episode)),
+            patch("core.netflix_sessions._has_completed_event", new=AsyncMock(return_value=False)),
+            patch("core.netflix_sessions._track_imported_root", new=AsyncMock(return_value=(SimpleNamespace(), True))),
         ):
-            stats = await _apply_import(db, 7, session, no_progress)
+            stats = await netflix_sessions._apply_import(db, 7, session, no_progress)
         return stats, db
 
     async def test_partial_import_writes_guessed_watch_dates_and_provisional_backfill(self):
@@ -171,8 +159,8 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
     async def test_imported_episode_without_air_date_keeps_release_confirmation_separate(self):
         media = SimpleNamespace(id=990101, tmdb_data={"existing": "metadata"})
         db = _MemoryDb()
-        with patch("routers.netflix_import.create_media_safely", new=AsyncMock(return_value=(media, True))) as create:
-            await _get_or_create_episode(
+        with patch("core.netflix_sessions.create_media_safely", new=AsyncMock(return_value=(media, True))) as create:
+            await netflix_sessions._get_or_create_episode(
                 db,
                 SimpleNamespace(id=990001, canonical_source="tmdb"),
                 {"tmdb_id": 990001},
@@ -226,7 +214,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         db = _MemoryDb()
         session = SimpleNamespace(payload={"items": [unresolved_title], "errors": [], "counts": {}})
         with self.assertRaisesRegex(ValueError, "uncertain title"):
-            await _apply_import(db, 7, session, AsyncMock())
+            await netflix_sessions._apply_import(db, 7, session, AsyncMock())
         self.assertEqual(db.executed, 0)
 
     async def test_show_remap_rebuilds_newest_first_csv_with_same_day_row_ties(self):
@@ -259,7 +247,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         }]})
 
         with (
-            patch("routers.netflix_import.tmdb.get_show_light", new=AsyncMock(return_value=details)),
+            patch("core.netflix_sessions.tmdb.get_show_light", new=AsyncMock(return_value=details)),
             patch("core.netflix_import.prepare_netflix_import", new=prepare),
         ):
             refreshed = await _prepare_remapped_item(item, "show", 4321, "test-key", "en-US")
@@ -289,7 +277,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             "outcome": {"status": "partial", "latest_season": 1, "latest_episode": 1},
         }
         details = {"id": 559969, "title": "El Camino: A Breaking Bad Movie", "release_date": "2019-10-11", "genres": [{"id": 18}], "original_language": "en"}
-        with patch("routers.netflix_import.tmdb.get_movie_light", new=AsyncMock(return_value=details)):
+        with patch("core.netflix_sessions.tmdb.get_movie_light", new=AsyncMock(return_value=details)):
             refreshed = await _prepare_remapped_item(item, "movie", 559969, "test-key", "en-US")
         self.assertEqual(refreshed["kind"], "movie")
         self.assertEqual(refreshed["source_title"], "El Camino: A Breaking Bad Movie")
@@ -315,7 +303,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             "catalog_episodes": [], "seasons": [],
         }]})
         with (
-            patch("routers.netflix_import.tmdb.get_show_light", new=AsyncMock(return_value=details)),
+            patch("core.netflix_sessions.tmdb.get_show_light", new=AsyncMock(return_value=details)),
             patch("core.netflix_import.prepare_netflix_import", new=prepare),
         ):
             refreshed = await _prepare_remapped_item(item, "show", 4321, "test-key", "en-US")
@@ -334,26 +322,26 @@ class NetflixDecisionTests(unittest.TestCase):
             {"season_number": 1, "represented": 2, "total_released": 8},
             {"season_number": 2, "represented": 1, "total_released": 6},
         ]
-        self.assertEqual(_default_show_status(sparse), "skip")
-        self.assertEqual(_default_show_status([sparse[0], {**sparse[1], "represented": 3}]), "partial")
-        self.assertEqual(_default_show_status([{"season_number": 1, "represented": 2, "total_released": 2, "catalogue_complete": True}]), "completed")
+        self.assertEqual(netflix_sessions._default_show_status(sparse), "skip")
+        self.assertEqual(netflix_sessions._default_show_status([sparse[0], {**sparse[1], "represented": 3}]), "partial")
+        self.assertEqual(netflix_sessions._default_show_status([{"season_number": 1, "represented": 2, "total_released": 2, "catalogue_complete": True}]), "completed")
 
         item = _show_item()
         item["seasons"] = sparse
         item["episodes"] = [{"resolution": "exact"}, {"resolution": "guessed"}]
-        _resolve_draft_items([item])
+        netflix_sessions._resolve_draft_items([item])
         self.assertEqual(item["outcome"]["status"], "skip")
         item["outcome"].update(status="partial", status_overridden=True)
-        _resolve_draft_items([item])
+        netflix_sessions._resolve_draft_items([item])
         self.assertEqual(item["outcome"]["status"], "partial")
 
     def test_existing_rating_flag_uses_effective_score(self):
         tracked = SimpleNamespace(rating_mode="manual", manual_score=7.5, season_scores={}, status="completed", progress=1)
-        self.assertTrue(_existing_state(SimpleNamespace(), tracked)["rated"])
+        self.assertTrue(netflix_sessions._existing_state(SimpleNamespace(), tracked)["rated"])
         tracked.rating_mode, tracked.manual_score, tracked.season_scores = "average", None, {"1": 8.0}
-        self.assertTrue(_existing_state(SimpleNamespace(), tracked)["rated"])
+        self.assertTrue(netflix_sessions._existing_state(SimpleNamespace(), tracked)["rated"])
         tracked.season_scores = {}
-        self.assertFalse(_existing_state(SimpleNamespace(), tracked)["rated"])
+        self.assertFalse(netflix_sessions._existing_state(SimpleNamespace(), tracked)["rated"])
 
     def test_anime_items_are_skipped_and_remain_skipped_when_episodes_resolve(self):
         prepared = {"shows": [{
@@ -369,15 +357,15 @@ class NetflixDecisionTests(unittest.TestCase):
             }],
             "seasons": [{"season_number": 1, "represented": 0, "total_released": 1, "catalogue_complete": True}],
         }]}
-        item = _normalise_groups(prepared)[0]
+        item = netflix_sessions._normalise_groups(prepared)[0]
         self.assertEqual(item["decision"], {"action": "skip"})
         self.assertEqual(item["outcome"]["status"], "skip")
-        _resolve_draft_items([item])
+        netflix_sessions._resolve_draft_items([item])
         self.assertEqual(item["decision"], {"action": "skip"})
         self.assertEqual(item["outcome"]["status"], "skip")
 
     def test_lower_partial_endpoint_excludes_later_source_episode(self):
-        sources, chosen, excluded = _show_import_positions(_show_item(), {"status": "partial", "latest_season": 1, "latest_episode": 2}, date(2026, 9, 24))
+        sources, chosen, excluded = netflix_sessions._show_import_positions(_show_item(), {"status": "partial", "latest_season": 1, "latest_episode": 2}, date(2026, 9, 24))
         self.assertEqual(set(sources), {(1, 2)})
         self.assertEqual(chosen, {(1, 1), (1, 2)})
         self.assertEqual(excluded, 1)
@@ -398,7 +386,7 @@ class NetflixDecisionTests(unittest.TestCase):
         item = _show_item()
         item["seasons"][0]["catalogue_complete"] = False
         item["catalog_episodes"] = [_episode(2)]
-        sources, chosen, excluded = _show_import_positions(item, {"status": "completed"}, date(2026, 9, 24))
+        sources, chosen, excluded = netflix_sessions._show_import_positions(item, {"status": "completed"}, date(2026, 9, 24))
         self.assertEqual(set(sources), {(1, 2), (1, 3)})
         self.assertEqual(chosen, {(1, 1), (1, 2), (1, 3)})
         self.assertEqual(excluded, 0)
@@ -415,14 +403,14 @@ class NetflixDecisionTests(unittest.TestCase):
             "seasons": [{"season_number": 1, "represented": 1,
                          "total_released": 2, "catalogue_complete": True}],
         }]}
-        item = _normalise_groups(raw)[0]
+        item = netflix_sessions._normalise_groups(raw)[0]
         self.assertEqual(item["episodes"][0]["source_rows"], 2)
         self.assertEqual(item["episodes"][0]["source_row_numbers"], [2, 3])
         self.assertEqual(item["episodes"][0]["dates"], ["2020-01-02"])
         self.assertEqual(item["match"]["candidates"][0]["tmdb_id"], 990001)
 
     def test_unmatched_source_id_is_not_treated_as_tmdb_id(self):
-        item = _normalise_groups({"unmatched": [{
+        item = netflix_sessions._normalise_groups({"unmatched": [{
             "id": "show:source-digest", "kind": "show",
             "source_title": ": Episode 2", "status": "review",
             "episodes": [{"source_title": ": Episode 2", "title": "Episode 2", "matched": False}],
@@ -439,7 +427,7 @@ class NetflixDecisionTests(unittest.TestCase):
             "seasons": [{"season_number": 1, "represented": 1,
                          "total_released": 3, "catalogue_complete": True}],
         }]}
-        item = _normalise_groups(raw)[0]
+        item = netflix_sessions._normalise_groups(raw)[0]
         self.assertEqual(item["outcome"]["status"], "skip")
         self.assertEqual((item["outcome"]["latest_season"], item["outcome"]["latest_episode"]), (1, 3))
 
@@ -462,7 +450,7 @@ class NetflixDecisionTests(unittest.TestCase):
             "dates": [f"2020-01-0{number + 1}"], "source_rows": [10 - number],
             "matched": False,
         } for number in range(1, 6))
-        item = _normalise_groups({"shows": [{
+        item = netflix_sessions._normalise_groups({"shows": [{
             "kind": "show", "source_title": "Fixture Show", "tmdb_id": 990001,
             "title": "Fixture Show", "status": "matched", "confidence": "high",
             "episodes": episodes, "catalog_episodes": catalog,
@@ -517,7 +505,7 @@ class NetflixDecisionTests(unittest.TestCase):
         item["outcome"].pop("endpoint_overridden", None)
         items = [item]
 
-        _resolve_draft_items(items)
+        netflix_sessions._resolve_draft_items(items)
 
         self.assertEqual((items[0]["outcome"]["latest_season"], items[0]["outcome"]["latest_episode"]), (1, 3))
 
@@ -547,7 +535,7 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         async def progress(*_args):
             return None
 
-        first = await _apply_import(self.db, self.user.id, session, progress)
+        first = await netflix_sessions._apply_import(self.db, self.user.id, session, progress)
         await self.db.flush()
         events = (await self.db.execute(select(WatchEvent, Media).join(Media, Media.id == WatchEvent.media_id).where(WatchEvent.user_id == self.user.id))).all()
         self.assertEqual({media.episode_number for _, media in events}, {1, 2})
@@ -559,7 +547,7 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
                          ("watching", 2, date(2020, 1, 2), None))
         self.assertEqual((first["source_watches"], first["inferred_episodes"], first["cutoff_exclusions"]), (1, 1, 1))
 
-        second = await _apply_import(self.db, self.user.id, session, progress)
+        second = await netflix_sessions._apply_import(self.db, self.user.id, session, progress)
         await self.db.flush()
         self.assertEqual(second["source_watches"], 0)
         self.assertEqual(second["inferred_episodes"], 0)
@@ -629,8 +617,8 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
                 await db.flush()
                 return media, True
 
-            with patch("routers.netflix_import.create_media_safely", new=AsyncMock(side_effect=create_media)):
-                await _apply_import(self.db, self.user.id, session, progress)
+            with patch("core.netflix_sessions.create_media_safely", new=AsyncMock(side_effect=create_media)):
+                await netflix_sessions._apply_import(self.db, self.user.id, session, progress)
             return (await self.db.execute(select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType.movie))).scalar_one()
 
         staged = await commit_movie(880002, 9.0)
@@ -644,7 +632,7 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         show_entry = TrackedEntry(user_id=self.user.id, media_id=show_root.id, status="watching", rating_mode="manual", season_scores={}, progress=0)
         self.db.add(show_entry)
         await self.db.flush()
-        await _apply_staged_rating(self.db, self.user.id, show_root, show_entry,
+        await netflix_sessions._apply_staged_rating(self.db, self.user.id, show_root, show_entry,
                                    {"manual_score": 7.5, "manual_score_staged": True})
         show_rating = (await self.db.execute(select(Rating).where(
             Rating.user_id == self.user.id, Rating.media_id == show_root.id,
@@ -657,7 +645,7 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         entry.manual_score = 6.5
         self.db.add(Rating(user_id=self.user.id, media_id=existing.id, rating=6.5))
         await self.db.flush()
-        await _apply_import(self.db, self.user.id, SimpleNamespace(id="preserve", payload={
+        await netflix_sessions._apply_import(self.db, self.user.id, SimpleNamespace(id="preserve", payload={
             "items": [{"id": "movie-880003", "kind": "movie", "source_title": "Movie 880003",
                        "match": {"state": "matched", "candidate": {"tmdb_id": 880003, "media_type": "movie", "title": "Movie 880003", "details": {}}},
                        "decision": {"action": "confirm"}, "outcome": {"status": "completed"}, "source_dates": ["2020-01-01"]}],
@@ -669,7 +657,6 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
 
 class NetflixRestartTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_resumes_preparation_and_commit_once(self):
-        from routers import netflix_import as imports
 
         rows = [
             SimpleNamespace(id="prepare", user_id=7, status="preparing", payload={"language": "de"}, idempotency_key=None),
@@ -682,13 +669,13 @@ class NetflixRestartTests(unittest.IsolatedAsyncioTestCase):
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.execute.return_value = result
-        with patch.object(imports, "async_sessionmaker", return_value=lambda: db), \
-             patch.object(imports, "_running", {"active"}), \
-             patch.object(imports, "_committing", set()), \
-             patch.object(imports, "_prepare_session", new_callable=AsyncMock) as prepare, \
-             patch.object(imports, "_commit_session", new_callable=AsyncMock) as commit:
-            self.assertEqual(await imports.resume_incomplete_netflix_imports(), 2)
-            self.assertEqual(await imports.resume_incomplete_netflix_imports(), 0)
+        with patch.object(netflix_sessions, "async_sessionmaker", return_value=lambda: db), \
+             patch.object(netflix_sessions, "_running", {"active"}), \
+             patch.object(netflix_sessions, "_committing", set()), \
+             patch.object(netflix_sessions, "_prepare_session", new_callable=AsyncMock) as prepare, \
+             patch.object(netflix_sessions, "_commit_session", new_callable=AsyncMock) as commit:
+            self.assertEqual(await netflix_sessions.resume_incomplete_netflix_imports(), 2)
+            self.assertEqual(await netflix_sessions.resume_incomplete_netflix_imports(), 0)
             await asyncio.sleep(0)
             prepare.assert_awaited_once_with("prepare", 7, "de")
             commit.assert_awaited_once_with("commit", 8, "receipt")

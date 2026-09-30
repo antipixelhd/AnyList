@@ -21,6 +21,11 @@ its backend on 7341, and the local database. See scripts/local.ps1.
 - src/styles/: shared tokens and feature stylesheets.
 - tests/: browser-independent regression tests.
 
+Base.astro composes the shell. Its browser behavior lives in the focused
+*Runtime.astro components: shell controls, artwork, playback, media actions,
+media requests, installation, and interactions. Keep feature logic in those
+components or src/lib/ controllers rather than growing the global layout.
+
 Browser controllers must clean up requests and listeners on client navigation.
 Use neighbouring controllers and tests as the guide for page lifetimes.
 

@@ -1,3 +1,5 @@
+from core import playback_sessions
+from core import db_queries
 from core import enrichment
 from core import show_metadata
 from core import scrobble_delivery, settings_store, outbound_sync, watch_echo, webhook_payloads
@@ -10,8 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
-from sqlalchemy.exc import IntegrityError, InvalidRequestError
-from sqlalchemy.orm.exc import StaleDataError
+from sqlalchemy.exc import IntegrityError
 
 from db import get_db
 from dependencies import get_current_user_or_api_key
@@ -179,35 +180,6 @@ async def _close_session(db: AsyncSession, session_key: str) -> Optional[Playbac
     if session:
         await db.delete(session)
     return session
-
-
-async def _commit_playback_session_update(db: AsyncSession, *keep) -> bool:
-    """Commits a pending PlaybackSession update, tolerating a concurrent
-    PlaybackStop having already deleted that same row. Jellyfin/Emby send no
-    dedup protection on webhook deliveries (unlike Plex), so an
-    overlapping/duplicate progress tick can race a stop event for the same
-    session_key and try to UPDATE a row that's already gone - SQLAlchemy
-    surfaces that as a StaleDataError (0 rows matched) instead of a silent
-    no-op, which otherwise crashes the whole request with a 500. Returns
-    False (after rolling back) if that happened, True on a normal commit.
-
-    A rollback expires every ORM object in the session, and the callers go
-    on to read `settings`/`media` in the scrobble forwarders - a lazy-load
-    outside a greenlet, i.e. MissingGreenlet (#410). Pass those objects as
-    `keep` and they are reloaded here, while we can still await."""
-    try:
-        await db.commit()
-        return True
-    except StaleDataError:
-        await db.rollback()
-        for obj in keep:
-            if obj is None:
-                continue
-            try:
-                await db.refresh(obj)
-            except InvalidRequestError:
-                pass  # row is gone too; nothing to reload
-        return False
 
 
 def _episode_for_progress(
@@ -641,11 +613,11 @@ async def find_or_create_media_jellyfin(
         )
         if data.get("year"):
             local_q = local_q.where(Media.release_date.like(f"{data['year']}%"))
-        
+
         media = (await db.execute(local_q)).scalars().first()
         if media:
             return media
-            
+
         # Try TMDB search to find the real ID
         try:
             search_res = await tmdb.search_movies(data["title"], year=data.get("year"), api_key=api_key)
@@ -855,7 +827,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             session = await _get_or_open_session(db, session_key, "jellyfin", user.id, current_episode.id)
             session.media_id = current_episode.id
             session.state = "playing"
-            await _commit_playback_session_update(db, settings, *media_list)
+            await playback_sessions._commit_playback_session_update(db, settings, *media_list)
         await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackProgress", "playback.progress"):
@@ -869,7 +841,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             session.progress_percent = segment_pct
             session.progress_seconds = segment_seconds
             session.updated_at = datetime.utcnow()
-            await _commit_playback_session_update(db, settings, *media_list)
+            await playback_sessions._commit_playback_session_update(db, settings, *media_list)
         if data["is_paused"]:
             await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
@@ -1098,7 +1070,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
         if not conn or conn.sync_playback:
             session = await _get_or_open_session(db, session_key, "emby", user.id, media.id)
             session.state = "playing"
-            await _commit_playback_session_update(db, settings, media)
+            await playback_sessions._commit_playback_session_update(db, settings, media)
         await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackProgress", "playback.progress"):
@@ -1108,7 +1080,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             session.progress_percent = data["progress_percent"]
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
-            await _commit_playback_session_update(db, settings, media)
+            await playback_sessions._commit_playback_session_update(db, settings, media)
         if data["is_paused"]:
             await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
@@ -1259,7 +1231,7 @@ async def _handle_jellyfin_scrobble_webhook(
         if conn.sync_playback:
             session = await _get_or_open_session(db, session_key, source, user.id, media.id)
             session.state = "playing"
-            await _commit_playback_session_update(db, settings, media)
+            await playback_sessions._commit_playback_session_update(db, settings, media)
         if not is_duplicate:
             await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
@@ -1270,7 +1242,7 @@ async def _handle_jellyfin_scrobble_webhook(
             session.progress_percent = data["progress_percent"]
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
-            await _commit_playback_session_update(db, settings, media)
+            await playback_sessions._commit_playback_session_update(db, settings, media)
         if data["is_paused"] and not is_duplicate:
             await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
@@ -1482,7 +1454,7 @@ async def _push_watched_for_new_item(
     Scrob already has finished watches of - marked watched before it was
     collected (#420) - so mark it watched on that server too, instead of
     leaving it unwatched until a full push. The server-side counterpart of the
-    same fix in the pull sync (see routers.sync._push_watched_back_to_source).
+    same fix in the pull sync (see core.server_sync._push_watched_back_to_source).
 
     Gated on the connection's own push_watched flag. A multi-episode file
     only qualifies when every episode in it is watched, since the server call
@@ -1498,10 +1470,9 @@ async def _push_watched_for_new_item(
     if baseline is None or not baseline.approved:
         return False
 
-    from routers.sync import _latest_watched_at
 
     media_ids = [m.id for m in media_list]
-    watched_at_by_media = await _latest_watched_at(db, user_id, media_ids)
+    watched_at_by_media = await db_queries.latest_watched_at(db, user_id, media_ids)
     if len(watched_at_by_media) != len(set(media_ids)):
         return False
 
@@ -1892,11 +1863,11 @@ async def find_or_create_media_plex(
         )
         if data.get("year"):
             local_q = local_q.where(Media.release_date.like(f"{data['year']}%"))
-        
+
         media = (await db.execute(local_q)).scalars().first()
         if media:
             return media
-            
+
         # Try TMDB search to find the real ID
         try:
             search_res = await tmdb.search_movies(data["title"], year=data.get("year"), api_key=api_key)

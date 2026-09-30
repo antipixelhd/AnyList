@@ -6,12 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import mdblist_sync
 from core import outbound_sync
 
 from models.base import MediaType
 from models.media import Media
-from routers.mdblist import _import_ratings
-from routers.trakt import _apply_imported_rating
+
+from core.import_ratings import apply_imported_rating as _apply_imported_rating
 
 
 def _scalar_result(items: list) -> MagicMock:
@@ -102,8 +103,8 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={(1, 1): 3572})),
-            patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")) as resolve_plex,
-            patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
+            patch("core.server_sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")) as resolve_plex,
+            patch("core.server_sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
             patch("core.outbound_sync.trakt_client.set_ratings_batch", AsyncMock()) as set_trakt,
             patch("core.mdblist.push_ratings", AsyncMock(return_value={})) as push_mdblist,
         ):
@@ -172,8 +173,8 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={(1, 1): 3572})),
-            patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
-            patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
+            patch("core.server_sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
+            patch("core.server_sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
             patch("core.outbound_sync.trakt_client.remove_ratings_batch", AsyncMock()) as remove_trakt,
             patch("core.mdblist.remove_ratings", AsyncMock(return_value={})) as remove_mdblist,
         ):
@@ -239,8 +240,8 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
                 "core.outbound_sync.resolve_tmdb_season_ids",
                 AsyncMock(return_value={(1, 1): 3572, (1, 2): 3573}),
             ),
-            patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
-            patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)),
+            patch("core.server_sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
+            patch("core.server_sync.plex.set_rating", AsyncMock(return_value=True)),
             patch("core.outbound_sync.trakt_client.set_ratings_batch", AsyncMock()),
             patch("core.mdblist.push_ratings", AsyncMock(return_value={})) as push_mdblist,
         ):
@@ -287,8 +288,8 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
                 "core.outbound_sync.resolve_tmdb_season_ids",
                 AsyncMock(return_value={(1, 1): 3572, (1, 2): 3573}),
             ),
-            patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
-            patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)),
+            patch("core.server_sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
+            patch("core.server_sync.plex.set_rating", AsyncMock(return_value=True)),
             patch("core.outbound_sync.trakt_client.remove_ratings_batch", AsyncMock()),
             patch("core.mdblist.remove_ratings", AsyncMock(return_value={})) as remove_mdblist,
         ):
@@ -347,15 +348,15 @@ class SeasonRatingImportTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.mdblist._resolve_external_tmdb_id",
+                "core.mdblist_sync._resolve_external_tmdb_id",
                 AsyncMock(return_value=1396),
             ),
             patch(
-                "routers.mdblist._get_or_create_series_media",
+                "core.mdblist_sync._get_or_create_series_media",
                 AsyncMock(return_value=media),
             ),
         ):
-            changed = await _import_ratings(
+            changed = await mdblist_sync._import_ratings(
                 db,
                 user_id=3,
                 payload=payload,

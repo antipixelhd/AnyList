@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
+from core import db_queries
 from core import watch_echo
 
-from routers import sync, webhooks
+from routers import webhooks
 
 
 class _Rows:
@@ -32,18 +34,18 @@ class WatchedPushBackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pull_waits_for_approved_initial_import(self):
         self.db.get.return_value = SimpleNamespace(approved=False)
-        with patch.object(sync.jellyfin, "mark_watched", new_callable=AsyncMock) as push:
-            count = await sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1"})
+        with patch.object(server_sync.jellyfin, "mark_watched", new_callable=AsyncMock) as push:
+            count = await server_sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1"})
         self.assertEqual(count, 0)
         self.db.execute.assert_not_awaited()
         push.assert_not_awaited()
 
     async def test_combined_file_requires_every_episode_watched(self):
         with (
-            patch.object(sync, "_latest_watched_at", new_callable=AsyncMock, return_value={2: datetime(2026, 1, 1)}),
-            patch.object(sync.jellyfin, "mark_watched", new_callable=AsyncMock) as push,
+            patch.object(db_queries, 'latest_watched_at', new_callable=AsyncMock, return_value={2: datetime(2026, 1, 1)}),
+            patch.object(server_sync.jellyfin, "mark_watched", new_callable=AsyncMock) as push,
         ):
-            count = await sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1"})
+            count = await server_sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1"})
         self.assertEqual(count, 0)
         push.assert_not_awaited()
 
@@ -51,18 +53,18 @@ class WatchedPushBackTests(unittest.IsolatedAsyncioTestCase):
         earlier = datetime(2026, 1, 1)
         later = datetime(2026, 1, 2)
         with (
-            patch.object(sync, "_latest_watched_at", new_callable=AsyncMock, return_value={2: earlier, 3: later}),
-            patch.object(sync.jellyfin, "mark_watched", new_callable=AsyncMock, return_value=True) as push,
+            patch.object(db_queries, 'latest_watched_at', new_callable=AsyncMock, return_value={2: earlier, 3: later}),
+            patch.object(server_sync.jellyfin, "mark_watched", new_callable=AsyncMock, return_value=True) as push,
             patch.object(watch_echo, "mark_pushed_watched") as mark_echo,
         ):
-            count = await sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1", 3: "file-1"})
+            count = await server_sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1", 3: "file-1"})
         self.assertEqual(count, 1)
         push.assert_awaited_once_with("http://local", "token", "remote-user", "file-1", played_at=later)
         self.assertEqual(mark_echo.call_count, 2)
 
     async def test_webhook_waits_for_approved_initial_import(self):
         self.db.get.return_value = SimpleNamespace(approved=False)
-        with patch.object(sync, "_latest_watched_at", new_callable=AsyncMock) as watches:
+        with patch.object(db_queries, 'latest_watched_at', new_callable=AsyncMock) as watches:
             pushed = await webhooks._push_watched_for_new_item(
                 self.db, 1, self.conn, "file-1", [SimpleNamespace(id=2)]
             )

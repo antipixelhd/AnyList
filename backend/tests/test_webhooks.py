@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import playback_sessions
 from core import watch_echo
 
 from sqlalchemy.exc import IntegrityError
@@ -14,7 +15,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from models.base import MediaType
 from routers import webhooks
-from routers.webhooks import _backfill_credits_stingers, _backfill_jellyfin_runtimes, _backfill_plex_runtime, _commit_playback_session_update, _ensure_collection_entry, _episode_for_progress, _get_or_open_session, _is_duplicate_webhook_delivery, _resolve_plex_progress, _resolve_tvdb_episode_to_tmdb_position, _translate_plex_tvdb_episode_position, _write_completed_events_and_filter_echoes, _write_watch_event, find_or_create_media_jellyfin, find_or_create_media_jellyfin_multi, find_or_create_media_kodi, find_or_create_media_plex
+from routers.webhooks import _backfill_credits_stingers, _backfill_jellyfin_runtimes, _backfill_plex_runtime, _ensure_collection_entry, _episode_for_progress, _get_or_open_session, _is_duplicate_webhook_delivery, _resolve_plex_progress, _resolve_tvdb_episode_to_tmdb_position, _translate_plex_tvdb_episode_position, _write_completed_events_and_filter_echoes, _write_watch_event, find_or_create_media_jellyfin, find_or_create_media_jellyfin_multi, find_or_create_media_kodi, find_or_create_media_plex
 
 
 class _Scalars:
@@ -902,13 +903,13 @@ class CommitPlaybackSessionUpdateTests(IsolatedAsyncioTestCase):
 
     async def test_normal_commit_succeeds(self):
         db = _FakeSessionCommitDB()
-        result = await _commit_playback_session_update(db)
+        result = await playback_sessions._commit_playback_session_update(db)
         self.assertTrue(result)
         self.assertFalse(db.rollback_called)
 
     async def test_stale_data_error_is_caught_and_rolled_back(self):
         db = _FakeSessionCommitDB(commit_side_effect=StaleDataError("0 were matched"))
-        result = await _commit_playback_session_update(db)
+        result = await playback_sessions._commit_playback_session_update(db)
         self.assertFalse(result)
         self.assertTrue(db.rollback_called)
 
@@ -917,25 +918,25 @@ class CommitPlaybackSessionUpdateTests(IsolatedAsyncioTestCase):
         # forwarders that run next would lazy-load them (MissingGreenlet).
         db = _FakeSessionCommitDB(commit_side_effect=StaleDataError("0 were matched"))
         settings, media = object(), object()
-        await _commit_playback_session_update(db, settings, None, media)
+        await playback_sessions._commit_playback_session_update(db, settings, None, media)
         self.assertEqual(db.refreshed, [settings, media])
 
     async def test_kept_objects_are_not_touched_on_normal_commit(self):
         db = _FakeSessionCommitDB()
-        await _commit_playback_session_update(db, object())
+        await playback_sessions._commit_playback_session_update(db, object())
         self.assertEqual(db.refreshed, [])
 
     async def test_kept_object_whose_row_is_gone_is_skipped(self):
         db = _FakeSessionCommitDB(commit_side_effect=StaleDataError("0 were matched"))
         gone, alive = InvalidRequestError("Could not refresh instance"), object()
-        result = await _commit_playback_session_update(db, gone, alive)
+        result = await playback_sessions._commit_playback_session_update(db, gone, alive)
         self.assertFalse(result)
         self.assertEqual(db.refreshed, [alive])
 
     async def test_other_exceptions_still_propagate(self):
         db = _FakeSessionCommitDB(commit_side_effect=RuntimeError("unrelated failure"))
         with self.assertRaises(RuntimeError):
-            await _commit_playback_session_update(db)
+            await playback_sessions._commit_playback_session_update(db)
         self.assertFalse(db.rollback_called)
 
 

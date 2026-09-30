@@ -1,0 +1,109 @@
+<script>
+    // ── Grab and Drag Scrolling ────────────────────────────────────────────────
+    function initDragScroll() {
+      const sliders = document.querySelectorAll<HTMLElement>('.scrollbar-none');
+
+      sliders.forEach(slider => {
+        if (slider.dataset.dragInit) return;
+        slider.dataset.dragInit = '1';
+        let isDown = false;
+        let startX: number;
+        let scrollLeft: number;
+        let hasMoved = false;
+        let preventClickRef: ((e: MouseEvent) => void) | null = null;
+
+        slider.addEventListener('mousedown', (e) => {
+          // Only trigger on primary mouse button (left click)
+          if (e.button !== 0) return;
+
+          // Clear any pending preventClick from a previous drag so a fresh click is never blocked
+          if (preventClickRef) {
+            slider.removeEventListener('click', preventClickRef, true);
+            preventClickRef = null;
+          }
+
+          isDown = true;
+          hasMoved = false;
+          // Do NOT add is-dragging yet — adding it here sets pointer-events:none on all
+          // children, which shifts the mouseup target and breaks click events on cards.
+          // is-dragging is added below only once actual movement is detected.
+          startX = e.pageX - slider.offsetLeft;
+          scrollLeft = slider.scrollLeft;
+        });
+
+        slider.addEventListener('mouseleave', () => {
+          if (!isDown) return;
+          isDown = false;
+          slider.classList.remove('is-dragging');
+        });
+
+        slider.addEventListener('mouseup', () => {
+          if (!isDown) return;
+          isDown = false;
+          slider.classList.remove('is-dragging');
+
+          // If we moved, prevent the next click event from firing on child elements
+          if (hasMoved) {
+            preventClickRef = (event: MouseEvent) => {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+              slider.removeEventListener('click', preventClickRef!, true);
+              preventClickRef = null;
+            };
+            slider.addEventListener('click', preventClickRef, true);
+          }
+        });
+
+        slider.addEventListener('mousemove', (e) => {
+          if (!isDown) return;
+
+          const x = e.pageX - slider.offsetLeft;
+          const walk = (x - startX) * 1.5; // multiplier for speed
+
+          if (Math.abs(walk) > 16) {
+            hasMoved = true;
+            slider.classList.add('is-dragging');
+            e.preventDefault();
+            slider.scrollLeft = scrollLeft - walk;
+          }
+        });
+
+        // Prevent native drag starts (for images/links) to avoid interfering
+        slider.addEventListener('dragstart', (e) => {
+          if (isDown) e.preventDefault();
+        });
+      });
+    }
+
+    // Run on initial load
+    initDragScroll();
+
+    // Re-run if using Astro View Transitions (if added in the future)
+    document.addEventListener('astro:after-swap', initDragScroll);
+
+    // Wire scroll containers inserted by dynamically loaded sections.
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.addedNodes.length) {
+          initDragScroll();
+        }
+      });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Bust bfcache on every page so back/forward always shows fresh server state
+    window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+
+    // Reveal blurred adult posters on click (capture phase so it fires before <a> navigation).
+    // Also reveals the backdrop on the same page, which cannot be clicked directly.
+    document.addEventListener('click', (e) => {
+      const adultEl = (e.target as Element).closest<HTMLElement>('[data-adult="true"]');
+      if (adultEl && document.documentElement.classList.contains('blur-explicit')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        document.querySelectorAll<HTMLElement>('[data-adult="true"]').forEach(el => el.removeAttribute('data-adult'));
+        document.querySelectorAll<HTMLElement>('[data-adult-backdrop="true"]').forEach(el => el.removeAttribute('data-adult-backdrop'));
+      }
+    }, true);
+  </script>

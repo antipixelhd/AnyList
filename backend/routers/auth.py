@@ -1,3 +1,4 @@
+from core import security
 from core.account_bootstrap import lock_account_bootstrap
 from core import trakt_auth
 import secrets
@@ -52,11 +53,7 @@ def _generate_backup_code() -> str:
     return f"{chars[:4]}-{chars[4:]}"
 
 
-def _generate_api_key() -> str:
-    return secrets.token_urlsafe(32)
-
 router = APIRouter()
-
 
 
 def _prevent_sensitive_response_caching(response: Response) -> None:
@@ -109,8 +106,6 @@ async def _check_nuvio_session_is_independent(db, url, token, exclude_connection
     ).limit(1))).scalar_one_or_none()
     if duplicate is not None:
         raise HTTPException(status_code=409, detail="Use a separate Nuvio sign-in for each connection")
-
-
 
 
 async def _registration_allowed(db: AsyncSession) -> bool:
@@ -225,7 +220,7 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
         email=user_in.email,
         username=user_in.username,
         password_hash=get_password_hash(user_in.password),
-        api_key=_generate_api_key(),
+        api_key=security.generate_opaque_token(),
         # Never take the role from the request body: role == "admin" grants
         # elevated access in several routers independently of is_admin, so a
         # self-registering user could escalate by posting {"role": "admin"}.
@@ -944,7 +939,7 @@ async def regenerate_api_key(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    current_user.api_key = _generate_api_key()
+    current_user.api_key = security.generate_opaque_token()
     await db.commit()
     await db.refresh(current_user)
     return current_user

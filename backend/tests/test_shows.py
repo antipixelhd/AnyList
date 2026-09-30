@@ -160,7 +160,7 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
              patch("core.settings_store.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
              patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)), \
              patch("routers.shows.tvdb_client.get_series_episodes", AsyncMock(return_value=[wrong_tvdb_ep])), \
-             patch("routers.shows.refresh_technical_data", AsyncMock()):
+             patch("core.media_presentation.refresh_technical_data", AsyncMock()):
             await shows.refresh_show_metadata(980001, db, SimpleNamespace(id=7))
 
         self.assertEqual(good_ep.title, "Correct Existing Title")
@@ -189,7 +189,7 @@ class RefreshShowMetadataTvdbFallbackCorruptionTests(unittest.IsolatedAsyncioTes
              patch("core.settings_store.get_user_tvdb_key", AsyncMock(return_value="tvdb-key")), \
              patch("routers.shows.get_user_metadata_language", AsyncMock(return_value=None)), \
              patch("routers.shows.tvdb_client.get_series_episodes", AsyncMock(return_value=[raw_tvdb_ep])), \
-             patch("routers.shows.refresh_technical_data", AsyncMock()):
+             patch("core.media_presentation.refresh_technical_data", AsyncMock()):
             await shows.refresh_show_metadata(980001, db, SimpleNamespace(id=7))
 
         self.assertEqual(tvdb_ep.title, "Refreshed Title")

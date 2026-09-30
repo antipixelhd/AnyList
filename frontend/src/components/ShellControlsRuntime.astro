@@ -1,0 +1,92 @@
+<script>
+    import { wirePasswordToggles } from '../lib/password-toggle';
+    wirePasswordToggles();
+    // ── Theme toggle ───────────────────────────────────────────────────────────
+    const themeToggle = document.getElementById('theme-toggle');
+
+    const themeColorMeta = document.getElementById('theme-color-meta') as HTMLMetaElement | null;
+    const syncThemeColor = () => {
+      const isLight = document.documentElement.classList.contains('light');
+      if (themeColorMeta) themeColorMeta.content = isLight ? '#f9fafb' : '#09090b';
+    };
+    syncThemeColor();
+
+    themeToggle?.addEventListener('click', () => {
+      document.documentElement.classList.toggle('light');
+      const isLight = document.documentElement.classList.contains('light');
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+      syncThemeColor();
+    });
+
+    // ── User dropdown (click-toggled) ──────────────────────────────────────────
+    const userMenuBtn = document.getElementById('user-menu-btn');
+    const userMenu = document.getElementById('user-menu');
+    const userChevron = document.getElementById('user-chevron');
+
+    userMenuBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !userMenu?.classList.contains('hidden');
+      userMenu?.classList.toggle('hidden', open);
+      userChevron?.style.setProperty('transform', open ? '' : 'rotate(180deg)');
+    });
+
+    document.addEventListener('click', () => {
+      userMenu?.classList.add('hidden');
+      userChevron?.style.removeProperty('transform');
+    });
+
+    // ── Search inputs: land the caret at the end, not the start ────────────────
+    // Both boxes can already carry a value (the current query, prefilled on
+    // /search) when focused - by click, the "/" shortcut, or opening the
+    // mobile search bar - and a browser's default caret placement on focus is
+    // the start, not the end. setSelectionRange alone is unreliable here (a
+    // click's own native caret placement can win the race against it); a
+    // value reassignment always moves the caret to the end and, firing from
+    // this same focus handler, applies after that native placement.
+    document.querySelectorAll<HTMLInputElement>('#desktop-search-input, #mobile-search-input').forEach((input) => {
+      input.addEventListener('focus', () => {
+        const value = input.value;
+        input.value = '';
+        input.value = value;
+      });
+    });
+
+    // ── Mobile search expand ───────────────────────────────────────────────────
+    const navDefault = document.getElementById('nav-default');
+    const navSearch = document.getElementById('nav-search');
+    const mobileSearchInput = document.getElementById('mobile-search-input') as HTMLInputElement | null;
+
+    document.getElementById('mobile-search-open')?.addEventListener('click', () => {
+      navDefault?.classList.add('hidden');
+      navSearch?.classList.remove('hidden');
+      navSearch?.classList.add('flex');
+      mobileSearchInput?.focus();
+    });
+
+    const closeSearch = () => {
+      navSearch?.classList.add('hidden');
+      navSearch?.classList.remove('flex');
+      navDefault?.classList.remove('hidden');
+    };
+
+    document.getElementById('mobile-search-close')?.addEventListener('click', closeSearch);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !navSearch?.classList.contains('hidden')) {
+        closeSearch();
+        return;
+      }
+      if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        e.preventDefault();
+        const desktopInput = document.getElementById('desktop-search-input') as HTMLInputElement | null;
+        if (desktopInput && getComputedStyle(desktopInput).display !== 'none') {
+          desktopInput.focus();
+        } else if (navSearch) {
+          navDefault?.classList.add('hidden');
+          navSearch.classList.remove('hidden');
+          navSearch.classList.add('flex');
+          mobileSearchInput?.focus();
+        }
+      }
+    });
+  </script>

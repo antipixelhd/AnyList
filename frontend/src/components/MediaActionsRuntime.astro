@@ -1,0 +1,1378 @@
+<script>
+    // ── Card action bar ────────────────────────────────────────────────────────
+    const API = '/api/proxy';
+    const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
+
+    // #174: an "aired" order needs no translation; any other key is forwarded to
+    // the season/show bulk endpoints so they map the display season to the real
+    // canonical episodes. Returns the key to send, or null.
+    const nonAiredOrder = (o: string | null | undefined): string | null =>
+      (o && o !== 'tmdb' && o !== 'tmdb:aired') ? o : null;
+
+    function esc(s: unknown): string {
+      if (s == null) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    async function apiFetch(path: string, method = 'GET', body?: unknown) {
+      const res = await fetch(`${API}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${TOKEN()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    // apiFetch's Error.message is the raw response body — usually a JSON
+    // {"detail": "..."} string from FastAPI, sometimes plain text.
+    function alertFromError(err: any, fallback = 'Something went wrong'): void {
+      let msg = fallback;
+      try {
+        const data = JSON.parse(err.message);
+        msg = data.detail || msg;
+      } catch {
+        if (err.message) msg = err.message;
+      }
+      alert(msg);
+    }
+
+    // ── Confirm dialog ─────────────────────────────────────────────────────────
+    window.showConfirm = showConfirm;
+    function showConfirm(title: string, body: string): Promise<boolean> {
+      return new Promise(resolve => {
+        const dialog = document.getElementById('confirm-dialog')!;
+        (document.getElementById('confirm-title') as HTMLElement).textContent = title;
+        (document.getElementById('confirm-body') as HTMLElement).textContent = body;
+        dialog.classList.remove('hidden');
+        const ok = document.getElementById('confirm-ok')!;
+        const cancel = document.getElementById('confirm-cancel')!;
+        const close = (v: boolean) => { dialog.classList.add('hidden'); ok.replaceWith(ok.cloneNode(true)); cancel.replaceWith(cancel.cloneNode(true)); resolve(v); };
+        document.getElementById('confirm-ok')!.addEventListener('click', () => close(true), { once: true });
+        document.getElementById('confirm-cancel')!.addEventListener('click', () => close(false), { once: true });
+      });
+    }
+
+    // ── Rating popover ─────────────────────────────────────────────────────────
+    let _activeRatingBtn: HTMLElement | null = null;
+    // A post-watch rate prompt (#177) waiting for a user-opened rating popover
+    // to close first. Latest-wins: at most one held, since finishing two
+    // episodes while you have a rating dialog open by hand is vanishingly rare.
+    let _pendingRatePrompt: any = null;
+
+    function closeRatingPopover() {
+      document.getElementById('rating-popover')!.classList.add('hidden');
+      _activeRatingBtn = null;
+      if (_pendingRatePrompt) {
+        const m = _pendingRatePrompt;
+        _pendingRatePrompt = null;
+        setTimeout(() => showRatePromptPopover(m), 150);
+      }
+    }
+
+    // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
+    let _ratingMediaId = '';
+    function openRatingPopover(
+      btn: HTMLElement | null,
+      tmdbId: string,
+      mediaType: string,
+      currentRating: number | null,
+      seasonNumber: number | null = null,
+      episodeOrder: string = 'tmdb',
+      itemInfo: { title?: string; subtitle?: string; posterUrl?: string; landscape?: boolean } | null = null,
+      mediaId: string = '',
+    ) {
+      _activeRatingBtn = btn;
+      _ratingMediaId = mediaId;
+      const popover = document.getElementById('rating-popover')!;
+      const starsEl = document.getElementById('rating-stars')!;
+      const removeBtn = document.getElementById('rating-remove')!;
+
+      // Item header - only shown when a caller has no on-page context for what's
+      // being rated (e.g. the post-watch prompt fired from the Now Playing bar).
+      const itemEl = document.getElementById('rating-popover-item')!;
+      const itemTitleEl = document.getElementById('rating-popover-item-title')!;
+      const itemSubEl = document.getElementById('rating-popover-item-sub')!;
+      const itemPosterEl = document.getElementById('rating-popover-poster') as HTMLImageElement;
+      if (itemInfo && itemInfo.title) {
+        itemTitleEl.textContent = itemInfo.title;
+        itemSubEl.textContent = itemInfo.subtitle ?? '';
+        itemSubEl.classList.toggle('hidden', !itemInfo.subtitle);
+        if (itemInfo.posterUrl) {
+          const applyArtwork = window.__applyResponsiveArtwork;
+          if (typeof applyArtwork === 'function') {
+            applyArtwork(itemPosterEl, itemInfo.posterUrl, {
+              size: itemInfo.landscape ? 'w780' : 'w500',
+              sizes: itemInfo.landscape ? '76px' : '40px',
+              route: itemInfo.posterUrl.startsWith('/api/proxy/') ? 'proxy' : 'direct',
+            });
+          } else {
+            itemPosterEl.src = itemInfo.posterUrl;
+          }
+          // Episodes use a landscape still; everything else a portrait poster.
+          itemPosterEl.className = itemInfo.landscape
+            ? 'shrink-0 w-[4.75rem] h-[2.75rem] rounded object-cover bg-zinc-800'
+            : 'shrink-0 w-10 h-14 rounded object-cover bg-zinc-800';
+        } else {
+          itemPosterEl.removeAttribute('src');
+          itemPosterEl.removeAttribute('srcset');
+          itemPosterEl.removeAttribute('sizes');
+          itemPosterEl.className = 'hidden';
+        }
+        itemEl.classList.remove('hidden');
+      } else {
+        itemEl.classList.add('hidden');
+        itemPosterEl.removeAttribute('src');
+        itemPosterEl.removeAttribute('srcset');
+        itemPosterEl.removeAttribute('sizes');
+      }
+
+      removeBtn.classList.toggle('hidden', currentRating == null);
+
+      // Build 5 stars with hover support (each click = value * 2 on 0-10 scale)
+      starsEl.innerHTML = '';
+      for (let i = 1; i <= 10; i++) {
+        const half = document.createElement('button');
+        half.className = [
+          'w-5 h-5 transition-colors cursor-pointer',
+          i <= (currentRating ?? 0) ? 'text-amber-400' : 'text-zinc-400',
+        ].join(' ');
+        half.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+        half.dataset.value = String(i);
+        half.addEventListener('mouseover', () => {
+          starsEl.querySelectorAll<HTMLElement>('[data-value]').forEach(s => {
+            s.className = Number(s.dataset.value) <= i
+              ? 'w-5 h-5 transition-colors cursor-pointer text-amber-400'
+              : 'w-5 h-5 transition-colors cursor-pointer text-zinc-400';
+          });
+        });
+        half.addEventListener('click', async () => {
+          try {
+            const ratingBody: Record<string, unknown> = { media_type: mediaType, rating: i };
+            if (tmdbId) ratingBody.tmdb_id = Number(tmdbId);
+            if (_ratingMediaId) ratingBody.media_id = Number(_ratingMediaId);
+            if (seasonNumber !== null) ratingBody.season_number = seasonNumber;
+            if (seasonNumber !== null && nonAiredOrder(episodeOrder)) ratingBody.episode_order = episodeOrder;
+            await apiFetch('/ratings', 'POST', ratingBody);
+            if (btn) {
+              btn.dataset.userRating = String(i);
+              btn.dataset.state = 'active';
+              btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-amber-500/10', 'hover:text-amber-400');
+              btn.classList.add('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
+              btn.querySelector('svg')!.setAttribute('fill', 'currentColor');
+              btn.querySelector('span')!.textContent = i.toFixed(1);
+              btn.title = `Your rating: ${i.toFixed(1)}/10`;
+            }
+            closeRatingPopover();
+          } catch { /* ignore */ }
+        });
+        starsEl.appendChild(half);
+      }
+      // Assigned (not addEventListener) so re-opening the popover - which the
+      // post-watch prompt does repeatedly, once per finished episode - replaces
+      // this handler instead of stacking a new one every time.
+      starsEl.onmouseleave = () => {
+        const saved = currentRating ?? 0;
+        starsEl.querySelectorAll<HTMLElement>('[data-value]').forEach(s => {
+          s.className = Number(s.dataset.value) <= saved
+            ? 'w-5 h-5 transition-colors cursor-pointer text-amber-400'
+            : 'w-5 h-5 transition-colors cursor-pointer text-zinc-400';
+        });
+      };
+
+      removeBtn.onclick = async () => {
+        try {
+          const seasonQuery = seasonNumber !== null ? `&season_number=${seasonNumber}` : '';
+          const orderQuery = seasonNumber !== null && nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
+          const idQuery = tmdbId ? `tmdb_id=${tmdbId}` : `media_id=${_ratingMediaId}`;
+          await apiFetch(`/ratings?${idQuery}&media_type=${mediaType}${seasonQuery}${orderQuery}`, 'DELETE');
+          if (btn) {
+            btn.dataset.userRating = '';
+            btn.dataset.state = 'inactive';
+            btn.classList.remove('bg-amber-500/20', 'text-amber-400', 'hover:bg-amber-500/40');
+            btn.classList.add('bg-zinc-800', 'text-zinc-500', 'hover:bg-amber-500/10', 'hover:text-amber-400');
+            btn.querySelector('svg')!.setAttribute('fill', 'none');
+            btn.querySelector('span')!.textContent = 'Rate';
+            btn.title = 'Rate this';
+          }
+          closeRatingPopover();
+        } catch { /* ignore */ }
+      };
+
+      popover.classList.remove('hidden');
+    }
+
+    document.getElementById('rating-popover-close')!.addEventListener('click', () => closeRatingPopover());
+    document.getElementById('rating-popover')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('rating-popover')) closeRatingPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeRatingPopover();
+    });
+
+    // ── Prompt to rate after watching (#177) ──────────────────────────────────
+    // The Now Playing poller (inline script above) fires this when a session
+    // drops off the bar. The backend decides whether a popup is warranted
+    // (user opted in for this type, a completed play landed recently, not yet
+    // rated); we just render it. sessionStorage stops a re-poll from re-asking.
+    function ratingPosterUrl(path: string | null | undefined): string | undefined {
+      if (!path) return undefined;
+      // Pass full URLs straight through: detail pages render posters/stills
+      // from the same image.tmdb.org URL, so an untouched value here is a
+      // browser cache hit instead of a fresh fetch of a proxied copy.
+      if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/api/proxy/')) return path;
+      return `https://image.tmdb.org/t/p/w500${path.startsWith('/') ? path : '/' + path}`;
+    }
+
+    function showRatePromptPopover(m: any) {
+      const isEpisode = m.type === 'episode';
+      const sxe = m.season_number != null && m.episode_number != null
+        ? `S${String(m.season_number).padStart(2, '0')}E${String(m.episode_number).padStart(2, '0')}`
+        : null;
+      openRatingPopover(null, String(m.tmdb_id), m.type, null, null, 'tmdb', {
+        title: isEpisode ? (m.show_title ?? m.title) : m.title,
+        subtitle: isEpisode ? [sxe, m.title].filter(Boolean).join(' · ') : undefined,
+        posterUrl: isEpisode
+          ? ratingPosterUrl(m.poster_path)
+          : window.ratingPosterUrl(ratingPosterUrl(m.poster_path), m, window.__HAS_RPDB__) ?? undefined,
+        landscape: isEpisode,
+      });
+    }
+
+    document.addEventListener('scrob:playback-ended', (e) => {
+      const media = (e as CustomEvent).detail?.media;
+      if (!media || media.id == null) return;
+      const seenKey = `scrob_rate_prompt_${media.id}`;
+      try { if (sessionStorage.getItem(seenKey)) return; } catch { /* ignore */ }
+      (async () => {
+        try {
+          const data = await apiFetch(`/history/rate-prompt?media_id=${media.id}`);
+          if (!data?.should_prompt || !data.media) return;
+          try { sessionStorage.setItem(seenKey, '1'); } catch { /* ignore */ }
+          const popoverOpen = !document.getElementById('rating-popover')!.classList.contains('hidden');
+          if (popoverOpen && _activeRatingBtn !== null) {
+            // A rating popover the user opened by hand - wait for them to close it.
+            _pendingRatePrompt = data.media;
+            return;
+          }
+          // Nothing open, or a previous post-watch prompt still showing: just
+          // swap in the newer one (openRatingPopover repopulates in place).
+          showRatePromptPopover(data.media);
+        } catch { /* ignore */ }
+      })();
+    });
+
+    // ── List popover ───────────────────────────────────────────────────────────
+    let _activeListBtn: HTMLElement | null = null;
+    let _listTmdbId = '';
+    // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
+    let _listMediaId = '';
+    let _listMediaType = '';
+    let _listSeasonNumber = '';
+
+    function closeListPopover() {
+      document.getElementById('list-popover')!.classList.add('hidden');
+      _activeListBtn = null;
+    }
+
+    async function openListPopover(btn: HTMLElement, tmdbId: string, mediaType: string, seasonNumber = '', mediaId = '') {
+      _activeListBtn = btn;
+      _listTmdbId = tmdbId;
+      _listMediaId = mediaId;
+      _listMediaType = mediaType;
+      _listSeasonNumber = seasonNumber;
+      const popover = document.getElementById('list-popover')!;
+      const itemsEl = document.getElementById('list-popover-items')!;
+      itemsEl.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500">Loading…</div>';
+      popover.classList.remove('hidden');
+
+      // Fetch lists
+      let lists: { id: number; name: string }[] = [];
+      try {
+        const data = await apiFetch('/lists');
+        lists = data.lists ?? [];
+      } catch { lists = []; }
+
+      const currentLists: number[] = JSON.parse(btn.dataset.inLists ?? '[]');
+
+      if (!lists.length) {
+        itemsEl.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500">No lists yet.</div>';
+        return;
+      }
+
+      itemsEl.innerHTML = lists.map(l => `
+        <label class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-800 cursor-pointer transition">
+          <input type="checkbox" data-list-id="${esc(String(l.id))}" ${currentLists.includes(l.id) ? 'checked' : ''}
+            class="w-3.5 h-3.5 rounded accent-blue-500" />
+          <span class="text-sm text-zinc-200 truncate">${esc(l.name)}</span>
+        </label>`).join('');
+
+      itemsEl.querySelectorAll<HTMLInputElement>('input[data-list-id]').forEach(cb => {
+        cb.addEventListener('change', async () => {
+          const listId = cb.dataset.listId!;
+          try {
+            // season_number identifies a whole-season list entry
+            // (media_type=series) - individual episodes have their own
+            // tmdb_id and never carry one, even though an episode card's
+            // dataset also has a season number for display purposes.
+            const seasonNumber = _listMediaType === 'series' && _listSeasonNumber ? Number(_listSeasonNumber) : null;
+            if (cb.checked) {
+              const body: Record<string, unknown> = { media_type: _listMediaType };
+              if (_listTmdbId) body.tmdb_id = Number(_listTmdbId);
+              if (_listMediaId) body.media_id = Number(_listMediaId);
+              if (seasonNumber != null) body.season_number = seasonNumber;
+              await apiFetch(`/lists/${listId}/items`, 'POST', body);
+            } else {
+              // Find the list_item id — need to fetch list detail
+              const detail = await apiFetch(`/lists/${listId}`);
+              const item = detail.items?.find((i: { media: { id?: number; tmdb_id: number | null; season_number: number | null } }) => {
+                const sameItem = _listTmdbId
+                  ? i.media?.tmdb_id === Number(_listTmdbId)
+                  : !!_listMediaId && i.media?.id === Number(_listMediaId);
+                if (!sameItem) return false;
+                // Only a whole-season list entry (media_type=series) needs
+                // season_number to disambiguate one season from another on
+                // the same show. For everything else (movies, episodes,
+                // shows added whole) tmdb_id alone is already unique - and
+                // for an episode, media.season_number here is the episode's
+                // own season within its show (a display fallback the API
+                // uses when there's no stored list_item.season_number), not
+                // something to match against.
+                if (_listMediaType !== 'series') return true;
+                return (i.media?.season_number ?? null) === seasonNumber;
+              });
+              if (item) {
+                await apiFetch(`/lists/${listId}/items/${item.id}`, 'DELETE');
+                // If we're on the list detail page for this list, remove the card immediately
+                const pageListId = window.location.pathname.match(/^\/list\/(\d+)/)?.[1];
+                if (pageListId === String(listId)) {
+                  const wrapper = document.querySelector(`[data-item-id="${item.id}"]`);
+                  wrapper?.remove();
+                  closeListPopover();
+                  const grid = document.getElementById('items-grid');
+                  if (grid && grid.children.length === 0) {
+                    document.getElementById('empty-state')?.classList.remove('hidden');
+                  }
+                }
+              }
+            }
+            // Update button state
+            if (_activeListBtn) {
+              const updated = cb.checked
+                ? [...JSON.parse(_activeListBtn.dataset.inLists ?? '[]'), Number(listId)]
+                : JSON.parse(_activeListBtn.dataset.inLists ?? '[]').filter((id: number) => id !== Number(listId));
+              _activeListBtn.dataset.inLists = JSON.stringify(updated);
+              const nowInLists = updated.length > 0;
+              _activeListBtn.dataset.state = nowInLists ? 'active' : 'inactive';
+
+              const isCard = _activeListBtn.parentElement?.classList.contains('grid');
+              if (nowInLists) {
+                _activeListBtn.classList.remove('bg-zinc-800', 'bg-zinc-900', 'text-zinc-500', 'text-zinc-400', 'hover:bg-sky-500/10', 'hover:text-sky-400');
+                if (isCard) {
+                  _activeListBtn.classList.add('bg-sky-500/20', 'text-sky-400');
+                } else {
+                  _activeListBtn.classList.add('bg-sky-500/50', 'text-sky-300', 'hover:bg-sky-400/50');
+                }
+              } else {
+                _activeListBtn.classList.remove('bg-sky-500/20', 'bg-sky-500/50', 'text-sky-400', 'text-sky-300', 'hover:bg-sky-500/40', 'hover:bg-sky-400/50');
+                if (isCard) {
+                  _activeListBtn.classList.add('bg-zinc-900', 'text-zinc-400', 'hover:bg-sky-500/10', 'hover:text-sky-400');
+                } else {
+                  _activeListBtn.classList.add('bg-zinc-800', 'text-zinc-500', 'hover:bg-sky-500/10', 'hover:text-sky-400');
+                }
+              }
+            }
+          } catch { cb.checked = !cb.checked; }
+        });
+      });
+    }
+
+    document.getElementById('list-popover-close')!.addEventListener('click', () => closeListPopover());
+
+    document.getElementById('list-popover-create')!.addEventListener('click', () => {
+      closeListPopover();
+      openCreateListModal();
+    });
+
+    document.getElementById('list-popover')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('list-popover')) closeListPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeListPopover();
+    });
+
+    // ── Rewatch modal ────────────────────────────────────────────────────────
+    function closeRewatchModal() {
+      document.getElementById('rewatch-modal')!.classList.add('hidden');
+    }
+
+    function openRewatchModal(seriesTmdbId: string) {
+      document.getElementById('rewatch-modal-restart')!.onclick = async () => {
+        closeRewatchModal();
+        try {
+          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesTmdbId}`, 'POST');
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to restart rewatch');
+        }
+      };
+
+      document.getElementById('rewatch-modal-cancel')!.onclick = async () => {
+        closeRewatchModal();
+        try {
+          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesTmdbId}`, 'DELETE');
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to cancel rewatch');
+        }
+      };
+
+      document.getElementById('rewatch-modal')!.classList.remove('hidden');
+    }
+
+    document.getElementById('rewatch-modal-close')!.addEventListener('click', closeRewatchModal);
+    document.getElementById('rewatch-modal')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('rewatch-modal')) closeRewatchModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeRewatchModal();
+    });
+
+    // ── Drop modal ───────────────────────────────────────────────────────────
+    function closeDropModal() {
+      document.getElementById('drop-modal')!.classList.add('hidden');
+    }
+
+    function openDropModal(mediaType: string, showId: string | undefined, mediaId: string, tmdbId?: string) {
+      const isSeries = mediaType === 'series';
+      document.getElementById('drop-modal-title')!.textContent = isSeries ? 'Drop Show' : 'Drop Movie';
+      document.getElementById('drop-modal-body')!.textContent = isSeries
+        ? 'Dropping hides this show from Next Up, Calendar, and recommendations, without touching your watch history.'
+        : 'Dropping hides this movie from Continue Watching and recommendations, without touching your watch history.';
+
+      // "Hide from Next Up" only makes sense for shows - movies have no
+      // Next Up concept to hide from.
+      const hideBtn = document.getElementById('drop-modal-hide')!;
+      hideBtn.classList.toggle('hidden', !isSeries);
+
+      hideBtn.onclick = async () => {
+        closeDropModal();
+        try {
+          await apiFetch('/history/next-up/hide', 'POST', { show_id: Number(showId) });
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to hide from Next Up');
+        }
+      };
+
+      document.getElementById('drop-modal-drop')!.onclick = async () => {
+        closeDropModal();
+        try {
+          if (isSeries) {
+            await apiFetch('/history/drop/show', 'POST', { show_id: Number(showId) });
+          } else {
+            // A movie opened straight from TMDB has no local id yet - send the
+            // tmdb id so the backend can resolve/create one (#330).
+            const body = mediaId && Number(mediaId) > 0
+              ? { media_id: Number(mediaId) }
+              : { tmdb_id: Number(tmdbId) };
+            await apiFetch('/history/drop/movie', 'POST', body);
+          }
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to drop');
+        }
+      };
+
+      document.getElementById('drop-modal')!.classList.remove('hidden');
+    }
+
+    document.getElementById('drop-modal-close')!.addEventListener('click', closeDropModal);
+    document.getElementById('drop-modal')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('drop-modal')) closeDropModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDropModal();
+    });
+
+    // ── Customize-on-add modal (admin-only - root folder/quality profile/
+    // tags/season-folder override for one Radarr/Sonarr add) ────────────────
+    let _customizeAddTags: number[] = [];
+
+    function closeCustomizeAddPopover() {
+      document.getElementById('customize-add-popover')!.classList.add('hidden');
+    }
+
+    function renderCustomizeAddTags(tags: any[], selectedIds: number[]) {
+      const container = document.getElementById('customize-add-tags')!;
+      if (!tags || tags.length === 0) {
+        container.innerHTML = '<span class="text-xs text-zinc-500 italic px-1">No tags found</span>';
+        return;
+      }
+      container.innerHTML = tags.map((tag: any) => {
+        const isSelected = selectedIds.includes(tag.id);
+        return `<button type="button" data-tag-id="${tag.id}" class="customize-add-tag-pill px-2 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer ${isSelected ? 'ring-1 ring-blue-500 border-blue-500/50 bg-blue-500/10 text-zinc-100' : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-300'}">${esc(tag.label)}</button>`;
+      }).join('');
+      container.querySelectorAll('.customize-add-tag-pill').forEach((pill) => {
+        pill.addEventListener('click', () => {
+          const id = parseInt((pill as HTMLElement).dataset.tagId!);
+          const selected = _customizeAddTags.includes(id);
+          if (selected) {
+            _customizeAddTags = _customizeAddTags.filter(t => t !== id);
+          } else {
+            _customizeAddTags.push(id);
+          }
+          pill.classList.toggle('ring-1', !selected);
+          pill.classList.toggle('ring-blue-500', !selected);
+          pill.classList.toggle('border-blue-500/50', !selected);
+          pill.classList.toggle('bg-blue-500/10', !selected);
+          pill.classList.toggle('text-zinc-100', !selected);
+          pill.classList.toggle('bg-zinc-800', selected);
+          pill.classList.toggle('text-zinc-300', selected);
+        });
+      });
+    }
+
+    async function openCustomizeAddPopover(mediaType: string, onConfirm: (overrides: Record<string, unknown>) => Promise<void>) {
+      const popover = document.getElementById('customize-add-popover')!;
+      const loading = document.getElementById('customize-add-loading')!;
+      const body = document.getElementById('customize-add-body')!;
+      const footer = document.getElementById('customize-add-footer')!;
+      const errorEl = document.getElementById('customize-add-error')!;
+      const seasonRow = document.getElementById('customize-add-season-folder-row')!;
+      const isSeries = mediaType === 'series';
+
+      document.getElementById('customize-add-title')!.textContent = isSeries ? 'Add to Sonarr' : 'Add to Radarr';
+      loading.classList.remove('hidden');
+      body.classList.add('hidden');
+      footer.classList.add('hidden');
+      errorEl.classList.add('hidden');
+      seasonRow.classList.toggle('hidden', !isSeries);
+      popover.classList.remove('hidden');
+
+      try {
+        const opts = await apiFetch(`/media/${mediaType}/customize-options`);
+
+        const rootSelect = document.getElementById('customize-add-root-folder') as HTMLSelectElement;
+        rootSelect.innerHTML = opts.root_folders.map((f: any) =>
+          `<option value="${esc(f.path)}" ${f.path === opts.current.root_folder ? 'selected' : ''}>${esc(f.path)}</option>`
+        ).join('');
+
+        const qualitySelect = document.getElementById('customize-add-quality-profile') as HTMLSelectElement;
+        qualitySelect.innerHTML = opts.quality_profiles.map((p: any) =>
+          `<option value="${p.id}" ${p.id === opts.current.quality_profile ? 'selected' : ''}>${esc(p.name)}</option>`
+        ).join('');
+
+        _customizeAddTags = [...(opts.current.tags || [])];
+        renderCustomizeAddTags(opts.tags, _customizeAddTags);
+
+        if (isSeries) {
+          (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked = opts.current.season_folder !== false;
+        }
+
+        loading.classList.add('hidden');
+        body.classList.remove('hidden');
+        footer.classList.remove('hidden');
+      } catch {
+        loading.classList.add('hidden');
+        body.classList.remove('hidden');
+        errorEl.textContent = 'Could not load options.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('customize-add-confirm')!.onclick = async () => {
+        const overrides: Record<string, unknown> = {
+          root_folder: (document.getElementById('customize-add-root-folder') as HTMLSelectElement).value,
+          quality_profile: parseInt((document.getElementById('customize-add-quality-profile') as HTMLSelectElement).value),
+          tags: _customizeAddTags,
+        };
+        if (isSeries) {
+          overrides.season_folder = (document.getElementById('customize-add-season-folder') as HTMLInputElement).checked;
+        }
+        closeCustomizeAddPopover();
+        await onConfirm(overrides);
+      };
+    }
+
+    document.getElementById('customize-add-close')!.addEventListener('click', () => closeCustomizeAddPopover());
+    document.getElementById('customize-add-cancel')!.addEventListener('click', () => closeCustomizeAddPopover());
+    document.getElementById('customize-add-popover')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('customize-add-popover')) closeCustomizeAddPopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeCustomizeAddPopover();
+    });
+
+    // ── Create list modal ──────────────────────────────────────────────────────
+    function openCreateListModal() {
+      const modal = document.getElementById('create-list-modal')!;
+      const input = document.getElementById('create-list-name') as HTMLInputElement;
+      input.value = '';
+      modal.classList.remove('hidden');
+      input.focus();
+    }
+
+    document.getElementById('create-list-cancel')!.addEventListener('click', () => {
+      document.getElementById('create-list-modal')!.classList.add('hidden');
+    });
+
+    document.getElementById('create-list-confirm')!.addEventListener('click', async () => {
+      const input = document.getElementById('create-list-name') as HTMLInputElement;
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      try {
+        await apiFetch('/lists', 'POST', { name });
+        document.getElementById('create-list-modal')!.classList.add('hidden');
+        // Re-open popover if we had an active card
+        if (_activeListBtn) {
+          const card = _activeListBtn.closest('[data-card]') as HTMLElement;
+          if (card) openListPopover(_activeListBtn, card.dataset.tmdbId || '', card.dataset.mediaType!, '', card.dataset.mediaId || card.dataset.id || '');
+        }
+      } catch { /* ignore */ }
+    });
+
+    document.getElementById('create-list-name')!.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') (document.getElementById('create-list-confirm') as HTMLButtonElement).click();
+    });
+
+    // ── Watched button UI updater ──────────────────────────────────────────────
+    function setWatchedActiveClasses(targetBtn: HTMLElement, active: boolean) {
+      const isCard = targetBtn.parentElement?.classList.contains('grid');
+      if (active) {
+        targetBtn.classList.remove('bg-zinc-800', 'bg-zinc-900', 'text-zinc-500', 'text-zinc-400', 'hover:bg-green-500/10', 'hover:text-green-400', 'hover:text-green-500');
+        if (isCard) {
+          targetBtn.classList.add('bg-green-500/20', 'text-green-400');
+        } else {
+          targetBtn.classList.add('bg-green-500/50', 'text-green-300', 'hover:bg-green-400/50');
+        }
+      } else {
+        targetBtn.classList.remove('bg-green-500/20', 'bg-green-500/50', 'text-green-400', 'text-green-300', 'hover:bg-green-500/40', 'hover:bg-green-400/50');
+        if (isCard) {
+          targetBtn.classList.add('bg-zinc-900', 'text-zinc-400', 'hover:bg-green-500/10', 'hover:text-green-500');
+        } else {
+          targetBtn.classList.add('bg-zinc-800', 'text-zinc-500', 'hover:bg-green-500/10', 'hover:text-green-400');
+        }
+      }
+      targetBtn.querySelector('circle')?.setAttribute('fill', active ? 'currentColor' : 'none');
+    }
+
+    // Updates a series-level Watched button (show or season card) to an
+    // arbitrary percentage - used both for the 0%/100% cascades below and
+    // for live-syncing a season/show badge from its children's DOM state.
+    //
+    // data-watched deliberately only follows "fully watched" (pct >= 100) -
+    // the main click handler reads it to decide whether clicking should
+    // open "mark as watched" (still more to watch) or offer to unwatch
+    // (already fully watched), so it must never be true for a partial
+    // percentage. The green/active *look*, on the other hand, should show
+    // as soon as anything has been watched, even if that rounds to a
+    // displayed "0%" (e.g. 1 watched out of 200+ episodes) - that's what
+    // the separate `started` param (data-state) drives; pct > 0 is only a
+    // fallback for callers that don't have an exact "any watched" signal.
+    function setSeriesWatchPctUI(targetBtn: HTMLElement, pct: number, started?: boolean) {
+      const isFullyWatched = pct >= 100;
+      const active = started ?? pct > 0;
+      targetBtn.dataset.watched = String(isFullyWatched);
+      targetBtn.dataset.watchPct = String(pct);
+      targetBtn.dataset.state = active ? 'active' : 'inactive';
+      targetBtn.title = `${pct}% watched`;
+      targetBtn.style.background = '';
+      const labelEl = targetBtn.querySelector('span');
+      if (labelEl) labelEl.textContent = `${pct}%`;
+      const smLabelEl = targetBtn.querySelectorAll('span')[1];
+      if (smLabelEl) smLabelEl.textContent = `${pct}%`;
+      setWatchedActiveClasses(targetBtn, active);
+    }
+
+    function updateWatchedButtonUI(targetBtn: HTMLElement, watched: boolean) {
+      targetBtn.dataset.watched = String(watched);
+      targetBtn.dataset.state = watched ? 'active' : 'inactive';
+      const card = targetBtn.closest<HTMLElement>('[data-card]');
+      const isSeries = card?.dataset.mediaType === 'series';
+      if (isSeries) {
+        setSeriesWatchPctUI(targetBtn, watched ? 100 : 0);
+        return;
+      }
+      targetBtn.title = watched ? 'Mark as unwatched' : 'Mark as watched';
+      setWatchedActiveClasses(targetBtn, watched);
+    }
+
+    // After marking a single episode watched/unwatched from the watch-history
+    // modal, the season-level ActionBar's percentage badge doesn't get touched
+    // by anything above (that only cascades show/season -> episodes, not the
+    // reverse) - recompute it from the now-updated episode buttons on the page.
+    function syncSeasonWatchPctFromDOM(showTmdbId: string, season: string) {
+      if (!showTmdbId || !season) return;
+      const epCards = document.querySelectorAll<HTMLElement>(
+        `[data-card][data-media-type="episode"][data-show-tmdb-id="${showTmdbId}"][data-season="${season}"]`
+      );
+      if (epCards.length === 0) return;
+
+      // Matches the backend's aired_denom logic (routers/shows.py get_show_season):
+      // only count released episodes, unless none have aired yet, in which case
+      // fall back to the full season total rather than dividing by zero.
+      const today = new Date().toISOString().slice(0, 10);
+      const isAired = (airDate: string) => !airDate || airDate <= today;
+      const allCards = Array.from(epCards);
+      const airedCards = allCards.filter(c => isAired(c.dataset.airDate || ''));
+      const denomCards = airedCards.length > 0 ? airedCards : allCards;
+
+      const watchedCount = denomCards.filter(
+        c => c.querySelector<HTMLElement>('[data-action="watched"]')?.dataset.watched === 'true'
+      ).length;
+      const pct = Math.round((watchedCount / denomCards.length) * 100);
+
+      const seasonBtn = document.querySelector<HTMLElement>(
+        `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season="${season}"] [data-action="watched"]`
+      );
+      if (seasonBtn) setSeriesWatchPctUI(seasonBtn, pct, watchedCount > 0);
+    }
+
+    // Same idea, one level up: marking/unmarking a whole season watched from
+    // the show page cascades down to that season's episode cards but never
+    // touched the show-level badge at the top - recompute it from the season
+    // cards now visible on the page. Averaging season percentages (rather
+    // than a precise watched/aired episode ratio, which isn't derivable from
+    // the DOM alone) matches how routers/shows.py get_tvdb_show already
+    // computes its own show-level watch_pct, so it's not a made-up shortcut.
+    function syncShowWatchPctFromDOM(showTmdbId: string) {
+      if (!showTmdbId) return;
+      const seasonBtns = document.querySelectorAll<HTMLElement>(
+        `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season]:not([data-season=""]) [data-action="watched"]`
+      );
+      if (seasonBtns.length === 0) return;
+      const seasonBtnList = Array.from(seasonBtns);
+      const pcts = seasonBtnList.map(b => Number(b.dataset.watchPct) || 0);
+      const avgPct = Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+      // data-state (not data-watched, which only means "fully watched" for a
+      // season) is each season button's own "any progress" signal.
+      const anyStarted = seasonBtnList.some(b => b.dataset.state === 'active');
+
+      const showBtn = document.querySelector<HTMLElement>(
+        `[data-card][data-media-type="series"][data-tmdb-id="${showTmdbId}"][data-season=""] [data-action="watched"]`
+      );
+      if (showBtn) setSeriesWatchPctUI(showBtn, avgPct, anyStarted);
+    }
+
+    // ── Watch history modal ────────────────────────────────────────────────────
+    let _watchHistoryTmdbId = '';
+    // Local media id - the only handle a TVDB-only episode has (no tmdb_id).
+    let _watchHistoryMediaId = '';
+    let _watchHistoryMediaType = '';
+    let _watchHistoryDateMode: 'now' | 'airdate' | 'custom' | 'unknown' = 'now';
+    let _watchHistoryShowTmdbId = '';
+    let _watchHistoryShowTvdbId = '';
+    let _watchHistorySeasonNumber = '';
+    let _watchHistoryEpisodeNumber = '';
+    // The item's own air/release date (YYYY-MM-DD), if known - lets "Air Date"
+    // offer it as a one-click alternative to "Just now" (#395). Empty in bulk
+    // season/show mode, where no single date applies.
+    let _watchHistoryAirDate = '';
+    // Set when the modal is being used to mark a whole season/show watched
+    // (no single item's history applies) rather than logging one item's play.
+    let _watchHistoryBulkMode: { kind: 'season' | 'show'; seriesId: string; season: string; episodeOrder: string; btn: HTMLElement; tvdbId: string } | null = null;
+
+    const toLocal = (d: Date) => {
+      const p = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
+    const toUTC = (d: Date) => d.toISOString().slice(0, 16);
+
+    function closeWatchHistoryModal() {
+      document.getElementById('watch-history-modal')!.classList.add('hidden');
+      _watchHistoryBulkMode = null;
+    }
+
+    function resetWatchHistoryDateUI() {
+      _watchHistoryDateMode = 'now';
+      const nowBtn = document.getElementById('watch-history-now-btn')!;
+      const airDateBtn = document.getElementById('watch-history-airdate-btn')!;
+      const customBtn = document.getElementById('watch-history-custom-btn')!;
+      const unknownBtn = document.getElementById('watch-history-unknown-btn')!;
+      const dateInput = document.getElementById('watch-history-date-input') as HTMLInputElement;
+      const activeClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
+      const inactiveClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
+      nowBtn.className = activeClass;
+      customBtn.className = inactiveClass;
+      unknownBtn.className = inactiveClass;
+      // Air Date only makes sense for a single item with a known, already-
+      // aired date - hidden entirely in bulk season/show mode, or when the
+      // date isn't known or hasn't happened yet (#395).
+      const today = new Date().toISOString().slice(0, 10);
+      const airDateAvailable = !!_watchHistoryAirDate && _watchHistoryAirDate <= today;
+      airDateBtn.className = inactiveClass;
+      airDateBtn.classList.toggle('hidden', !airDateAvailable);
+      dateInput.classList.add('hidden');
+      dateInput.value = toLocal(new Date());
+      dateInput.max = toLocal(new Date());
+    }
+
+    async function openWatchHistoryModal(_btn: HTMLElement, tmdbId: string, mediaType: string, showTmdbId = '', seasonNumber = '', episodeNumber = '', showTvdbId = '', mediaId = '', airDate = '') {
+      _watchHistoryBulkMode = null;
+      _watchHistoryTmdbId = tmdbId;
+      _watchHistoryMediaId = mediaId;
+      _watchHistoryMediaType = mediaType;
+      _watchHistoryShowTmdbId = showTmdbId;
+      _watchHistoryShowTvdbId = showTvdbId;
+      _watchHistorySeasonNumber = seasonNumber;
+      _watchHistoryEpisodeNumber = episodeNumber;
+      _watchHistoryAirDate = airDate;
+
+      document.getElementById('watch-history-modal-title')!.textContent = 'Watch History';
+      document.getElementById('watch-history-modal-events')!.classList.remove('hidden');
+      document.getElementById('watch-history-add-play-label')!.classList.remove('hidden');
+      resetWatchHistoryDateUI();
+
+      document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
+      document.getElementById('watch-history-modal')!.classList.remove('hidden');
+      await loadWatchHistoryEvents();
+    }
+
+    function openBulkWatchModal(btn: HTMLElement, kind: 'season' | 'show', seriesId: string, season = '', episodeOrder = '', tvdbId = '') {
+      _watchHistoryBulkMode = { kind, seriesId, season, episodeOrder, btn, tvdbId };
+      // No single date applies across a whole season/show - never offer it here.
+      _watchHistoryAirDate = '';
+
+      document.getElementById('watch-history-modal-title')!.textContent = kind === 'season' ? 'Mark Season Watched' : 'Mark Show Watched';
+      document.getElementById('watch-history-modal-events')!.classList.add('hidden');
+      document.getElementById('watch-history-unwatch-btn')!.classList.add('hidden');
+      document.getElementById('watch-history-add-play-label')!.classList.add('hidden');
+      resetWatchHistoryDateUI();
+
+      document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
+      document.getElementById('watch-history-modal')!.classList.remove('hidden');
+    }
+
+    function cascadeWatchedUI(btn: HTMLElement, mediaType: string, tmdbId: string, seriesId: string, season: string, episodeOrder: string, nowWatched: boolean) {
+      updateWatchedButtonUI(btn, nowWatched);
+
+      // If marking a show as watched/unwatched, update all season/episode cards on the page
+      if (mediaType === 'series' && !season) {
+        // Find season cards: can be [data-tmdb-id=SHOW_ID] with [data-season] set,
+        // OR [data-show-tmdb-id=SHOW_ID] with [data-season] set.
+        const allSeasonCards = document.querySelectorAll(`
+          [data-card][data-media-type="series"][data-tmdb-id="${tmdbId}"][data-season]:not([data-season=""]),
+          [data-card][data-media-type="series"][data-show-tmdb-id="${tmdbId}"][data-season]:not([data-season=""])
+        `);
+        allSeasonCards.forEach(c => {
+          const sBtn = c.querySelector<HTMLElement>('[data-action="watched"]');
+          if (sBtn) updateWatchedButtonUI(sBtn, nowWatched);
+        });
+        // Also update any episode cards for this show
+        const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${tmdbId}"]`);
+        allEpCards.forEach(c => {
+          const eBtn = c.querySelector<HTMLElement>('[data-action="watched"]');
+          if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
+        });
+      }
+
+      // If marking a season as watched/unwatched, update all episodes for that season on the page.
+      // Under a non-aired order (#174) an episode card's `data-season` is the *canonical* season
+      // (what its tracking calls need) while `data-display-season` is what the user sees - match
+      // on the latter, since `season` here is the display season from the season control.
+      if (mediaType === 'series' && season) {
+        const seasonAttribute = nonAiredOrder(episodeOrder) ? 'data-display-season' : 'data-season';
+        const allEpCards = document.querySelectorAll(`[data-card][data-media-type="episode"][data-show-tmdb-id="${seriesId}"][${seasonAttribute}="${season}"]`);
+        allEpCards.forEach(c => {
+          const eBtn = c.querySelector<HTMLElement>('[data-action="watched"]');
+          if (eBtn) updateWatchedButtonUI(eBtn, nowWatched);
+        });
+      }
+    }
+
+    async function loadWatchHistoryEvents() {
+      const eventsEl = document.getElementById('watch-history-modal-events')!;
+      eventsEl.innerHTML = '<div class="px-4 py-3 text-xs text-zinc-500">Loading…</div>';
+      const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
+      unwatchBtn.classList.add('hidden');
+      try {
+        const seriesQuery = _watchHistoryMediaType === 'episode'
+          ? (_watchHistoryShowTmdbId ? `&series_tmdb_id=${_watchHistoryShowTmdbId}` : '')
+            + (_watchHistoryShowTvdbId ? `&series_tvdb_id=${_watchHistoryShowTvdbId}` : '')
+          : '';
+        const itemIdQuery = _watchHistoryTmdbId ? `tmdb_id=${_watchHistoryTmdbId}` : `media_id=${_watchHistoryMediaId}`;
+        const { watched, events }: { watched: boolean; events: Array<{ id: number; watched_at: string | null }> } = await apiFetch(
+          `/history/item-events?${itemIdQuery}&media_type=${_watchHistoryMediaType}${seriesQuery}`
+        );
+        if (events.length === 0) {
+          eventsEl.innerHTML = '<div class="px-4 py-3 text-sm text-zinc-500 italic">No plays recorded yet</div>';
+        } else {
+          eventsEl.innerHTML = events.map(ev => {
+            const fmt = ev.watched_at
+              ? new Date(ev.watched_at + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ })
+              : 'Unknown date';
+            return `<div class="flex items-center justify-between px-4 py-2.5 hover:bg-zinc-800/50 group">
+              <span class="text-sm text-zinc-200">${esc(fmt)}</span>
+              <button class="text-zinc-600 group-hover:text-zinc-400 hover:!text-red-400 transition-colors cursor-pointer" data-delete-event="${ev.id}" aria-label="Remove">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>`;
+          }).join('');
+        }
+        // "Any plays at all" (controls the destructive "remove all history"
+        // button) is a different question from "counts as watched right now"
+        // (controls the ActionBar button) - they only diverge when a rewatch
+        // is active and every remaining play predates it.
+        const hasEvents = events.length > 0;
+        unwatchBtn.classList.toggle('hidden', !hasEvents);
+        document.getElementById('watch-history-log-btn')!.textContent = hasEvents ? 'Log a rewatch' : 'Mark as watched';
+        const cardSelector = _watchHistoryTmdbId
+          ? `[data-card][data-tmdb-id="${_watchHistoryTmdbId}"][data-media-type="${_watchHistoryMediaType}"]`
+          : `[data-card][data-media-id="${_watchHistoryMediaId}"][data-media-type="${_watchHistoryMediaType}"]`;
+        document.querySelectorAll<HTMLElement>(
+          `${cardSelector} [data-action="watched"]`
+        ).forEach(b => updateWatchedButtonUI(b, watched));
+      } catch {
+        eventsEl.innerHTML = '<div class="px-4 py-2 text-xs text-red-400">Failed to load</div>';
+      }
+    }
+
+    document.getElementById('watch-history-modal-close')!.addEventListener('click', closeWatchHistoryModal);
+    document.getElementById('watch-history-modal')!.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('watch-history-modal')) closeWatchHistoryModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeWatchHistoryModal();
+    });
+
+    document.getElementById('watch-history-modal-events')!.addEventListener('click', async (e) => {
+      const delBtn = (e.target as Element).closest<HTMLElement>('[data-delete-event]');
+      if (!delBtn) return;
+      delBtn.style.opacity = '0.4';
+      delBtn.style.pointerEvents = 'none';
+      try {
+        await apiFetch(`/history/event/${delBtn.dataset.deleteEvent}`, 'DELETE');
+        await loadWatchHistoryEvents();
+        syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
+      } catch {
+        delBtn.style.opacity = '';
+        delBtn.style.pointerEvents = '';
+      }
+    });
+
+    document.getElementById('watch-history-unwatch-btn')!.addEventListener('click', async () => {
+      const confirmed = await showConfirm(
+        'Mark as unwatched?',
+        'This will remove every recorded play for this item and mark it as unwatched on enabled services.'
+      );
+      if (!confirmed) return;
+
+      const unwatchBtn = document.getElementById('watch-history-unwatch-btn') as HTMLButtonElement;
+      unwatchBtn.disabled = true;
+      unwatchBtn.textContent = 'Removing…';
+      try {
+        const unwatchIdQuery = _watchHistoryTmdbId
+          ? `tmdb_id=${encodeURIComponent(_watchHistoryTmdbId)}`
+          : `id=${encodeURIComponent(_watchHistoryMediaId)}`;
+        await apiFetch(
+          `/history/item?${unwatchIdQuery}&media_type=${encodeURIComponent(_watchHistoryMediaType)}`,
+          'DELETE'
+        );
+        await loadWatchHistoryEvents();
+        syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
+      } catch { /* keep the modal open so the user can retry */ }
+      unwatchBtn.disabled = false;
+      unwatchBtn.textContent = 'Mark as unwatched';
+    });
+
+    (() => {
+      const activeClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-blue-600 text-white';
+      const inactiveClass = 'px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200';
+      // Air Date's own "active"/"inactive" classes never touch its "hidden"
+      // state - that's set once, separately, by resetWatchHistoryDateUI based
+      // on whether an air date is actually available (#395).
+      const setDateModeButtons = (mode: 'now' | 'airdate' | 'custom' | 'unknown') => {
+        (document.getElementById('watch-history-now-btn') as HTMLElement).className = mode === 'now' ? activeClass : inactiveClass;
+        const airDateBtn = document.getElementById('watch-history-airdate-btn') as HTMLElement;
+        const airDateWasHidden = airDateBtn.classList.contains('hidden');
+        airDateBtn.className = mode === 'airdate' ? activeClass : inactiveClass;
+        airDateBtn.classList.toggle('hidden', airDateWasHidden);
+        (document.getElementById('watch-history-custom-btn') as HTMLElement).className = mode === 'custom' ? activeClass : inactiveClass;
+        (document.getElementById('watch-history-unknown-btn') as HTMLElement).className = mode === 'unknown' ? activeClass : inactiveClass;
+      };
+
+      document.getElementById('watch-history-now-btn')!.addEventListener('click', () => {
+        _watchHistoryDateMode = 'now';
+        setDateModeButtons('now');
+        document.getElementById('watch-history-date-input')!.classList.add('hidden');
+      });
+
+      document.getElementById('watch-history-airdate-btn')!.addEventListener('click', () => {
+        _watchHistoryDateMode = 'airdate';
+        setDateModeButtons('airdate');
+        document.getElementById('watch-history-date-input')!.classList.add('hidden');
+      });
+
+      document.getElementById('watch-history-custom-btn')!.addEventListener('click', () => {
+        _watchHistoryDateMode = 'custom';
+        setDateModeButtons('custom');
+        const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
+        input.max = toLocal(new Date());
+        input.classList.remove('hidden');
+        input.focus();
+      });
+
+      document.getElementById('watch-history-unknown-btn')!.addEventListener('click', () => {
+        _watchHistoryDateMode = 'unknown';
+        setDateModeButtons('unknown');
+        document.getElementById('watch-history-date-input')!.classList.add('hidden');
+      });
+
+      document.getElementById('watch-history-log-btn')!.addEventListener('click', async () => {
+        const input = document.getElementById('watch-history-date-input') as HTMLInputElement;
+        const watchedAt = _watchHistoryDateMode === 'unknown'
+          ? null
+          : _watchHistoryDateMode === 'now'
+            ? toUTC(new Date())
+            : _watchHistoryDateMode === 'airdate'
+              // Date-only string (YYYY-MM-DD) - midday, not midnight, so this
+              // can never shift a day backward in a timezone east of UTC
+              // (see AGENTS.md's date-only string guidance).
+              ? toUTC(new Date(_watchHistoryAirDate + 'T12:00:00'))
+              : toUTC(new Date(input.value || toLocal(new Date())));
+        const logBtn = document.getElementById('watch-history-log-btn') as HTMLButtonElement;
+        const idleLabel = logBtn.textContent || 'Mark as watched';
+        logBtn.disabled = true;
+        logBtn.textContent = 'Saving…';
+
+        if (_watchHistoryBulkMode) {
+          const { kind, seriesId, season, episodeOrder, btn: sourceBtn, tvdbId: bulkTvdbId } = _watchHistoryBulkMode;
+          try {
+            if (kind === 'season') {
+              const body: Record<string, unknown> = {
+                series_tmdb_id: Number(seriesId),
+                season_number: Number(season),
+                watched_at: watchedAt,
+              };
+              if (nonAiredOrder(episodeOrder)) body.episode_order = episodeOrder;
+              if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
+              await apiFetch('/history/season', 'POST', body);
+              cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, season, episodeOrder, true);
+              syncShowWatchPctFromDOM(seriesId);
+            } else {
+              const body: Record<string, unknown> = { series_tmdb_id: Number(seriesId), watched_at: watchedAt };
+              if (bulkTvdbId) body.series_tvdb_id = Number(bulkTvdbId);
+              await apiFetch('/history/show-all', 'POST', body);
+              cascadeWatchedUI(sourceBtn, 'series', seriesId, seriesId, '', '', true);
+            }
+            closeWatchHistoryModal();
+          } catch (err) {
+            logBtn.textContent = idleLabel;
+            alertFromError(err, 'Failed to mark as watched');
+          }
+          logBtn.disabled = false;
+          return;
+        }
+
+        const watchBody: Record<string, unknown> = {
+          media_type: _watchHistoryMediaType,
+          completed: true,
+          watched_at: watchedAt,
+        };
+        if (_watchHistoryTmdbId) watchBody.tmdb_id = Number(_watchHistoryTmdbId);
+        if (_watchHistoryMediaId) watchBody.media_id = Number(_watchHistoryMediaId);
+        if (_watchHistoryMediaType === 'episode' && (_watchHistoryShowTmdbId || _watchHistoryShowTvdbId)) {
+          if (_watchHistoryShowTmdbId) watchBody.series_tmdb_id = Number(_watchHistoryShowTmdbId);
+          if (_watchHistoryShowTvdbId) watchBody.series_tvdb_id = Number(_watchHistoryShowTvdbId);
+          if (_watchHistorySeasonNumber) watchBody.season_number = Number(_watchHistorySeasonNumber);
+          if (_watchHistoryEpisodeNumber) watchBody.episode_number = Number(_watchHistoryEpisodeNumber);
+        }
+
+        const submitWatch = async () => {
+          await apiFetch('/history', 'POST', watchBody);
+          await loadWatchHistoryEvents();
+          syncSeasonWatchPctFromDOM(_watchHistoryShowTmdbId, _watchHistorySeasonNumber);
+          // Reset to "Just now" after logging
+          _watchHistoryDateMode = 'now';
+          setDateModeButtons('now');
+          input.classList.add('hidden');
+        };
+
+        try {
+          await submitWatch();
+        } catch (err) {
+          // A 409 {detail: {error: "duplicate_watch", message, ...}} means this
+          // looks like a duplicate of an existing watch within the configured
+          // window (#390) - only the manual entry point gets to override that
+          // with a confirmation, everything else (webhooks, imports) just skips
+          // silently.
+          let duplicateDetail: any = null;
+          try {
+            const data = JSON.parse((err as Error).message);
+            if (data?.detail?.error === 'duplicate_watch') duplicateDetail = data.detail;
+          } catch {}
+
+          let forcedSuccess = false;
+          if (duplicateDetail) {
+            const proceed = await showConfirm(
+              'Possible duplicate',
+              duplicateDetail.message || 'This looks like a duplicate of an existing watch. Add anyway?',
+            );
+            if (proceed) {
+              try {
+                watchBody.force = true;
+                await submitWatch();
+                forcedSuccess = true;
+              } catch (err2) {
+                alertFromError(err2, 'Failed to mark as watched');
+              }
+            }
+          } else {
+            alertFromError(err, 'Failed to mark as watched');
+          }
+          if (!forcedSuccess) logBtn.textContent = idleLabel;
+        }
+        logBtn.disabled = false;
+      });
+    })();
+
+    // ── Main event delegation ──────────────────────────────────────────────────
+    document.addEventListener('click', async (e) => {
+      const target = e.target as Element;
+
+      const btn = target.closest<HTMLElement>('[data-action]');
+      if (!btn) return;
+
+      const card = btn.closest<HTMLElement>('[data-card]');
+      if (!card) return;
+
+      const action = btn.dataset.action;
+      const mediaActions = ['watched', 'list', 'collected', 'request', 'rate', 'rewatch', 'drop'];
+      if (!action || !mediaActions.includes(action)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const tmdbIdRaw = card.dataset.tmdbId;
+      const tmdbId = tmdbIdRaw && tmdbIdRaw !== 'null' ? tmdbIdRaw : '';
+      // ActionBar cards set data-media-id; MediaCard grid cards set data-id
+      // (same purpose, mismatched attribute name) — check both.
+      const mediaId = card.dataset.mediaId || card.dataset.id || '';
+      const mediaType = card.dataset.mediaType!;
+      const episodeOrder = card.dataset.episodeOrder || 'tmdb';
+
+      if (action === 'watched') {
+        const isWatched = btn.dataset.watched === 'true';
+        const showTmdbId = card.dataset.showTmdbId;
+        const season = card.dataset.season;
+        // For season cards: showTmdbId = show TMDB ID, tmdbId = show TMDB ID (same)
+        // season is set → season-level operation
+        const seriesId = showTmdbId || tmdbId;
+
+        if (mediaType === 'movie' || mediaType === 'episode') {
+          await openWatchHistoryModal(btn, tmdbId, mediaType, card.dataset.showTmdbId || '', card.dataset.season || '', card.dataset.episodeNumber || '', card.dataset.showTvdbId || '', mediaId, card.dataset.airDate || '');
+          return;
+        }
+
+        // Marking a season/show watched needs a date (custom/unknown/now) — handled by
+        // the modal's own log button, which POSTs to /history/season or /history/show-all
+        // once the user confirms (see the watch-history-log-btn handler below).
+        if (mediaType === 'series' && season && !isWatched) {
+          openBulkWatchModal(btn, 'season', seriesId, season, episodeOrder, card.dataset.tvdbId || '');
+          return;
+        }
+        if (mediaType === 'series' && !season && !isWatched) {
+          openBulkWatchModal(btn, 'show', tmdbId, '', '', card.dataset.tvdbId || '');
+          return;
+        }
+
+        // Only the "unwatch" (remove all history) cases remain here — no date involved.
+        let confirmed = true;
+        if (mediaType === 'series' && season && isWatched) {
+          confirmed = await showConfirm('Mark season as unwatched?', 'This will remove all watch events for every episode in this season.');
+        } else if (mediaType === 'series' && !season && isWatched) {
+          confirmed = await showConfirm('Remove all watch history?', 'This will remove all watch events for every episode of this show.');
+        }
+        if (!confirmed) return;
+
+        try {
+          if (mediaType === 'series' && season) {
+            const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
+            await apiFetch(`/history/season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
+          } else if (mediaType === 'series') {
+            await apiFetch(`/history/show-all?series_tmdb_id=${tmdbId}`, 'DELETE');
+          }
+          cascadeWatchedUI(btn, mediaType, tmdbId, seriesId, season || '', episodeOrder, false);
+          if (mediaType === 'series' && season) {
+            syncShowWatchPctFromDOM(seriesId);
+          }
+        } catch { /* ignore */ }
+
+      } else if (action === 'list') {
+        if (!tmdbId && !mediaId) { alert('Cannot add unmatched item to lists'); return; }
+        if (document.getElementById('list-popover')!.classList.contains('hidden') || _activeListBtn !== btn) {
+          openListPopover(btn, tmdbId, mediaType, card.dataset.season || '', mediaId);
+        } else {
+          closeListPopover();
+        }
+
+      } else if (action === 'collected') {
+        const season = card.dataset.season;
+        const showTmdbId = card.dataset.showTmdbId;
+        const inLibrary = btn.dataset.inLibrary === 'true';
+        const seriesId = showTmdbId || tmdbId;
+        try {
+          if (mediaType === 'series' && !season) {
+            // Show-level collect/uncollect — covers all seasons
+            if (inLibrary) {
+              const ok = await showConfirm('Remove show from collection?', 'This will remove all collection entries for every episode in this show.');
+              if (!ok) return;
+              await apiFetch(`/media/collect-show?tmdb_id=${tmdbId}`, 'DELETE');
+            } else {
+              await apiFetch('/media/collect-show', 'POST', { tmdb_id: Number(tmdbId), media_type: 'series' });
+            }
+          } else if (mediaType === 'series' && season) {
+            // Season-level collect/uncollect
+            if (inLibrary) {
+              const ok = await showConfirm('Remove season from collection?', 'This will remove all collection entries for this season.');
+              if (!ok) return;
+              const orderQuery = nonAiredOrder(episodeOrder) ? '&episode_order=' + encodeURIComponent(episodeOrder) : '';
+              await apiFetch(`/media/collect-season?series_tmdb_id=${seriesId}&season_number=${season}${orderQuery}`, 'DELETE');
+            } else {
+              const collectSeasonBody: Record<string, number | string> = {
+                series_tmdb_id: Number(seriesId),
+                season_number: Number(season),
+              };
+              if (nonAiredOrder(episodeOrder)) collectSeasonBody.episode_order = episodeOrder;
+              await apiFetch('/media/collect-season', 'POST', collectSeasonBody);
+            }
+          } else {
+            if (inLibrary) {
+              const ok = await showConfirm('Remove from collection?', 'This will remove all collection entries for this item.');
+              if (!ok) return;
+              const query = tmdbId ? `tmdb_id=${tmdbId}` : `id=${mediaId}`;
+              await apiFetch(`/media/collect?${query}&media_type=${mediaType}`, 'DELETE');
+            } else {
+              if (!tmdbId && !mediaId) { alert('Cannot manually collect unmatched items'); return; }
+              const collectBody: Record<string, number | string> = { media_type: mediaType };
+              if (tmdbId) collectBody.tmdb_id = Number(tmdbId);
+              if (mediaId) collectBody.media_id = Number(mediaId);
+              if (mediaType === 'episode') {
+                const epNum = card.dataset.episodeNumber;
+                if (showTmdbId) collectBody.series_tmdb_id = Number(showTmdbId);
+                if (season) collectBody.season_number = Number(season);
+                if (epNum) collectBody.episode_number = Number(epNum);
+              }
+              await apiFetch('/media/collect', 'POST', collectBody);
+            }
+            // Episode-level: just toggle the button locally
+            const nowInLibrary = !inLibrary;
+            btn.dataset.inLibrary = String(nowInLibrary);
+            btn.dataset.state = nowInLibrary ? 'active' : 'inactive';
+            const isCard = btn.parentElement?.classList.contains('grid');
+            if (nowInLibrary) {
+              btn.classList.remove('bg-zinc-800', 'bg-zinc-900', 'text-zinc-500', 'text-zinc-400', 'hover:bg-purple-500/10', 'hover:text-purple-400');
+              btn.classList.add(isCard ? 'bg-purple-500/20' : 'bg-purple-500/50', 'text-purple-400');
+            } else {
+              btn.classList.remove('bg-purple-500/20', 'bg-purple-500/50', 'text-purple-400', 'text-purple-300', 'hover:bg-purple-500/40', 'hover:bg-purple-400/50');
+              btn.classList.add(isCard ? 'bg-zinc-900' : 'bg-zinc-800', isCard ? 'text-zinc-400' : 'text-zinc-500');
+            }
+            btn.title = nowInLibrary ? 'In collection' : 'Add to collection';
+            return;
+          }
+          // Season/show-level: reload so percentages and all sibling cards update
+          window.location.reload();
+        } catch { /* ignore */ }
+
+      } else if (action === 'rate') {
+        const currentRating = btn.dataset.userRating ? Number(btn.dataset.userRating) : null;
+        const ratingSeason = (mediaType === 'series' && card.dataset.season) ? Number(card.dataset.season) : null;
+        // Cards (MediaCard/EpisodeCard) and detail-page ActionBars set data-rate-*
+        // so the popover header can name what's being rated once the modal dims
+        // the page. Absent = no header, same as before.
+        const rateInfo = card.dataset.rateTitle
+          ? {
+              title: card.dataset.rateTitle,
+              subtitle: card.dataset.rateSubtitle || undefined,
+              posterUrl: ratingPosterUrl(card.dataset.ratePoster),
+              landscape: card.dataset.rateLandscape === 'true',
+            }
+          : null;
+        if (document.getElementById('rating-popover')!.classList.contains('hidden') || _activeRatingBtn !== btn) {
+          openRatingPopover(btn, tmdbId, mediaType, currentRating, ratingSeason, episodeOrder, rateInfo, mediaId);
+        } else {
+          closeRatingPopover();
+        }
+
+      } else if (action === 'request') {
+        const performRequestAdd = async (overrides?: Record<string, unknown>) => {
+          const originalContent = btn.innerHTML;
+          btn.innerHTML = '<svg class="animate-spin h-5 w-5 text-orange-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+          btn.classList.add('pointer-events-none');
+
+          try {
+            const res = await apiFetch(`/media/${mediaType}/${tmdbId}/request`, 'POST', overrides);
+            if (res.status === 'added' || res.status === 'already_exists') {
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-green-500"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-green-500">' + (res.status === 'added' ? 'Added' : 'Exists') + '</span>';
+              btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
+              btn.classList.add('bg-green-500/10', 'text-green-500');
+              (btn as HTMLButtonElement).disabled = true;
+            } else if (res.status === 'pending_approval') {
+              btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-amber-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="text-[10px] font-bold uppercase tracking-wider leading-none text-amber-400">Pending</span>';
+              btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-500/10', 'hover:text-orange-400');
+              btn.classList.add('bg-amber-500/10', 'text-amber-400');
+              (btn as HTMLButtonElement).disabled = true;
+            } else {
+              throw new Error('Failed to request');
+            }
+          } catch (err: any) {
+            btn.innerHTML = originalContent;
+            btn.classList.remove('pointer-events-none');
+            alertFromError(err, 'Request failed');
+          }
+        };
+
+        // Admin-only, opt-in via Connections/Admin settings - everyone else
+        // (and admins who've left the toggle off) keeps the instant-add path.
+        const customizeOnAdd = (window as any).__IS_ADMIN__ && (
+          (mediaType === 'movie' && (window as any).__RADARR_CUSTOMIZE_ON_ADD__) ||
+          (mediaType === 'series' && (window as any).__SONARR_CUSTOMIZE_ON_ADD__)
+        );
+        if (customizeOnAdd) {
+          openCustomizeAddPopover(mediaType, performRequestAdd);
+        } else {
+          await performRequestAdd();
+        }
+
+      } else if (action === 'rewatch') {
+        // Show-level card only (ActionBar only renders this button there) —
+        // data-tmdb-id on the card IS the show's own tmdb id in that context.
+        const seriesId = tmdbId;
+        const isActive = btn.dataset.rewatchActive === 'true';
+
+        if (isActive) {
+          openRewatchModal(seriesId);
+          return;
+        }
+
+        try {
+          await apiFetch(`/history/rewatch?series_tmdb_id=${seriesId}`, 'POST');
+          window.location.reload();
+        } catch (err: any) {
+          alertFromError(err, 'Failed to start rewatch');
+        }
+
+      } else if (action === 'drop') {
+        const showId = btn.dataset.showId;
+        const isDropped = btn.dataset.dropped === 'true';
+
+        if (isDropped) {
+          try {
+            if (mediaType === 'series') {
+              await apiFetch(`/history/drop/show?show_id=${showId}`, 'DELETE');
+            } else {
+              const q = mediaId && Number(mediaId) > 0 ? `media_id=${mediaId}` : `tmdb_id=${tmdbId}`;
+              await apiFetch(`/history/drop/movie?${q}`, 'DELETE');
+            }
+            window.location.reload();
+          } catch (err: any) {
+            alertFromError(err, 'Failed to undrop');
+          }
+          return;
+        }
+
+        openDropModal(mediaType, showId, mediaId, tmdbId);
+      }
+    });
+  </script>

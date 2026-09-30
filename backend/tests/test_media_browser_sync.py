@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from sqlalchemy.sql import Select
 from core.sync_jobs import SyncCancelled
@@ -59,19 +60,19 @@ class MediaBrowserPullTests(unittest.IsolatedAsyncioTestCase):
             "propagate": AsyncMock(),
         }
         with ExitStack() as stack:
-            stack.enter_context(patch.object(sync, "async_sessionmaker", return_value=lambda: db))
-            stack.enter_context(patch.object(sync, "mark_job_running_unless_cancelled", AsyncMock(return_value=not cancelled)))
-            stack.enter_context(patch.object(sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=key)))
+            stack.enter_context(patch.object(server_sync, "async_sessionmaker", return_value=lambda: db))
+            stack.enter_context(patch.object(server_sync, "mark_job_running_unless_cancelled", AsyncMock(return_value=not cancelled)))
+            stack.enter_context(patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=key)))
             for method in ["libraries", "movies", "shows", "episodes"]:
                 stack.enter_context(patch.object(adapter, f"get_{method}", mocks[method]))
             for method, name in [("sync_items", "items"), ("sync_shows_batch", "map"),
                                  ("_remove_stale_collection_files", "remove"), ("_push_watched_back_to_source", "push")]:
-                stack.enter_context(patch.object(sync, method, mocks[name]))
-            stack.enter_context(patch.object(sync, "_stamp_matched_show_warnings", AsyncMock(side_effect=lambda db, user, warnings: warnings)))
+                stack.enter_context(patch.object(server_sync, method, mocks[name]))
+            stack.enter_context(patch.object(server_sync, "_stamp_matched_show_warnings", AsyncMock(side_effect=lambda db, user, warnings: warnings)))
             stack.enter_context(patch("core.media_server_reconciliation.reconcile_media_server_pull", mocks["reconcile"]))
             stack.enter_context(patch("core.pull_propagation.propagate_media_server_pull", mocks["propagate"]))
-            stack.enter_context(patch.object(sync.asyncio, "create_task", side_effect=lambda coroutine: coroutine.close()))
-            await sync._run_media_browser_sync(provider, 1, 2, movie_limit, show_limit, 7)
+            stack.enter_context(patch.object(server_sync.asyncio, "create_task", side_effect=lambda coroutine: coroutine.close()))
+            await server_sync._run_media_browser_sync(provider, 1, 2, movie_limit, show_limit, 7)
         return db, mocks
 
     async def test_cancelled_queued_jobs_do_not_contact_either_provider(self):
@@ -86,7 +87,7 @@ class MediaBrowserPullTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(provider=provider):
                 db, calls = await self._run(provider, connection=False)
                 calls["libraries"].assert_not_awaited()
-                self.assertEqual(db.writes[-1]["status"], sync.SyncStatus.failed)
+                self.assertEqual(db.writes[-1]["status"], server_sync.SyncStatus.failed)
 
     async def test_provider_specific_tmdb_requirements_are_preserved(self):
         db, calls = await self._run("jellyfin", key=None)
@@ -94,7 +95,7 @@ class MediaBrowserPullTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.writes[-1]["error_message"], "Missing Jellyfin connection or TMDB API key")
         db, calls = await self._run("emby", key=None)
         calls["libraries"].assert_awaited_once()
-        self.assertEqual(db.writes[-1]["status"], sync.SyncStatus.completed)
+        self.assertEqual(db.writes[-1]["status"], server_sync.SyncStatus.completed)
 
     async def test_selected_movie_libraries_and_limits_preserve_source_and_partial_pull(self):
         for provider in ["jellyfin", "emby"]:
@@ -127,7 +128,7 @@ class MediaBrowserPullTests(unittest.IsolatedAsyncioTestCase):
         for provider in ["jellyfin", "emby"]:
             with self.subTest(provider=provider):
                 db, calls = await self._run(provider, fetch_error=SyncCancelled())
-                self.assertEqual(db.writes[-1]["status"], sync.SyncStatus.cancelled)
+                self.assertEqual(db.writes[-1]["status"], server_sync.SyncStatus.cancelled)
                 self.assertEqual(db.writes[-1]["stats"], {"movies": 0, "episodes": 0, "skipped": 0, "errors": 0})
                 db.rollback.assert_awaited_once()
                 calls["items"].assert_not_awaited()

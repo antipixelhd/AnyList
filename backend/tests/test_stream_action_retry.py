@@ -7,8 +7,8 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql+asyncpg://test:test@localhost/test",
 )
+from core import scheduler
 
-import main
 from core import cloud_actions, stream_actions
 from core import watch_intents
 from core import streaming_library
@@ -60,7 +60,7 @@ class StreamActionRetryTests(unittest.IsolatedAsyncioTestCase):
              patch.object(watch_intents, "dispatch_watch_intents", watch_dispatch), \
              patch.object(cloud_actions, "dispatch_cloud_actions", cloud_dispatch), \
              patch.object(streaming_library, "dispatch_pending_library_deliveries", library_dispatch):
-            await main._dispatch_pending_stream_actions_once(factory)
+            await scheduler._dispatch_pending_stream_actions_once(factory)
 
         self.assertEqual([call.args[1] for call in dispatch.await_args_list], [4, 9])
         self.assertEqual([call.args[1] for call in watch_dispatch.await_args_list], [4, 9])
@@ -78,7 +78,7 @@ class StreamActionRetryTests(unittest.IsolatedAsyncioTestCase):
              patch.object(watch_intents, "dispatch_watch_intents", watch_dispatch), \
              patch.object(cloud_actions, "dispatch_cloud_actions", cloud_dispatch), \
              patch.object(streaming_library, "dispatch_pending_library_deliveries", library_dispatch):
-            await main._dispatch_pending_stream_actions_once(factory)
+            await scheduler._dispatch_pending_stream_actions_once(factory)
 
         self.assertEqual([call.args[1] for call in dispatch.await_args_list], [4, 9])
         self.assertEqual([call.args[1] for call in watch_dispatch.await_args_list], [4, 9])

@@ -1,0 +1,34 @@
+<script>
+    // ── Radarr / Sonarr monitored check (deferred after page load) ────────────
+    (async () => {
+      const btn = document.querySelector<HTMLButtonElement>('[data-action="request"][data-request-loading="true"]');
+      if (!btn) return;
+      const card = btn.closest<HTMLElement>('[data-card]');
+      if (!card) return;
+      const tmdbId = card.dataset.tmdbId;
+      const mediaType = card.dataset.mediaType;
+      if (!tmdbId || !mediaType) return;
+
+      const API = '/api/proxy';
+      const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
+
+      try {
+        const res = await fetch(`${API}/media/request-status?tmdb_id=${tmdbId}&media_type=${mediaType}`, {
+          headers: { Authorization: `Bearer ${TOKEN()}` },
+        });
+        if (!res.ok) return; // service down — keep disabled
+        const { monitored } = await res.json();
+        btn.removeAttribute('data-request-loading');
+        if (monitored) {
+          btn.title = mediaType === 'series' ? 'Already in Sonarr' : 'Already in Radarr';
+          btn.dataset.state = 'active';
+          btn.classList.remove('bg-zinc-800', 'text-zinc-500', 'hover:bg-orange-300/60', 'hover:text-orange-400');
+          btn.classList.add('bg-orange-500/50', 'text-orange-300', 'hover:bg-orange-400/50');
+        } else {
+          btn.disabled = false;
+        }
+      } catch {
+        // network error — keep disabled
+      }
+    })();
+  </script>

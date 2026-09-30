@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("SECRET_KEY", "local-tests-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import scheduler
 
 from core.pull_cycle import (
     coordinated_pull_cycle,
@@ -217,7 +218,6 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('NOT IN', db.target_query)
 
     async def test_cycle_flush_groups_watch_ids_by_their_own_source_exclusions(self):
-        import main
         from core.pull_cycle import allow_cycle_delivery
 
         class _Result:
@@ -267,7 +267,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
                     )
                 defer_watch_removals(61, {13}, 7)
                 with allow_cycle_delivery(state):
-                    await main._flush_pull_cycle(state)
+                    await scheduler._flush_pull_cycle(state)
 
         watched_calls = [call for call in fanout.await_args_list if call.args[3]]
         self.assertEqual(len(watched_calls), 2)
@@ -287,7 +287,6 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_failed_pull_does_not_cancel_peer_or_skip_cycle_flush(self):
-        import main
 
         both_started = asyncio.Event()
         starts = 0
@@ -317,8 +316,8 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("provider unavailable")
 
         flush = AsyncMock()
-        with patch.object(main, "_flush_pull_cycle", flush):
-            await main._run_scheduled_pull_cycle(52, [
+        with patch.object(scheduler, "_flush_pull_cycle", flush):
+            await scheduler._run_scheduled_pull_cycle(52, [
                 ("stremio:3", successful_pull),
                 ("nuvio:4", failed_pull),
             ])

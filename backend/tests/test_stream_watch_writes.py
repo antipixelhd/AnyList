@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import server_sync
 
 from core.watch_intents import _write_provider_watch_state
 from models import MediaType
@@ -110,7 +111,7 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(baseline.snapshot["mappings"], {"existing-id": 99})
 
     async def test_full_push_persists_confirmed_visibility_echo_before_continuing(self):
-        from routers.sync import _record_full_push_visibility_echo
+
         events = []
         db = SimpleNamespace(commit=AsyncMock(side_effect=lambda: events.append("commit")))
         conn = SimpleNamespace(id=12)
@@ -120,7 +121,7 @@ class NuvioWatchWriteTests(unittest.IsolatedAsyncioTestCase):
             events.append("record")
 
         with patch("core.nuvio_visibility.record_visibility_echo", side_effect=record) as save:
-            await _record_full_push_visibility_echo(db, conn, written)
+            await server_sync._record_full_push_visibility_echo(db, conn, written)
 
         save.assert_awaited_once_with(db, conn, written)
         self.assertEqual(events, ["record", "commit"])

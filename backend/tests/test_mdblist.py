@@ -9,16 +9,12 @@ import httpx
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import mdblist_sync
 
 from core import mdblist
 from models.base import MediaType
 from models.media import Media
-from routers.mdblist import (
-    _describe_not_found,
-    _episode_identity,
-    _resolve_external_tmdb_id,
-    _season_identity,
-)
+
 from routers.lists import _push_list_item_to_mdblist
 
 
@@ -378,19 +374,19 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
             "episode": {"season": 3, "number": 2, "title": "Caballo sin Nombre"},
             "show": {"ids": {"tmdb": 1396}},
         }
-        self.assertEqual(_episode_identity(entry), (1396, 3, 2, "Caballo sin Nombre"))
+        self.assertEqual(mdblist_sync._episode_identity(entry), (1396, 3, 2, "Caballo sin Nombre"))
 
     async def test_show_imdb_id_resolves_to_tmdb_once(self) -> None:
         find = AsyncMock(return_value={"tv_results": [{"id": 1396}]})
         cache: dict[tuple[str, str], int | None] = {}
         with patch("core.tmdb.find_by_external_id", find):
-            first = await _resolve_external_tmdb_id(
+            first = await mdblist_sync._resolve_external_tmdb_id(
                 {"ids": {"imdb": "tt0903747"}},
                 "tv",
                 "tmdb-token",
                 cache,
             )
-            second = await _resolve_external_tmdb_id(
+            second = await mdblist_sync._resolve_external_tmdb_id(
                 {"ids": {"imdb": "tt0903747"}},
                 "tv",
                 "tmdb-token",
@@ -409,7 +405,7 @@ class MDBListNormalizationTests(unittest.IsolatedAsyncioTestCase):
             "show": {"title": "Breaking Bad", "ids": {"tmdb": 1396}},
         }
 
-        show, season_number = _season_identity(entry)
+        show, season_number = mdblist_sync._season_identity(entry)
 
         self.assertEqual(show["ids"]["tmdb"], 1396)
         self.assertEqual(season_number, 1)
@@ -469,7 +465,7 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         exact watched_at for what's really the same play. A new watch
         reported within WATCH_DEDUP_WINDOW of one we already have for the
         title must not create a second WatchEvent."""
-        from routers.mdblist import _import_watched
+
 
         async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             return SimpleNamespace(id=1)
@@ -482,9 +478,9 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         # Existing completed watch for media 1 four minutes before the incoming one.
         db = _WatchedFakeSessionWithHistory([(1, datetime(2026, 8, 1, 11, 56, 0))])
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
-                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
-            changed = await _import_watched(
+        with patch("core.mdblist_sync._resolve_media", side_effect=fake_resolve_media), \
+                patch("core.mdblist_sync.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
+            changed = await mdblist_sync._import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
@@ -498,7 +494,7 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         known one for the title is a genuine rewatch and must still be
         recorded - including a same-day rewatch a couple hours later (e.g.
         watching a movie twice in a row to make sense of it)."""
-        from routers.mdblist import _import_watched
+
 
         async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             return SimpleNamespace(id=1)
@@ -511,9 +507,9 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         # Existing completed watch for media 1 two hours before the incoming one.
         db = _WatchedFakeSessionWithHistory([(1, datetime(2026, 8, 1, 12, 0, 0))])
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
-                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
-            changed = await _import_watched(
+        with patch("core.mdblist_sync._resolve_media", side_effect=fake_resolve_media), \
+                patch("core.mdblist_sync.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
+            changed = await mdblist_sync._import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
@@ -525,7 +521,7 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
     async def test_null_dated_existing_watch_does_not_crash_the_window_check(self) -> None:
         """A legacy undated event can receive a reliable provider date in
         place without creating a duplicate watch."""
-        from routers.mdblist import _import_watched
+
 
         async def fake_resolve_media(db, kind, entry, api_key, external_cache, *, notify_unmatched=True):
             return SimpleNamespace(id=1)
@@ -537,9 +533,9 @@ class ImportWatchedDedupWindowTests(unittest.IsolatedAsyncioTestCase):
         stats = {"watched": 0, "skipped": 0, "errors": 0}
         db = _WatchedFakeSessionWithHistory([(1, None)])
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
-                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=True):
-            changed = await _import_watched(
+        with patch("core.mdblist_sync._resolve_media", side_effect=fake_resolve_media), \
+                patch("core.mdblist_sync.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=True):
+            changed = await mdblist_sync._import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
@@ -560,7 +556,7 @@ class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
         episode-level one, and could collide with an unrelated movie that
         happens to share the same TMDB id (movies and shows are separate
         TMDB id namespaces)."""
-        from routers.mdblist import _import_watched
+
 
         seen_kinds: list[str] = []
         unmatched_notifications: list[bool] = []
@@ -590,9 +586,9 @@ class ImportWatchedSkipsShowRollupTests(unittest.IsolatedAsyncioTestCase):
         stats = {"watched": 0, "skipped": 0, "errors": 0}
         db = _WatchedFakeSession()
 
-        with patch("routers.mdblist._resolve_media", side_effect=fake_resolve_media), \
-                patch("routers.mdblist.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
-            changed = await _import_watched(
+        with patch("core.mdblist_sync._resolve_media", side_effect=fake_resolve_media), \
+                patch("core.mdblist_sync.reconcile_inferred_watch_date", new_callable=AsyncMock, return_value=False):
+            changed = await mdblist_sync._import_watched(
                 db, user_id=35, payload=payload, api_key=None, external_cache={}, stats=stats
             )
 
@@ -610,13 +606,13 @@ class DescribeNotFoundTests(unittest.TestCase):
 
     def test_movie_with_title(self):
         self.assertEqual(
-            _describe_not_found({"kind": "movie", "item": {"ids": {"tmdb": 550}, "title": "Fight Club"}}),
+            mdblist_sync._describe_not_found({"kind": "movie", "item": {"ids": {"tmdb": 550}, "title": "Fight Club"}}),
             'movie tmdb:550 "Fight Club"',
         )
 
     def test_show_with_nested_season_episode(self):
         self.assertEqual(
-            _describe_not_found({"kind": "show", "item": {
+            mdblist_sync._describe_not_found({"kind": "show", "item": {
                 "ids": {"tmdb": 1396}, "seasons": [{"number": 2, "episodes": [{"number": 4}]}],
             }}),
             "show tmdb:1396 S2E4",
@@ -624,34 +620,34 @@ class DescribeNotFoundTests(unittest.TestCase):
 
     def test_flat_season_episode_and_imdb_fallback(self):
         self.assertEqual(
-            _describe_not_found({"kind": "episode", "item": {"imdb": "tt0903747", "season": 1, "episode": 3}}),
+            mdblist_sync._describe_not_found({"kind": "episode", "item": {"imdb": "tt0903747", "season": 1, "episode": 3}}),
             "episode imdb:tt0903747 S1E3",
         )
 
     def test_missing_everything_is_still_a_string(self):
-        self.assertEqual(_describe_not_found({}), "item no-id")
-        self.assertEqual(_describe_not_found({"kind": "movie", "item": "garbage"}), "movie no-id")
+        self.assertEqual(mdblist_sync._describe_not_found({}), "item no-id")
+        self.assertEqual(mdblist_sync._describe_not_found({"kind": "movie", "item": "garbage"}), "movie no-id")
 
     def test_recovered_show_candidate_resolves_to_a_title(self):
         # #368: the id-less episode echo carries _candidate_show_tmdb_ids
         # (attached by core.mdblist._push) instead of MDBList's own ids.
         entry = {"kind": "episode", "item": {"season": 6, "_candidate_show_tmdb_ids": [1396]}}
         self.assertEqual(
-            _describe_not_found(entry, show_titles={1396: "Breaking Bad"}),
+            mdblist_sync._describe_not_found(entry, show_titles={1396: "Breaking Bad"}),
             "episode no-id S6 (show: Breaking Bad)",
         )
 
     def test_recovered_show_candidate_without_a_known_title_falls_back_to_tmdb_id(self):
         entry = {"kind": "episode", "item": {"season": 6, "_candidate_show_tmdb_ids": [1396]}}
         self.assertEqual(
-            _describe_not_found(entry, show_titles={}),
+            mdblist_sync._describe_not_found(entry, show_titles={}),
             "episode no-id S6 (show: tmdb:1396)",
         )
 
     def test_multiple_candidates_are_listed_as_possibly(self):
         entry = {"kind": "episode", "item": {"season": 6, "_candidate_show_tmdb_ids": [100, 200]}}
         self.assertEqual(
-            _describe_not_found(entry, show_titles={100: "Poirot", 200: "Marple"}),
+            mdblist_sync._describe_not_found(entry, show_titles={100: "Poirot", 200: "Marple"}),
             "episode no-id S6 (possibly: Poirot, Marple)",
         )
 
@@ -662,7 +658,7 @@ class DescribeNotFoundTests(unittest.TestCase):
         entry = {"kind": "episode", "item": {
             "ids": {"tmdb": 42}, "season": 6, "_candidate_show_tmdb_ids": [100],
         }}
-        self.assertEqual(_describe_not_found(entry, show_titles={100: "Poirot"}), "episode tmdb:42 S6")
+        self.assertEqual(mdblist_sync._describe_not_found(entry, show_titles={100: "Poirot"}), "episode tmdb:42 S6")
 
 
 class IndexEpisodeShowsTests(unittest.TestCase):

@@ -1,0 +1,8 @@
+<script>
+    import { applyResponsiveArtwork } from "../lib/responsive-artwork";
+
+    // The layout's long-running inline scripts render a few images after the
+    // initial HTML is parsed. Keep those paths on the same shared responsive
+    // artwork implementation as server-rendered images.
+    (window as any).__applyResponsiveArtwork = applyResponsiveArtwork;
+  </script>
