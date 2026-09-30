@@ -25,4 +25,9 @@ chmod 440 /etc/sudoers.d/anylist-preview-ci
 visudo -cf /etc/sudoers.d/anylist-preview-ci
 install -o root -g root -m 644 "$source_dir/sshd.conf" /etc/ssh/sshd_config.d/80-anylist-preview-ci.conf
 sshd -t
+install -d -m 755 /etc/systemd/system/tailscaled.service.d
+install -o root -g root -m 644 "$source_dir/tailscaled.conf" \
+  /etc/systemd/system/tailscaled.service.d/80-anylist-preview.conf
+systemctl daemon-reload
+echo 'Restart tailscaled during the reviewed bootstrap maintenance window to disable SSH forwarding.'
 echo 'Controller installed. Configure Tailscale SSH policy + hostname; provision beta first. See README.md.'

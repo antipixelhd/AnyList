@@ -17,6 +17,11 @@ Stage 2 installs infrastructure and configures access. Linux/systemd/PostgreSQL/
 Tailscale behavior must be exercised there; local unit tests do not substitute for
 the end-to-end GitHub → Tailscale → SSH → VPS test.
 
+Stage 2 was exercised on 2026-09-30 with all three private source previews running
+simultaneously. GitHub deployment is enabled. The initial beta database is empty
+and migrated; development databases were copied from it. Private addresses,
+identity values, and the deployment verification report are kept outside Git.
+
 ## Slots and runtime
 
 `slots.json` is the single privileged mapping. Branch names are slot names.
@@ -229,6 +234,17 @@ belong in those root-owned env files; never commit populated files.
    and no access to slot env files or production secrets. Verify file-transfer and
    forwarding behavior and filesystem permissions during Stage 2; neither is used
    by preview deployment. Interactive/PTY/exec requests must remain restricted.
+
+   Bootstrap also installs `tailscaled.conf` as a daemon systemd drop-in setting
+   `TS_SSH_DISABLE_FORWARDING=true`. Restart `tailscaled` once in the bootstrap
+   maintenance window to activate it. This disables TCP and Unix socket SSH
+   forwarding for **all Tailscale SSH users on this VPS**, including administrators;
+   regular admin commands and the existing Serve/Funnel configuration remain
+   available. The restricted login shell alone cannot block forwarding. The GitHub
+   status operation probes PostgreSQL's protocol through an SSH forwarding request
+   and fails unless forwarding is explicitly denied. Recheck this after Tailscale
+   upgrades; this daemon setting comes from Tailscale's implementation rather than
+   a per-user SSH policy field.
 
 6. On the VPS, provision beta first, then development slots:
 
