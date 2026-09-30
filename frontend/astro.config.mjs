@@ -39,6 +39,9 @@ export default defineConfig({
     },
     server: {
       allowedHosts,
+      // Serve binds the same port on the Tailscale interface. Vite otherwise
+      // probes the wildcard address and silently moves to another port.
+      ...(previewHostname ? { host: '127.0.0.1', strictPort: true } : {}),
       ...(previewHostname ? { hmr: { protocol: 'wss', host: previewHostname,
         clientPort: Number(previewUrl?.port || 443) } } : {}),
     }

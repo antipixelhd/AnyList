@@ -92,13 +92,40 @@ jobs:
               echo 'Privileged SSH account unexpectedly accessible' >&2
               exit 1
             fi
-            grep -Eqi 'permission denied|access denied|not allowed|SSH denied|no matching SSH' refused.log || {
+            grep -Eqi 'permission denied|access denied|not allowed|does not permit|SSH denied|no matching SSH' refused.log || {
               cat refused.log
               echo "Expected SSH policy refusal missing for account: $user" >&2
               exit 1
             }
           done
-          echo 'Arbitrary commands, beta reset and privileged SSH accounts refused.'
+          if timeout 20s tailscale ssh "anylist-preview-ci@$HOST" </dev/null >refused.log 2>&1; then
+            echo 'Interactive login unexpectedly succeeded' >&2
+            exit 1
+          fi
+          grep -q 'Interactive login is disabled' refused.log
+          for path in /etc/anylist-preview/beta.env /opt/anylist/.env.production; do
+            printf 'get %s %s/sftp-protected-file\n' "$path" "$RUNNER_TEMP" >access.batch
+            if timeout 20s sftp -b access.batch \
+              -o "UserKnownHostsFile=$HOME/.config/tailscale/ssh_known_hosts" \
+              -o "HostKeyAlias=$HOST." -o 'StrictHostKeyChecking=yes' \
+              -o 'ProxyCommand=tailscale nc %h %p' "anylist-preview-ci@$HOST" >refused.log 2>&1; then
+              echo 'Protected file unexpectedly readable through SFTP' >&2
+              exit 1
+            fi
+            grep -Eqi 'permission denied|Preview command refused|Connection closed' refused.log || {
+              cat refused.log
+              exit 1
+            }
+          done
+          if timeout 20s tailscale ssh "anylist-preview-ci@$HOST" -W 127.0.0.1:5432 </dev/null >refused.log 2>&1; then
+            echo 'SSH forwarding unexpectedly succeeded' >&2
+            exit 1
+          fi
+          grep -Eqi 'prohibited|not permitted|disabled|unsupported|does not permit' refused.log || {
+            cat refused.log
+            exit 1
+          }
+          echo 'Restricted commands, accounts, interactive login, protected SFTP reads and forwarding verified.'
       - name: Run installed preview entrypoint
         env:
           HOST: ${{ secrets.PREVIEW_VPS_HOST }}
