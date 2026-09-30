@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 from core.sync_jobs import SyncCancelled, raise_if_cancelled, mark_job_running_unless_cancelled
 from types import SimpleNamespace
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
@@ -1312,54 +1312,68 @@ async def sync_items(
 
 async def run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
     async with _sync_semaphore:
-        await _run_jellyfin_sync(user_id, job_id, movie_limit, show_limit, connection_id)
+        await _run_media_browser_sync("jellyfin", user_id, job_id, movie_limit, show_limit, connection_id)
 
 
-async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    print(f"Starting Jellyfin sync for user {user_id}, job {job_id}")
+async def run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
+    async with _sync_semaphore:
+        await _run_media_browser_sync("emby", user_id, job_id, movie_limit, show_limit, connection_id)
+
+
+async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
+    adapter, selection_model = (jellyfin, JellyfinLibrarySelection) if provider == "jellyfin" else (emby, EmbyLibrarySelection)
+    provider_name = "Jellyfin" if provider == "jellyfin" else "Emby"
+    source = CollectionSource(provider)
+    stats = {"movies": 0, "episodes": 0, "skipped": 0, "errors": 0}
+    print(f"Starting {provider_name} sync for user {user_id}, job {job_id}")
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session() as db:
         try:
             if not await mark_job_running_unless_cancelled(db, job_id, processed_items=0, total_items=0):
-                print(f"Jellyfin sync job {job_id} was cancelled before it started - skipping")
+                print(f"{provider_name} sync job {job_id} was cancelled before it started - skipping")
                 return
 
             settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
             settings = settings_result.scalar_one_or_none()
             tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
 
-            # Load the specific connection (or oldest jellyfin connection for this user)
+            # Scope the pull to the requested connection or the oldest one for this provider.
             conn_q = select(MediaServerConnection).where(
                 MediaServerConnection.user_id == user_id,
-                MediaServerConnection.type == "jellyfin",
+                MediaServerConnection.type == provider,
             )
-            if connection_id:
+            has_connection_id = bool(connection_id) if provider == "jellyfin" else connection_id is not None
+            if has_connection_id:
                 conn_q = conn_q.where(MediaServerConnection.id == connection_id)
             else:
                 conn_q = conn_q.order_by(MediaServerConnection.id.asc()).limit(1)
             conn_result = await db.execute(conn_q)
             conn = conn_result.scalar_one_or_none()
 
-            if not conn or not tmdb_api_key:
+            # Jellyfin requires metadata enrichment; Emby also supports pulls without a TMDB key.
+            err = None
+            if provider == "jellyfin" and (not conn or not tmdb_api_key):
                 err = "Missing Jellyfin connection or TMDB API key"
+            elif provider == "emby" and (not conn or not conn.url or not conn.token or not conn.server_user_id):
+                err = "Missing Emby connection (URL, Token, or User ID)"
+            if err:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=err))
                 await db.commit()
                 return
 
-            j_url, j_token, j_user = conn.url, conn.token, conn.server_user_id
+            server_url, server_token, server_user = conn.url, conn.token, conn.server_user_id
 
-            print(f"  Fetching libraries from {j_url}")
-            libraries = await jellyfin.get_libraries(j_url, j_token, j_user)
+            print(f"  Fetching libraries from {server_url}")
+            libraries = await adapter.get_libraries(server_url, server_token, server_user)
 
             sel_result = await db.execute(
-                select(JellyfinLibrarySelection).where(JellyfinLibrarySelection.connection_id == conn.id)
+                select(selection_model).where(selection_model.connection_id == conn.id)
             )
             selected_ids = {row.library_id for row in sel_result.scalars().all()}
             if selected_ids:
                 libraries = [lib for lib in libraries if lib.get("Id") in selected_ids]
 
             print(f"  Found {len(libraries)} libraries to sync")
-            stats = {"movies": 0, "episodes": 0, "skipped": 0, "errors": 0}
             all_warnings: list[dict] = []
             total_discovered = 0
             _new_watched: set[int] = set()
@@ -1375,7 +1389,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                 print(f"  Processing library: {lib_name} ({lib_type})")
 
                 if lib_type == "movies":
-                    items = await jellyfin.get_movies(lib_id, j_url, j_token, j_user)
+                    items = await adapter.get_movies(lib_id, server_url, server_token, server_user)
 
                     if movie_limit:
                         items = items[:movie_limit]
@@ -1421,14 +1435,14 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling movies"))
                     await db.commit()
 
-                    w = await sync_items(items, MediaType.movie, CollectionSource.jellyfin, db, stats, user_id, job_id, api_key=tmdb_api_key,
+                    w = await sync_items(items, MediaType.movie, source, db, stats, user_id, job_id, api_key=tmdb_api_key,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
                         new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
                         seen_source_ids=_seen_collection_source_ids)
                     all_warnings.extend(w)
 
                 elif lib_type in ("tvshows", "tv"):
-                    shows = await jellyfin.get_shows(lib_id, j_url, j_token, j_user)
+                    shows = await adapter.get_shows(lib_id, server_url, server_token, server_user)
                     if show_limit:
                         shows = shows[:show_limit]
 
@@ -1452,7 +1466,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                             "reason": "Unmatched on source — no TMDB ID available for the series",
                         })
 
-                    items = await jellyfin.get_episodes(lib_id, j_url, j_token, j_user)
+                    items = await adapter.get_episodes(lib_id, server_url, server_token, server_user)
                     filtered_episodes = [e for e in items if str(e.get("SeriesId")) in show_map]
                     unmatched_series_ids = {str(s.get("Id")) for s in shows if str(s.get("Id")) not in show_map}
                     unmatched_series_episodes = [e for e in items if str(e.get("SeriesId")) in unmatched_series_ids]
@@ -1462,7 +1476,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
                     await db.commit()
 
                     w = await sync_items(
-                        filtered_episodes, MediaType.episode, CollectionSource.jellyfin,
+                        filtered_episodes, MediaType.episode, source,
                         db, stats, user_id, job_id, show_map,
                         api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
                         sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
@@ -1473,7 +1487,7 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
                     if unmatched_series_episodes:
                         w = await sync_items(
-                            unmatched_series_episodes, MediaType.episode, CollectionSource.jellyfin,
+                            unmatched_series_episodes, MediaType.episode, source,
                             db, stats, user_id, job_id, {},
                             api_key=tmdb_api_key, show_id_to_tmdb={},
                             sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
@@ -1484,19 +1498,19 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
 
             if conn.sync_collection and not movie_limit and not show_limit:
                 removed_media_ids = await _remove_stale_collection_files(
-                    db, user_id, CollectionSource.jellyfin, conn.id, _seen_collection_source_ids,
+                    db, user_id, source, conn.id, _seen_collection_source_ids,
                 )
                 if removed_media_ids:
                     stats["removed"] = len(removed_media_ids)
                     await db.commit()
-                    print(f"Jellyfin sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Jellyfin.")
+                    print(f"{provider_name} sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in {provider_name}.")
 
             if not movie_limit and not show_limit and not stats["errors"]:
                 pushed_back = await _push_watched_back_to_source(db, user_id, conn, _push_back)
                 if pushed_back:
-                    print(f"Jellyfin sync job {job_id}: pushed watched state for {pushed_back} newly collected item(s).")
+                    print(f"{provider_name} sync job {job_id}: pushed watched state for {pushed_back} newly collected item(s).")
 
-            print(f"Jellyfin sync job {job_id} completed. Stats: {stats}")
+            print(f"{provider_name} sync job {job_id} completed. Stats: {stats}")
             from core.media_server_reconciliation import reconcile_media_server_pull
             accepted_watched, accepted_ratings = await reconcile_media_server_pull(
                 db, conn, stats, _new_watched, _observed_ratings,
@@ -1511,235 +1525,12 @@ async def _run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_l
             )
             asyncio.create_task(pre_cache_all_collected_bg())
         except SyncCancelled:
-            print(f"Jellyfin sync job {job_id} cancelled")
+            print(f"{provider_name} sync job {job_id} cancelled")
             await db.rollback()
             await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled, stats=stats, updated_at=func.now()))
             await db.commit()
         except Exception as e:
-            print(f"Jellyfin sync job {job_id} failed: {e}")
-            import traceback
-            traceback.print_exc()
-            await db.rollback()
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=str(e)[:900]))
-            await db.commit()
-
-
-async def run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
-        await _run_emby_sync(user_id, job_id, movie_limit, show_limit, connection_id)
-
-
-async def _run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    print(f"Starting Emby sync for user {user_id}, job {job_id}")
-    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    async with async_session() as db:
-        try:
-            if not await mark_job_running_unless_cancelled(db, job_id, processed_items=0, total_items=0):
-                print(f"Emby sync job {job_id} was cancelled before it started - skipping")
-                return
-
-            if connection_id is not None:
-                conn_result = await db.execute(
-                    select(MediaServerConnection).where(
-                        MediaServerConnection.id == connection_id,
-                        MediaServerConnection.user_id == user_id,
-                        MediaServerConnection.type == "emby",
-                    )
-                )
-            else:
-                conn_result = await db.execute(
-                    select(MediaServerConnection).where(
-                        MediaServerConnection.user_id == user_id,
-                        MediaServerConnection.type == "emby",
-                    ).order_by(MediaServerConnection.id.asc()).limit(1)
-                )
-            conn = conn_result.scalar_one_or_none()
-
-            settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
-            settings = settings_result.scalar_one_or_none()
-            tmdb_api_key = await settings_store.get_effective_tmdb_key(db, settings)
-
-            if not conn or not conn.url or not conn.token or not conn.server_user_id:
-                err = "Missing Emby connection (URL, Token, or User ID)"
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=err))
-                await db.commit()
-                return
-
-            e_url = conn.url
-            e_token = conn.token
-            e_user = conn.server_user_id
-
-            print(f"  Fetching libraries from {e_url}")
-            libraries = await emby.get_libraries(e_url, e_token, e_user)
-
-            sel_result = await db.execute(
-                select(EmbyLibrarySelection).where(EmbyLibrarySelection.connection_id == conn.id)
-            )
-            selected_ids = {row.library_id for row in sel_result.scalars().all()}
-            if selected_ids:
-                libraries = [lib for lib in libraries if lib.get("Id") in selected_ids]
-
-            print(f"  Found {len(libraries)} libraries to sync")
-            stats = {"movies": 0, "episodes": 0, "skipped": 0, "errors": 0}
-            all_warnings: list[dict] = []
-            total_discovered = 0
-            _new_watched: set[int] = set()
-            _observed_ratings: RatingChanges = {}
-            _new_collected: set[int] = set()
-            _push_back: dict[int, str] = {}
-            _seen_collection_source_ids: set[str] = set()
-
-            for lib in libraries:
-                lib_type = (lib.get("CollectionType") or "").lower()
-                lib_id = lib.get("Id")
-                lib_name = lib.get("Name")
-                print(f"  Processing library: {lib_name} ({lib_type})")
-
-                if lib_type == "movies":
-                    items = await emby.get_movies(lib_id, e_url, e_token, e_user)
-
-                    if movie_limit:
-                        items = items[:movie_limit]
-
-                    movies_without_tmdb = [
-                        m for m in items
-                        if not get_jellyfin_tmdb_id(m.get("ProviderIds", {}))
-                        and (m.get("ProviderIds", {}).get("Imdb") or m.get("Name"))
-                    ]
-                    if movies_without_tmdb:
-                        print(f"    Resolving {len(movies_without_tmdb)} movies via IMDb/title fallback...")
-                        semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
-
-                        async def resolve_emby_movie_tmdb_id(m: dict) -> None:
-                            async with semaphore:
-                                pids = m.get("ProviderIds", {})
-                                imdb_id = pids.get("Imdb") or pids.get("imdb")
-                                try:
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("movie_results"):
-                                            tid = res["movie_results"][0]["id"]
-                                            m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
-                                            return
-                                    title = m.get("Name")
-                                    year = m.get("ProductionYear")
-                                    if title:
-                                        res = await tmdb.search_movies(title, year=year, api_key=tmdb_api_key)
-                                        if res.get("results"):
-                                            best = res["results"][0]
-                                            for r in res["results"]:
-                                                if r.get("title", "").lower() == title.lower():
-                                                    best = r
-                                                    break
-                                            tid = best["id"]
-                                            m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
-                                except Exception as e:
-                                    print(f"    Could not resolve movie '{m.get('Name')}': {e}")
-
-                        await asyncio.gather(*[resolve_emby_movie_tmdb_id(m) for m in movies_without_tmdb])
-
-                    total_discovered += len(items)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling movies"))
-                    await db.commit()
-
-                    w = await sync_items(items, MediaType.movie, CollectionSource.emby, db, stats, user_id, job_id, api_key=tmdb_api_key,
-                        sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
-                        seen_source_ids=_seen_collection_source_ids)
-                    all_warnings.extend(w)
-
-                elif lib_type in ("tvshows", "tv"):
-                    shows = await emby.get_shows(lib_id, e_url, e_token, e_user)
-                    if show_limit:
-                        shows = shows[:show_limit]
-
-                    series_tmdb_map = {
-                        s.get("Id"): get_jellyfin_tmdb_id(s.get("ProviderIds", {}))
-                        for s in shows if get_jellyfin_tmdb_id(s.get("ProviderIds", {}))
-                    }
-
-                    total_discovered += len(series_tmdb_map)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling shows"))
-                    await db.commit()
-
-                    print(f"    Mapping {len(series_tmdb_map)} shows to TMDB...")
-                    show_map, show_id_to_tmdb = await sync_shows_batch(
-                        series_tmdb_map, db, api_key=tmdb_api_key
-                    )
-                    unmatched_shows = [s for s in shows if str(s.get("Id")) not in show_map]
-                    for s in unmatched_shows:
-                        all_warnings.append({
-                            "title": s.get("Name"),
-                            "media_type": "series",
-                            "source_id": str(s.get("Id")),
-                            "reason": "Unmatched on source — no TMDB ID available for the series",
-                        })
-
-                    items = await emby.get_episodes(lib_id, e_url, e_token, e_user)
-                    filtered_episodes = [e for e in items if str(e.get("SeriesId")) in show_map]
-                    unmatched_series_ids = {str(s.get("Id")) for s in shows if str(s.get("Id")) not in show_map}
-                    unmatched_series_episodes = [e for e in items if str(e.get("SeriesId")) in unmatched_series_ids]
-
-                    total_discovered = total_discovered - len(series_tmdb_map) + len(filtered_episodes) + len(unmatched_series_episodes)
-                    await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(total_items=total_discovered, current_step="Pulling episodes"))
-                    await db.commit()
-
-                    w = await sync_items(
-                        filtered_episodes, MediaType.episode, CollectionSource.emby,
-                        db, stats, user_id, job_id, show_map,
-                        api_key=tmdb_api_key, show_id_to_tmdb=show_id_to_tmdb,
-                        sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                        new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
-                        seen_source_ids=_seen_collection_source_ids,
-                    )
-                    all_warnings.extend(w)
-
-                    if unmatched_series_episodes:
-                        w = await sync_items(
-                            unmatched_series_episodes, MediaType.episode, CollectionSource.emby,
-                            db, stats, user_id, job_id, {},
-                            api_key=tmdb_api_key, show_id_to_tmdb={},
-                            sync_collection=conn.sync_collection, sync_watched=conn.sync_watched, sync_ratings=conn.sync_ratings,
-                            new_watched_ids=_new_watched, observed_ratings=_observed_ratings, new_collected_ids=_new_collected, connection_id=conn.id, push_back=_push_back,
-                            seen_source_ids=_seen_collection_source_ids,
-                        )
-                        all_warnings.extend(w)
-
-            if conn.sync_collection and not movie_limit and not show_limit:
-                removed_media_ids = await _remove_stale_collection_files(
-                    db, user_id, CollectionSource.emby, conn.id, _seen_collection_source_ids,
-                )
-                if removed_media_ids:
-                    stats["removed"] = len(removed_media_ids)
-                    await db.commit()
-                    print(f"Emby sync job {job_id}: removed {len(removed_media_ids)} item(s) no longer in Emby.")
-
-            if not movie_limit and not show_limit and not stats["errors"]:
-                pushed_back = await _push_watched_back_to_source(db, user_id, conn, _push_back)
-                if pushed_back:
-                    print(f"Emby sync job {job_id}: pushed watched state for {pushed_back} newly collected item(s).")
-
-            print(f"Emby sync job {job_id} completed. Stats: {stats}")
-            from core.media_server_reconciliation import reconcile_media_server_pull
-            accepted_watched, accepted_ratings = await reconcile_media_server_pull(
-                db, conn, stats, _new_watched, _observed_ratings,
-                complete=not movie_limit and not show_limit and not stats["errors"],
-            )
-            all_warnings = await _stamp_matched_show_warnings(db, user_id, all_warnings)
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, stats=stats, warnings=all_warnings or None, updated_at=func.now()))
-            await db.commit()
-            from core.pull_propagation import propagate_media_server_pull
-            await propagate_media_server_pull(
-                db, conn=conn, watched_ids=accepted_watched, ratings=accepted_ratings,
-            )
-            asyncio.create_task(pre_cache_all_collected_bg())
-        except SyncCancelled:
-            print(f"Emby sync job {job_id} cancelled")
-            await db.rollback()
-            await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.cancelled, stats=stats, updated_at=func.now()))
-            await db.commit()
-        except Exception as e:
-            print(f"Emby sync job {job_id} failed: {e}")
+            print(f"{provider_name} sync job {job_id} failed: {e}")
             import traceback
             traceback.print_exc()
             await db.rollback()

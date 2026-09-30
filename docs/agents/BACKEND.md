@@ -55,6 +55,9 @@ dates, and season notices share core/season_releases.py.
 Plex watchlist persistence and delivery live in core/plex_watchlist.py;
 core/watchlist_reconcile.py owns the pure three-way reconciliation plan.
 
+Jellyfin and Emby pulls share `_run_media_browser_sync` in routers/sync.py;
+provider adapters, library selections, and validation remain provider-specific.
+
 ## Implementation anchors
 
 Streaming connections are independent by connection ID. Each AnyList user may
