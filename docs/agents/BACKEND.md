@@ -52,6 +52,9 @@ Shared title, entry, and activity display projections live in
 core/tracking_projection.py. Airing and new-season indicators, metadata release
 dates, and season notices share core/season_releases.py.
 
+Plex watchlist persistence and delivery live in core/plex_watchlist.py;
+core/watchlist_reconcile.py owns the pure three-way reconciliation plan.
+
 ## Implementation anchors
 
 Streaming connections are independent by connection ID. Each AnyList user may
