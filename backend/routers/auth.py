@@ -1,3 +1,4 @@
+from core import trakt_auth
 import secrets
 import pyotp
 import logging
@@ -1445,13 +1446,12 @@ async def get_connection_status(
         return {"configured": True, "connected": True, "quality_profiles": quality_profiles, "root_folders": root_folders, "tags": tags}
 
     async def check_trakt():
-        from routers.trakt import TraktTokenError, ensure_valid_trakt_token
         if not user_settings or not (user_settings.trakt_access_token and user_settings.trakt_client_id):
             return {"configured": False, "connected": False}
         try:
-            await ensure_valid_trakt_token(db, user_settings, force_check=True)
+            await trakt_auth.ensure_valid_trakt_token(db, user_settings, force_check=True)
             return {"configured": True, "connected": True}
-        except TraktTokenError:
+        except trakt_auth.TraktTokenError:
             return {"configured": True, "connected": False}
 
     async def check_media_server(conn):

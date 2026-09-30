@@ -1,3 +1,4 @@
+from core import mdblist_payloads, trakt_auth
 from core import settings_store
 import asyncio
 import json
@@ -203,10 +204,9 @@ async def _push_watch_state(
 
     trakt_token: str | None = None
     if push_trakt and settings.trakt_client_id:
-        from routers.trakt import TraktTokenError, ensure_valid_trakt_token
         try:
-            trakt_token = await ensure_valid_trakt_token(db, settings)
-        except TraktTokenError as exc:
+            trakt_token = await trakt_auth.ensure_valid_trakt_token(db, settings)
+        except trakt_auth.TraktTokenError as exc:
             logger.warning("Skipping Trakt history push for user %s: %s", user_id, exc)
 
     if trakt_token:
@@ -233,9 +233,8 @@ async def _push_watch_state(
 
     if push_mdblist:
         from core import mdblist as mdblist_client
-        from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item
 
-        mdblist_payload = _empty_payload()
+        mdblist_payload = mdblist_payloads.empty_payload()
         media_result = await db.execute(select(Media).where(Media.id.in_(media_ids)))
         media_list = media_result.scalars().all()
         mdblist_show_ids = {m.show_id for m in media_list if m.media_type == MediaType.episode and m.show_id}
@@ -248,13 +247,13 @@ async def _push_watch_state(
                 continue
             show = mdblist_shows_by_id.get(media.show_id)
             item = (
-                _payload_item(media, show=show, watched_at=resolved_watched_at.get(media.id, datetime.utcnow()))
+                mdblist_payloads.payload_item(media, show=show, watched_at=resolved_watched_at.get(media.id, datetime.utcnow()))
                 if watched
-                else _payload_item(media, show=show)
+                else mdblist_payloads.payload_item(media, show=show)
             )
             if item:
                 mdblist_payload[item[0]].append(item[1])
-        mdblist_payload["shows"] = _merge_show_entries(mdblist_payload["shows"])
+        mdblist_payload["shows"] = mdblist_payloads.merge_show_entries(mdblist_payload["shows"])
         # MDBList's /sync/watched/remove has no per-item removal feed — it bumps
         # a removal timestamp on /sync/last_activities and expects clients to
         # re-fetch the whole watched snapshot rather than confirming per item,
@@ -1636,8 +1635,7 @@ async def _push_show_dropped_to_providers(db: AsyncSession, settings: UserSettin
     drop/undrop action itself."""
     if settings.trakt_push_dropped and settings.trakt_access_token and settings.trakt_client_id:
         try:
-            from routers.trakt import ensure_valid_trakt_token
-            token = await ensure_valid_trakt_token(db, settings)
+            token = await trakt_auth.ensure_valid_trakt_token(db, settings)
             if remove:
                 await trakt_client.remove_from_hidden(settings.trakt_client_id, token, "dropped", tmdb_id)
             else:

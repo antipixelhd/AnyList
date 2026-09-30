@@ -63,7 +63,7 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
         # The Trakt fan-out now validates the token via its own DB session (#326);
         # stub that so these routing tests don't need a database.
         p = patch(
-            "routers.trakt.ensure_valid_trakt_token_for_user",
+            "core.trakt_auth.ensure_valid_trakt_token_for_user",
             AsyncMock(return_value="trakt-token"),
         )
         p.start()

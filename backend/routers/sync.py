@@ -1,3 +1,4 @@
+from core import mdblist_payloads, trakt_auth
 from core import settings_store
 from core import stremio_payloads, stremio_delivery
 from core.db_queries import latest_watched_at as _latest_watched_at
@@ -1061,9 +1062,8 @@ async def _fan_out_changes_to_other_connections(
         # runs amid concurrently-gathered push tasks). Skipping this let the
         # token expire unnoticed and stall Trakt pushes for days (#326). On
         # failure, disable every Trakt sub-push below.
-        from routers.trakt import ensure_valid_trakt_token_for_user
         try:
-            trakt_access_token = await ensure_valid_trakt_token_for_user(user_id)
+            trakt_access_token = await trakt_auth.ensure_valid_trakt_token_for_user(user_id)
         except Exception as exc:  # best-effort fan-out - don't fail the whole sync
             logger.warning("Skipping Trakt fan-out for user %s: %s", user_id, exc)
             trakt_access_token = None
@@ -1198,18 +1198,17 @@ async def _fan_out_changes_to_other_connections(
 
     if (push_mdblist_watched or push_mdblist_ratings or push_mdblist_collection) and all_changed_ids:
         from core import mdblist as mdblist_client
-        from routers.mdblist import _empty_payload, _merge_show_entries, _payload_item, _rating_removal_item
 
         mdblist_media_by_id = media_by_id
 
         if push_mdblist_watched:
             watched_at_by_media = await _latest_watched_at(db, user_id, list(new_watched_ids))
 
-            watched_payload = _empty_payload()
+            watched_payload = mdblist_payloads.empty_payload()
             for media_id in new_watched_ids:
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _payload_item(
+                    mdblist_payloads.payload_item(
                         media,
                         show=shows_by_id.get(media.show_id),
                         watched_at=watched_at_by_media.get(media_id, datetime.utcnow()),
@@ -1219,7 +1218,7 @@ async def _fan_out_changes_to_other_connections(
                 )
                 if item:
                     watched_payload[item[0]].append(item[1])
-            watched_payload["shows"] = _merge_show_entries(watched_payload["shows"])
+            watched_payload["shows"] = mdblist_payloads.merge_show_entries(watched_payload["shows"])
             push_tasks.append(mdblist_client.push_watched(settings.mdblist_api_key, watched_payload))
 
         if push_mdblist_collection and new_collected_ids:
@@ -1231,11 +1230,11 @@ async def _fan_out_changes_to_other_connections(
             )
             collected_at_by_media = {media_id: added_at for media_id, added_at in collected_at_result.all()}
 
-            collection_add_payload = _empty_payload()
+            collection_add_payload = mdblist_payloads.empty_payload()
             for media_id in new_collected_ids:
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _payload_item(
+                    mdblist_payloads.payload_item(
                         media,
                         show=shows_by_id.get(media.show_id),
                         collected_at=collected_at_by_media.get(media_id, datetime.utcnow()),
@@ -1245,17 +1244,17 @@ async def _fan_out_changes_to_other_connections(
                 )
                 if item:
                     collection_add_payload[item[0]].append(item[1])
-            collection_add_payload["shows"] = _merge_show_entries(collection_add_payload["shows"])
+            collection_add_payload["shows"] = mdblist_payloads.merge_show_entries(collection_add_payload["shows"])
             push_tasks.append(mdblist_client.push_collection(settings.mdblist_api_key, collection_add_payload))
 
         if push_mdblist_collection and removed_collected_ids:
-            collection_remove_payload = _empty_payload()
+            collection_remove_payload = mdblist_payloads.empty_payload()
             for media_id in removed_collected_ids:
                 media = mdblist_media_by_id.get(media_id)
-                item = _payload_item(media, show=shows_by_id.get(media.show_id)) if media else None
+                item = mdblist_payloads.payload_item(media, show=shows_by_id.get(media.show_id)) if media else None
                 if item:
                     collection_remove_payload[item[0]].append(item[1])
-            collection_remove_payload["shows"] = _merge_show_entries(collection_remove_payload["shows"])
+            collection_remove_payload["shows"] = mdblist_payloads.merge_show_entries(collection_remove_payload["shows"])
             push_tasks.append(mdblist_client.remove_collection(settings.mdblist_api_key, collection_remove_payload))
 
         if push_mdblist_ratings and new_ratings:
@@ -1276,12 +1275,12 @@ async def _fan_out_changes_to_other_connections(
                         for media_id, season_number, rated_at in rated_at_result.all()
                     }
                 )
-            ratings_payload = _empty_payload()
+            ratings_payload = mdblist_payloads.empty_payload()
             for key, rating in new_ratings.items():
                 media_id, season_number = key
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _payload_item(
+                    mdblist_payloads.payload_item(
                         media,
                         show=shows_by_id.get(media.show_id),
                         rating=rating,
@@ -1293,21 +1292,21 @@ async def _fan_out_changes_to_other_connections(
                 )
                 if item:
                     ratings_payload[item[0]].append(item[1])
-            ratings_payload["shows"] = _merge_show_entries(ratings_payload["shows"])
+            ratings_payload["shows"] = mdblist_payloads.merge_show_entries(ratings_payload["shows"])
             push_tasks.append(mdblist_client.push_ratings(settings.mdblist_api_key, ratings_payload))
 
         if push_mdblist_ratings and removed_ratings:
-            removed_payload = _empty_payload()
+            removed_payload = mdblist_payloads.empty_payload()
             for media_id, season_number in removed_ratings:
                 media = mdblist_media_by_id.get(media_id)
                 item = (
-                    _rating_removal_item(media, season_number, show=shows_by_id.get(media.show_id))
+                    mdblist_payloads.rating_removal_item(media, season_number, show=shows_by_id.get(media.show_id))
                     if media
                     else None
                 )
                 if item:
                     removed_payload[item[0]].append(item[1])
-            removed_payload["shows"] = _merge_show_entries(removed_payload["shows"])
+            removed_payload["shows"] = mdblist_payloads.merge_show_entries(removed_payload["shows"])
             push_tasks.append(
                 mdblist_client.remove_ratings(
                     settings.mdblist_api_key,

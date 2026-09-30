@@ -1,3 +1,4 @@
+from core import trakt_auth
 import json
 import re
 from datetime import datetime, timedelta
@@ -66,9 +67,8 @@ async def _maybe_trakt_scrobble(
     # the stored token as-is and broke for a week at a time when it expired
     # (#326). Uses its own session so a refresh's commit can't touch the
     # webhook request's in-flight transaction.
-    from routers.trakt import ensure_valid_trakt_token_for_user
     try:
-        access_token = await ensure_valid_trakt_token_for_user(settings.user_id)
+        access_token = await trakt_auth.ensure_valid_trakt_token_for_user(settings.user_id)
     except Exception as exc:  # scrobbles are best-effort - never raise
         import logging
         logging.getLogger(__name__).warning("[Trakt scrobble] %s skipped: %s", action, exc)

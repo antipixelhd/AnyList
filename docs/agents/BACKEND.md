@@ -76,6 +76,10 @@ Continue Watching queries. core/nuvio.py owns provider transport; routers/sync.p
 orchestrates sync jobs and full pushes. Payload and projection tests live in
 backend/tests/test_nuvio_payloads.py and test_nuvio_projection.py.
 
+Trakt token validation and refresh live in core/trakt_auth.py. Shared MDBList
+wire formatting and nested show/season/episode merging live in core/mdblist_payloads.py.
+Their focused tests are test_trakt_auth.py and test_mdblist_payloads.py.
+
 For Stremio outbound state, core/stremio_delivery.py owns projection, serialized
 writes, and playback confirmation. core/stremio_payloads.py owns item formatting
 and watch/resume state updates; core/stremio.py owns HTTP transport and Cinemeta

@@ -1,3 +1,4 @@
+from core import trakt_auth
 from core import settings_store
 import logging
 from fastapi import APIRouter, Depends, HTTPException
@@ -512,9 +513,8 @@ async def _push_season_list_item_to_trakt(
         return
 
     from core import trakt as trakt_client
-    from routers.trakt import ensure_valid_trakt_token
     try:
-        token = await ensure_valid_trakt_token(db, settings)
+        token = await trakt_auth.ensure_valid_trakt_token(db, settings)
         if remove:
             await trakt_client.remove_season_from_list(
                 settings.trakt_client_id, token,
@@ -556,9 +556,8 @@ async def _push_list_item_to_trakt(
         return
 
     from core import trakt as trakt_client
-    from routers.trakt import ensure_valid_trakt_token
     try:
-        token = await ensure_valid_trakt_token(db, settings)
+        token = await trakt_auth.ensure_valid_trakt_token(db, settings)
         if list_trakt_slug in ("__watchlist__", "__watchlist_movies__", "__watchlist_shows__"):
             if remove:
                 await trakt_client.remove_from_watchlist(
