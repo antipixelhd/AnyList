@@ -322,7 +322,21 @@ class Preview:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def check_serve_listener(self):
+        config = json.loads(run(["tailscale", "serve", "status", "--json"], capture=True))
+        port = str(self.slot["frontend_port"])
+        suffix = ":" + port
+        listener = config.get("TCP", {}).get(port)
+        handlers = [value for name, value in config.get("Web", {}).items() if name.endswith(suffix)]
+        expected = {"Handlers": {"/": {"Proxy": "http://127.0.0.1:" + port}}}
+        if (listener is not None and (listener != {"HTTPS": True} or not handlers)) or any(
+                value != expected for value in handlers):
+            raise Refused("Preview port already belongs to another Tailscale Serve listener")
+        if any(enabled for name, enabled in config.get("AllowFunnel", {}).items() if name.endswith(suffix)):
+            raise Refused("Preview port must not have Funnel enabled")
+
     def provision(self, recreate=False):
+        self.check_serve_listener()
         host = (ETC / "hostname").read_text().strip()
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.ts\.net", host):
             raise Refused("Configure a valid Tailscale machine FQDN first")

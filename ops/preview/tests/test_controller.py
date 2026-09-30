@@ -243,6 +243,22 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(["npm", "ci"], commands)
         self.assertFalse(any("sync" in args for args in commands))
 
+    def test_provisioning_refuses_existing_unrelated_or_public_listener(self):
+        p = self.preview()
+        port = str(p.slot["frontend_port"])
+        own = {"TCP": {port: {"HTTPS": True}}, "Web": {"private.ts.net:" + port:
+               {"Handlers": {"/": {"Proxy": "http://127.0.0.1:" + port}}}}}
+        for config in ({}, own):
+            with patch.object(c, "run", return_value=json.dumps(config)):
+                p.check_serve_listener()
+        unrelated = json.loads(json.dumps(own))
+        unrelated["Web"]["private.ts.net:" + port]["Handlers"]["/"]["Proxy"] = "http://127.0.0.1:9000"
+        public = dict(own, AllowFunnel={"private.ts.net:" + port: True})
+        raw = {"TCP": {port: {"TCPForward": "127.0.0.1:9000"}}}
+        for config in (unrelated, public, raw):
+            with patch.object(c, "run", return_value=json.dumps(config)), self.assertRaises(c.Refused):
+                p.check_serve_listener()
+
     def test_additive_configuration_sync_rejects_beta_changes(self):
         p = self.preview("beta")
         install = self.state / "installed"
