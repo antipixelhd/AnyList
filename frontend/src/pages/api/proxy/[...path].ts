@@ -1,4 +1,5 @@
 import type { APIRoute } from "astro";
+import { sessionCookieName } from "../../../lib/session-cookies.ts";
 
 const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
@@ -28,7 +29,8 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
       if (tokenQuery) {
         forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
       } else {
-        const tokenMatch = /(?:^|;\s*)token=([^;]+)/.exec(request.headers.get("Cookie") ?? "");
+        const tokenMatch = new RegExp(`(?:^|;\\s*)${sessionCookieName("token")}=([^;]+)`)
+          .exec(request.headers.get("Cookie") ?? "");
         if (tokenMatch) {
           forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
         }
