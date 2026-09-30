@@ -1,0 +1,10 @@
+# Reference only: controller provision generates separate root-owned slot env files.
+# Values must be simple KEY=value (no quotes, shell expansion, or multiline values).
+SECRET_KEY=<generated-on-VPS>
+DATABASE_URL=postgresql+asyncpg://<slot-role>:<generated-password>@127.0.0.1:5432/<slot-database>
+SERVER_URL=https://<machine>.<tailnet>.ts.net:8001
+PREVIEW_HOSTNAME=<machine>.<tailnet>.ts.net
+PREVIEW_SLOT=beta
+BACKEND_PORT=8101
+OIDC_REDIRECT_URL=https://<machine>.<tailnet>.ts.net:8001/oidc-callback
+DATA_DIR=/srv/anylist-preview/beta/data

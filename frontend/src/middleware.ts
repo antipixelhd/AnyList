@@ -1,3 +1,4 @@
+import { sessionCookieName } from "./lib/session-cookies";
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
@@ -64,7 +65,7 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 export const onRequest = defineMiddleware(async (context, next) => {
-  const token = context.cookies.get("token")?.value;
+  const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
 
   // Development playgrounds are isolated from sessions and backend data. Never serve
@@ -159,7 +160,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       // request as unauthenticated and let the next request re-verify.
       const isAuthRejected = e instanceof Error && /^API 401\b/.test(e.message);
       if (isAuthRejected) {
-        context.cookies.delete("token", { path: "/" });
+        context.cookies.delete(sessionCookieName("token"), { path: "/" });
       }
       if (!isPublicRoute && !(await isAllowedAnonymousPublicPage())) {
         return context.redirect("/login", 302);

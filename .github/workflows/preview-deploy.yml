@@ -1,0 +1,20 @@
+name: Preview Deploy
+on:
+  push:
+    branches: [beta, development-1, development-2]
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: anylist-preview-${{ github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: vars.PREVIEW_ENABLED == 'true'
+    uses: ./.github/workflows/preview-remote.yml
+    with:
+      preview: ${{ github.ref_name }}
+      operation: deploy
+      sha: ${{ github.sha }}
+      forced: ${{ github.event.forced && 'true' || 'false' }}
+    secrets: inherit

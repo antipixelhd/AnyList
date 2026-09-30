@@ -1,4 +1,5 @@
 ---
+import { sessionCookieName, secureSessionCookie } from "../lib/session-cookies";
 import Base from "../layouts/Base.astro";
 import PosterWall from "../components/PosterWall.astro";
 import AuthHero from "../components/AuthHero.astro";
@@ -45,10 +46,10 @@ if (Astro.request.method === "POST") {
 
       if (!result.access_token) return Astro.redirect("/login");
 
-      Astro.cookies.set("token", result.access_token, {
+      Astro.cookies.set(sessionCookieName("token"), result.access_token, {
         path: "/",
         httpOnly: true,
-        secure: import.meta.env.PROD,
+        secure: secureSessionCookie(import.meta.env.PROD),
         sameSite: "lax",
         maxAge: 60 * 60 * 24 * 7,
       });

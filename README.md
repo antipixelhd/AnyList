@@ -17,6 +17,10 @@ A self-hosted movie and TV tracker for personal lists and shared discoveries.
 
 ## Development
 
+Private VPS source previews use GitHub as their control plane: **normal development
+does not require VPS SSH**. See [preview setup and operations](ops/preview/README.md)
+for beta, parallel development branches, GitHub controls, and the Stage 2 runbook.
+
 Backend dependencies live in `backend/pyproject.toml` and `backend/uv.lock`;
 frontend dependencies live in `frontend/package.json` and `frontend/package-lock.json`.
 CI uses Python 3.13 and Node 22; the frontend requires Node 22.12 or newer.

@@ -1,10 +1,11 @@
 ---
+import { sessionCookieName } from "../../lib/session-cookies";
 import MediaRow from "../../components/MediaRow.astro";
 import { api } from "../../lib/api";
 
 export const partial = true;
 
-const token = Astro.cookies.get("token")?.value;
+const token = Astro.cookies.get(sessionCookieName("token"))?.value;
 const type = Astro.url.searchParams.get("type");
 const id = Astro.url.searchParams.get("id");
 

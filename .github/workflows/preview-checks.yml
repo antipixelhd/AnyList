@@ -1,0 +1,34 @@
+name: Preview Infrastructure Checks
+on:
+  pull_request:
+    paths: ['ops/preview/**', '.github/workflows/preview-*.yml']
+  push:
+    branches: [codex/preview-control-plane, beta, development-1, development-2]
+    paths: ['ops/preview/**', '.github/workflows/preview-*.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'beta' || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Unit and syntax checks
+        run: |
+          python -m unittest discover -s ops/preview/tests -v
+          python -m compileall -q ops/preview
+          bash -n ops/preview/bootstrap.sh
+          shellcheck ops/preview/bootstrap.sh
+      - name: Validate workflows
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+        run: |
+          set -euo pipefail
+          curl -fsSLo actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tar.gz actionlint
+          ./actionlint

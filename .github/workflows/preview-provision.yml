@@ -1,0 +1,22 @@
+name: Preview Provision
+on:
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: Slot already present in the installed, reviewed slots.json
+        type: string
+        required: true
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: anylist-preview-${{ inputs.preview }}
+  cancel-in-progress: false
+jobs:
+  provision:
+    if: vars.PREVIEW_ENABLED == 'true'
+    uses: ./.github/workflows/preview-remote.yml
+    with:
+      preview: ${{ inputs.preview }}
+      operation: provision
+    secrets: inherit

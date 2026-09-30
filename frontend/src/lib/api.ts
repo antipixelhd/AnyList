@@ -1,7 +1,7 @@
 import { responsiveArtwork } from "./responsive-artwork";
 
-const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
-const BASE = `http://localhost:${BACKEND_PORT}`;
+const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
+const BASE = `http://127.0.0.1:${BACKEND_PORT}`;
 
 type ParamValue = string | number | boolean | undefined;
 

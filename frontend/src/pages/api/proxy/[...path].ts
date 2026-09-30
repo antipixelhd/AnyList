@@ -1,7 +1,7 @@
 import type { APIRoute } from "astro";
 
-const BACKEND_PORT = (import.meta.env?.BACKEND_PORT as string | undefined) ?? "7331";
-const BACKEND = `http://localhost:${BACKEND_PORT}`;
+const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
+const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
 
 // This proxy is a generic catch-all for every backend path, so a redirect
 // passed straight through to the browser must be pinned to hosts we actually

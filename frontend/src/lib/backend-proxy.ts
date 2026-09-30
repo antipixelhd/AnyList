@@ -1,5 +1,5 @@
-const BACKEND_PORT = (import.meta.env.BACKEND_PORT as string | undefined) ?? "7331";
-const BACKEND = `http://localhost:${BACKEND_PORT}`;
+const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
+const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
 
 // Passes a backend path straight through byte-for-byte. Used for FastAPI's
 // built-in docs (/docs, /redoc, /openapi.json) — their generated HTML embeds
