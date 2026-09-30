@@ -1,6 +1,7 @@
 import contextlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -168,13 +169,35 @@ class ControllerTests(unittest.TestCase):
         snapshot.write_bytes(b"dump")
         p.snapshot = lambda: snapshot
         commands = []
-        with patch.object(c, "run", lambda args, **kwargs: commands.append(args)):
+        calls = []
+        def command(args, **kwargs):
+            commands.append(args)
+            calls.append(kwargs)
+        with patch.object(c, "run", command):
             c.Preview.reset_database(p)
         self.assertEqual(p.events, ["stop", "migrate"])
-        self.assertEqual([args[4] for args in commands], ["dropdb", "createdb", "pg_restore"])
-        self.assertTrue(all(p.role in args for args in commands))
+        self.assertEqual([args[4] for args in commands], ["dropdb", "createdb", "psql", "pg_restore"])
+        self.assertTrue(all(p.role in args for args in commands if args[4] != "psql"))
+        self.assertEqual(calls[2]["input"], f"REVOKE ALL ON DATABASE {p.role} FROM PUBLIC;\n")
         self.assertFalse(any(SLOTS["beta"]["database"] in args for args in commands))
         self.assertFalse(snapshot.exists())
+
+    def test_permanent_snapshot_retains_recent_backups_and_keeps_new_dump(self):
+        p = self.preview("beta")
+        folder = self.state / "backups"
+        folder.mkdir()
+        for index in range(3):
+            previous = folder / f"beta-old-{index}.dump"
+            previous.write_bytes(b"old")
+            os.utime(previous, (index + 1, index + 1))
+        def dump(args, **kwargs):
+            kwargs["stdout"].write(b"consistent snapshot")
+        with patch.object(c, "STATE", self.state), patch.object(c, "BACKUP_KEEP", 2), \
+             patch.object(c.subprocess, "run", dump):
+            path = c.Preview.snapshot(p, permanent=True)
+        self.assertEqual(path.read_bytes(), b"consistent snapshot")
+        self.assertEqual(len(list(folder.glob("beta-*.dump"))), 2)
+        self.assertTrue((folder / "beta-old-2.dump").exists())
 
     def test_failed_restore_cleans_snapshot_and_never_runs_migrations(self):
         p = self.preview()

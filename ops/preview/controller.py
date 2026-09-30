@@ -26,6 +26,7 @@ REPOSITORY = "https://github.com/antipixelhd/AnyList.git"
 OPERATIONS = {"status", "restart", "redeploy", "reset-db-from-beta", "recreate-preview", "provision", "sync-config"}
 DEPENDENCIES = {"backend": ["backend/pyproject.toml", "backend/uv.lock"],
                 "frontend": ["frontend/package.json", "frontend/package-lock.json"]}
+BACKUP_KEEP = 20
 
 
 class Refused(RuntimeError):
@@ -121,7 +122,7 @@ class Preview:
 
     def app(self, args, *, directory="backend", capture=False, check=True, env=None, **kwargs):
         # root never executes branch-controlled packages/scripts or sources .env.
-        return run(["runuser", "-u", self.user, "--", *args],
+        return run(["/usr/sbin/runuser", "-u", self.user, "--", *args],
                    cwd=self.checkout / directory, env=env or self.env(),
                    capture=capture, check=check, **kwargs)
 
@@ -202,10 +203,17 @@ class Preview:
         path = Path(name)
         try:
             with os.fdopen(fd, "wb") as stream:
-                subprocess.run(["runuser", "-u", "postgres", "--", "pg_dump", "-Fc",
+                subprocess.run(["/usr/sbin/runuser", "-u", "postgres", "--", "pg_dump", "-Fc",
                                 "--no-owner", "--no-acl", self.slots["beta"]["database"]],
                                stdout=stream, check=True)
             print(f"Beta snapshot: {path}", flush=True)
+            if permanent:
+                # Only completed, controller-owned snapshots in the private folder.
+                backups = sorted(folder.glob("beta-*.dump"),
+                                 key=lambda item: item.stat().st_mtime_ns, reverse=True)
+                for old in backups[BACKUP_KEEP:]:
+                    if old != path and old.is_file() and not old.is_symlink():
+                        old.unlink()
             return path
         except BaseException:
             path.unlink(missing_ok=True)
@@ -219,11 +227,13 @@ class Preview:
             snapshot = self.snapshot()
         try:
             self.services("stop")
-            run(["runuser", "-u", "postgres", "--", "dropdb", "--if-exists", "--force", self.role])
-            run(["runuser", "-u", "postgres", "--", "createdb", "--owner", self.role, self.role])
+            run(["/usr/sbin/runuser", "-u", "postgres", "--", "dropdb", "--if-exists", "--force", self.role])
+            run(["/usr/sbin/runuser", "-u", "postgres", "--", "createdb", "--owner", self.role, self.role])
+            run(["/usr/sbin/runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1"],
+                input=f"REVOKE ALL ON DATABASE {self.role} FROM PUBLIC;\n")
             # Restore as postgres SET ROLE target: all restored objects belong to target.
             with snapshot.open("rb") as stream:
-                run(["runuser", "-u", "postgres", "--", "pg_restore", "--exit-on-error",
+                run(["/usr/sbin/runuser", "-u", "postgres", "--", "pg_restore", "--exit-on-error",
                      "--no-owner", "--no-acl", "--role", self.role, "--dbname", self.role], stdin=stream)
             self.migrate()
         finally:
@@ -324,8 +334,10 @@ class Preview:
             password = secrets.token_hex(32)
             # Never print credentials or put them in process arguments.
             sql = f"CREATE ROLE {self.role} LOGIN PASSWORD '{password}';"
-            run(["runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1"], input=sql)
-            run(["runuser", "-u", "postgres", "--", "createdb", "--owner", self.role, self.role])
+            run(["/usr/sbin/runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1"], input=sql)
+            run(["/usr/sbin/runuser", "-u", "postgres", "--", "createdb", "--owner", self.role, self.role])
+            run(["/usr/sbin/runuser", "-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1"],
+                input=f"REVOKE ALL ON DATABASE {self.role} FROM PUBLIC;\n")
             values = {
                 "SECRET_KEY": secrets.token_hex(32),
                 "DATABASE_URL": f"postgresql+asyncpg://{self.role}:{password}@127.0.0.1:5432/{self.role}",
@@ -348,11 +360,11 @@ class Preview:
                     f"retired=home/'{retired}'; retired.mkdir(); "
                     "[(home/name).rename(retired/name) for name in ('checkout', '.venv') "
                     "if (home/name).exists()]")
-            run(["runuser", "-u", self.user, "--", "python3", "-c", code], env=self.env())
+            run(["/usr/sbin/runuser", "-u", self.user, "--", "python3", "-c", code], env=self.env())
         if not self.checkout.exists():
-            run(["runuser", "-u", self.user, "--", "git", "clone", "--no-checkout", REPOSITORY,
+            run(["/usr/sbin/runuser", "-u", self.user, "--", "git", "clone", "--no-checkout", REPOSITORY,
                  self.checkout], env={"PATH": "/usr/bin:/bin", "HOME": str(self.home)})
-        run(["runuser", "-u", self.user, "--", "mkdir", "-p", self.home / "data"])
+        run(["/usr/sbin/runuser", "-u", self.user, "--", "mkdir", "-p", self.home / "data"])
         for part in ("frontend", "backend"):
             template = (INSTALL / (part + ".service.in")).read_text()
             substitutions = {"@BRANCH@": self.branch, "@USER@": self.user,

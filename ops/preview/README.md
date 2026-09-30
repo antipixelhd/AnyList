@@ -76,8 +76,10 @@ Beta stops its own runtime, inspects DB revisions, and takes a timestamped custo
 share `beta-database.lock`. Only forward `alembic upgrade heads` runs. Beta is never
 reset, dropped, cloned over, downgraded, or automatically restored. Incompatibility
 or migration failure leaves its DB intact and services stopped; fix the migration
-in code, then redeploy. Backups remain in `/var/lib/anylist-preview/backups` until
-an administrator chooses retention/off-host backup policy.
+in code, then redeploy. The most recent 20 completed migration backups remain in
+`/var/lib/anylist-preview/backups`; older matching dump files are removed only
+after a new dump completes. Off-host backups remain optional infrastructure
+maintenance. Deployment never restores a backup automatically.
 
 Ordinary development pushes preserve their DB and apply forward migrations. Forced
 pushes, non-fast-forward changes relative to the last successfully deployed SHA,
