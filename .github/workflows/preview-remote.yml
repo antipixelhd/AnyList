@@ -16,6 +16,13 @@ jobs:
   remote:
     runs-on: ubuntu-latest
     steps:
+      - name: Mask private preview hostname
+        env:
+          HOST: ${{ vars.PREVIEW_VPS_HOST }}
+        run: |
+          printf '::add-mask::%s\n' "$HOST"
+          printf '::add-mask::%s\n' "${HOST%%.*}"
+          printf '::add-mask::%s\n' "${HOST#*.}"
       - uses: actions/checkout@v6
         with:
           ref: beta
@@ -49,12 +56,40 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           audience: ${{ secrets.TS_AUDIENCE }}
           tags: tag:ci
+          version: latest
+          log-mode: quiet
       - name: Verify private connectivity
         env:
           HOST: ${{ vars.PREVIEW_VPS_HOST }}
         run: |
           set -euo pipefail
-          tailscale ping --timeout=30s "$HOST"
+          python3 - <<'PY'
+          import os, socket
+          for address in {item[4][0] for item in socket.getaddrinfo(os.environ['HOST'], 22)}:
+              print('::add-mask::' + address)
+          PY
+          tailscale ping --timeout=30s "$HOST" >/dev/null
+      - name: Verify restricted CI commands
+        if: inputs.operation == 'status'
+        env:
+          HOST: ${{ vars.PREVIEW_VPS_HOST }}
+        run: |
+          set -euo pipefail
+          for command in 'id' 'preview reset-db-from-beta beta'; do
+            if timeout 20s tailscale ssh "anylist-preview-ci@$HOST" "$command" >refused.log 2>&1; then
+              echo 'Restricted CI command unexpectedly succeeded' >&2
+              exit 1
+            fi
+            grep -q 'Preview command refused' refused.log
+          done
+          for user in root ubuntu; do
+            if timeout 20s tailscale ssh "$user@$HOST" id >refused.log 2>&1; then
+              echo 'Privileged SSH account unexpectedly accessible' >&2
+              exit 1
+            fi
+            grep -Eqi 'permission denied|access denied|not allowed' refused.log
+          done
+          echo 'Arbitrary commands, beta reset and privileged SSH accounts refused.'
       - name: Run installed preview entrypoint
         env:
           HOST: ${{ vars.PREVIEW_VPS_HOST }}
