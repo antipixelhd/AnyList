@@ -976,6 +976,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import { wireCancelButton } from '../lib/sync-controls';
   import { createSyncJobMonitor } from '../lib/sync-job-monitor';
+  import { createSyncProgressRenderer } from '../lib/sync-progress';
   import { mountDataImports } from '../lib/data-import-controls';
   let dataImports: ReturnType<typeof mountDataImports> | undefined;
   document.addEventListener('astro:before-swap', () => dataImports?.stop());
@@ -1210,59 +1211,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Simkl progress tracking ───────────────────────────────────────────────
 
-  function renderSimklProgress(job: any) {
-    const strip  = document.getElementById('simkl-progress');
-    const bar    = document.getElementById('simkl-job-bar');
-    const pctEl  = document.getElementById('simkl-job-pct');
-    const label  = document.getElementById('simkl-job-label');
-    const items  = document.getElementById('simkl-job-items');
-    const cancelBtn = document.querySelector<HTMLButtonElement>('#simkl-job-cancel');
-    if (!strip) return;
-
-    if (!job) { strip.classList.add('hidden'); return; }
-    strip.classList.remove('hidden');
-
-    const isPush     = job.job_type === 'push';
-    const isFailed   = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending  = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-
-    if (isCompleted) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = `h-1.5 rounded-full transition-all duration-500 ${isPush ? 'bg-amber-500' : 'bg-blue-600'}`; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
-      if (pctEl) pctEl.textContent = '100%';
-      const s = job.stats;
-      if (items) items.textContent = s
-        ? `${s.movies ?? 0} movies, ${s.episodes ?? 0} episodes, ${s.ratings ?? 0} ratings`
-        : `${job.processed_items} items`;
-      return;
-    }
-
-    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const barColor = isPush ? 'bg-amber-500' : 'bg-blue-600';
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-1.5 rounded-full transition-all duration-500 ${barColor}${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending
-      ? (isPush ? 'Push queued…' : 'Pull queued…')
-      : (job.current_step || (isPush ? 'Pushing…' : 'Pulling…'));
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-  }
+  const renderSimklProgress = createSyncProgressRenderer('simkl', token, message => showMessage(message, 'error'));
 
   function startSimklPoller(jobId?: number) {
     void jobMonitor?.watch('simkl', {
@@ -1275,61 +1224,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Trakt progress tracking ───────────────────────────────────────────────
 
-  function renderTraktProgress(job: any) {
-    const strip  = document.getElementById('trakt-progress');
-    const bar    = document.getElementById('trakt-job-bar');
-    const pctEl  = document.getElementById('trakt-job-pct');
-    const label  = document.getElementById('trakt-job-label');
-    const items  = document.getElementById('trakt-job-items');
-    const cancelBtn = document.querySelector<HTMLButtonElement>('#trakt-job-cancel');
-    if (!strip) return;
-
-    if (!job) { strip.classList.add('hidden'); return; }
-    strip.classList.remove('hidden');
-
-    const traktVerbs: Record<string, { queued: string; active: string; complete: string; failed: string; cancelled: string }> = {
-      push:   { queued: 'Push queued…', active: 'Pushing…',   complete: 'Push complete',   failed: 'Push failed',   cancelled: 'Push cancelled' },
-      import: { queued: 'Import queued…', active: 'Importing…', complete: 'Import complete', failed: 'Import failed', cancelled: 'Import cancelled' },
-      pull:   { queued: 'Pull queued…', active: 'Pulling…',   complete: 'Pull complete',   failed: 'Pull failed',   cancelled: 'Pull cancelled' },
-    };
-    const verbs = traktVerbs[job.job_type] || traktVerbs.pull;
-    const isFailed    = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending   = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? verbs.cancelled : verbs.failed;
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-
-    if (isCompleted) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = verbs.complete;
-      if (pctEl) pctEl.textContent = '100%';
-      const s = job.stats;
-      if (items) items.textContent = s
-        ? `${s.succeeded ?? 0} ok, ${s.failed ?? 0} failed`
-        : `${job.processed_items} items`;
-      return;
-    }
-
-    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-1.5 rounded-full transition-all duration-500 bg-red-500${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending ? verbs.queued : (job.current_step || verbs.active);
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-  }
+  const renderTraktProgress = createSyncProgressRenderer('trakt', token, message => showMessage(message, 'error'));
 
   function startTraktPoller(jobId?: number) {
     void jobMonitor?.watch('trakt', {
@@ -1341,58 +1236,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   // ── Trakt export-import progress (the "Import" section's upload box) ─────
-  function renderTraktImportProgress(job: any) {
-    const dropzone = document.getElementById('trakt-import-dropzone');
-    const progress = document.getElementById('trakt-import-progress');
-    const bar      = document.getElementById('trakt-import-bar');
-    const pctEl    = document.getElementById('trakt-import-pct');
-    const label    = document.getElementById('trakt-import-label');
-    const items    = document.getElementById('trakt-import-items');
-    const statusEl = document.getElementById('trakt-import-status');
-    if (!dropzone || !progress) return;
-
-    if (!job) {
-      progress.classList.add('hidden');
-      dropzone.classList.remove('hidden');
-      return;
-    }
-    dropzone.classList.add('hidden');
-    progress.classList.remove('hidden');
-
-    const isFailed    = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending   = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = '';
-      if (statusEl) statusEl.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-
-    if (isCompleted) {
-      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Import complete';
-      if (pctEl) pctEl.textContent = '100%';
-      if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : `${job.processed_items} items`;
-      if (statusEl) statusEl.textContent = '';
-      return;
-    }
-
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-2 rounded-full transition-all duration-500 bg-red-500${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending ? 'Import queued…' : 'Importing…';
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-    if (statusEl) statusEl.textContent = '';
-  }
+  const renderTraktImportProgress = createSyncProgressRenderer('trakt-import', token, message => showMessage(message, 'error'));
 
   function startTraktImportPoller(jobId?: number) {
     void jobMonitor?.watch('trakt-import', {
@@ -1405,58 +1249,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Scrob export-import progress (the "Import" section's Scrob tab) ──────
 
-  function renderScrobImportProgress(job: any) {
-    const dropzone = document.getElementById('scrob-import-dropzone');
-    const progress = document.getElementById('scrob-import-progress');
-    const bar      = document.getElementById('scrob-import-bar');
-    const pctEl    = document.getElementById('scrob-import-pct');
-    const label    = document.getElementById('scrob-import-label');
-    const items    = document.getElementById('scrob-import-items');
-    const statusEl = document.getElementById('scrob-import-status');
-    if (!dropzone || !progress) return;
-
-    if (!job) {
-      progress.classList.add('hidden');
-      dropzone.classList.remove('hidden');
-      return;
-    }
-    dropzone.classList.add('hidden');
-    progress.classList.remove('hidden');
-
-    const isFailed    = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending   = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = '';
-      if (statusEl) statusEl.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-
-    if (isCompleted) {
-      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-blue-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Import complete';
-      if (pctEl) pctEl.textContent = '100%';
-      if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : `${job.processed_items} items`;
-      if (statusEl) statusEl.textContent = '';
-      return;
-    }
-
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-2 rounded-full transition-all duration-500 bg-blue-500${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending ? 'Import queued…' : 'Importing…';
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-    if (statusEl) statusEl.textContent = '';
-  }
+  const renderScrobImportProgress = createSyncProgressRenderer('scrob-import', token, message => showMessage(message, 'error'));
 
   function startScrobImportPoller(jobId?: number) {
     void jobMonitor?.watch('manual-import', {
@@ -1469,58 +1262,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Yamtrack/Floppy import progress (the "Import" section's Yamtrack tab) ──
 
-  function renderYamtrackImportProgress(job: any) {
-    const dropzone = document.getElementById('yamtrack-import-dropzone');
-    const progress = document.getElementById('yamtrack-import-progress');
-    const bar      = document.getElementById('yamtrack-import-bar');
-    const pctEl    = document.getElementById('yamtrack-import-pct');
-    const label    = document.getElementById('yamtrack-import-label');
-    const items    = document.getElementById('yamtrack-import-items');
-    const statusEl = document.getElementById('yamtrack-import-status');
-    if (!dropzone || !progress) return;
-
-    if (!job) {
-      progress.classList.add('hidden');
-      dropzone.classList.remove('hidden');
-      return;
-    }
-    dropzone.classList.add('hidden');
-    progress.classList.remove('hidden');
-
-    const isFailed    = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending   = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? 'Import cancelled' : 'Import failed';
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = '';
-      if (statusEl) statusEl.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-
-    if (isCompleted) {
-      if (bar) { bar.className = 'h-2 rounded-full transition-all duration-500 bg-green-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Import complete';
-      if (pctEl) pctEl.textContent = '100%';
-      if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : `${job.processed_items} items`;
-      if (statusEl) statusEl.textContent = '';
-      return;
-    }
-
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-2 rounded-full transition-all duration-500 bg-green-500${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending ? 'Import queued…' : 'Importing…';
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-    if (statusEl) statusEl.textContent = '';
-  }
+  const renderYamtrackImportProgress = createSyncProgressRenderer('yamtrack-import', token, message => showMessage(message, 'error'));
 
   function startYamtrackImportPoller(jobId?: number) {
     void jobMonitor?.watch('yamtrack-import', {
@@ -1532,53 +1274,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   // ── MDBList progress tracking ─────────────────────────────────────────────
-  function renderMdblistProgress(job: any) {
-    const strip = document.getElementById('mdblist-progress');
-    const bar = document.getElementById('mdblist-job-bar');
-    const pctEl = document.getElementById('mdblist-job-pct');
-    const label = document.getElementById('mdblist-job-label');
-    const items = document.getElementById('mdblist-job-items');
-    const cancelBtn = document.querySelector<HTMLButtonElement>('#mdblist-job-cancel');
-    if (!strip) return;
-    if (!job) { strip.classList.add('hidden'); return; }
-    strip.classList.remove('hidden');
-
-    const isPush = job.job_type === 'push';
-    const isFailed = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? (isPush ? 'Push cancelled' : 'Pull cancelled') : (isPush ? 'Push failed' : 'Pull failed');
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-    if (isCompleted) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-violet-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isPush ? 'Push complete' : 'Pull complete';
-      if (pctEl) pctEl.textContent = '100%';
-      if (items) items.textContent = `${job.processed_items ?? 0} items`;
-      return;
-    }
-
-    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-1.5 rounded-full transition-all duration-500 bg-violet-500${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending
-      ? (isPush ? 'Push queued…' : 'Pull queued…')
-      : (job.current_step || (isPush ? 'Pushing…' : 'Pulling…'));
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-  }
+  const renderMdblistProgress = createSyncProgressRenderer('mdblist', token, message => showMessage(message, 'error'));
 
   function startMdblistPoller(jobId?: number) {
     void jobMonitor?.watch('mdblist', {
@@ -1591,51 +1287,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Bingebase progress tracking ───────────────────────────────────────────
 
-  function renderBingebaseProgress(job: any) {
-    const strip  = document.getElementById('bingebase-progress');
-    const bar    = document.getElementById('bingebase-job-bar');
-    const pctEl  = document.getElementById('bingebase-job-pct');
-    const label  = document.getElementById('bingebase-job-label');
-    const items  = document.getElementById('bingebase-job-items');
-    const cancelBtn = document.querySelector<HTMLButtonElement>('#bingebase-job-cancel');
-    if (!strip) return;
-
-    if (!job) { strip.classList.add('hidden'); return; }
-    strip.classList.remove('hidden');
-
-    const isFailed = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-    const isCompleted = job.status === 'completed';
-    const isPending = job.status === 'pending';
-
-    if (isFailed || isCancelled) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-red-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = isCancelled ? 'Push cancelled' : 'Push failed';
-      if (pctEl) pctEl.textContent = '';
-      if (items) items.textContent = isCancelled ? '' : String(job.error_message || 'Unknown error');
-      return;
-    }
-    if (isCompleted) {
-      if (cancelBtn) cancelBtn.classList.add('hidden');
-      if (bar) { bar.className = 'h-1.5 rounded-full transition-all duration-500 bg-emerald-500'; bar.style.width = '100%'; }
-      if (label) label.textContent = 'Push complete';
-      if (pctEl) pctEl.textContent = '100%';
-      if (items) items.textContent = `${job.processed_items ?? 0} items pushed`;
-      return;
-    }
-
-    wireCancelButton(cancelBtn, job, token, message => showMessage(message, 'error'));
-    const pct = job.total_items > 0 ? Math.min(100, Math.round((job.processed_items / job.total_items) * 100)) : 0;
-    const indeterminate = isPending || pct === 0;
-    if (bar) {
-      bar.className = `h-1.5 rounded-full transition-all duration-500 bg-emerald-500${indeterminate ? ' animate-pulse' : ''}`;
-      bar.style.width = indeterminate ? '100%' : `${pct}%`;
-    }
-    if (label) label.textContent = isPending ? 'Push queued…' : 'Pushing…';
-    if (pctEl) pctEl.textContent = pct > 0 ? `${pct}%` : '';
-    if (items) items.textContent = job.total_items > 0 ? `${job.processed_items} / ${job.total_items} items` : 'Loading…';
-  }
+  const renderBingebaseProgress = createSyncProgressRenderer('bingebase', token, message => showMessage(message, 'error'));
 
   function startBingebasePoller(jobId?: number) {
     void jobMonitor?.watch('bingebase', {

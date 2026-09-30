@@ -134,6 +134,7 @@ export interface SyncJob {
   total_items: number;
   processed_items: number;
   error_message: string | null;
+  stats?: Record<string, unknown> | null;
   updated_at: string;
 }
 
