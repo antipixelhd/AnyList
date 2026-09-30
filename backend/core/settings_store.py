@@ -30,12 +30,15 @@ async def get_effective_tmdb_key(
     return global_settings.tmdb_api_key if global_settings else None
 
 
-async def get_user_tmdb_key(db: AsyncSession, user_id: int) -> str | None:
+async def get_user_tmdb_key(db: AsyncSession, user_id: int, *, cached: bool = True) -> str | None:
     cache_key = f"tmdb_key_{user_id}"
-    if cache_key not in db.info:
-        row = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
-        db.info[cache_key] = await get_effective_tmdb_key(db, row, cached_global=True)
-    return db.info[cache_key]
+    if cached and cache_key in db.info:
+        return db.info[cache_key]
+    row = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
+    api_key = await get_effective_tmdb_key(db, row, cached_global=cached)
+    if cached:
+        db.info[cache_key] = api_key
+    return api_key
 
 
 def check_tmdb_key(api_key: str | None) -> bool:

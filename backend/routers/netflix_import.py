@@ -19,18 +19,17 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPE
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core import tmdb
+from core import tmdb, settings_store
 from core.enrichment import create_media_safely
 from core.status_provenance import mark_status_change
 from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from core.tracking_rules import effective_score
 from db import engine, get_db
 from dependencies import get_current_user
-from models import Media, NetflixImportSession, Rating, Show, User, UserSettings, WatchEvent
+from models import Media, NetflixImportSession, Rating, Show, User, WatchEvent
 from models.events import WatchEvent as WatchEventModel
 from models.base import MediaType
 from models.episode_order import EpisodeOrderMapping
-from models.global_settings import GlobalSettings
 from models.tracking import TrackedEntry, TrackingDeletion
 
 logger = logging.getLogger(__name__)
@@ -49,14 +48,6 @@ class ImportCancelled(Exception):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-async def _tmdb_key(db: AsyncSession, user_id: int) -> str | None:
-    settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
-    if settings and settings.tmdb_api_key:
-        return settings.tmdb_api_key
-    global_settings = (await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))).scalar_one_or_none()
-    return global_settings.tmdb_api_key if global_settings else None
 
 
 def _to_date(value: Any) -> date | None:
@@ -582,7 +573,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             if session is None or session.status != "preparing":
                 return
             content = session.source_csv
-            api_key = await _tmdb_key(db, user_id)
+            api_key = await settings_store.get_user_tmdb_key(db, user_id, cached=False)
             resolved_language = language or (session.payload or {}).get("language")
             if not content:
                 raise ValueError("The uploaded CSV is no longer available for preparation.")
@@ -719,7 +710,7 @@ async def upload_netflix_history(
         NetflixImportSession.status != "committed",
         NetflixImportSession.expires_at <= now,
     ))
-    if not await _tmdb_key(db, current_user.id):
+    if not await settings_store.get_user_tmdb_key(db, current_user.id, cached=False):
         raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing Netflix history.")
     session = NetflixImportSession(
         id=str(uuid.uuid4()), user_id=current_user.id, status="preparing", phase="parse",
@@ -771,7 +762,7 @@ async def update_netflix_import_item(
         media_type, tmdb_id = patch.get("media_type"), patch.get("tmdb_id")
         if media_type not in ("movie", "show") or not isinstance(tmdb_id, int) or tmdb_id <= 0:
             raise HTTPException(status_code=422, detail="A remap requires media_type and a positive TMDB id.")
-        api_key = await _tmdb_key(db, current_user.id)
+        api_key = await settings_store.get_user_tmdb_key(db, current_user.id, cached=False)
         language = (before.payload or {}).get("language")
         await db.commit()
         if not api_key:

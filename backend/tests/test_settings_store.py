@@ -17,6 +17,15 @@ def session(*rows):
 
 
 class MetadataCredentialTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fresh_user_lookup_ignores_request_cache_without_overwriting_it(self):
+        db = session(SimpleNamespace(tmdb_api_key="new-user-key"), None,
+                     SimpleNamespace(tmdb_api_key="new-global-key"))
+        db.info.update(tmdb_key_7="old-user-key", global_settings=SimpleNamespace(tmdb_api_key="old-global-key"))
+        self.assertEqual(await settings_store.get_user_tmdb_key(db, 7, cached=False), "new-user-key")
+        self.assertEqual(await settings_store.get_user_tmdb_key(db, 7, cached=False), "new-global-key")
+        self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "old-user-key")
+        self.assertEqual(db.info["global_settings"].tmdb_api_key, "old-global-key")
+
     async def test_user_key_wins_without_querying_global_settings(self):
         db = session(SimpleNamespace(tmdb_api_key="user-key"))
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "user-key")

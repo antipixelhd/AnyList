@@ -77,7 +77,10 @@ streaming_library.py and stream_actions.py.
 Peer change delivery lives in core/outbound_sync.py: destination selection,
 reconciliation gates, provider writes, and bounded batching. core/watch_echo.py
 tracks pending Jellyfin/Emby echoes; core/bingebase.py sends playback events.
-Their small independent tests are test_watch_echo.py and test_bingebase.py.
+Live playback forwarding uses core/scrobble_delivery.py. It owns provider gates,
+Trakt token refresh, and Simkl completion fallback; handlers select the event.
+Focused regressions are test_watch_echo.py, test_bingebase.py, and
+test_scrobble_delivery.py.
 Explicit watch/unwatch corrections live in core/watch_delivery.py, with focused
 regressions in test_watch_delivery.py. Streaming writes go through durable watch
 intents; provider rollback and exclusion rules do not depend on HTTP routes.

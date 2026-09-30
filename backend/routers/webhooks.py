@@ -1,5 +1,4 @@
-from core import bingebase, outbound_sync, watch_echo
-from core import trakt_auth
+from core import scrobble_delivery, settings_store, outbound_sync, watch_echo
 import json
 import re
 from datetime import datetime, timedelta
@@ -20,7 +19,6 @@ from models.collection import Collection, CollectionFile
 from models.events import WatchEvent
 from models.ratings import Rating
 from models.users import User, UserSettings
-from models.global_settings import GlobalSettings
 from models.connections import MediaServerConnection
 from models.scrobble_connection import ScrobbleConnection
 from models.base import MediaType, CollectionSource
@@ -39,255 +37,11 @@ from core.rewatch import record_rewatch_progress, get_active_rewatch
 from core.watch_dedup import DEFAULT_DEDUP_WINDOW_MINUTES, dedup_window_from_settings, find_duplicate_watch_event
 from models.rewatch import RewatchProgress
 from core import tmdb
-from core import trakt as trakt_client
-from core import simkl as simkl_client
-from core import mdblist as mdblist_client
 from core import tvdb as tvdb_client
 from core.jellyfin import extract_quality
 from core.translations import get_user_metadata_language
 
 router = APIRouter()
-
-
-async def _maybe_trakt_scrobble(
-    settings: UserSettings | None,
-    media: "Media",
-    action: str,
-    progress_percent: float,
-    db: AsyncSession | None = None,
-) -> None:
-    """Forward a play/pause/stop event to Trakt's scrobble API. Errors are swallowed."""
-    if not (settings and settings.trakt_scrobble and settings.trakt_access_token and settings.trakt_client_id):
-        return
-
-    from sqlalchemy import inspect as sa_inspect
-
-    progress = min(100.0, round(progress_percent * 100, 1))
-
-    # Refresh the token if needed before scrobbling - real-time scrobbles used
-    # the stored token as-is and broke for a week at a time when it expired
-    # (#326). Uses its own session so a refresh's commit can't touch the
-    # webhook request's in-flight transaction.
-    try:
-        access_token = await trakt_auth.ensure_valid_trakt_token_for_user(settings.user_id)
-    except Exception as exc:  # scrobbles are best-effort - never raise
-        import logging
-        logging.getLogger(__name__).warning("[Trakt scrobble] %s skipped: %s", action, exc)
-        return
-
-    try:
-        if media.media_type == MediaType.movie:
-            year: int | None = None
-            if media.release_date:
-                try:
-                    year = int(str(media.release_date)[:4])
-                except (ValueError, TypeError):
-                    pass
-            await trakt_client.scrobble_movie(
-                settings.trakt_client_id, access_token,
-                action=action,
-                tmdb_id=media.tmdb_id,
-                progress=progress,
-                title=media.title,
-                year=year,
-            )
-        elif media.media_type == MediaType.episode and media.season_number is not None and media.episode_number is not None:
-            state = sa_inspect(media)
-            if "show" in state.unloaded:
-                show = await db.get(Show, media.show_id) if db and media.show_id else None
-            else:
-                show = media.show
-            await trakt_client.scrobble_episode(
-                settings.trakt_client_id, access_token,
-                action=action,
-                season_number=media.season_number,
-                episode_number=media.episode_number,
-                progress=progress,
-                show_tmdb_id=show.tmdb_id if show else None,
-                show_title=show.title if show else None,
-                episode_tmdb_id=media.tmdb_id,
-            )
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("[Trakt scrobble] %s failed: %s", action, exc)
-
-
-# Simkl finalises a /scrobble/stop as watched at >= this progress (see
-# core/simkl.py). A stop at or above it is a real completed watch, so it must
-# still reach Simkl even if the live scrobble call fails.
-_SIMKL_WATCHED_PROGRESS = 80.0
-
-
-async def _maybe_simkl_scrobble(
-    settings: UserSettings | None,
-    media: "Media",
-    action: str,
-    progress_percent: float = 0.0,
-    db: AsyncSession | None = None,
-) -> None:
-    """Forward a play/stop event to Simkl's scrobble API. Errors are swallowed.
-    action is 'start' (play/resume) or 'stop'. Simkl has no pause concept.
-    'start' fires a fire-and-forget checkin (Simkl runtime-extrapolates progress
-    from there); 'stop' calls /scrobble/stop with the real progress, since
-    there's no separate cancel/delete endpoint to end a checkin otherwise.
-
-    Simkl's /scrobble endpoints identify an episode only by show tmdb id +
-    season + episode number, using Simkl's own layout - so an absolute-numbered
-    anime episode past the first cour (TMDB keeps one season, Simkl splits it)
-    404s. When a completed-watch stop fails we retry via /sync/history, which is
-    a little more forgiving; it still resolves the tmdb id to Simkl's own layout
-    though, so the same season-split mismatch is reported back (inside a 201) as
-    not_found - add_episode_to_history now raises SimklHistoryRejected on that
-    rather than logging a false success. A watch lost this way needs the
-    TMDB->Simkl layout remap that isn't built yet; for now it is logged, not
-    silently dropped (#328)."""
-    if not (settings and settings.simkl_scrobble and settings.simkl_access_token and settings.simkl_client_id):
-        return
-
-    from sqlalchemy import inspect as sa_inspect
-    import logging
-    log = logging.getLogger(__name__)
-
-    progress = min(100.0, round(progress_percent * 100, 1))
-    cid, token = settings.simkl_client_id, settings.simkl_access_token
-
-    is_movie = media.media_type == MediaType.movie and media.tmdb_id
-    is_episode = (
-        media.media_type == MediaType.episode
-        and media.season_number is not None
-        and media.episode_number is not None
-    )
-
-    show = None
-    if is_episode:
-        try:
-            unloaded = sa_inspect(media).unloaded
-        except Exception:
-            unloaded = ()
-        if "show" in unloaded:
-            show = await db.get(Show, media.show_id) if db and media.show_id else None
-        else:
-            show = getattr(media, "show", None)
-        if not (show and show.tmdb_id):
-            return
-    elif not is_movie:
-        return
-
-    try:
-        if is_movie:
-            if action == "start":
-                year: int | None = None
-                if media.release_date:
-                    try:
-                        year = int(str(media.release_date)[:4])
-                    except (ValueError, TypeError):
-                        pass
-                await simkl_client.checkin_movie(
-                    cid, token, tmdb_id=media.tmdb_id, title=media.title, year=year, progress=progress,
-                )
-            elif action == "stop":
-                await simkl_client.stop_scrobble_movie(cid, token, tmdb_id=media.tmdb_id, progress=progress)
-        else:
-            if action == "start":
-                await simkl_client.checkin_episode(
-                    cid, token,
-                    show_tmdb_id=show.tmdb_id,
-                    season_number=media.season_number,
-                    episode_number=media.episode_number,
-                    show_title=show.title,
-                    progress=progress,
-                )
-            elif action == "stop":
-                await simkl_client.stop_scrobble_episode(
-                    cid, token,
-                    show_tmdb_id=show.tmdb_id,
-                    season_number=media.season_number,
-                    episode_number=media.episode_number,
-                    progress=progress,
-                )
-    except Exception as exc:
-        if action == "stop" and progress >= _SIMKL_WATCHED_PROGRESS:
-            try:
-                if is_movie:
-                    await simkl_client.add_movie_to_history(cid, token, media.tmdb_id)
-                else:
-                    await simkl_client.add_episode_to_history(
-                        cid, token, show.tmdb_id, media.season_number, media.episode_number,
-                    )
-                log.info(
-                    "[Simkl scrobble] stop call failed (%s) - recorded the watch via /sync/history instead", exc,
-                )
-            except Exception as fallback_exc:
-                log.warning(
-                    "[Simkl scrobble] stop failed (%s) and the /sync/history fallback also failed: %s",
-                    exc, fallback_exc,
-                )
-        else:
-            log.warning("[Simkl scrobble] %s failed: %s", action, exc)
-
-
-async def _maybe_mdblist_scrobble(
-    settings: UserSettings | None,
-    media: "Media",
-    action: str,
-    progress_percent: float,
-    db: AsyncSession | None = None,
-) -> None:
-    """Forward a play/pause/stop event to MDBList's scrobble API. Errors are swallowed."""
-    if not (settings and settings.mdblist_scrobble and settings.mdblist_api_key):
-        return
-
-    from sqlalchemy import inspect as sa_inspect
-
-    progress = min(100.0, round(progress_percent * 100, 1))
-
-    # MDBList's /scrobble/stop downgrades any sub-80% stop into a resumable "paused"
-    # session (same threshold Trakt uses). Below our own "did they actually watch
-    # anything" cutoff, also clear the session so a barely-started play doesn't leave
-    # a phantom continue-watching entry.
-    actions = [action]
-    if action == "stop" and progress_percent <= 0.05:
-        actions.append("clear")
-
-    try:
-        show = None
-        if media.media_type == MediaType.episode and media.season_number is not None and media.episode_number is not None:
-            state = sa_inspect(media)
-            if "show" in state.unloaded:
-                show = await db.get(Show, media.show_id) if db and media.show_id else None
-            else:
-                show = media.show
-
-        for act in actions:
-            act_progress = progress if act != "clear" else None
-            if media.media_type == MediaType.movie and media.tmdb_id:
-                await mdblist_client.scrobble_movie(
-                    settings.mdblist_api_key,
-                    action=act,
-                    tmdb_id=media.tmdb_id,
-                    progress=act_progress,
-                )
-            elif media.media_type == MediaType.episode and media.season_number is not None and media.episode_number is not None:
-                if show and show.tmdb_id:
-                    await mdblist_client.scrobble_episode(
-                        settings.mdblist_api_key,
-                        action=act,
-                        show_tmdb_id=show.tmdb_id,
-                        season_number=media.season_number,
-                        episode_number=media.episode_number,
-                        progress=act_progress,
-                    )
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("[MDBList scrobble] %s failed: %s", action, exc)
-
-
-async def _get_tmdb_key(db: AsyncSession, settings: UserSettings | None) -> str | None:
-    if settings and settings.tmdb_api_key:
-        return settings.tmdb_api_key
-    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-    gs = gs_result.scalar_one_or_none()
-    return gs.tmdb_api_key if gs else None
 
 
 async def _get_oldest_connection(db: AsyncSession, user_id: int, conn_type: str) -> MediaServerConnection | None:
@@ -1231,7 +985,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     # Almost always one episode; a combined multi-episode file (see #138)
     # resolves to several. "Now playing"/live progress scrobbles below stay
@@ -1313,10 +1067,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             session.media_id = current_episode.id
             session.state = "playing"
             await _commit_playback_session_update(db, settings, *media_list)
-        await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackProgress", "playback.progress"):
         if not conn or conn.sync_playback:
@@ -1331,9 +1082,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             session.updated_at = datetime.utcnow()
             await _commit_playback_session_update(db, settings, *media_list)
         if data["is_paused"]:
-            await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "pause", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackStop", "playback.stop"):
         # sync_watched and sync_playback are independent toggles - watched status
@@ -1354,10 +1103,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes)
         await db.commit()
         for m in media_list:
-            await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
-            await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
-            await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
-            await bingebase.scrobble(settings, m, "stop", progress_percent, db=db)
+            await scrobble_delivery.forward(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
         # Same reasoning as PlaybackStop above: _close_session's pending delete
@@ -1374,10 +1120,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
             )
         await db.commit()
         for m in non_echo_media:
-            await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
-            await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
-            await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
-            await bingebase.scrobble(settings, m, "stop", 1.0, db=db)
+            await scrobble_delivery.forward(settings, m, "stop", 1.0, db=db)
 
     elif notification_type == "UserDataSaved":
         # Jellyfin's official Webhook plugin has no dedicated "mark played"
@@ -1395,10 +1138,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 )
                 await db.commit()
                 for m in non_echo_media:
-                    await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
-                    await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
-                    await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
-                    await bingebase.scrobble(settings, m, "stop", 1.0, db=db)
+                    await scrobble_delivery.forward(settings, m, "stop", 1.0, db=db)
             elif played is False:
                 changed_ids = [
                     m.id for m in media_list
@@ -1500,7 +1240,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     # See the matching comment in _handle_jellyfin_webhook (#138 follow-up).
     media_list = await find_or_create_media_jellyfin_multi(data, db, api_key=tmdb_key, user_id=user.id)
@@ -1570,10 +1310,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             session = await _get_or_open_session(db, session_key, "emby", user.id, media.id)
             session.state = "playing"
             await _commit_playback_session_update(db, settings, media)
-        await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackProgress", "playback.progress"):
         if not conn or conn.sync_playback:
@@ -1584,9 +1321,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             session.updated_at = datetime.utcnow()
             await _commit_playback_session_update(db, settings, media)
         if data["is_paused"]:
-            await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "pause", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackStop", "playback.stop"):
         # sync_watched and sync_playback are independent toggles - watched status
@@ -1604,10 +1339,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
                 await _write_watch_event(db, user.id, m.id, progress_percent, progress_seconds, progress_percent >= 0.90, window_minutes)
         await db.commit()
         for m in media_list:
-            await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
-            await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
-            await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
-            await bingebase.scrobble(settings, m, "stop", progress_percent, db=db)
+            await scrobble_delivery.forward(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
         # Same reasoning as PlaybackStop above: _close_session's pending delete
@@ -1622,10 +1354,7 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             )
         await db.commit()
         for m in non_echo_media:
-            await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
-            await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
-            await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
-            await bingebase.scrobble(settings, m, "stop", 1.0, db=db)
+            await scrobble_delivery.forward(settings, m, "stop", 1.0, db=db)
 
     elif notification_type in ("MarkUnplayed", "item.markunplayed"):
         # Emby's webhook plugin reports mark-unwatched as its own distinct
@@ -1692,7 +1421,7 @@ async def _handle_jellyfin_scrobble_webhook(
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     # See the matching comment in _handle_jellyfin_webhook (#138 follow-up).
     media_list = await find_or_create_media_jellyfin_multi(data, db, api_key=tmdb_key, user_id=user.id)
@@ -1743,10 +1472,7 @@ async def _handle_jellyfin_scrobble_webhook(
             session.state = "playing"
             await _commit_playback_session_update(db, settings, media)
         if not is_duplicate:
-            await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackProgress", "playback.progress"):
         if conn.sync_playback:
@@ -1757,9 +1483,7 @@ async def _handle_jellyfin_scrobble_webhook(
             session.updated_at = datetime.utcnow()
             await _commit_playback_session_update(db, settings, media)
         if data["is_paused"] and not is_duplicate:
-            await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "pause", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
     elif notification_type in ("PlaybackStop", "playback.stop"):
         # sync_watched and sync_playback are independent toggles - watched status
@@ -1778,10 +1502,7 @@ async def _handle_jellyfin_scrobble_webhook(
         await db.commit()
         if not is_duplicate:
             for m in media_list:
-                await _maybe_trakt_scrobble(settings, m, "stop", progress_percent, db=db)
-                await _maybe_mdblist_scrobble(settings, m, "stop", progress_percent, db=db)
-                await _maybe_simkl_scrobble(settings, m, "stop", progress_percent, db=db)
-                await bingebase.scrobble(settings, m, "stop", progress_percent, db=db)
+                await scrobble_delivery.forward(settings, m, "stop", progress_percent, db=db)
 
     elif notification_type in ("MarkPlayed", "item.markplayed"):
         # Same reasoning as PlaybackStop above: _close_session's pending delete
@@ -1797,10 +1518,7 @@ async def _handle_jellyfin_scrobble_webhook(
         await db.commit()
         if not is_duplicate:
             for m in non_echo_media:
-                await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
-                await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
-                await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
-                await bingebase.scrobble(settings, m, "stop", 1.0, db=db)
+                await scrobble_delivery.forward(settings, m, "stop", 1.0, db=db)
 
     elif notification_type == "UserDataSaved":
         # Jellyfin's official Webhook plugin has no dedicated "mark played"
@@ -1820,10 +1538,7 @@ async def _handle_jellyfin_scrobble_webhook(
                 await db.commit()
                 if not is_duplicate:
                     for m in non_echo_media:
-                        await _maybe_trakt_scrobble(settings, m, "stop", 1.0, db=db)
-                        await _maybe_mdblist_scrobble(settings, m, "stop", 1.0, db=db)
-                        await _maybe_simkl_scrobble(settings, m, "stop", 1.0, db=db)
-                        await bingebase.scrobble(settings, m, "stop", 1.0, db=db)
+                        await scrobble_delivery.forward(settings, m, "stop", 1.0, db=db)
             elif played is False:
                 changed_ids = [
                     m.id for m in media_list
@@ -2621,7 +2336,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     session_key = f"plex:{user.id}:{data['session_key']}"
 
@@ -2646,10 +2361,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
             await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await _backfill_credits_stingers(db, media, tmdb_key)
             await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif event == "media.resume":
         media = await find_or_create_media_plex(data, db, api_key=tmdb_key, conn=conn, user_id=user.id)
@@ -2669,10 +2381,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
             await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await _backfill_credits_stingers(db, media, tmdb_key)
             await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif event == "media.pause":
         if not conn or conn.sync_playback:
@@ -2688,9 +2397,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                 await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
                 await _backfill_credits_stingers(db, media, tmdb_key)
                 await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "pause", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
     elif event == "media.stop":
         session = await _close_session(db, session_key)
@@ -2713,10 +2420,7 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
             await _backfill_plex_runtime(db, media, data, conn, tmdb_key)
             await _backfill_credits_stingers(db, media, tmdb_key)
             await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "stop", progress_percent, db=db)
-        await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
-        await _maybe_simkl_scrobble(settings, media, "stop", progress_percent, db=db)
-        await bingebase.scrobble(settings, media, "stop", progress_percent, db=db)
+        await scrobble_delivery.forward(settings, media, "stop", progress_percent, db=db)
 
     elif event == "media.scrobble":
         await _close_session(db, session_key)
@@ -2947,7 +2651,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     session_key = f"plex:scrobble:{user.id}:{data['session_key']}"
     # See _duplicated_by_full_connection's docstring (#312) - guards only the
@@ -2973,10 +2677,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             await _backfill_credits_stingers(db, media, tmdb_key)
             await db.commit()
         if not is_duplicate:
-            await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif event == "media.resume":
         media = await find_or_create_media_plex(data, db, api_key=tmdb_key, conn=None, user_id=user.id)
@@ -2992,10 +2693,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             await _backfill_credits_stingers(db, media, tmdb_key)
             await db.commit()
         if not is_duplicate:
-            await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif event == "media.pause":
         if conn.sync_playback:
@@ -3012,9 +2710,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
                 await _backfill_credits_stingers(db, media, tmdb_key)
                 await db.commit()
         if not is_duplicate:
-            await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-            await bingebase.scrobble(settings, media, "pause", data["progress_percent"], db=db)
+            await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
     elif event == "media.stop":
         session = await _close_session(db, session_key)
@@ -3037,10 +2733,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
             )
         await db.commit()
         if not is_duplicate:
-            await _maybe_trakt_scrobble(settings, media, "stop", progress_percent, db=db)
-            await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
-            await _maybe_simkl_scrobble(settings, media, "stop", progress_percent, db=db)
-            await bingebase.scrobble(settings, media, "stop", progress_percent, db=db)
+            await scrobble_delivery.forward(settings, media, "stop", progress_percent, db=db)
 
     elif event == "media.scrobble":
         await _close_session(db, session_key)
@@ -3367,7 +3060,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
     window_minutes = dedup_window_from_settings(settings)
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     media = await find_or_create_media_kodi(data, db, api_key=tmdb_key, user_id=user.id)
     if media is None:
@@ -3380,10 +3073,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         session.state = "playing"
         session.updated_at = datetime.utcnow()
         await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type == "resume":
         session = await _get_or_open_session(db, session_key, "kodi", user.id, media.id)
@@ -3392,10 +3082,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         session.progress_seconds = data["progress_seconds"]
         session.updated_at = datetime.utcnow()
         await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await _maybe_simkl_scrobble(settings, media, "start", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "start", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "start", data["progress_percent"], db=db)
 
     elif notification_type == "pause":
         result = await db.execute(select(PlaybackSession).where(PlaybackSession.session_key == session_key))
@@ -3406,9 +3093,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
             session.progress_seconds = data["progress_seconds"]
             session.updated_at = datetime.utcnow()
             await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-        await _maybe_mdblist_scrobble(settings, media, "pause", data["progress_percent"], db=db)
-        await bingebase.scrobble(settings, media, "pause", data["progress_percent"], db=db)
+        await scrobble_delivery.forward(settings, media, "pause", data["progress_percent"], db=db)
 
     elif notification_type == "progress":
         session = await _get_or_open_session(db, session_key, "kodi", user.id, media.id)
@@ -3426,10 +3111,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         if completed or progress_percent > 0.05:
             await _write_watch_event(db, user.id, media.id, progress_percent, progress_seconds, completed, window_minutes)
         await db.commit()
-        await _maybe_trakt_scrobble(settings, media, "stop", progress_percent, db=db)
-        await _maybe_mdblist_scrobble(settings, media, "stop", progress_percent, db=db)
-        await _maybe_simkl_scrobble(settings, media, "stop", progress_percent, db=db)
-        await bingebase.scrobble(settings, media, "stop", progress_percent, db=db)
+        await scrobble_delivery.forward(settings, media, "stop", progress_percent, db=db)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 
@@ -3547,7 +3229,7 @@ async def kodi_rating(
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))
     settings = settings_result.scalar_one_or_none()
-    tmdb_key = await _get_tmdb_key(db, settings)
+    tmdb_key = await settings_store.get_effective_tmdb_key(db, settings)
 
     data = {
         "media_type": payload.media_type,
