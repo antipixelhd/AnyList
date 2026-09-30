@@ -21,7 +21,14 @@ if (me.totp_enabled) {
 ---
 
 <TrackerSettings title="Account">
-  <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
+  <div
+    id="app-data"
+    data-token={token}
+    data-blur-explicit={String(settings.blur_explicit !== false)}
+    data-time-format-24h={String(settings.time_format_24h !== false)}
+    class="hidden"
+    aria-hidden="true"
+  ></div>
   <div data-account-settings-page class="max-w-4xl mx-auto">
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
@@ -82,185 +89,6 @@ if (me.totp_enabled) {
             </button>
           </div>
         </form>
-      </section>
-
-      <!-- Legacy Scrob home/history controls are retained for data compatibility only. -->
-      <section hidden>
-        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Display Settings</h2>
-        <div class="space-y-6">
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Shuffle Next Up</p>
-              <p class="text-xs text-zinc-400">Randomize the order of the Next Up row on the homepage. When off, shows are ordered by most recently watched.</p>
-            </div>
-            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
-              <input
-                type="checkbox"
-                name="shuffle_next_up"
-                id="shuffle-next-up-toggle"
-                class="sr-only peer"
-                checked={settings.shuffle_next_up === true}
-              />
-              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-            </label>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Minimalist Next Up</p>
-              <p class="text-xs text-zinc-400">Show the Next Up row like any other row, without the large banner and title text.</p>
-            </div>
-            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
-              <input
-                type="checkbox"
-                name="minimalist_next_up"
-                id="minimalist-next-up-toggle"
-                class="sr-only peer"
-                checked={settings.minimalist_next_up === true}
-              />
-              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-            </label>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Hide watched from Recently Added</p>
-              <p class="text-xs text-zinc-400">Hide items you've already watched from the Recently Added row on the homepage. They still appear when viewing the full collection.</p>
-            </div>
-            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
-              <input
-                type="checkbox"
-                name="hide_watched_from_recently_added"
-                id="hide-watched-recently-added-toggle"
-                class="sr-only peer"
-                checked={settings.hide_watched_from_recently_added === true}
-              />
-              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-            </label>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Condense history by show</p>
-              <p class="text-xs text-zinc-400">On the Watch History page, collapse episodes of the same show watched on the same day into a single row instead of listing each one individually.</p>
-            </div>
-            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
-              <input
-                type="checkbox"
-                name="condense_history_by_show"
-                id="condense-history-toggle"
-                class="sr-only peer"
-                checked={settings.condense_history_by_show === true}
-              />
-              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-            </label>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Prompt to rate after watching</p>
-              <p class="text-xs text-zinc-400">When something finishes playing and drops off the Now Playing bar on the homepage, show a quick star-rating popup for it. Skipped for anything you've already rated.</p>
-            </div>
-            <div class="flex flex-col gap-3 shrink-0 mt-0.5">
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-zinc-400 w-16 text-right">Movies</span>
-                <label class="relative inline-flex items-center shrink-0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    name="rate_prompt_movies"
-                    id="rate-prompt-movies-toggle"
-                    class="sr-only peer"
-                    checked={settings.rate_prompt_movies === true}
-                  />
-                  <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                </label>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-zinc-400 w-16 text-right">Episodes</span>
-                <label class="relative inline-flex items-center shrink-0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    name="rate_prompt_episodes"
-                    id="rate-prompt-episodes-toggle"
-                    class="sr-only peer"
-                    checked={settings.rate_prompt_episodes === true}
-                  />
-                  <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                </label>
-              </div>
-            </div>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Duplicate watch window</p>
-              <p class="text-xs text-zinc-400">If a movie or episode is already in your history within this many minutes, a new watch of it (from any source - webhook, import, or manual) is skipped instead of recorded again. A small built-in minimum always applies even if you leave this blank.</p>
-            </div>
-            <div class="flex items-center gap-2 shrink-0 mt-0.5">
-              <input
-                type="number"
-                min="0"
-                step="1"
-                name="duplicate_watch_window_minutes"
-                id="duplicate-watch-window-input"
-                placeholder="5"
-                value={settings.duplicate_watch_window_minutes ?? ''}
-                class="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <span class="text-xs text-zinc-500">min</span>
-            </div>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">Blur explicit content</p>
-              <p class="text-xs text-zinc-400">Blur posters flagged as adult content by TMDB. Click a blurred poster to reveal it.</p>
-            </div>
-            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
-              <input
-                type="checkbox"
-                name="blur_explicit"
-                id="blur-explicit-toggle"
-                class="sr-only peer"
-                checked={settings.blur_explicit !== false}
-              />
-              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-            </label>
-          </div>
-          <div class="flex items-start justify-between gap-6 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800">
-            <div>
-              <p class="text-sm font-semibold text-zinc-100 mb-1">24-hour time format</p>
-              <p class="text-xs text-zinc-400">Display watch times in 24-hour format (e.g. 23:31) instead of 12-hour (e.g. 11:31 PM).</p>
-            </div>
-            <label class="relative inline-flex items-center shrink-0 cursor-pointer mt-0.5">
-              <input
-                type="checkbox"
-                name="time_format_24h"
-                id="time-format-24h-toggle"
-                class="sr-only peer"
-                checked={settings.time_format_24h !== false}
-              />
-              <div class="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-            </label>
-          </div>
-          <div>
-            <p class="text-sm text-zinc-400">Accent color</p>
-            <div class="flex flex-wrap gap-3 mt-3" id="accent-swatches">
-              {[
-                { id: 'blue',   label: 'Blue',   color: '#3b82f6' },
-                { id: 'purple', label: 'Purple', color: '#a855f7' },
-                { id: 'pink',   label: 'Pink',   color: '#ec4899' },
-                { id: 'red',    label: 'Red',    color: '#ef4444' },
-                { id: 'green',  label: 'Green',  color: '#22c55e' },
-                { id: 'yellow', label: 'Yellow', color: '#eab308' },
-                { id: 'orange', label: 'Orange', color: '#f97316' },
-              ].map(({ id, label, color }) => (
-                <button
-                  type="button"
-                  data-accent-id={id}
-                  class="accent-swatch flex items-center gap-2.5 px-5 py-3 rounded-xl border border-zinc-800 bg-zinc-900 hover:border-zinc-600 transition-all cursor-pointer text-sm text-zinc-400 hover:text-zinc-100"
-                >
-                  <span class="w-5 h-5 rounded-full shrink-0" style={`background-color: ${color}`}></span>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
       </section>
 
       <!-- Security -->
@@ -800,31 +628,14 @@ if (me.totp_enabled) {
     });
   }
 
-  function setupAccentSwatches() {
+  function applySavedAccent() {
     const saved = localStorage.getItem('accentTheme') || 'blue';
-
-    function applyAccent(id: string) {
-      if (id === 'blue') {
-        document.documentElement.removeAttribute('data-accent');
-      } else {
-        document.documentElement.setAttribute('data-accent', id);
-      }
-      localStorage.setItem('accentTheme', id);
-
-      document.querySelectorAll('.accent-swatch').forEach(btn => {
-        const isActive = btn.getAttribute('data-accent-id') === id;
-        btn.classList.toggle('border-zinc-100', isActive);
-        btn.classList.toggle('text-zinc-100', isActive);
-        btn.classList.toggle('border-zinc-800', !isActive);
-        btn.classList.toggle('text-zinc-400', !isActive);
-      });
+    if (saved === 'blue') {
+      document.documentElement.removeAttribute('data-accent');
+    } else {
+      document.documentElement.setAttribute('data-accent', saved);
     }
-
-    applyAccent(saved);
-
-    document.querySelectorAll('.accent-swatch').forEach(btn => {
-      btn.addEventListener('click', () => applyAccent(btn.getAttribute('data-accent-id') || 'blue'));
-    });
+    localStorage.setItem('accentTheme', saved);
   }
 
   function setupSettingsForm() {
@@ -971,131 +782,24 @@ if (me.totp_enabled) {
     });
   }
 
-  setupAccentSwatches();
+  applySavedAccent();
   setupActions();
   setupPasswordToggles();
   setupSettingsForm();
   setupPasswordForm();
 
-  const shuffleNextUpToggle = document.querySelector<HTMLInputElement>('#shuffle-next-up-toggle');
-  if (shuffleNextUpToggle) {
-    shuffleNextUpToggle.addEventListener('change', async () => {
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shuffle_next_up: shuffleNextUpToggle.checked }),
-      });
-    });
-  }
-
-  const minimalistNextUpToggle = document.querySelector<HTMLInputElement>('#minimalist-next-up-toggle');
-  if (minimalistNextUpToggle) {
-    minimalistNextUpToggle.addEventListener('change', async () => {
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ minimalist_next_up: minimalistNextUpToggle.checked }),
-      });
-    });
-  }
-
-  const hideWatchedRecentlyAddedToggle = document.querySelector<HTMLInputElement>('#hide-watched-recently-added-toggle');
-  if (hideWatchedRecentlyAddedToggle) {
-    hideWatchedRecentlyAddedToggle.addEventListener('change', async () => {
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hide_watched_from_recently_added: hideWatchedRecentlyAddedToggle.checked }),
-      });
-    });
-  }
-
-  const condenseHistoryToggle = document.querySelector<HTMLInputElement>('#condense-history-toggle');
-  if (condenseHistoryToggle) {
-    condenseHistoryToggle.addEventListener('change', async () => {
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ condense_history_by_show: condenseHistoryToggle.checked }),
-      });
-    });
-  }
-
-  for (const [id, key] of [
-    ['rate-prompt-movies-toggle', 'rate_prompt_movies'],
-    ['rate-prompt-episodes-toggle', 'rate_prompt_episodes'],
-  ] as const) {
-    const el = document.getElementById(id) as HTMLInputElement | null;
-    if (!el) continue;
-    el.addEventListener('change', async () => {
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [key]: el.checked }),
-      });
-    });
-  }
-
-  const duplicateWatchWindowInput = document.querySelector<HTMLInputElement>('#duplicate-watch-window-input');
-  if (duplicateWatchWindowInput) {
-    duplicateWatchWindowInput.addEventListener('change', async () => {
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      const raw = duplicateWatchWindowInput.value.trim();
-      const value = raw === '' ? null : Math.max(0, parseInt(raw, 10) || 0);
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duplicate_watch_window_minutes: value }),
-      });
-    });
-  }
-
-  // Sync blur_explicit cookie from the server-rendered value on page load.
-  // Picks up changes made on another device/browser.
-  const blurToggle = document.querySelector<HTMLInputElement>('#blur-explicit-toggle');
-  if (blurToggle) {
-    const val = blurToggle.checked ? 'true' : 'false';
-    document.cookie = `blur_explicit=${val}; path=/; SameSite=Lax; Max-Age=31536000`;
-    document.documentElement.classList.toggle('blur-explicit', blurToggle.checked);
-
-    blurToggle.addEventListener('change', async () => {
-      const v = blurToggle.checked ? 'true' : 'false';
-      document.cookie = `blur_explicit=${v}; path=/; SameSite=Lax; Max-Age=31536000`;
-      document.documentElement.classList.toggle('blur-explicit', blurToggle.checked);
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blur_explicit: blurToggle.checked }),
-      });
-    });
-  }
-
-  // Sync time_format_24h cookie from the server-rendered value on page load.
-  const timeFormatToggle = document.querySelector<HTMLInputElement>('#time-format-24h-toggle');
-  if (timeFormatToggle) {
-    document.cookie = `time_format_24h=${timeFormatToggle.checked ? 'true' : 'false'}; path=/; SameSite=Lax; Max-Age=31536000`;
-
-    timeFormatToggle.addEventListener('change', async () => {
-      document.cookie = `time_format_24h=${timeFormatToggle.checked ? 'true' : 'false'}; path=/; SameSite=Lax; Max-Age=31536000`;
-      const tok = (document.getElementById('app-data') as HTMLElement | null)?.dataset.token ?? '';
-      await fetch('/api/proxy/auth/settings', {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ time_format_24h: timeFormatToggle.checked }),
-      });
-    });
+  // Keep browser display preferences in sync with the account values.
+  if (appData) {
+    const blurExplicit = appData.dataset.blurExplicit === 'true';
+    document.cookie = `blur_explicit=${blurExplicit}; path=/; SameSite=Lax; Max-Age=31536000`;
+    document.documentElement.classList.toggle('blur-explicit', blurExplicit);
+    document.cookie = `time_format_24h=${appData.dataset.timeFormat24h}; path=/; SameSite=Lax; Max-Age=31536000`;
   }
 
   setupExportData();
 
   document.addEventListener('astro:after-swap', () => {
-    setupAccentSwatches();
+    applySavedAccent();
     setupActions();
     setupPasswordToggles();
     setupSettingsForm();
