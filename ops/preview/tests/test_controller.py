@@ -243,6 +243,20 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(["npm", "ci"], commands)
         self.assertFalse(any("sync" in args for args in commands))
 
+    def test_public_status_never_reads_private_application_journals(self):
+        p = self.preview()
+        p.env = lambda: {"SERVER_URL": "https://private.ts.net:8002"}
+        p.http_health = lambda part: True
+        commands = []
+        def command(args, **kwargs):
+            commands.append(args)
+            if args[0] == "journalctl":
+                raise RuntimeError("Private application journal must not be read")
+            return "active"
+        with patch.object(c, "run", command):
+            self.assertTrue(p.status())
+        self.assertFalse(any(args[0] == "journalctl" for args in commands))
+
     def test_provisioning_refuses_existing_unrelated_or_public_listener(self):
         p = self.preview()
         port = str(p.slot["frontend_port"])

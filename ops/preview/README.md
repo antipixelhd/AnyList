@@ -117,7 +117,7 @@ manual `Publish AnyList container` workflow stays unchanged.
 
 | Operation | Behavior |
 | --- | --- |
-| status | Checkout branch/SHA, freshly fetched remote SHA, service state/logs, separate frontend/backend health, DB connectivity/revisions/heads, URL |
+| status | Checkout branch/SHA, freshly fetched remote SHA, service state, separate frontend/backend health, DB connectivity/revisions/heads, URL |
 | restart | Restart only selected frontend/backend, then health-check; no code/DB deployment |
 | redeploy | Deploy freshly fetched current branch head through the same controller |
 | reset-db-from-beta | Fresh snapshot → replace target development DB → target checkout migrations → restart/health; beta is refused |
@@ -125,7 +125,9 @@ manual `Publish AnyList container` workflow stays unchanged.
 
 Health failure produces a failed Action. Redeploy/restart are the normal recovery
 controls after fixing code/configuration. Disconnected job output remains in
-systemd journal; status shows recent application logs. Full controller job journals
+systemd journal. Raw application journals stay on the VPS because they may contain
+private query parameters or user data; status reports service state and health.
+Full controller job journals
 are a break-glass diagnostic when the runner lost its connection.
 Recreation retains old checkout/venv files in the slot's `retired-<timestamp>`
 directory for diagnosis; these can be removed during reviewed disk maintenance.

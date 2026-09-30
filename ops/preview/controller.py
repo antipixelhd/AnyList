@@ -295,8 +295,8 @@ class Preview:
             unit = f"anylist-preview-{self.branch}-{part}.service"
             report(part + " service", lambda unit=unit: run(["systemctl", "show", unit,
                    "--property=ActiveState,SubState,Result", "--no-pager"], capture=True))
-            report(part + " recent logs", lambda unit=unit: run(["journalctl", "-u", unit,
-                   "-n", "30", "--no-pager"], capture=True))
+            # Application journals may contain private query parameters or user
+            # data. Public GitHub status output includes state, never raw logs.
         report("DB connectivity / Alembic", self.migration_state)
         report("preview URL", lambda: self.env()["SERVER_URL"])
         health = True
