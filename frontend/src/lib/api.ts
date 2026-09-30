@@ -62,18 +62,6 @@ async function post<T>(path: string, body?: unknown, token?: string): Promise<T>
   return request<T>(path, "POST", undefined, body, token);
 }
 
-async function put<T>(path: string, body?: unknown, token?: string): Promise<T> {
-  return request<T>(path, "PUT", undefined, body, token);
-}
-
-async function patch<T>(path: string, body?: unknown, token?: string): Promise<T> {
-  return request<T>(path, "PATCH", undefined, body, token);
-}
-
-async function del<T>(path: string, token?: string): Promise<T> {
-  return request<T>(path, "DELETE", undefined, undefined, token);
-}
-
 // Shared sub-types
 
 export interface CastMember {
@@ -83,27 +71,10 @@ export interface CastMember {
   profile_path: string | null;
 }
 
-export interface Network {
-  id: number;
-  name: string;
-  logo_path: string | null;
-}
-
 export interface ProductionCompany {
   id: number;
   name: string;
   logo_path: string | null;
-}
-
-export interface SeasonMeta {
-  season_number: number;
-  name: string;
-  overview: string | null;
-  poster_path: string | null;
-  episode_count: number;
-  air_date: string | null;
-  tmdb_season_id?: number | null;
-  tmdb_rating?: number | null;
 }
 
 export interface SeasonState {
@@ -113,101 +84,6 @@ export interface SeasonState {
   watch_pct: number;
   watch_started?: boolean;
   user_rating: number | null;
-}
-
-export interface EpisodeItem {
-  id: number | null;
-  // null for a TVDB-only episode (no TMDB counterpart); use `id` then.
-  tmdb_id: number | null;
-  tvdb_id?: number | null;
-  episode_number: number;
-  season_number?: number;
-  canonical_season_number?: number;
-  canonical_episode_number?: number;
-  title: string;
-  overview: string | null;
-  air_date: string | null;
-  poster_path: string | null;
-  tmdb_rating: number;
-  runtime: number | null;
-  in_library: boolean;
-  watched: boolean;
-  user_rating: number | null;
-  in_lists: number[];
-}
-
-export interface ShowSummary {
-  tmdb_id: number;
-  title: string;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  seasons_meta: SeasonMeta[];
-}
-
-export interface Season {
-  show: ShowSummary;
-  name: string;
-  overview: string | null;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  air_date: string | null;
-  tmdb_rating?: number | null;
-  episodes: EpisodeItem[];
-  season_number: number;
-  episode_order?: string;
-  show_watched: boolean;
-  season_watched: boolean;
-  season_watch_pct: number;
-  season_watch_started?: boolean;
-  season_in_library: boolean;
-  season_collection_pct: number;
-  season_user_rating: number | null;
-  show_in_lists: number[];
-  show_in_library: boolean;
-  show_collection_pct: number;
-  show_request_enabled: boolean;
-  show_is_monitored: boolean;
-}
-
-export interface EpisodeDetail {
-  show: ShowSummary;
-  title: string;
-  overview: string | null;
-  still_path: string | null;
-  air_date: string | null;
-  episode_number: number;
-  season_number: number;
-  episode_order?: string;
-  canonical_season_number?: number;
-  canonical_episode_number?: number;
-  runtime: number | null;
-  tmdb_rating: number | null;
-  // null for a TVDB-only episode (no TMDB counterpart); use `id` then.
-  tmdb_id: number | null;
-  tvdb_id?: number | null;
-  id: number | null;
-  in_library: boolean;
-  watched: boolean;
-  in_lists: number[];
-  collection_pct: number;
-  user_rating?: number | null;
-  play_count?: number;
-  cast: CastMember[];
-  guest_stars: CastMember[];
-  episodes: EpisodeItem[];
-  season?: {
-    name: string;
-    season_number: number;
-    poster_path: string | null;
-  };
-  library: {
-    resolution: string;
-    video_codec: string;
-    audio_codec: string;
-    audio_channels: string;
-    audio_languages: string[];
-    subtitle_languages: string[];
-  } | null;
 }
 
 export interface PersonCredit {
@@ -271,35 +147,6 @@ export interface ShowSeasonOverride {
   target_source: "tmdb" | "tvdb";
   target_season_number: number;
   target_show_title: string | null;
-}
-
-export interface UserList {
-  id: number;
-  name: string;
-  description: string | null;
-  privacy_level: PrivacyLevel;
-  item_count: number;
-  created_at: string;
-  updated_at: string;
-  preview_posters: { url: string; adult: boolean }[];
-}
-
-export interface PublicList extends UserList {
-  username: string;
-}
-
-export interface ListItemEntry {
-  id: number;
-  list_id: number;
-  added_at: string;
-  sort_order: number;
-  notes: string | null;
-  media: MediaItem;
-}
-
-export interface ListDetail extends UserList {
-  items: ListItemEntry[];
-  is_owner: boolean;
 }
 
 // Main types
@@ -375,11 +222,6 @@ export interface LoginResponse {
   token_type: string;
   requires_2fa: boolean;
   temp_token: string | null;
-}
-
-export interface TotpSetupData {
-  provisioning_uri: string;
-  secret: string;
 }
 
 export interface DevicePending {
@@ -560,63 +402,6 @@ export interface MediaServerConnection {
   created_at: string;
 }
 
-export interface MediaServerConnectionCreate {
-  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio";
-  name: string;
-  url: string;
-  token: string;
-  server_user_id?: string | null;
-  server_username?: string | null;
-  sync_collection?: boolean;
-  sync_watched?: boolean;
-  sync_ratings?: boolean;
-  sync_playback?: boolean;
-  push_watched?: boolean;
-  push_collection?: boolean;
-  push_playback?: boolean;
-  push_ratings?: boolean;
-  auto_sync_interval?: number | null;
-  auto_push_interval?: number | null;
-  plex_auth_token?: string | null;
-  plex_account_id?: string | null;
-  plex_machine_identifier?: string | null;
-}
-
-export type MediaServerConnectionUpdate = Partial<Omit<MediaServerConnectionCreate, "type">>;
-
-export interface PlexPinStart {
-  pin_id: number;
-  auth_url: string;
-  interval: number;
-}
-
-export interface PlexLoginConnection {
-  uri: string;
-  local: boolean;
-  relay: boolean;
-  protocol: string | null;
-  reachable: boolean;
-  label: string;
-}
-
-export interface PlexLoginServer {
-  name: string;
-  machine_identifier: string;
-  owned: boolean;
-  url: string;
-  token: string;
-  connections: PlexLoginConnection[];
-}
-
-export type PlexPinPoll =
-  | { status: "pending" }
-  | {
-      status: "connected";
-      account: { id: string; username: string; title: string; email: string };
-      auth_token: string;
-      servers: PlexLoginServer[];
-    };
-
 export interface ScrobbleConnection {
   id: number;
   user_id: number;
@@ -628,34 +413,6 @@ export interface ScrobbleConnection {
   sync_watched: boolean;
   sync_playback: boolean;
   created_at: string;
-}
-
-export interface ScrobbleConnectionCreate {
-  type: "jellyfin" | "emby" | "plex";
-  name: string;
-  server_user_id?: string | null;
-  server_username?: string | null;
-  sync_collection?: boolean;
-  sync_watched?: boolean;
-  sync_playback?: boolean;
-}
-
-export type ScrobbleConnectionUpdate = Pick<ScrobbleConnectionCreate, "sync_collection" | "sync_watched" | "sync_playback">;
-
-export interface ServiceStatus {
-  configured: boolean;
-  connected: boolean;
-  quality_profiles?: { id: number; name: string }[];
-  root_folders?: { path: string; freeSpace: number }[];
-  tags?: { id: number; label: string }[];
-}
-
-export interface ConnectionStatus {
-  radarr: ServiceStatus;
-  sonarr: ServiceStatus;
-  trakt: ServiceStatus;
-  simkl: ServiceStatus;
-  mdblist: ServiceStatus;
 }
 
 export interface MediaItem {
@@ -752,54 +509,6 @@ export interface MediaItem {
   release_dates?: { digital?: string | null; physical?: string | null } | null;
 }
 
-export interface SubtitleTrack {
-  index: number;
-  language: string | null;
-  label: string | null;
-  codec: string | null;
-}
-
-export interface PlaybackSource {
-  connection_id: number;
-  source: string;
-  name: string;
-  resolution: string | null;
-  subtitles: SubtitleTrack[];
-}
-
-export interface NowPlayingMedia {
-  id: number;
-  tmdb_id: number;
-  type: MediaType;
-  title: string;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  season_number: number | null;
-  episode_number: number | null;
-  runtime: number | null;
-  show_title?: string;
-  show_tmdb_id?: number;
-  show_tvdb_id?: number | null;
-  show_poster_path?: string | null;
-  tvdb_id?: number | null;
-  imdb_id?: string | null;
-  tvdb_sourced?: boolean;
-  show_episode_order?: string | null;
-  display_season_number?: number | null;
-  display_episode_number?: number | null;
-}
-
-export interface NowPlayingSession {
-  session_key: string;
-  source: string;
-  state: "playing" | "paused";
-  progress_percent: number;
-  progress_seconds: number;
-  started_at: string;
-  updated_at: string;
-  media: NowPlayingMedia;
-}
-
 export interface ContinueWatchingItem {
   id: number;
   media: MediaItem;
@@ -808,142 +517,6 @@ export interface ContinueWatchingItem {
   progress_seconds: number | null;
   progress_percent: number | null;
   completed: boolean;
-}
-
-export interface DroppedShow {
-  id: number;
-  tmdb_id: number | null;
-  tvdb_id: number | null;
-  title: string;
-  poster_path: string | null;
-  year: string | null;
-  status: string | null;
-}
-
-export interface ShowProgress {
-  show_id: number;
-  tmdb_id: number | null;
-  tvdb_id: number | null;
-  title: string;
-  poster_path: string | null;
-  status: string | null;
-  episodes_total: number;
-  episodes_watched: number;
-  episodes_collected: number;
-  watch_pct: number;
-  collection_pct: number;
-  last_watched_at: string | null;
-}
-
-export interface DroppedMovie {
-  id: number;
-  tmdb_id: number | null;
-  title: string;
-  poster_path: string | null;
-  year: string | null;
-}
-
-export interface CollectionDetail {
-  id: number;
-  name: string;
-  overview: string | null;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  genres: string[];
-  cast: { tmdb_id: number; name: string; profile_path: string | null; appearances: number }[];
-  parts: MediaItem[];
-}
-
-export interface StudioHeader {
-  id: number;
-  name: string;
-  logo_path: string | null;
-  origin_country: string | null;
-  homepage: string | null;
-}
-
-export interface TvdbEpisode {
-  tvdb_id: number | null;
-  tmdb_id: number | null;
-  show_tmdb_id: number | null;
-  tmdb_season_number: number;
-  tmdb_episode_number: number;
-  unmatched: boolean;
-  season_number: number;
-  episode_number: number;
-  name: string | null;
-  overview: string | null;
-  air_date: string | null;
-  runtime: number | null;
-  image_url: string | null;
-  id: number | null;
-  in_library: boolean;
-  watched: boolean;
-  user_rating: number | null;
-  in_lists: number[];
-}
-
-export interface TvdbEpisodeDetail {
-  tvdb_id: number | null;
-  tmdb_id: number | null;
-  show_tmdb_id: number | null;
-  tmdb_season_number: number;
-  tmdb_episode_number: number;
-  unmatched: boolean;
-  season_number: number;
-  episode_number: number;
-  name: string | null;
-  overview: string | null;
-  air_date: string | null;
-  runtime: number | null;
-  image_url: string | null;
-  id: number | null;
-  in_library: boolean;
-  watched: boolean;
-  user_rating: number | null;
-  play_count: number;
-  in_lists: number[];
-  library: {
-    resolution: string | null;
-    video_codec: string | null;
-    audio_codec: string | null;
-    audio_channels: string | null;
-    audio_languages: string[] | null;
-    subtitle_languages: string[] | null;
-  } | null;
-  cast: { tmdb_id: null; person_id: number | null; name: string; character: string; profile_path: string | null }[];
-  episodes: { episode_number: number; name: string | null }[];
-  show: { id: number | null; tvdb_id: number; tmdb_id: number | null; episode_order: "tvdb"; title: string; poster_path: string | null; backdrop_path: string | null };
-  season: { name: string; season_number: number; poster_path: string | null };
-}
-
-export interface TvdbSeason {
-  tvdb_id: number;
-  season_number: number;
-  name: string;
-  overview: string | null;
-  tmdb_rating: number | null;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  air_date: string | null;
-  episodes: TvdbEpisode[];
-  season_in_library: boolean;
-  season_watch_pct: number;
-  season_watch_started?: boolean;
-  season_watched: boolean;
-  season_collection_pct: number;
-  season_user_rating: number | null;
-  show_in_library: boolean;
-  show: {
-    id: number | null;
-    tvdb_id: number;
-    tmdb_id: number | null;
-    episode_order: "tvdb";
-    title: string;
-    poster_path: string | null;
-    backdrop_path: string | null;
-    seasons_meta: TvdbSeasonMeta[];
-  };
 }
 
 export interface TvdbSeasonMeta {
@@ -1006,54 +579,6 @@ export interface TvdbShow {
   rewatch?: ShowRewatch | null;
 }
 
-export interface EpisodeOrderOption {
-  key: string;
-  label: string;
-  provider: "tmdb" | "tvdb";
-}
-
-export interface Show {
-  id: number | null;
-  tmdb_id: number;
-  tvdb_id?: number | null;
-  // Order key: "tmdb:aired" (default), "tvdb:official", "tvdb:dvd",
-  // "tmdb:group:<id>", ... (#174). Legacy "tmdb"/"tvdb" no longer sent.
-  episode_order: string;
-  episode_order_label?: string | null;
-  title: string;
-  original_title: string | null;
-  overview: string;
-  poster_path: string | null;
-  backdrop_path: string | null;
-  tmdb_rating: number;
-  genres: string[];
-  in_library: boolean;
-  watched: boolean;
-  watch_pct?: number;
-  watch_started?: boolean;
-  in_lists: number[];
-  collection_pct: number;
-  is_monitored?: boolean;
-  request_enabled?: boolean;
-  seasons: Record<string, MediaItem[]>;
-  seasons_meta: SeasonMeta[];
-  season_states: Record<number, SeasonState>;
-  cast: CastMember[];
-  networks: Network[];
-  recommendations: MediaItem[];
-  tagline: string | null;
-  status: string | null;
-  original_language?: string | null;
-  age_rating?: string | null;
-  imdb_id?: string | null;
-  adult?: boolean;
-  user_rating?: number | null;
-  first_air_date: string | null;
-  last_air_date: string | null;
-  where_to_watch?: { type: string; name: string; logo: string | null }[];
-  rewatch?: ShowRewatch | null;
-}
-
 export interface ProfileWatchedItem {
   tmdb_id: number;
   media_type: string;
@@ -1076,21 +601,6 @@ export interface ProfileRatedItem {
   poster_path: string | null;
   backdrop_path: string | null;
   user_rating: number;
-}
-
-export interface UserSearchResult {
-  id: number;
-  username: string;
-  display_name: string;
-  avatar_url: string | null;
-  country: string | null;
-  movies_watched: number;
-  shows_watched: number;
-  total_collected: number;
-  total_rated: number;
-  follower_count: number;
-  is_following: boolean;
-  is_self: boolean;
 }
 
 export interface ProfileFollowEntry {
@@ -1151,38 +661,6 @@ export interface PublicProfile {
   is_following: boolean;
 }
 
-export interface UserStats {
-  movies_watched: number;
-  shows_watched: number;
-  episodes_watched: number;
-  total_watch_minutes: number;
-  watch_activity: { month: string; movies: number; episodes: number }[];
-  rating_distribution: { rating: number; count: number }[];
-  avg_movie_rating: number | null;
-  avg_show_rating: number | null;
-  movies_collected: number;
-  shows_collected: number;
-  episodes_collected: number;
-  movies_watched_collected: number;
-  movies_unwatched_collected: number;
-  shows_watched_collected: number;
-  shows_unwatched_collected: number;
-  weekday_activity: { day: string; avg: number }[];
-}
-
-export interface Comment {
-  id: number;
-  user_id: number;
-  username: string;
-  display_name: string;
-  avatar_url: string | null;
-  user_is_public: boolean;
-  content: string;
-  is_spoiler: boolean;
-  created_at: string;
-  updated_at?: string | null;
-}
-
 // API calls
 export const api = {
   auth: {
@@ -1208,62 +686,10 @@ export const api = {
       get<DeviceGrant[]>("/auth/device/grants", undefined, token),
     getSettings: (token: string) =>
       get<UserSettings>("/auth/settings", undefined, token),
-    updateSettings: (settings: Partial<UserSettings>, token: string) =>
-      patch<UserSettings>("/auth/settings", settings, token),
-    changePassword: (body: unknown, token: string) =>
-      post<{ message: string }>("/auth/change-password", body, token),
-    deleteAccount: (token: string) =>
-      del<{ message: string }>("/auth/me", token),
-    regenerateApiKey: (token: string) =>
-      post<UserProfile>("/auth/api-key/regenerate", undefined, token),
     getConnections: (token: string) =>
       get<MediaServerConnection[]>("/auth/connections", undefined, token),
-    createConnection: (body: MediaServerConnectionCreate, token: string) =>
-      post<MediaServerConnection>("/auth/connections", body, token),
-    updateConnection: (id: number, body: MediaServerConnectionUpdate, token: string) =>
-      patch<MediaServerConnection>(`/auth/connections/${id}`, body, token),
-    deleteConnection: (id: number, token: string) =>
-      del<{ status: string }>(`/auth/connections/${id}`, token),
-    plexPinStart: (token: string) =>
-      post<PlexPinStart>("/auth/plex/pin/start", undefined, token),
-    plexPinPoll: (token: string) =>
-      post<PlexPinPoll>("/auth/plex/pin/poll", undefined, token),
-    startStremioLink: (token: string) =>
-      post<{ code: string; link: string; qrcode: string }>("/auth/stremio/link/start", undefined, token),
-    pollStremioLink: (body: { code: string; name: string }, token: string) =>
-      post<{ status: "pending" | "connected"; connection?: MediaServerConnection }>("/auth/stremio/link/poll", body, token),
     getScrobbleConnections: (token: string) =>
       get<ScrobbleConnection[]>("/auth/scrobble-connections", undefined, token),
-    createScrobbleConnection: (body: ScrobbleConnectionCreate, token: string) =>
-      post<ScrobbleConnection>("/auth/scrobble-connections", body, token),
-    updateScrobbleConnection: (id: number, body: ScrobbleConnectionUpdate, token: string) =>
-      patch<ScrobbleConnection>(`/auth/scrobble-connections/${id}`, body, token),
-    deleteScrobbleConnection: (id: number, token: string) =>
-      del<{ status: string }>(`/auth/scrobble-connections/${id}`, token),
-    testJellyfin: (url: string, token: string, jellyfinUserId: string | null, userToken: string) =>
-      post<{ success: boolean; message: string }>("/auth/test-jellyfin", { url, token, user_id: jellyfinUserId }, userToken),
-    testEmby: (url: string, token: string, embyUserId: string | null, userToken: string) =>
-      post<{ success: boolean; message: string }>("/auth/test-emby", { url, token, user_id: embyUserId }, userToken),
-    testPlex: (url: string, token: string, userToken: string) =>
-      post<{ success: boolean; message: string }>("/auth/test-plex", { url, token }, userToken),
-    testRadarr: (url: string, token: string, userToken: string) =>
-      post<{ success: boolean; message: string }>("/auth/test-radarr", { url, token }, userToken),
-    getRadarrProfiles: (url: string, token: string, userToken: string) =>
-      post<{ quality_profiles: any[]; root_folders: any[] }>("/auth/radarr/profiles", { url, token }, userToken),
-    testSonarr: (url: string, token: string, userToken: string) =>
-      post<{ success: boolean; message: string }>("/auth/test-sonarr", { url, token }, userToken),
-    getSonarrProfiles: (url: string, token: string, userToken: string) =>
-      post<{ quality_profiles: any[]; root_folders: any[]; language_profiles: any[] }>("/auth/sonarr/profiles", { url, token }, userToken),
-    testTmdb: (key: string, userToken: string) =>
-      post<{ success: boolean; message: string }>("/auth/test-tmdb", { key }, userToken),
-    getConnectionStatus: (token: string) =>
-      get<ConnectionStatus>("/auth/connection-status", undefined, token),
-    totp2faSetup: (token: string) =>
-      post<TotpSetupData>("/auth/2fa/setup", undefined, token),
-    totp2faEnable: (body: { secret: string; code: string }, token: string) =>
-      post<TotpBackupCodesResponse>("/auth/2fa/enable", body, token),
-    totp2faDisable: (body: { code: string }, token: string) =>
-      post<{ status: string }>("/auth/2fa/disable", body, token),
     totp2faBackupCodes: (token: string) =>
       get<TotpBackupCodesResponse>("/auth/2fa/backup-codes", undefined, token),
     totp2faVerifyLogin: (body: { temp_token: string; code: string }) =>
@@ -1276,43 +702,7 @@ export const api = {
       post<OidcExchangeResponse>("/auth/oidc/exchange", { code }),
   },
 
-  trakt: {
-    deviceStart: (token: string) =>
-      post<{ user_code: string; verification_url: string; expires_in: number; interval: number }>("/trakt/auth/device/start", undefined, token),
-    devicePoll: (token: string) =>
-      post<{ status: "pending" | "connected" }>("/trakt/auth/device/poll", undefined, token),
-    disconnect: (token: string) =>
-      del<{ status: string }>("/trakt/auth/disconnect", token),
-    sync: (token: string) =>
-      post<{ status: string; job_id: number; message: string }>("/trakt/sync", undefined, token),
-  },
-
-  simkl: {
-    pinStart: (token: string) =>
-      post<{ user_code: string; url: string; expires_in: number; interval: number }>("/simkl/auth/pin/start", undefined, token),
-    pinPoll: (token: string) =>
-      post<{ status: "pending" | "connected" }>("/simkl/auth/pin/poll", undefined, token),
-    disconnect: (token: string) =>
-      del<{ status: string }>("/simkl/auth/disconnect", token),
-    sync: (token: string) =>
-      post<{ status: string; job_id: number; message: string }>("/simkl/sync", undefined, token),
-    push: (token: string) =>
-      post<{ status: string; message: string }>("/simkl/push", undefined, token),
-  },
-
-  mdblist: {
-    sync: (token: string) =>
-      post<{ status: string; job_id: number; message: string }>("/mdblist/sync", undefined, token),
-    push: (token: string) =>
-      post<{ status: string; job_id: number; message: string }>("/mdblist/push", undefined, token),
-  },
-
   media: {
-    list: (params?: { type?: string; sort?: string; page?: number; genre?: string[]; year?: number[]; watched?: string[]; in_list?: string }, token?: string) =>
-      get<{ page: number; page_size: number; total_pages: number; total_results: number; results: MediaItem[] }>("/media", params, token),
-
-    years: (type: string, token?: string) =>
-      get<{ years: number[] }>("/media/years", { type }, token),
 
     get: (type: string, tmdbId: number, token?: string) =>
       get<MediaItem>(`/media/${type}/${tmdbId}`, undefined, token),
@@ -1334,33 +724,6 @@ export const api = {
         min_rating: filters?.minRating || undefined,
       }, token),
 
-    getCollection: (collectionId: number, token?: string) =>
-      get<CollectionDetail>(`/media/collection/${collectionId}`, undefined, token),
-
-    getNetwork: (networkId: number, token?: string) =>
-      get<StudioHeader>(`/media/network/${networkId}`, undefined, token),
-
-    getCompany: (companyId: number, token?: string) =>
-      get<StudioHeader>(`/media/company/${companyId}`, undefined, token),
-
-    tmdbList: (params: { type: string; category?: string; page?: number; genre?: string[]; year?: number[]; min_rating?: number; status?: string; collection?: string[]; watch?: string[]; arr?: string[]; original_language?: string; in_list?: string[]; network?: number; company?: number }, token?: string) =>
-      get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/tmdb/list", params, token),
-
-    search: (q: string, type?: string, page: number = 1, year?: number, token?: string, inLibrary?: boolean) =>
-      get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/search", { q, ...(type ? { type } : {}), page, ...(year ? { year } : {}), ...(inLibrary ? { in_library: true } : {}) }, token),
-
-    searchTvdb: (q: string, token?: string) =>
-      get<{ tvdb_id: number; title: string; overview: string | null; year: string | null; image_url: string | null; status: string | null; network: string | null }[]>("/media/search-tvdb", { q }, token),
-
-    recentlyAdded: (type?: string, token?: string) =>
-      get<{ results: MediaItem[] }>("/media/recently-added", type ? { type } : {}, token),
-
-    onAirToday: (page: number = 1, token?: string) =>
-      get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/on-air-today", { page }, token),
-
-    airingTodayCollected: (token?: string) =>
-      get<{ results: MediaItem[] }>("/media/airing-today/collected", {}, token),
-
     publicPosterWall: () =>
       get<{ posters: { poster_path: string; title: string | null; media_type: "movie" | "series" }[] }>("/media/public/poster-wall"),
 
@@ -1369,183 +732,18 @@ export const api = {
 
     trendingShows: (page: number = 1, token?: string) =>
       get<{ results: MediaItem[]; page: number; total_pages: number; total_results: number }>("/media/trending/shows", { page }, token),
-
-    nowPlaying: (token?: string) =>
-      get<{ results: MediaItem[] }>("/media/now-playing", {}, token),
-
-    upcomingMovies: (token?: string) =>
-      get<{ results: MediaItem[] }>("/media/upcoming", {}, token),
-
-    onAirThisWeek: (token?: string) =>
-      get<{ results: MediaItem[] }>("/media/on-air-this-week", {}, token),
-
-    hiddenGems: (type: string = "movie", token?: string) =>
-      get<{ results: MediaItem[] }>("/media/hidden-gems", { type }, token),
-
-    recommended: (token?: string) =>
-      get<{ results: MediaItem[] }>("/media/recommended", {}, token),
-
-    forYou: (token?: string) =>
-      get<{ results: MediaItem[] }>("/media/for-you", {}, token),
-
-    collect: (body: { tmdb_id: number; media_type: string }, token: string) =>
-      post<{ status: string; message: string }>("/media/collect", body, token),
-
-    request: (type: string, tmdbId: number, token: string) =>
-      post<{ status: string; movie?: any; series?: any }>(`/media/${type}/${tmdbId}/request`, undefined, token),
-
-    uncollect: (tmdbId: number, mediaType: string, token: string) =>
-      del<{ status: string }>(`/media/collect?tmdb_id=${tmdbId}&media_type=${mediaType}`, token),
-
-    refreshMovie: (tmdbId: number, token: string) =>
-      post<{ message: string }>(`/media/movie/${tmdbId}/refresh`, undefined, token),
-
-    playbackSources: (type: string, tmdbId: number, token: string) =>
-      get<PlaybackSource[]>(`/media/playback/${type}/${tmdbId}`, undefined, token),
   },
 
   shows: {
-    list: (params?: { sort?: string; page?: number; page_size?: number; genre?: string[]; year?: number[]; status?: string[]; watched?: string[]; in_list?: string }, token?: string) =>
-      get<{ page: number; page_size: number; total_results: number; total_pages: number; results: any[] }>("/shows", params, token),
-
-    years: (token?: string) =>
-      get<{ years: number[] }>("/shows/years", undefined, token),
-
-    // The active episode ordering is the user's stored per-show preference,
-    // resolved server-side (#174) - no query param needed.
-    get: (seriesTmdbId: number, token?: string) =>
-      get<Show>(`/shows/${seriesTmdbId}`, undefined, token),
 
     getRecommendations: (seriesTmdbId: number, token?: string) =>
       get<{ results: MediaItem[] }>(`/shows/${seriesTmdbId}/recommendations`, undefined, token),
 
-    getSeason: (seriesTmdbId: number, seasonNumber: number, token?: string) =>
-      get<Season>(`/shows/${seriesTmdbId}/season/${seasonNumber}`, undefined, token),
-
-    getEpisode: (seriesTmdbId: number, seasonNumber: number, episodeNumber: number, token?: string) =>
-      get<EpisodeDetail>(`/shows/${seriesTmdbId}/season/${seasonNumber}/${episodeNumber}`, undefined, token),
-
-    refreshMetadata: (seriesTmdbId: number, token: string) =>
-      post<{ message: string }>(`/shows/${seriesTmdbId}/refresh`, undefined, token),
-
-    getEpisodeOrders: (seriesTmdbId: number, token?: string) =>
-      get<{ orders: EpisodeOrderOption[]; selected: string }>(
-        `/shows/${seriesTmdbId}/episode-orders`, undefined, token,
-      ),
-
-    setEpisodeOrder: (
-      seriesTmdbId: number, orderKey: string, token: string,
-      opts?: { label?: string | null; forceRefresh?: boolean },
-    ) =>
-      post<{
-        status?: "started";
-        job_id?: number;
-        episode_order?: string;
-        series_tmdb_id?: number;
-        redirect?: string;
-      }>(
-        `/shows/${seriesTmdbId}/episode-order`,
-        { episode_order: orderKey, order_label: opts?.label ?? null, force_refresh: opts?.forceRefresh ?? false },
-        token,
-      ),
-
     getTvdb: (tvdbId: number, token?: string) =>
       get<TvdbShow>(`/shows/tvdb/${tvdbId}`, undefined, token),
-
-    getTvdbSeason: (tvdbId: number, seasonNumber: number, token?: string) =>
-      get<TvdbSeason>(`/shows/tvdb/${tvdbId}/season/${seasonNumber}`, undefined, token),
-
-    getTvdbEpisode: (tvdbId: number, seasonNumber: number, episodeNumber: number, token?: string) =>
-      get<TvdbEpisodeDetail>(`/shows/tvdb/${tvdbId}/season/${seasonNumber}/episode/${episodeNumber}`, undefined, token),
-  },
-
-  history: {
-    list: (params?: { page?: number; page_size?: number; type?: string; q?: string }, token?: string) =>
-      get<{ page: number; page_size: number; total_pages: number; total_results: number; results: WatchEvent[] }>("/history", params, token),
-
-    markAsWatched: (body: { tmdb_id: number; media_type: string; watched_at?: string | null; completed?: boolean }, token: string) =>
-      post<{ message: string }>("/history", body, token),
-
-    unwatchItem: (tmdbId: number, mediaType: string, token: string) =>
-      del<{ status: string }>(`/history/item?tmdb_id=${tmdbId}&media_type=${mediaType}`, token),
-
-    markSeasonWatched: (body: { series_tmdb_id: number; season_number: number }, token: string) =>
-      post<{ status: string; count: number }>("/history/season", body, token),
-
-    unmarkSeasonWatched: (seriesTmdbId: number, seasonNumber: number, token: string) =>
-      del<{ status: string }>(`/history/season?series_tmdb_id=${seriesTmdbId}&season_number=${seasonNumber}`, token),
-
-    markShowWatched: (body: { series_tmdb_id: number }, token: string) =>
-      post<{ status: string; count: number }>("/history/show-all", body, token),
-
-    unmarkShowWatched: (seriesTmdbId: number, token: string) =>
-      del<{ status: string }>(`/history/show-all?series_tmdb_id=${seriesTmdbId}`, token),
-
-    continueWatching: (token?: string) =>
-      get<{ continue_watching: ContinueWatchingItem[] }>("/history/continue-watching", undefined, token),
-
-    nextUp: (token?: string, limit?: number, includeHidden?: boolean) =>
-      get<{ next_up: MediaItem[] }>("/history/next-up", { ...(limit ? { limit } : {}), ...(includeHidden ? { include_hidden: true } : {}) }, token),
-
-    hideNextUp: (showId: number, token: string) =>
-      post<{ status: string }>("/history/next-up/hide", { show_id: showId }, token),
-
-    unhideNextUp: (showId: number, token: string) =>
-      del<{ status: string }>(`/history/next-up/hide?show_id=${showId}`, token),
-
-    nowPlaying: (token: string) =>
-      get<{ now_playing: NowPlayingSession[] }>("/history/now-playing", undefined, token),
-
-    dropped: (token?: string) =>
-      get<{ shows: DroppedShow[]; movies: DroppedMovie[] }>("/history/dropped", undefined, token),
-
-    progress: (
-      params: { type?: "watched" | "collection"; sort?: string; hide_complete?: boolean; page?: number },
-      token?: string,
-    ) =>
-      get<{ shows: ShowProgress[]; page: number; page_size: number; total: number; total_pages: number }>(
-        "/history/progress", params, token,
-      ),
-  },
-
-  lists: {
-    getAll: (token: string) =>
-      get<{ lists: UserList[] }>("/lists", undefined, token),
-    getPublic: (token?: string) =>
-      get<{ lists: PublicList[] }>("/lists/public", undefined, token),
-    create: (body: { name: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>
-      post<UserList>("/lists", body, token),
-    get: (id: number, token?: string) =>
-      get<ListDetail>(`/lists/${id}`, undefined, token),
-    update: (id: number, body: { name?: string; description?: string; privacy_level?: PrivacyLevel }, token: string) =>
-      patch<UserList>(`/lists/${id}`, body, token),
-    delete: (id: number, token: string) =>
-      del<{ message: string }>(`/lists/${id}`, token),
-    addItem: (listId: number, body: { tmdb_id: number; media_type: string }, token: string) =>
-      post<ListItemEntry>(`/lists/${listId}/items`, body, token),
-    removeItem: (listId: number, itemId: number, token: string) =>
-      del<{ message: string }>(`/lists/${listId}/items/${itemId}`, token),
   },
 
   sync: {
-    jellyfin: (params?: { movie_limit?: number; show_limit?: number }, token?: string) =>
-      post<{ status: string; job_id: number; message: string }>("/sync/jellyfin", params, token),
-    emby: (params?: { movie_limit?: number; show_limit?: number }, token?: string) =>
-      post<{ status: string; job_id: number; message: string }>("/sync/emby", params, token),
-    plex: (params?: { movie_limit?: number; show_limit?: number }, token?: string) =>
-      post<{ status: string; job_id: number; message: string }>("/sync/plex", params, token),
-    syncConnection: (connectionId: number, params?: { movie_limit?: number; show_limit?: number }, token?: string) =>
-      post<{ status: string; job_id: number; message: string }>(`/sync/connection/${connectionId}`, params, token),
-    fullResyncConnection: (connectionId: number, token: string) =>
-      post<{ status: string; job_id: number; message: string }>(`/sync/connection/${connectionId}?full=true`, undefined, token),
-    status: (token: string) =>
-      get<SyncJob[]>("/sync/status", undefined, token),
-    getConnectionLibraries: (connectionId: number, token: string) =>
-      get<{ libraries: { id?: string; key?: string; name: string; type: string; selected: boolean }[]; all_selected: boolean }>(`/sync/connection/${connectionId}/libraries`, undefined, token),
-    saveConnectionLibraries: (connectionId: number, body: { library_ids?: string[]; library_keys?: string[] }, token: string) =>
-      put<{ saved: number }>(`/sync/connection/${connectionId}/libraries`, body, token),
-    scanLibraries: (connectionId: number, token: string) =>
-      post<{ status: string; message: string }>(`/sync/connection/${connectionId}/scan`, undefined, token),
     getSeasonOverrides: (token: string) =>
       get<ShowSeasonOverride[]>("/sync/season-overrides", undefined, token),
   },
@@ -1557,60 +755,17 @@ export const api = {
       get<PublicProfile>(`/profile/${userId}`, undefined, token),
     publicAccessStatus: () =>
       get<{ enable_logged_out_navigation: boolean; disable_comments: boolean }>("/profile/public-access-status"),
-    update: (body: Partial<UserPreferences>, token: string) =>
-      patch<UserPreferences>("/profile/me", body, token),
-    uploadAvatar: (formData: FormData, token: string) =>
-      request<{ avatar_url: string }>("/profile/me/avatar", "POST", undefined, formData, token),
-    deleteAvatar: (token: string) =>
-      del<{ status: string }>("/profile/me/avatar", token),
-    follow: (userId: number, token: string) =>
-      post<{ status: string }>(`/profile/${userId}/follow`, undefined, token),
-    unfollow: (userId: number, token: string) =>
-      del<{ status: string }>(`/profile/${userId}/follow`, token),
-    searchUsers: (q: string, token?: string) =>
-      get<{ results: UserSearchResult[] }>("/profile/search", { q }, token),
-    getStats: (userId: number, token?: string) =>
-      get<UserStats>(`/profile/${userId}/stats`, undefined, token),
-    topRatedMovies: (userId: number, page: number = 1, token?: string) =>
-      get<{ results: ProfileRatedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/top-rated-movies`, { page }, token),
-    topRatedShows: (userId: number, page: number = 1, token?: string) =>
-      get<{ results: ProfileRatedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/top-rated-shows`, { page }, token),
-    recentlyWatchedMovies: (userId: number, page: number = 1, token?: string) =>
-      get<{ results: ProfileWatchedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/recently-watched-movies`, { page }, token),
-    recentlyWatchedShows: (userId: number, page: number = 1, token?: string) =>
-      get<{ results: ProfileWatchedItem[]; page: number; total_pages: number; total_results: number }>(`/profile/${userId}/recently-watched-shows`, { page }, token),
-  },
-
-  comments: {
-    list: (params: { media_type: string; tmdb_id: number; season_number?: number; episode_number?: number }, token?: string) =>
-      get<Comment[]>("/comments", params, token),
-    create: (body: { media_type: string; tmdb_id: number; season_number?: number; episode_number?: number; content: string }, token: string) =>
-      post<Comment>("/comments", body, token),
-    update: (id: number, content: string, token: string) =>
-      patch<{ id: number; content: string; updated_at: string | null }>(`/comments/${id}`, { content }, token),
-    delete: (id: number, token: string) =>
-      del<{ message: string }>(`/comments/${id}`, token),
   },
 
   admin: {
     getSettings: (token: string) =>
       get<GlobalSettings>("/admin/settings", undefined, token),
-    updateSettings: (body: Partial<GlobalSettings>, token: string) =>
-      patch<GlobalSettings>("/admin/settings", body, token),
     listUsers: (token: string) =>
       get<AdminUser[]>("/admin/users", undefined, token),
-    toggleAdmin: (userId: number, token: string) =>
-      patch<AdminUser>(`/admin/users/${userId}/toggle-admin`, undefined, token),
-    deleteUser: (userId: number, token: string) =>
-      del<{ status: string }>(`/admin/users/${userId}`, token),
     getPendingCount: (token: string) =>
       get<{ pending: number }>("/admin/requests/pending-count", undefined, token),
     getRequests: (token: string) =>
       get<MediaRequestItem[]>("/admin/requests", undefined, token),
-    approveRequest: (requestId: number, token: string) =>
-      post<{ status: string }>(`/admin/requests/${requestId}/approve`, undefined, token),
-    rejectRequest: (requestId: number, token: string) =>
-      post<{ status: string }>(`/admin/requests/${requestId}/reject`, undefined, token),
   },
 };
 
