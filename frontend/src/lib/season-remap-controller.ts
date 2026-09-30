@@ -20,7 +20,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
   // Searches end with the page; an already-started save still finishes applying.
   const request = (url: string, options: RequestInit) => fetch(url, {
     ...options,
-    ...(options.method === 'POST' ? {} : { signal: lifetime.signal }),
+    ...(options.method && options.method !== 'GET' ? {} : { signal: lifetime.signal }),
   });
   let srcTmdbId = 0;
   let srcSeason = 0;
@@ -447,5 +447,65 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
     // Auto-search immediately so results appear right away
     doSearch();
   };
+  // Delegation covers refreshed warnings and the static remap list without rebinding.
+  document.addEventListener('click', async event => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest<HTMLButtonElement>('.remap-season-btn, .match-show-btn, .unmatch-show-btn, .delete-override-btn');
+    if (!button || button.disabled) return;
+    if (button.classList.contains('remap-season-btn')) {
+      openRemapModal(parseInt(button.dataset.srcTmdb ?? '0'), parseInt(button.dataset.srcSeason ?? '0'), button.dataset.srcTitle ?? '');
+      return;
+    }
+    const title = button.dataset.seriesName ?? '';
+    const isMovie = button.dataset.mediaType === 'movie';
+    if (button.classList.contains('match-show-btn')) {
+      if (isMovie) openMatchMovieModal(title);
+      else openMatchModal(title);
+      return;
+    }
+    if (button.classList.contains('unmatch-show-btn')) {
+      if (!title) return;
+      button.disabled = true;
+      button.textContent = 'Removing…';
+      try {
+        const res = await request(`/api/proxy/sync/${isMovie ? 'unmatch-movie' : 'unmatch-show'}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(isMovie ? { movie_title: title } : { show_title: title }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        if (!lifetime.signal.aborted) onSaved();
+      } catch (error) {
+        if (lifetime.signal.aborted) return;
+        button.disabled = false;
+        button.textContent = 'Unmatch';
+        alert(`Failed to unmatch: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+      return;
+    }
+    const overrideId = button.dataset.overrideId;
+    if (!overrideId || !confirm('Remove this season remap?')) return;
+    button.disabled = true;
+    button.textContent = 'Removing…';
+    try {
+      const res = await request(`/api/proxy/sync/season-overrides/${overrideId}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (lifetime.signal.aborted) return;
+      if (res.ok) {
+        button.closest('[data-override-id]')?.remove();
+        const list = document.getElementById('season-remaps-list');
+        if (list && list.children.length === 0) document.getElementById('season-remaps-panel')?.remove();
+      } else {
+        button.disabled = false;
+        button.textContent = 'Remove';
+      }
+    } catch {
+      if (lifetime.signal.aborted) return;
+      button.disabled = false;
+      button.textContent = 'Remove';
+    }
+  }, { signal: lifetime.signal });
+
   return { openRemapModal, openMatchModal, openMatchMovieModal, stop: () => lifetime.abort() };
 }

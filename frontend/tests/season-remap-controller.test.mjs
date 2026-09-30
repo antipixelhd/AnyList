@@ -27,6 +27,7 @@ class Node extends EventTarget {
   setAttribute(name, value) { this[name] = value; }
   removeAttribute(name) { delete this[name]; }
   focus() {}
+  closest(selector) { return selector.split(', ').some(value => this.classList.contains(value.slice(1))) ? this : null; }
   click() { this.dispatchEvent(new Event('click')); }
 }
 
@@ -38,13 +39,29 @@ function page(t, fetch) {
     return nodes.get(selector);
   };
   const previous = globalThis.document;
-  globalThis.document = { getElementById: id => id === 'season-remap-modal' ? modal : null, createElement: () => new Node() };
+  globalThis.document = Object.assign(new EventTarget(), {
+    getElementById: id => id === 'season-remap-modal' ? modal : null, createElement: () => new Node(),
+  });
+  const previousElement = globalThis.Element;
+  globalThis.Element = Node;
+  t.after(() => { if (previousElement === undefined) delete globalThis.Element; else globalThis.Element = previousElement; });
+  for (const [name, value] of [['confirm', () => true], ['alert', () => {}]]) {
+    const previous = globalThis[name];
+    globalThis[name] = value;
+    t.after(() => { if (previous === undefined) delete globalThis[name]; else globalThis[name] = previous; });
+  }
   t.after(() => { if (previous === undefined) delete globalThis.document; else globalThis.document = previous; });
   t.mock.method(globalThis, 'fetch', fetch);
   let saved = 0;
   const controller = mountSeasonRemap('token', () => saved++);
   t.after(() => controller.stop());
-  return { modal, get: id => modal.querySelector(`#${id}`), controller, saved: () => saved };
+  return { modal, get: id => modal.querySelector(`#${id}`), controller, saved: () => saved,
+    click(button) {
+      const event = new Event('click');
+      Object.defineProperty(event, 'target', { value: button });
+      document.dispatchEvent(event);
+    },
+  };
 }
 
 test('show matching auto-searches once and submits the selected TVDB identity', async t => {
@@ -65,6 +82,113 @@ test('show matching auto-searches once and submits the selected TVDB identity', 
   assert.equal(calls[1].url, '/api/proxy/sync/match-unmatched-show');
   assert.deepEqual(JSON.parse(calls[1].options.body), { show_title: 'Original', tvdb_id: 42 });
   assert.equal(state.saved(), 1);
+});
+
+function warningButton(marker, dataset) {
+  const button = new Node();
+  button.classList.add(marker);
+  button.dataset = dataset;
+  return button;
+}
+
+test('delegated warning clicks handle nested targets and refreshed rows without duplicate bindings', async t => {
+  const calls = [];
+  const state = page(t, async url => { calls.push(url); return Response.json({ results: [] }); });
+  const remap = warningButton('remap-season-btn', { srcTmdb: '4', srcSeason: '0', srcTitle: 'Source' });
+  const icon = new Node();
+  icon.closest = selector => remap.closest(selector);
+  state.click(icon);
+  assert.equal(state.get('remap-source-label').textContent, '"Source" — Season 0');
+  for (let i = 0; i < 3; i++) {
+    state.click(warningButton('match-show-btn', { mediaType: 'movie', seriesName: 'Movie' }));
+    await drain();
+  }
+  assert.deepEqual(calls, Array(3).fill('/api/proxy/media/search?q=Movie&type=movie'));
+  state.controller.stop();
+  state.click(warningButton('match-show-btn', { mediaType: 'movie', seriesName: 'Movie' }));
+  assert.equal(calls.length, 3);
+  const replacement = mountSeasonRemap('token', () => {});
+  t.after(() => replacement.stop());
+  state.click(warningButton('match-show-btn', { mediaType: 'movie', seriesName: 'Movie' }));
+  await drain();
+  assert.equal(calls.length, 4);
+});
+
+test('unmatching submits each media identity once while its request is pending', async t => {
+  const calls = [];
+  let finish;
+  const state = page(t, (url, options) => {
+    calls.push({ url, options });
+    return new Promise(resolve => { finish = resolve; });
+  });
+  for (const mediaType of ['show', 'movie']) {
+    const button = warningButton('unmatch-show-btn', { mediaType, seriesName: 'Title' });
+    state.click(button);
+    state.click(button);
+    assert.equal(calls.at(-1).url, `/api/proxy/sync/unmatch-${mediaType}`);
+    assert.deepEqual(JSON.parse(calls.at(-1).options.body), { [mediaType === 'movie' ? 'movie_title' : 'show_title']: 'Title' });
+    assert.equal(calls.at(-1).options.headers.Authorization, 'Bearer token');
+    finish(Response.json({}));
+    await drain();
+  }
+  assert.equal(calls.length, 2);
+  assert.equal(state.saved(), 2);
+});
+
+test('failed unmatching restores the action for retry and reports the server error', async t => {
+  let calls = 0;
+  const state = page(t, async () => ++calls === 1 ? new Response('offline', { status: 502 }) : Response.json({}));
+  const alerts = [];
+  t.mock.method(globalThis, 'alert', message => alerts.push(message));
+  const button = warningButton('unmatch-show-btn', { seriesName: 'Title' });
+  state.click(button);
+  await drain();
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Unmatch');
+  assert.deepEqual(alerts, ['Failed to unmatch: offline']);
+  state.click(button);
+  await drain();
+  assert.equal(state.saved(), 1);
+});
+
+test('remap removal confirms once, submits once, and removes an empty panel', async t => {
+  let finish, calls = 0, confirmations = 0, removed = 0, panelsRemoved = 0;
+  const state = page(t, () => { calls++; return new Promise(resolve => { finish = resolve; }); });
+  t.mock.method(globalThis, 'confirm', () => { confirmations++; return true; });
+  const button = warningButton('delete-override-btn', { overrideId: '19' });
+  const closest = button.closest.bind(button);
+  button.closest = selector => selector === '[data-override-id]' ? { remove: () => removed++ } : closest(selector);
+  const getElementById = document.getElementById;
+  document.getElementById = id => id === 'season-remaps-list' ? { children: [] }
+    : id === 'season-remaps-panel' ? { remove: () => panelsRemoved++ } : getElementById(id);
+  state.click(button);
+  state.click(button);
+  assert.equal(calls, 1);
+  assert.equal(confirmations, 1);
+  finish(Response.json({}));
+  await drain();
+  assert.equal(removed, 1);
+  assert.equal(panelsRemoved, 1);
+});
+
+test('cancelled removal sends no request and navigation suppresses late UI updates', async t => {
+  let finish, calls = 0, removed = 0;
+  const state = page(t, () => { calls++; return new Promise(resolve => { finish = resolve; }); });
+  const button = warningButton('delete-override-btn', { overrideId: '19' });
+  const closest = button.closest.bind(button);
+  button.closest = selector => selector === '[data-override-id]' ? { remove: () => removed++ } : closest(selector);
+  const confirmation = t.mock.method(globalThis, 'confirm', () => false);
+  state.click(button);
+  assert.equal(calls, 0);
+  assert.equal(button.disabled, false);
+  confirmation.mock.mockImplementation(() => true);
+  state.click(button);
+  state.controller.stop();
+  finish(Response.json({}));
+  await drain();
+  assert.equal(calls, 1);
+  assert.equal(removed, 0);
+  assert.equal(state.saved(), 0);
 });
 
 test('movie matching uses movie search and the selected TMDB identity', async t => {
