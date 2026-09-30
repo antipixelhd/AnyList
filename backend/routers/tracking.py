@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core import settings_store
+from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
 import re
@@ -60,176 +60,6 @@ def is_close_title_match(query: str, title: str) -> bool:
     """Avoid showing unrelated results from a generated fallback query."""
     compact = lambda value: re.sub(r"[^\w]", "", value.casefold())
     return SequenceMatcher(None, compact(query), compact(title)).ratio() >= 0.6
-
-
-def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=None):
-    """Return the availability indicator and reason from cached season/episode data.
-
-    ``episodes`` is an iterable of ``(season_number, release_date, media_id)``
-    rows. Incomplete or malformed catalogue data never produces a dot.
-    """
-    today = today or date.today()
-    data = tmdb_data if isinstance(tmdb_data, dict) else {}
-    seasons = data.get('seasons')
-    if not isinstance(seasons, list):
-        return False, None
-
-    def parse_day(value):
-        if not isinstance(value, str) or not value:
-            return None
-        try:
-            return date.fromisoformat(value[:10])
-        except ValueError:
-            return None
-
-    regular = {}
-    for season in seasons:
-        if not isinstance(season, dict):
-            continue
-        number = season.get('season_number')
-        count = season.get('episode_count')
-        premiered = parse_day(season.get('air_date'))
-        if isinstance(number, int) and number > 0 and isinstance(count, int) and count > 0 and premiered:
-            regular[number] = (count, premiered)
-    if not regular:
-        return False, None
-
-    released_by_season, future_by_season = {}, {}
-    watched = set(watched_episode_ids or ())
-    for episode in episodes or ():
-        season, released_at, media_id = episode[:3]
-        import_confirmed_release = len(episode) > 3 and episode[3]
-        if season not in regular:
-            continue
-        released_day = parse_day(released_at)
-        if released_day is None and not import_confirmed_release:
-            continue
-        if import_confirmed_release or released_day <= today:
-            released_by_season.setdefault(season, []).append(media_id)
-        else:
-            future_by_season.setdefault(season, []).append(media_id)
-
-    # Airing takes priority and applies regardless of the user's tracking status.
-    next_episode = data.get('next_episode_to_air')
-    if isinstance(next_episode, dict):
-        next_season = next_episode.get('season_number')
-        next_day = parse_day(next_episode.get('air_date'))
-        if next_season in regular and next_day and next_day >= today:
-            expected, premiered = regular[next_season]
-            if premiered <= today and len(released_by_season.get(next_season, ())) < expected:
-                return True, 'airing'
-    for number, (expected, premiered) in regular.items():
-        if premiered <= today and len(released_by_season.get(number, ())) < expected and future_by_season.get(number):
-            return True, 'airing'
-
-    # Only the newest season that has premiered can be a recent new season.
-    started = [(number, info) for number, info in regular.items() if info[1] <= today]
-    if not started or status == 'watching':
-        return False, None
-    number, (_, premiered) = max(started, key=lambda item: item[0])
-    if premiered < today - timedelta(days=30):
-        return False, None
-    if any(media_id not in watched for media_id in released_by_season.get(number, ())):
-        return True, 'new_season'
-    return False, None
-
-
-def current_airing_details(tmdb_data, episodes, today=None):
-    """Return active-release state and its next known date for a series.
-
-    TMDB's broad status can stay at ``Returning Series`` between seasons, so
-    require both that active status and the episode-level signal used by the
-    availability indicator: a started season with a future scheduled episode.
-    """
-    today = today or date.today()
-    data = tmdb_data if isinstance(tmdb_data, dict) else {}
-    status = str(data.get('status') or '').strip().casefold()
-    if status != 'returning series':
-        return False, None
-    episode_rows = list(episodes or ())
-    next_episode = data.get('next_episode_to_air')
-    last_episode = data.get('last_episode_to_air')
-    if isinstance(next_episode, dict) and isinstance(last_episode, dict):
-        next_position = (next_episode.get('season_number'), next_episode.get('episode_number'))
-        last_position = (last_episode.get('season_number'), last_episode.get('episode_number'))
-        if all(isinstance(part, int) for part in next_position + last_position) and next_position <= last_position:
-            # TMDB occasionally retains a stale next pointer after a batch
-            # drop. Episode release dates can still prove active releases.
-            data = {**data}
-            data.pop('next_episode_to_air', None)
-            next_episode = None
-    _, reason = availability_dot(data, episode_rows, set(), 'watching', today)
-    if reason != 'airing':
-        return False, None
-
-    def parse_day(value):
-        if not isinstance(value, str) or not value:
-            return None
-        try:
-            return date.fromisoformat(value[:10])
-        except ValueError:
-            return None
-
-    seasons = data.get('seasons')
-    regular = {
-        season['season_number']: season for season in seasons if isinstance(season, dict)
-        and isinstance(season.get('season_number'), int) and season['season_number'] > 0
-        and isinstance(season.get('episode_count'), int) and season['episode_count'] > 0
-        and parse_day(season.get('air_date')) and parse_day(season.get('air_date')) <= today
-    } if isinstance(seasons, list) else {}
-    next_episode = data.get('next_episode_to_air')
-    next_day = parse_day(next_episode.get('air_date')) if isinstance(next_episode, dict) else None
-    next_season = next_episode.get('season_number') if isinstance(next_episode, dict) else None
-    if next_day and next_day >= today and next_season in regular:
-        return True, next_day.isoformat()
-
-    last_episode = data.get('last_episode_to_air')
-    active_season = last_episode.get('season_number') if isinstance(last_episode, dict) else None
-    if active_season not in regular:
-        candidates = [number for number in regular if any(
-            len(row) > 1 and row[0] == number and parse_day(row[1]) and parse_day(row[1]) > today
-            for row in episode_rows
-        )]
-        active_season = max(candidates, default=None)
-    if active_season not in regular:
-        return True, None
-    future_days = [parse_day(row[1]) for row in episode_rows
-                   if len(row) > 1 and row[0] == active_season
-                   and parse_day(row[1]) and parse_day(row[1]) > today]
-    return True, min(future_days).isoformat() if future_days else None
-
-
-def is_currently_airing(tmdb_data, episodes, today=None):
-    return current_airing_details(tmdb_data, episodes, today)[0]
-
-
-async def media_availability_dot(db, user_id, media, status, today=None):
-    data = media.tmdb_data or {}
-    ids = data.get('tracking_episode_ids') or []
-    imported_ids = data.get('tracking_import_episode_media_ids') or []
-    provider = data.get('tracking_catalogue_provider', 'tmdb')
-    identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
-    if not ids and not imported_ids:
-        return availability_dot(data, [], set(), status, today)
-    identity_filters = []
-    if ids:
-        identity_filters.append(identity.in_(ids))
-    if imported_ids:
-        identity_filters.append(Media.id.in_(imported_ids))
-    rows = (await db.execute(select(Media.id, Media.season_number, Media.release_date, Media.tmdb_data).where(
-        Media.media_type == MediaType.episode,
-        or_(*identity_filters),
-        Media.season_number > 0
-    ))).all()
-    watched = set((await db.execute(select(WatchEvent.media_id).where(
-        WatchEvent.user_id == user_id, WatchEvent.completed.is_(True),
-        WatchEvent.media_id.in_([row.id for row in rows])
-    ))).scalars()) if rows else set()
-    return availability_dot(data, [
-        (row.season_number, row.release_date, row.id,
-         bool((row.tmdb_data or {}).get('tracking_import_released')))
-        for row in rows
-    ], watched, status, today)
 
 
 @router.delete('/entry/{media_id}')
@@ -546,7 +376,7 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         'results':failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
                     'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
-                    'media':media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+                    'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
 
 
 class SeenReviews(BaseModel):
@@ -795,7 +625,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
 async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
-    if not await anime_is_visible(db):entries=[row for row in entries if not is_anime(row[1])]
+    if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]
     following_ids = (await db.execute(select(Follow.following_id).where(Follow.follower_id == user.id))).scalars().all()
     followers_ids = (await db.execute(select(Follow.follower_id).where(Follow.following_id == user.id))).scalars().all()
     people = (await db.execute(select(User, UserProfileData).join(UserProfileData, UserProfileData.user_id == User.id).where(User.id.in_(set(following_ids + followers_ids)), UserProfileData.privacy_level == PrivacyLevel.public))).all()
@@ -806,7 +636,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     activity_rows = (await db.execute(select(TrackingActivity, Media).join(Media, Media.id == TrackingActivity.media_id)
         .where(TrackingActivity.user_id == user.id).order_by(TrackingActivity.created_at.desc()).limit(60))).all()
     if not await anime_is_visible(db):
-        activity_rows = [row for row in activity_rows if not is_anime(row[1])]
+        activity_rows = [row for row in activity_rows if not tracking_projection.is_anime(row[1])]
     prefs=await db.get(TrackingPreferences,user.id)
     favorite_entries = [(e, m, index) for index, (e, m) in enumerate(entries) if e.favorite]
     favorite_order = list((prefs.favorite_order if prefs else None) or [])
@@ -823,8 +653,8 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
                   "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids),
                   "favorites":sum(e.favorite for e,m in entries),"rated":len(scores)},
         "average_score":round(sum(scores)/len(scores),1) if scores else None,
-        "favorites":[media_data(m) for e,m,_ in favorite_entries],"people":visible,
-        "recent_activity":activity_data(activity_rows,limit=12)}
+        "favorites":[tracking_projection.media_data(m) for e,m,_ in favorite_entries],"people":visible,
+        "recent_activity":tracking_projection.activity_data(activity_rows,limit=12)}
 
 
 class FavoriteOrderBody(BaseModel):
@@ -844,8 +674,8 @@ async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(
         Media, Media.id == TrackedEntry.media_id
     ).where(TrackedEntry.user_id == viewer.id, TrackedEntry.favorite.is_(True)))).all()
     show_anime = await anime_is_visible(db)
-    visible_ids = {media_id for media_id, media in favorite_rows if show_anime or not is_anime(media)}
-    hidden_ids = {media_id for media_id, media in favorite_rows if not show_anime and is_anime(media)}
+    visible_ids = {media_id for media_id, media in favorite_rows if show_anime or not tracking_projection.is_anime(media)}
+    hidden_ids = {media_id for media_id, media in favorite_rows if not show_anime and tracking_projection.is_anime(media)}
     requested_ids = set(body.media_ids)
     if requested_ids != visible_ids:
         raise HTTPException(409, 'Favorite order must include every visible favorite exactly once')
@@ -911,7 +741,7 @@ async def library(db: AsyncSession = Depends(get_db), viewer: User = Depends(get
         Media.media_type.in_([MediaType.movie, MediaType.series]),
         or_(Media.id.in_(selected), (Media.id.in_(observed)) & ~Media.id.in_(excluded)),
     ).order_by(Media.title))).scalars().all()
-    return {"results":[media_data(m) for m in rows]}
+    return {"results":[tracking_projection.media_data(m) for m in rows]}
 
 
 class LibraryIntentPatch(BaseModel):
@@ -1023,84 +853,9 @@ async def profile_access(db, username, viewer):
     return user, owner
 
 
-def is_anime(media: Media) -> bool:
-    data=media.tmdb_data or {}
-    genres={str(g if isinstance(g,str) else g.get('name','')).lower() for g in data.get('genres',[]) if isinstance(g,(str,dict))}
-    countries={str(value).upper() for value in data.get('origin_country',[]) if value}
-    countries.update(str(value.get('iso_3166_1','')).upper() for value in data.get('production_countries',[]) if isinstance(value,dict))
-    return 'animation' in genres and (data.get('original_language')=='ja' or 'JP' in countries)
-
-
 async def anime_is_visible(db: AsyncSession) -> bool:
     settings=await db.get(GlobalSettings,1)
     return bool(settings and settings.show_anime)
-
-
-def media_data(media):
-    data = media.tmdb_data or {}
-    regular_seasons = [
-        season for season in data.get("seasons", [])
-        if isinstance(season, dict) and (season.get("season_number") or 0) > 0
-    ]
-    return {
-        "id": media.id, "title": media.title, "type": media.media_type.value,
-        "poster": media.poster_path, "backdrop": media.backdrop_path,
-        "overview": media.overview, "year": (media.release_date or "")[:4],
-        "release_date": media.release_date, "original_title": media.original_title,
-        "runtime": media.runtime or data.get("runtime"), "tmdb_score": media.tmdb_rating,
-        "imdb_score": media.imdb_rating,
-        "rt_critic_score": media.rt_critic_score,
-        "rt_audience_score": media.rt_audience_score,
-        "external_scores_updated_at": media.external_scores_updated_at,
-        "tagline": media.tagline or data.get("tagline"), "adult": media.adult,
-        "original_language": data.get("original_language"),
-        "networks": [n for n in data.get("networks", []) if isinstance(n, dict) and n.get("name")],
-        "studios": [c for c in data.get("production_companies", []) if isinstance(c, dict) and c.get("name")],
-        "creators": [c for c in data.get("created_by", []) if isinstance(c, dict) and c.get("name")],
-        "episode_runtime": next((value for value in data.get("episode_run_time", []) if value), None),
-        "season_count": data.get("number_of_seasons") or len(regular_seasons) or None,
-        "episode_count": data.get("number_of_episodes"),
-        "last_air_date": data.get("last_air_date"),
-        "release_status": media.status or data.get('status'), "genres": [g if isinstance(g, str) else g["name"] for g in data.get("genres", []) if isinstance(g, str) or (isinstance(g, dict) and g.get("name"))],
-        "tmdb_id": media.tmdb_id, "tvdb_id": media.tvdb_id, "imdb_id": media.imdb_id,
-        "is_anime": is_anime(media),
-    }
-
-
-def activity_data(rows, *, include_user=False, limit=12):
-    """Collapse legacy and current rows into one newest-first UTC-day card."""
-    from core.activity import has_activity_event, merge_activity_payload
-    grouped = {}
-    for row in rows:
-        activity, media = row[0], row[1]
-        user = row[2] if include_user else None
-        profile = row[3] if include_user else None
-        key = (user.id if user else activity.user_id, media.id, activity.created_at.date())
-        if key not in grouped:
-            grouped[key] = {
-                "key": f"{key[0]}:{key[1]}:{key[2].isoformat()}",
-                **({
-                    "user_id": user.id,
-                    "username": user.username,
-                    "display_name": user.username,
-                    "has_avatar": bool(profile.avatar_path),
-                } if user else {}),
-                "status": activity.status,
-                "score": activity.score,
-                "payload": dict(activity.payload or {}),
-                "created_at": activity.created_at,
-                "media": media_data(media),
-            }
-        else:
-            grouped[key]["payload"] = merge_activity_payload(grouped[key]["payload"], activity.payload)
-    for activity in grouped.values():
-        if activity["score"] is None:
-            # A known previous score means the rating was cleared. A legacy row
-            # with no old or new score cannot establish that an edit occurred.
-            activity["payload"]["rating_first"] = False
-            if activity["payload"].get("previous_score") is None:
-                activity["payload"]["rating_changed"] = False
-    return [item for item in grouped.values() if has_activity_event(item["status"], item["payload"])][:limit]
 
 
 def encode_activity_cursor(created_at: datetime, row_id: int) -> str:
@@ -1120,20 +875,6 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
         raise HTTPException(422, "Invalid activity cursor")
 
 
-def entry_data(entry, media, owner=False):
-    result = {
-        **media_data(media), "status": entry.status, "rating_mode": entry.rating_mode,
-        "score": effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
-        "season_scores": entry.season_scores, "progress": entry.progress,
-        "favorite": entry.favorite, "start_date": entry.start_date, "finish_date": entry.finish_date,
-        "rewatch_count": entry.rewatch_count, "updated_at": entry.updated_at,
-        "notes": entry.notes,
-    }
-    if owner:
-        result.update(manual_score=entry.manual_score)
-    return result
-
-
 @router.get("/profile/{username}/{media_type}")
 async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     user, owner = await profile_access(db, username, viewer)
@@ -1141,13 +882,13 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     if media_type=='all':query=query.where(Media.media_type.in_([MediaType.movie,MediaType.series]))
     else:query=query.where(Media.media_type==MediaType(media_type))
     rows=(await db.execute(query.order_by(Media.title))).all()
-    if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
+    if not await anime_is_visible(db):rows=[row for row in rows if not tracking_projection.is_anime(row[1])]
     following = False
     follows_you = False
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
         follows_you = (await db.execute(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))).scalar_one_or_none() is not None
-    entries = [entry_data(e, m, owner) for e, m in rows]
+    entries = [tracking_projection.entry_data(e, m, owner) for e, m in rows]
     movie_ids = [m.id for _, m in rows if m.media_type == MediaType.movie]
     watched_movies = set((await db.execute(select(WatchEvent.media_id).where(
         WatchEvent.user_id == user.id, WatchEvent.media_id.in_(movie_ids),
@@ -1214,12 +955,12 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
             title_catalogue = [r for r in catalogue if (
                 (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
             )]
-            result['currently_airing'], result['next_release_date'] = current_airing_details(
+            result['currently_airing'], result['next_release_date'] = season_releases.current_airing_details(
                 {**show_metadata, 'status': show_metadata.get('status') or media.status},
                 [(r.season_number, r.release_date, r.id,
                   bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
             )
-            dot, reason = availability_dot(
+            dot, reason = season_releases.availability_dot(
                 media.tmdb_data,
                 [(r.season_number, r.release_date, r.id,
                   bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
@@ -1273,14 +1014,14 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
         TrackedEntry.user_id == user.id, Media.media_type.in_([MediaType.movie, MediaType.series]))
     if media_type != "all": query = query.where(Media.media_type == MediaType(media_type))
     entries = (await db.execute(query)).all()
-    if not await anime_is_visible(db): entries = [row for row in entries if not is_anime(row[1])]
+    if not await anime_is_visible(db): entries = [row for row in entries if not tracking_projection.is_anime(row[1])]
     statuses = {status.value: 0 for status in TrackingStatus}
     scores, genres = [], {}
     for entry, media in entries:
         statuses[entry.status] = statuses.get(entry.status, 0) + 1
         score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
         if score: scores.append(float(score))
-        for genre in media_data(media)["genres"]: genres[genre] = genres.get(genre, 0) + 1
+        for genre in tracking_projection.media_data(media)["genres"]: genres[genre] = genres.get(genre, 0) + 1
 
     events = (await db.execute(select(WatchEvent, Media).join(Media, Media.id == WatchEvent.media_id).where(
         WatchEvent.user_id == user.id, WatchEvent.completed.is_(True),
@@ -1330,8 +1071,8 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
     else:
         query = query.order_by(Media.title)
     rows = (await db.execute(query.limit(80))).scalars().all()
-    if not show_anime:rows=[m for m in rows if not is_anime(m)]
-    results = [media_data(m) for m in rows]
+    if not show_anime:rows=[m for m in rows if not tracking_projection.is_anime(m)]
+    results = [tracking_projection.media_data(m) for m in rows]
     notice = None
     if term:
         from core import tmdb
@@ -1360,7 +1101,7 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 for item in remote_results:
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
-                    if item['id'] in known or item.get('adult') or (not show_anime and is_anime(candidate)):
+                    if item['id'] in known or item.get('adult') or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
                         'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
@@ -1400,7 +1141,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
-    if is_anime(media) and not await anime_is_visible(db):
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
         raise HTTPException(404,"Title not found")
     # Logged-out visitors only read the shared cache. Signed-in visits may
     # refresh stale scores using the user's key, then the administrator key.
@@ -1430,7 +1171,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
         released = [e for e in episodes if e.season_number == season.get('season_number')]
         season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
         season['watched_count'] = sum(e.id in watched for e in released)
-    return {**media_data(media), "entry": entry_data(entry, media, True) if entry else None,
+    return {**tracking_projection.media_data(media), "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 
@@ -1528,9 +1269,9 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
     entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
     if (entry is not None and body.model_fields_set == {"favorite"}
             and entry.favorite == body.favorite):
-        result = entry_data(entry, media, True)
+        result = tracking_projection.entry_data(entry, media, True)
         if media.media_type == MediaType.series:
-            dot, reason = await media_availability_dot(db, viewer.id, media, entry.status)
+            dot, reason = await season_releases.media_availability_dot(db, viewer.id, media, entry.status)
             result['availability_dot'], result['availability_reason'] = dot, reason
         else:
             result['availability_dot'], result['availability_reason'] = False, None
@@ -1724,9 +1465,9 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
             added_watched_ids, changed_ratings, removed_ratings,
             delivery_job_id=job.id, removed_watched_ids=removed_watched_ids,
         )
-    result = entry_data(entry, media, True)
+    result = tracking_projection.entry_data(entry, media, True)
     if media.media_type == MediaType.series:
-        dot, reason = await media_availability_dot(db, viewer.id, media, entry.status)
+        dot, reason = await season_releases.media_availability_dot(db, viewer.id, media, entry.status)
         result['availability_dot'], result['availability_reason'] = dot, reason
     else:
         result['availability_dot'], result['availability_reason'] = False, None
@@ -1779,11 +1520,11 @@ async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db)
     has_more = incremental and len(rows) > 60
     if has_more:
         rows = rows[:60]
-    if not await anime_is_visible(db):rows=[row for row in rows if not is_anime(row[1])]
+    if not await anime_is_visible(db):rows=[row for row in rows if not tracking_projection.is_anime(row[1])]
     presentation_rows = list(reversed(rows)) if incremental else rows
     if has_more and rows:
         next_cursor = encode_activity_cursor(rows[-1][0].created_at, rows[-1][0].id)
     else:
         next_cursor = encode_activity_cursor(watermark, 0)
-    return {"results": activity_data(presentation_rows,include_user=True,limit=60),
+    return {"results": tracking_projection.activity_data(presentation_rows,include_user=True,limit=60),
             "cursor":next_cursor,"has_more":has_more}

@@ -48,6 +48,10 @@ session; job lookups with an existing settings row refresh the global fallback.
   episode seed keys in the JSON string `continue_watching_settings_payload`.
   Update and confirm both blobs; accepted resumption clears every title alias.
 
+Shared title, entry, and activity display projections live in
+core/tracking_projection.py. Airing and new-season indicators, metadata release
+dates, and season notices share core/season_releases.py.
+
 ## Implementation anchors
 
 Streaming connections are independent by connection ID. Each AnyList user may
