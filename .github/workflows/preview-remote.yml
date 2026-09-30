@@ -81,14 +81,22 @@ jobs:
               echo 'Restricted CI command unexpectedly succeeded' >&2
               exit 1
             fi
-            grep -q 'Preview command refused' refused.log
+            grep -q 'Preview command refused' refused.log || {
+              cat refused.log
+              echo "Expected CI refusal message missing for: $command" >&2
+              exit 1
+            }
           done
           for user in root ubuntu; do
             if timeout 20s tailscale ssh "$user@$HOST" id >refused.log 2>&1; then
               echo 'Privileged SSH account unexpectedly accessible' >&2
               exit 1
             fi
-            grep -Eqi 'permission denied|access denied|not allowed' refused.log
+            grep -Eqi 'permission denied|access denied|not allowed|SSH denied|no matching SSH' refused.log || {
+              cat refused.log
+              echo "Expected SSH policy refusal missing for account: $user" >&2
+              exit 1
+            }
           done
           echo 'Arbitrary commands, beta reset and privileged SSH accounts refused.'
       - name: Run installed preview entrypoint
