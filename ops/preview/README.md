@@ -143,6 +143,7 @@ review desired bypass/PR policies before enabling a ruleset.
 | --- | --- | --- |
 | Secret | TS_OAUTH_CLIENT_ID | Tailscale federated identity Client ID |
 | Secret | TS_AUDIENCE | Tailscale federated identity Audience |
+| Secret | PREVIEW_VPS_HOST | Same private hostname, stored as a secret for automatic log masking |
 | Variable | PREVIEW_VPS_HOST | Actual `<machine>.<tailnet>.ts.net`, no scheme/port |
 | Variable | PREVIEW_ENABLED | `true` only after bootstrap/configuration; unset or `false` during Stage 1 |
 
@@ -150,7 +151,9 @@ No OAuth client secret, reusable auth key, GitHub PAT, production secret, or DB
 password is required in the repository. `PREVIEW_SSH_PRIVATE_KEY` and
 `PREVIEW_SSH_KNOWN_HOSTS` are no longer required. `tailscale ssh` verifies host keys
 through Tailscale rather than a committed or manually pinned known-hosts file.
-Public Git fetches use the public repository.
+The hostname variable remains available as configuration, but workflows read its
+secret copy so step environments are masked before execution. Public Git fetches
+use the public repository.
 The actual hostname is written to `/etc/anylist-preview/hostname` during bootstrap.
 Per-slot app secrets/DB passwords are generated only on the VPS. Optional app settings
 belong in those root-owned env files; never commit populated files.
