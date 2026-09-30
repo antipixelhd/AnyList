@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import watch_echo
 
 from routers import sync, webhooks
 
@@ -52,7 +53,7 @@ class WatchedPushBackTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(sync, "_latest_watched_at", new_callable=AsyncMock, return_value={2: earlier, 3: later}),
             patch.object(sync.jellyfin, "mark_watched", new_callable=AsyncMock, return_value=True) as push,
-            patch.object(webhooks, "mark_pushed_watched") as mark_echo,
+            patch.object(watch_echo, "mark_pushed_watched") as mark_echo,
         ):
             count = await sync._push_watched_back_to_source(self.db, 1, self.conn, {2: "file-1", 3: "file-1"})
         self.assertEqual(count, 1)

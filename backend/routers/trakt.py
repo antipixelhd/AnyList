@@ -8,6 +8,7 @@ Endpoints:
   POST /trakt/import/upload       – Import watched history/ratings/lists from a Trakt
                                      data export zip (no VIP / API app required)
 """
+from core import outbound_sync
 from core import trakt_auth
 
 from core import settings_store
@@ -1680,9 +1681,8 @@ async def _run_trakt_push(user_id: int, job_id: int) -> None:
                     ))
 
             if settings.trakt_push_ratings and ratings_map:
-                from routers.sync import _resolve_tmdb_season_ids
 
-                season_tmdb_ids = await _resolve_tmdb_season_ids(
+                season_tmdb_ids = await outbound_sync.resolve_tmdb_season_ids(
                     media_by_id,
                     set(ratings_map),
                     await settings_store.get_effective_tmdb_key(db, settings),

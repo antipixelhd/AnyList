@@ -278,7 +278,7 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "routers.sync._fan_out_changes_to_other_connections",
+            "core.outbound_sync.fan_out_changes",
             AsyncMock(),
         ) as fan_out:
             result = await submit_rating(

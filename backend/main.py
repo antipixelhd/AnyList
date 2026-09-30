@@ -1,3 +1,4 @@
+from core import outbound_sync
 from core import settings_store
 import asyncio
 from fastapi import Depends, FastAPI
@@ -33,10 +34,6 @@ async def _flush_pull_cycle(state) -> None:
     from models import Collection, UserSettings
     from core.cloud_actions import dispatch_cloud_actions
     from core.stream_actions import dispatch_stream_actions
-    from routers.sync import (
-        _fan_out_changes_to_other_connections,
-        _fan_out_streaming_library_changes,
-    )
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as db:
@@ -76,7 +73,7 @@ async def _flush_pull_cycle(state) -> None:
             await db.commit()
             await dispatch_watch_intents(db, state.user_id)
         for exclusions, media_ids in watched_groups.items():
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db, state.user_id, None, media_ids, {}, settings,
                 exclude_connection_ids=set(exclusions[0]),
                 exclude_cloud_sources=set(exclusions[1]),
@@ -108,7 +105,7 @@ async def _flush_pull_cycle(state) -> None:
                         skip_stream_watch_writes=True,
                     )
         if state.library_new_ids or state.library_removed_ids:
-            await _fan_out_streaming_library_changes(
+            await outbound_sync.fan_out_streaming_library(
                 db,
                 state.user_id,
                 None,
@@ -118,7 +115,7 @@ async def _flush_pull_cycle(state) -> None:
                 source_observed_at_by_media=state.library_observed_at_by_media,
                 source_connection_ids_by_media=state.library_source_ids_by_media,
             )
-        await _fan_out_changes_to_other_connections(
+        await outbound_sync.fan_out_changes(
             db,
             state.user_id,
             None,

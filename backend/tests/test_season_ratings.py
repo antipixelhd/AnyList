@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import outbound_sync
 
 from models.base import MediaType
 from models.media import Media
 from routers.mdblist import _import_ratings
 from routers.trakt import _apply_imported_rating
-from routers.sync import _fan_out_changes_to_other_connections
 
 
 def _scalar_result(items: list) -> MagicMock:
@@ -101,13 +101,13 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("routers.sync._resolve_tmdb_season_ids", AsyncMock(return_value={(1, 1): 3572})),
+            patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={(1, 1): 3572})),
             patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")) as resolve_plex,
             patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
-            patch("routers.sync.trakt_client.set_ratings_batch", AsyncMock()) as set_trakt,
+            patch("core.outbound_sync.trakt_client.set_ratings_batch", AsyncMock()) as set_trakt,
             patch("core.mdblist.push_ratings", AsyncMock(return_value={})) as push_mdblist,
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db,
                 user_id=3,
                 exclude_connection_id=None,
@@ -171,13 +171,13 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch("routers.sync._resolve_tmdb_season_ids", AsyncMock(return_value={(1, 1): 3572})),
+            patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={(1, 1): 3572})),
             patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
             patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)) as set_plex,
-            patch("routers.sync.trakt_client.remove_ratings_batch", AsyncMock()) as remove_trakt,
+            patch("core.outbound_sync.trakt_client.remove_ratings_batch", AsyncMock()) as remove_trakt,
             patch("core.mdblist.remove_ratings", AsyncMock(return_value={})) as remove_mdblist,
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db,
                 user_id=3,
                 exclude_connection_id=None,
@@ -236,15 +236,15 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.sync._resolve_tmdb_season_ids",
+                "core.outbound_sync.resolve_tmdb_season_ids",
                 AsyncMock(return_value={(1, 1): 3572, (1, 2): 3573}),
             ),
             patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
             patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)),
-            patch("routers.sync.trakt_client.set_ratings_batch", AsyncMock()),
+            patch("core.outbound_sync.trakt_client.set_ratings_batch", AsyncMock()),
             patch("core.mdblist.push_ratings", AsyncMock(return_value={})) as push_mdblist,
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db,
                 user_id=3,
                 exclude_connection_id=None,
@@ -284,15 +284,15 @@ class SeasonRatingFanoutTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "routers.sync._resolve_tmdb_season_ids",
+                "core.outbound_sync.resolve_tmdb_season_ids",
                 AsyncMock(return_value={(1, 1): 3572, (1, 2): 3573}),
             ),
             patch("routers.sync.plex.resolve_season_rating_key", AsyncMock(return_value="103")),
             patch("routers.sync.plex.set_rating", AsyncMock(return_value=True)),
-            patch("routers.sync.trakt_client.remove_ratings_batch", AsyncMock()),
+            patch("core.outbound_sync.trakt_client.remove_ratings_batch", AsyncMock()),
             patch("core.mdblist.remove_ratings", AsyncMock(return_value={})) as remove_mdblist,
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db,
                 user_id=3,
                 exclude_connection_id=None,

@@ -70,6 +70,11 @@ For provider sync, inspect pull_cycle.py, tracking_snapshot.py, and the relevant
 reconciliation/delivery modules. For streaming-library changes, inspect
 streaming_library.py and stream_actions.py.
 
+Peer change delivery lives in core/outbound_sync.py: destination selection,
+reconciliation gates, provider writes, and bounded batching. core/watch_echo.py
+tracks pending Jellyfin/Emby echoes; core/bingebase.py sends playback events.
+Their small independent tests are test_watch_echo.py and test_bingebase.py.
+
 For Nuvio outbound state, inspect core/nuvio_payloads.py for wire formatting and
 identity selection, and core/nuvio_projection.py for library, watch-history, and
 Continue Watching queries. core/nuvio.py owns provider transport; routers/sync.py

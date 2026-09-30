@@ -1,3 +1,4 @@
+from core import outbound_sync, watch_echo
 from core import mdblist_payloads, trakt_auth
 from core import settings_store
 import asyncio
@@ -125,8 +126,7 @@ async def _push_watch_state(
     async def _push_plex_watched_and_record(conn: MediaServerConnection, source_id: str, uid: int, mid: int) -> bool:
         ok = await plex_client.mark_watched(conn.url, conn.token, source_id)
         if ok:
-            from routers.sync import _record_plex_pending_push
-            await _record_plex_pending_push(uid, mid)
+            await outbound_sync.record_plex_pending_push(uid, mid)
         return ok
 
     # Jellyfin/Emby's UserDataSaved webhook echoes an outbound mark-watched
@@ -134,7 +134,6 @@ async def _push_watch_state(
     # recent-event guard - so each such push is registered here so the echo is
     # recognised as our own, not a second play stamped "now" (GitHub #324).
     # Mirrors the same registration in routers/sync.py's fan-out.
-    from routers.webhooks import mark_pushed_watched
 
     if connections:
         files_result = await db.execute(
@@ -165,14 +164,14 @@ async def _push_watch_state(
                 elif coll_file.source == CollectionSource.jellyfin:
                     label = f"jellyfin connection {conn.id}"
                     if watched:
-                        mark_pushed_watched(user_id, coll_media_id)
+                        watch_echo.mark_pushed_watched(user_id, coll_media_id)
                         tasks.append((label, jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                     else:
                         tasks.append((label, jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.emby:
                     label = f"emby connection {conn.id}"
                     if watched:
-                        mark_pushed_watched(user_id, coll_media_id)
+                        watch_echo.mark_pushed_watched(user_id, coll_media_id)
                         tasks.append((label, emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
                     else:
                         tasks.append((label, emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))

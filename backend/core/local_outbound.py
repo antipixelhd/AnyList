@@ -1,5 +1,6 @@
 """Run ordinary local tracking delivery after the local response is committed."""
 from __future__ import annotations
+from core import outbound_sync
 
 import logging
 
@@ -35,7 +36,6 @@ async def dispatch_local_tracking_delta(
     delivery_job_id: int | None = None,
     removed_watched_ids: set[int] | None = None,
 ) -> None:
-    from routers.sync import _fan_out_changes_to_other_connections
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     removed_watched_ids = removed_watched_ids or set()
@@ -56,7 +56,7 @@ async def dispatch_local_tracking_delta(
                 UserSettings.user_id == user_id,
             ))).scalar_one_or_none()
             if watched_ids or ratings or removed_ratings:
-                await _fan_out_changes_to_other_connections(
+                await outbound_sync.fan_out_changes(
                     db, user_id, None, watched_ids, ratings, settings,
                     removed_ratings=removed_ratings,
                     durable_watch_media_ids=set(watched_ids),

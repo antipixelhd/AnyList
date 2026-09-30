@@ -677,7 +677,7 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         with patch("routers.history.jellyfin_client.mark_watched", fake_mark_watched), \
-             patch("routers.webhooks.mark_pushed_watched",
+             patch("core.watch_echo.mark_pushed_watched",
                    side_effect=lambda uid, mid: registered.append((uid, mid))):
             await history._push_watch_state(
                 self._fixture("jellyfin"), user_id=7, media_ids=[42], watched=True,
@@ -693,7 +693,7 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         with patch("routers.history.emby_client.mark_watched", fake_mark_watched), \
-             patch("routers.webhooks.mark_pushed_watched",
+             patch("core.watch_echo.mark_pushed_watched",
                    side_effect=lambda uid, mid: registered.append((uid, mid))):
             await history._push_watch_state(
                 self._fixture("emby"), user_id=7, media_ids=[42], watched=True,
@@ -707,7 +707,7 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         with patch("routers.history.jellyfin_client.mark_unwatched", fake_mark_unwatched), \
-             patch("routers.webhooks.mark_pushed_watched") as reg:
+             patch("core.watch_echo.mark_pushed_watched") as reg:
             await history._push_watch_state(
                 self._fixture("jellyfin"), user_id=7, media_ids=[42], watched=False,
             )

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import outbound_sync
 
 from fastapi import HTTPException
 from sqlalchemy import event, func, select
@@ -481,7 +482,6 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._count(StreamBaseline), 0)
 
     async def test_watch_fanout_delivers_to_each_stremio_account(self):
-        from routers.sync import _fan_out_changes_to_other_connections
 
         first = MediaServerConnection(
             id=101, user_id=self.owner.id, type="stremio", name="First", url=stremio.DEFAULT_URL,
@@ -511,13 +511,13 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             "commit": AsyncMock(),
         })()
         with (
-            patch("routers.sync._select_in_chunks", AsyncMock(return_value=[movie])),
+            patch("core.outbound_sync._select_in_chunks", AsyncMock(return_value=[movie])),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.stremio_delivery.push_connection", AsyncMock()) as push,
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db, self.owner.id, None, {movie.id}, {}, settings=None,
             )
 
@@ -525,7 +525,6 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({call.args[1].id for call in push.await_args_list}, {101, 102})
 
     async def test_nuvio_watched_and_library_fanout_targets_each_profile(self):
-        from routers.sync import _fan_out_changes_to_other_connections
 
         first = type("NuvioConnection", (), {
             "id": 201, "user_id": self.owner.id, "type": "nuvio", "url": "https://nuvio.test",
@@ -563,18 +562,18 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         library_push = AsyncMock(return_value=True)
         watched_push = AsyncMock()
         with (
-            patch("routers.sync._select_in_chunks", AsyncMock(return_value=[movie])),
+            patch("core.outbound_sync._select_in_chunks", AsyncMock(return_value=[movie])),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
             patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
             patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
-            patch("routers.sync._push_nuvio_library_delta", library_push),
+            patch("core.outbound_sync.push_nuvio_library_delta", library_push),
             patch.object(nuvio, "push_watched_items", watched_push),
             patch("routers.sync.refresh_stream_connection", AsyncMock()),
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db, self.owner.id, None, {movie.id}, {}, settings=None,
                 new_collected_ids={movie.id},
             )

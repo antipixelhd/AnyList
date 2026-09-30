@@ -26,7 +26,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         db.get.return_value = SimpleNamespace(approved=True)
         db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
         conn = SimpleNamespace(id=7, user_id=71, type='nuvio')
-        with patch('routers.sync._fan_out_changes_to_other_connections', AsyncMock()), \
+        with patch('core.outbound_sync.fan_out_changes', AsyncMock()), \
              patch('routers.history._push_watch_state', AsyncMock()) as push:
             async with coordinated_pull_cycle(71) as state:
                 await propagate_media_server_pull(
@@ -46,7 +46,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         fan_out = AsyncMock()
         queue = AsyncMock()
         dispatch = AsyncMock()
-        with patch('routers.sync._fan_out_changes_to_other_connections', fan_out), \
+        with patch('core.outbound_sync.fan_out_changes', fan_out), \
              patch('core.watch_intents.queue_watch_intents', queue), \
              patch('core.watch_intents.dispatch_watch_intents', dispatch):
             await propagate_media_server_pull(db, conn=conn, watched_ids={10}, ratings={})
@@ -66,7 +66,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         queue = AsyncMock()
         dispatch = AsyncMock()
         with patch('core.cloud_reconciliation.cloud_push_is_approved', AsyncMock(return_value=False)), \
-             patch('routers.sync._fan_out_changes_to_other_connections', fan_out), \
+             patch('core.outbound_sync.fan_out_changes', fan_out), \
              patch('core.watch_intents.queue_watch_intents', queue), \
              patch('core.watch_intents.dispatch_watch_intents', dispatch):
             await propagate_cloud_pull(
@@ -83,7 +83,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         db.execute.return_value = SimpleNamespace(
             scalar_one_or_none=lambda: SimpleNamespace(approved=False),
         )
-        with patch('routers.sync._fan_out_changes_to_other_connections', fan_out):
+        with patch('core.outbound_sync.fan_out_changes', fan_out):
             await propagate_cloud_pull(
                 db, user_id=41, provider='trakt', watched_ids={10},
                 ratings={}, complete=True,
@@ -252,7 +252,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         dispatch = AsyncMock()
         state_cm = coordinated_pull_cycle(61)
         with patch('db.async_sessionmaker', side_effect=lambda *_a, **_k: lambda: _SessionContext(db)), \
-             patch('routers.sync._fan_out_changes_to_other_connections', fanout), \
+             patch('core.outbound_sync.fan_out_changes', fanout), \
              patch('routers.history._push_watch_state', push_unwatched), \
              patch('core.watch_intents.queue_watch_intents', queue), \
              patch('core.watch_intents.dispatch_watch_intents', dispatch), \

@@ -1234,7 +1234,7 @@ class FullPushPartialWatchTests(_PartialWatchDB):
         with patch.object(sync, "engine", self.engine), \
              patch.object(sync.jellyfin, "mark_watched", mark_watched), \
              patch.object(sync.jellyfin, "get_items_watched_state", watched_state), \
-             patch("routers.webhooks.mark_pushed_watched") as mark_pushed:
+             patch("core.watch_echo.mark_pushed_watched") as mark_pushed:
             await sync._run_full_push(1, connection_id, job_id)
         return mark_watched, mark_pushed, job_id
 
@@ -1322,7 +1322,7 @@ class FullPushEchoTokenTimingTests(_PartialWatchDB):
         with patch.object(sync, "engine", self.engine), \
              patch.object(sync.jellyfin, "mark_watched", mark_watched), \
              patch.object(sync.jellyfin, "get_items_watched_state", watched_state), \
-             patch("routers.webhooks.mark_pushed_watched") as mark_pushed:
+             patch("core.watch_echo.mark_pushed_watched") as mark_pushed:
             await sync._run_full_push(1, connection_id, job_id)
 
         pushed_source_ids = [call.args[3] for call in mark_watched.await_args_list]

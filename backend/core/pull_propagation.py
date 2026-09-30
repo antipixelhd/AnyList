@@ -1,5 +1,6 @@
 """Export only accepted changes from an already reconciled cloud pull."""
 from __future__ import annotations
+from core import outbound_sync
 
 import logging
 
@@ -30,7 +31,6 @@ async def propagate_cloud_pull(
     ))).scalar_one_or_none()
     if not baseline or not baseline.approved:
         return
-    from routers.sync import _fan_out_changes_to_other_connections
 
     try:
         if watched_ids:
@@ -41,7 +41,7 @@ async def propagate_cloud_pull(
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == user_id,
         ))).scalar_one_or_none()
-        await _fan_out_changes_to_other_connections(
+        await outbound_sync.fan_out_changes(
             db,
             user_id,
             None,
@@ -69,7 +69,6 @@ async def propagate_media_server_pull(
     baseline = await db.get(StreamBaseline, conn.id)
     if not baseline or not baseline.approved:
         return
-    from routers.sync import _fan_out_changes_to_other_connections
 
     try:
         from core.pull_cycle import defer_watch_removals
@@ -97,7 +96,7 @@ async def propagate_media_server_pull(
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == conn.user_id,
         ))).scalar_one_or_none()
-        await _fan_out_changes_to_other_connections(
+        await outbound_sync.fan_out_changes(
             db, conn.user_id, conn.id, watched_ids, ratings, settings,
             durable_watch_media_ids=set(watched_ids),
         )

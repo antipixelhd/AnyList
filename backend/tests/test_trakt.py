@@ -634,7 +634,7 @@ class TraktHistorySafetyTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioT
                 get_episodes,
             ),
             patch(
-                "routers.sync._fan_out_changes_to_other_connections",
+                "core.outbound_sync.fan_out_changes",
                 AsyncMock(),
             ),
         ):
@@ -1066,7 +1066,7 @@ class TraktRatingsPushTests(_ApprovedCloudPushMixin, unittest.IsolatedAsyncioTes
             patch.object(trakt_router.trakt_client, "set_movie_rating", per_item),
             patch.object(trakt_router.trakt_client, "set_show_rating", per_item),
             patch.object(trakt_router.trakt_client, "set_season_rating", per_item),
-            patch("routers.sync._resolve_tmdb_season_ids", AsyncMock(return_value={})),
+            patch("core.outbound_sync.resolve_tmdb_season_ids", AsyncMock(return_value={})),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="k")),
             patch.object(trakt_router.asyncio, "sleep", AsyncMock()),
         ):
@@ -1379,7 +1379,7 @@ class TraktExportSyncTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(trakt_router, "async_sessionmaker", return_value=lambda: session),
             patch.object(trakt_router, "_apply_trakt_import", fake_apply),
-            patch("routers.sync._fan_out_changes_to_other_connections", AsyncMock()),
+            patch("core.outbound_sync.fan_out_changes", AsyncMock()),
         ):
             # Defaults (as when the endpoint isn't given explicit form values).
             await trakt_router.run_trakt_export_sync(user_id=1, job_id=31, export_data=export_data)

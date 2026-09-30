@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
+from core import outbound_sync
 from core import settings_store
 from core import nuvio_payloads, nuvio_projection
 
@@ -2134,7 +2135,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.db.get(Collection, collection.id))
 
     async def test_stream_library_fanout_requires_approved_source_and_target(self):
-        from routers.sync import _fan_out_streaming_library_changes
         from core import stremio
 
         source = MediaServerConnection(
@@ -2182,7 +2182,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
               patch.object(stremio, 'datastore_put', AsyncMock()) as write):
-            await _fan_out_streaming_library_changes(
+            await outbound_sync.fan_out_streaming_library(
                 self.db,
                 self.owner.id,
                 source.id,
@@ -2199,7 +2199,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             source_baseline.approved = True
             target_baseline.approved = False
             await self.db.commit()
-            await _fan_out_streaming_library_changes(
+            await outbound_sync.fan_out_streaming_library(
                 self.db,
                 self.owner.id,
                 source.id,
@@ -2215,7 +2215,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
             target_baseline.approved = True
             await self.db.commit()
-            await _fan_out_streaming_library_changes(
+            await outbound_sync.fan_out_streaming_library(
                 self.db,
                 self.owner.id,
                 source.id,
@@ -2231,7 +2231,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(by_connection[source.id].state, 'observed')
 
     async def test_provider_library_delta_retries_failed_peer_without_another_pull(self):
-        from routers.sync import _fan_out_streaming_library_changes
         from core import stremio, nuvio
         import main
 
@@ -2270,7 +2269,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
               patch.object(stremio, 'datastore_put', AsyncMock(side_effect=[RuntimeError('offline'), None])) as write,
               patch.object(nuvio, 'merge_library', AsyncMock()) as source_write):
-            await _fan_out_streaming_library_changes(
+            await outbound_sync.fan_out_streaming_library(
                 self.db, self.owner.id, source.id,
                 new_collected_ids={self.movie.id}, removed_collected_ids=set(), api_key=None,
             )
@@ -2291,7 +2290,6 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         source_write.assert_not_awaited()
 
     async def test_provider_library_delta_preserves_newer_local_choice(self):
-        from routers.sync import _fan_out_streaming_library_changes
         from core import stremio
 
         source = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio source',
@@ -2313,7 +2311,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         with (patch.object(stremio, 'datastore_get', AsyncMock(return_value=[])),
               patch.object(stremio, 'datastore_put', AsyncMock()) as write):
-            await _fan_out_streaming_library_changes(
+            await outbound_sync.fan_out_streaming_library(
                 self.db, self.owner.id, source.id,
                 new_collected_ids={self.movie.id}, removed_collected_ids=set(), api_key=None,
             )
@@ -2800,7 +2798,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(sync, 'sync_items', AsyncMock(return_value=[])))
             stack.enter_context(patch('core.stream_actions.dispatch_stream_actions', AsyncMock()))
             dispatch = stack.enter_context(patch('core.watch_intents.dispatch_watch_intents', AsyncMock()))
-            fanout = stack.enter_context(patch.object(sync, '_fan_out_changes_to_other_connections', AsyncMock()))
+            fanout = stack.enter_context(patch.object(outbound_sync, 'fan_out_changes', AsyncMock()))
             stack.enter_context(patch('core.streaming_library.retry_pending_library_deliveries', AsyncMock()))
             stack.enter_context(patch.object(sync, 'pre_cache_all_collected_bg', AsyncMock()))
             if provider == 'nuvio':

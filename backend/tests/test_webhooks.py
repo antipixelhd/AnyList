@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import watch_echo
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import InvalidRequestError
@@ -13,31 +14,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from models.base import MediaType
 from routers import webhooks
-from routers.webhooks import (
-    _backfill_credits_stingers,
-    _backfill_jellyfin_runtimes,
-    _backfill_plex_runtime,
-    _commit_playback_session_update,
-    _consume_recently_pushed_watched,
-    _ensure_collection_entry,
-    _episode_for_progress,
-    _get_or_open_session,
-    _is_duplicate_webhook_delivery,
-    _maybe_bingebase_scrobble,
-    _maybe_simkl_scrobble,
-    _resolve_plex_progress,
-    _resolve_tvdb_episode_to_tmdb_position,
-    _translate_plex_tvdb_episode_position,
-    _write_completed_events_and_filter_echoes,
-    _write_watch_event,
-    find_or_create_media_jellyfin,
-    find_or_create_media_jellyfin_multi,
-    find_or_create_media_kodi,
-    find_or_create_media_plex,
-    mark_pushed_watched,
-    parse_jellyfin_payload,
-    parse_kodi_payload,
-)
+from routers.webhooks import _backfill_credits_stingers, _backfill_jellyfin_runtimes, _backfill_plex_runtime, _commit_playback_session_update, _ensure_collection_entry, _episode_for_progress, _get_or_open_session, _is_duplicate_webhook_delivery, _maybe_simkl_scrobble, _resolve_plex_progress, _resolve_tvdb_episode_to_tmdb_position, _translate_plex_tvdb_episode_position, _write_completed_events_and_filter_echoes, _write_watch_event, find_or_create_media_jellyfin, find_or_create_media_jellyfin_multi, find_or_create_media_kodi, find_or_create_media_plex, parse_jellyfin_payload, parse_kodi_payload
 
 
 class _Scalars:
@@ -107,7 +84,7 @@ class DuplicateWebhookDeliveryTests(unittest.TestCase):
 
 class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
     def setUp(self):
-        webhooks._recently_pushed_watched.clear()
+        watch_echo._recently_pushed_watched.clear()
 
     async def test_first_completed_event_is_recorded(self):
         db = _FakeDB(queued_scalars=[None])  # no recent WatchEvent found
@@ -130,7 +107,7 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         # event is typically old (imported history), so the 5-minute dedup
         # above never catches it and it used to land as a brand new WatchEvent
         # stamped at push time - even though no recent duplicate is queued here.
-        mark_pushed_watched(user_id=1, media_id=2)
+        watch_echo.mark_pushed_watched(user_id=1, media_id=2)
         db = _FakeDB(queued_scalars=[None])
         result = await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
         self.assertEqual(len(db.added), 0)
@@ -139,7 +116,7 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
     async def test_echo_suppression_is_scoped_to_the_pushed_user_and_media(self):
-        mark_pushed_watched(user_id=1, media_id=2)
+        watch_echo.mark_pushed_watched(user_id=1, media_id=2)
         db = _FakeDB(queued_scalars=[None, None])
         await _write_watch_event(db, user_id=1, media_id=999, progress_percent=1.0, progress_seconds=120, completed=True)
         await _write_watch_event(db, user_id=999, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
@@ -148,7 +125,7 @@ class WriteWatchEventDedupTests(IsolatedAsyncioTestCase):
     async def test_echo_suppression_is_one_shot(self):
         # A real rewatch shortly after must not be silently swallowed too -
         # only the one echo actually expected back from the push is consumed.
-        mark_pushed_watched(user_id=1, media_id=2)
+        watch_echo.mark_pushed_watched(user_id=1, media_id=2)
         db = _FakeDB(queued_scalars=[None, None])
         await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
         await _write_watch_event(db, user_id=1, media_id=2, progress_percent=1.0, progress_seconds=120, completed=True)
@@ -177,12 +154,12 @@ class WriteCompletedEventsAndFilterEchoesTests(IsolatedAsyncioTestCase):
     the whole batch and not none of it."""
 
     def setUp(self):
-        webhooks._recently_pushed_watched.clear()
+        watch_echo._recently_pushed_watched.clear()
 
     async def test_filters_out_only_the_echoed_media(self):
         # media_id=2 was just pushed (an echo is expected back for it);
         # media_id=3 is a genuine, unrelated completion in the same payload.
-        mark_pushed_watched(user_id=1, media_id=2)
+        watch_echo.mark_pushed_watched(user_id=1, media_id=2)
         db = _FakeDB(queued_scalars=[None])  # only media_id=3 reaches a real query
         media_list = [SimpleNamespace(id=2), SimpleNamespace(id=3)]
 
@@ -426,35 +403,6 @@ class EnsureCollectionEntryConnectionGuardTests(IsolatedAsyncioTestCase):
             source_id="521136", quality=None, connection_id=None,
         )
         self.assertIsNone(self._bound_connection_id(db.collection_file_insert))
-
-
-class ConsumeRecentlyPushedWatchedTests(unittest.TestCase):
-    def setUp(self):
-        webhooks._recently_pushed_watched.clear()
-
-    def test_unmarked_media_is_not_consumed(self):
-        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
-
-    def test_marked_media_is_consumed_once(self):
-        mark_pushed_watched(user_id=1, media_id=2)
-        self.assertTrue(_consume_recently_pushed_watched(user_id=1, media_id=2))
-        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
-
-    def test_expired_marker_is_not_consumed(self):
-        import datetime
-        mark_pushed_watched(user_id=1, media_id=2)
-        webhooks._recently_pushed_watched[(1, 2)][0] = datetime.datetime.utcnow() - webhooks._PUSHED_WATCHED_TTL - datetime.timedelta(seconds=1)
-        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
-
-    def test_two_pending_pushes_each_consume_their_own_echo(self):
-        # A user pushing the same item to two Jellyfin/Emby connections at
-        # once expects two echoes back - the second shouldn't be treated as
-        # an unexpected duplicate just because the first already consumed.
-        mark_pushed_watched(user_id=1, media_id=2)
-        mark_pushed_watched(user_id=1, media_id=2)
-        self.assertTrue(_consume_recently_pushed_watched(user_id=1, media_id=2))
-        self.assertTrue(_consume_recently_pushed_watched(user_id=1, media_id=2))
-        self.assertFalse(_consume_recently_pushed_watched(user_id=1, media_id=2))
 
 
 class ParseJellyfinPayloadEmbyEventFieldTests(unittest.TestCase):
@@ -1360,31 +1308,6 @@ class EpisodeForProgressTests(unittest.TestCase):
         self.assertIs(episode, media[0])
         self.assertEqual(pct, 0.0)
         self.assertEqual(secs, 0)
-
-
-class TestBingebaseScrobble(unittest.IsolatedAsyncioTestCase):
-    async def test_maybe_bingebase_scrobble_disabled(self):
-        settings = SimpleNamespace(bingebase_scrobble=False, bingebase_webhook_url="https://bingebase.com/api/webhook")
-        media = SimpleNamespace(media_type="movie", title="Test", tmdb_id=550, imdb_id=None)
-        with patch("httpx.AsyncClient.post") as mock_post:
-            await _maybe_bingebase_scrobble(settings, media, "start", 0.5)
-            mock_post.assert_not_called()
-
-    async def test_maybe_bingebase_scrobble_enabled(self):
-        settings = SimpleNamespace(
-            bingebase_scrobble=True,
-            bingebase_webhook_url="https://bingebase.com/api/webhook",
-            bingebase_api_key="secret-token"
-        )
-        media = SimpleNamespace(media_type="movie", title="Fight Club", tmdb_id=550, imdb_id="tt0137523")
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-            await _maybe_bingebase_scrobble(settings, media, "stop", 0.95)
-            mock_post.assert_called_once()
-            args, kwargs = mock_post.call_args
-            self.assertEqual(args[0], "https://bingebase.com/api/webhook")
-            self.assertEqual(kwargs["json"]["Event"], "playback.stop")
-            self.assertEqual(kwargs["json"]["Item"]["ProviderIds"]["Tmdb"], "550")
-            self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret-token")
 
 
 class SimklScrobbleFallbackTests(unittest.IsolatedAsyncioTestCase):

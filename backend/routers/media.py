@@ -1,3 +1,4 @@
+from core import outbound_sync
 from core import settings_store
 import asyncio
 import httpx
@@ -3236,9 +3237,8 @@ async def _push_collection_change(
         return
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()
-    from routers.sync import _fan_out_changes_to_other_connections
 
-    await _fan_out_changes_to_other_connections(
+    await outbound_sync.fan_out_changes(
         db,
         user_id,
         None,

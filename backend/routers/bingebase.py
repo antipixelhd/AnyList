@@ -1,3 +1,4 @@
+from core import bingebase
 import asyncio
 import logging
 
@@ -19,7 +20,6 @@ async def run_bingebase_push(user_id: int, job_id: int) -> None:
     """Push all historical watched events from AnyList to the Bingebase webhook."""
     from db import AsyncSessionLocal
     from core.sync_jobs import SyncCancelled, raise_if_cancelled, short_error
-    from routers.webhooks import _maybe_bingebase_scrobble
 
     processed_so_far = 0
 
@@ -53,7 +53,7 @@ async def run_bingebase_push(user_id: int, job_id: int) -> None:
 
             for i, event in enumerate(events, 1):
                 if event.media:
-                    await _maybe_bingebase_scrobble(settings, event.media, "stop", 1.0, db=db)
+                    await bingebase.scrobble(settings, event.media, "stop", 1.0, db=db)
 
                 processed_so_far = i
                 if i % 10 == 0 or i == total_items:

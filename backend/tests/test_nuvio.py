@@ -11,19 +11,14 @@ import httpx
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+from core import outbound_sync
 
 from core import nuvio
 from models.base import MediaType
 from models.media import Media
 from models.show import Show
 from models.sync import SyncStatus
-from routers.sync import (
-    _fan_out_changes_to_other_connections,
-    _apply_nuvio_watch_history,
-    _normalize_nuvio_item,
-    _push_nuvio_library_delta,
-    _run_full_push,
-)
+from routers.sync import _apply_nuvio_watch_history, _normalize_nuvio_item, _run_full_push
 from schemas import MediaServerConnectionResponse
 
 
@@ -908,12 +903,12 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value="tmdb-token"),
             ),
             patch(
-                "routers.sync._push_nuvio_library_delta",
+                "routers.sync.outbound_sync.push_nuvio_library_delta",
                 AsyncMock(return_value=True),
             ) as push_delta,
             patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()),
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db,
                 user_id=7,
                 exclude_connection_id=None,
@@ -972,7 +967,7 @@ class NuvioCollectionFanoutTests(unittest.IsolatedAsyncioTestCase):
             side_effect=lambda **kwargs: _REAL_ASYNC_CLIENT(transport=transport, **kwargs),
         ):
             with self.assertRaises(nuvio.NuvioAPIError):
-                await _push_nuvio_library_delta(db, conn, [], {"tt1"})
+                await outbound_sync.push_nuvio_library_delta(db, conn, [], {"tt1"})
 
         self.assertEqual(conn.token, "new-refresh")
         db.commit.assert_awaited_once()
@@ -1139,14 +1134,14 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
         pushed = AsyncMock()
         with (
             patch("core.pull_cycle.defer_fan_out", return_value=False),
-            patch("routers.sync._select_in_chunks", selected),
+            patch("core.outbound_sync._select_in_chunks", selected),
             patch("core.nuvio_projection.select_in_chunks", selected),
             patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
             patch.object(nuvio, "push_watched_items", pushed),
         ):
-            await _fan_out_changes_to_other_connections(
+            await outbound_sync.fan_out_changes(
                 db,
                 user_id=7,
                 exclude_connection_id=None,
@@ -1177,7 +1172,7 @@ class LocalTrackingRollbackDispatchTests(unittest.IsolatedAsyncioTestCase):
         finish_job = AsyncMock()
         with (
             patch("core.local_outbound.async_sessionmaker", return_value=lambda: _SessionCM(db)),
-            patch("routers.sync._fan_out_changes_to_other_connections", fan_out),
+            patch("routers.sync.outbound_sync.fan_out_changes", fan_out),
             patch("routers.history._push_watch_state", push_watch_state),
             patch("core.watch_intents.queue_watch_intents", AsyncMock()),
             patch("core.watch_intents.dispatch_watch_intents", AsyncMock()),
