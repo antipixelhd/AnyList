@@ -1408,24 +1408,9 @@ async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id
                                 pids = m.get("ProviderIds", {})
                                 imdb_id = pids.get("Imdb") or pids.get("imdb")
                                 try:
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("movie_results"):
-                                            tid = res["movie_results"][0]["id"]
-                                            m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
-                                            return
-                                    title = m.get("Name")
-                                    year = m.get("ProductionYear")
-                                    if title:
-                                        res = await tmdb.search_movies(title, year=year, api_key=tmdb_api_key)
-                                        if res.get("results"):
-                                            best = res["results"][0]
-                                            for r in res["results"]:
-                                                if r.get("title", "").lower() == title.lower():
-                                                    best = r
-                                                    break
-                                            tid = best["id"]
-                                            m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
+                                    tid = await tmdb.resolve_movie_id(imdb_id, m.get("Name"), year=m.get("ProductionYear"), api_key=tmdb_api_key)
+                                    if tid is not None:
+                                        m.setdefault("ProviderIds", {})["Tmdb"] = str(tid)
                                 except Exception as e:
                                     print(f"    Could not resolve movie '{m.get('Name')}': {e}")
 
@@ -2055,24 +2040,9 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
                                 guids = m.get("Guid", [])
                                 imdb_id = plex.extract_imdb_id(guids)
                                 try:
-                                    if imdb_id:
-                                        res = await tmdb.find_by_external_id(imdb_id, "imdb_id", api_key=tmdb_api_key)
-                                        if res.get("movie_results"):
-                                            tid = res["movie_results"][0]["id"]
-                                            m.setdefault("Guid", []).append({"id": f"tmdb://{tid}"})
-                                            return
-                                    title = m.get("title")
-                                    year = m.get("year")
-                                    if title:
-                                        res = await tmdb.search_movies(title, year=year, api_key=tmdb_api_key)
-                                        if res.get("results"):
-                                            best = res["results"][0]
-                                            for r in res["results"]:
-                                                if r.get("title", "").lower() == title.lower():
-                                                    best = r
-                                                    break
-                                            tid = best["id"]
-                                            m.setdefault("Guid", []).append({"id": f"tmdb://{tid}"})
+                                    tid = await tmdb.resolve_movie_id(imdb_id, m.get("title"), year=m.get("year"), api_key=tmdb_api_key)
+                                    if tid is not None:
+                                        m.setdefault("Guid", []).append({"id": f"tmdb://{tid}"})
                                 except Exception as e:
                                     print(f"    Could not resolve movie '{m.get('title')}': {e}")
 

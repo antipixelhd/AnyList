@@ -351,6 +351,30 @@ async def search_movies(q: str, page: int = 1, year: int | None = None, api_key:
     return await _get(f"{TMDB_BASE}/search/movie", headers=get_headers(api_key), params=params)
 
 
+async def resolve_movie_id(
+    imdb_id: str | None,
+    title: str | None,
+    year: int | None = None,
+    api_key: str | None = None,
+) -> int | None:
+    """Resolve an imported movie by IMDb, then exact title or the first search result."""
+    if imdb_id:
+        result = await find_by_external_id(imdb_id, "imdb_id", api_key=api_key)
+        if result.get("movie_results"):
+            return result["movie_results"][0]["id"]
+    if title:
+        result = await search_movies(title, year=year, api_key=api_key)
+        matches = result.get("results")
+        if matches:
+            best = matches[0]
+            for match in matches:
+                if match.get("title", "").lower() == title.lower():
+                    best = match
+                    break
+            return best["id"]
+    return None
+
+
 async def search_shows(q: str, page: int = 1, year: int | None = None, api_key: str = None, language: str | None = None) -> dict:
     params: dict = {"query": q, "include_adult": "false", "page": page}
     if year:

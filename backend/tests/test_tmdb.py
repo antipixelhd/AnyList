@@ -13,6 +13,44 @@ from core import tmdb
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
+class ResolveMovieIdTests(unittest.IsolatedAsyncioTestCase):
+    async def test_imdb_match_takes_precedence_over_title_search(self):
+        with patch.object(tmdb, "find_by_external_id", AsyncMock(return_value={"movie_results": [{"id": 42}]})) as find, \
+             patch.object(tmdb, "search_movies", AsyncMock()) as search:
+            self.assertEqual(await tmdb.resolve_movie_id("tt123", "Title", 2001, "key"), 42)
+        find.assert_awaited_once_with("tt123", "imdb_id", api_key="key")
+        search.assert_not_awaited()
+
+    async def test_missing_imdb_match_falls_back_to_exact_title_case_insensitively(self):
+        with patch.object(tmdb, "find_by_external_id", AsyncMock(return_value={"movie_results": []})), \
+             patch.object(tmdb, "search_movies", AsyncMock(return_value={"results": [
+                 {"id": 1, "title": "Another film"}, {"id": 2, "title": "TITLE"}, {"id": 3, "title": "Title"},
+             ]})) as search:
+            self.assertEqual(await tmdb.resolve_movie_id("tt123", "Title", 2001, "key"), 2)
+        search.assert_awaited_once_with("Title", year=2001, api_key="key")
+
+    async def test_title_search_uses_first_result_when_no_title_matches_exactly(self):
+        with patch.object(tmdb, "find_by_external_id", AsyncMock()) as find, \
+             patch.object(tmdb, "search_movies", AsyncMock(return_value={"results": [{"id": 1, "title": "Alternative"}]})):
+            self.assertEqual(await tmdb.resolve_movie_id(None, "Title"), 1)
+        find.assert_not_awaited()
+
+    async def test_empty_results_or_missing_identifiers_leave_movie_unresolved(self):
+        with patch.object(tmdb, "find_by_external_id", AsyncMock(return_value={})) as find, \
+             patch.object(tmdb, "search_movies", AsyncMock(return_value={})) as search:
+            self.assertIsNone(await tmdb.resolve_movie_id("tt123", "Title"))
+            self.assertIsNone(await tmdb.resolve_movie_id(None, None))
+        find.assert_awaited_once()
+        search.assert_awaited_once()
+
+    async def test_lookup_failures_reach_the_provider_handler_without_guessing_a_title_match(self):
+        with patch.object(tmdb, "find_by_external_id", AsyncMock(side_effect=RuntimeError("offline"))), \
+             patch.object(tmdb, "search_movies", AsyncMock()) as search:
+            with self.assertRaisesRegex(RuntimeError, "offline"):
+                await tmdb.resolve_movie_id("tt123", "Title")
+        search.assert_not_awaited()
+
+
 class GetShowCacheBypassTests(unittest.IsolatedAsyncioTestCase):
     """Regression tests for: "Refresh Metadata" calling tmdb.get_show/get_season/
     get_movie/get_episode with no cache_ttl override meant a user-initiated
