@@ -27,7 +27,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
         conn = SimpleNamespace(id=7, user_id=71, type='nuvio')
         with patch('core.outbound_sync.fan_out_changes', AsyncMock()), \
-             patch('routers.history._push_watch_state', AsyncMock()) as push:
+             patch('core.watch_delivery.push_watch_state', AsyncMock()) as push:
             async with coordinated_pull_cycle(71) as state:
                 await propagate_media_server_pull(
                     db, conn=conn, watched_ids=set(), ratings={},
@@ -253,7 +253,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         state_cm = coordinated_pull_cycle(61)
         with patch('db.async_sessionmaker', side_effect=lambda *_a, **_k: lambda: _SessionContext(db)), \
              patch('core.outbound_sync.fan_out_changes', fanout), \
-             patch('routers.history._push_watch_state', push_unwatched), \
+             patch('core.watch_delivery.push_watch_state', push_unwatched), \
              patch('core.watch_intents.queue_watch_intents', queue), \
              patch('core.watch_intents.dispatch_watch_intents', dispatch), \
              patch('core.stream_actions.dispatch_stream_actions', AsyncMock()), \

@@ -323,7 +323,7 @@ class ClearHistoryAndUnwatchShowRewatchCleanupTests(unittest.IsolatedAsyncioTest
             show,        # show lookup
             [(11,), (12,)],  # episode id rows
         ])
-        with patch("routers.history._push_watch_state", new_callable=AsyncMock):
+        with patch("core.watch_delivery.push_watch_state", new_callable=AsyncMock):
             response = await history.unwatch_show(series_tmdb_id=100, db=db, current_user=SimpleNamespace(id=1))
         self.assertEqual(response["status"], "ok")
         self.assertEqual(db._deleted_tables(), ["show_rewatches", "watch_events"])
@@ -467,7 +467,7 @@ class HandleUnwatchToggleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_true_when_a_row_was_deleted(self):
         # Regression for #190 follow-up: callers gate the outbound
-        # _push_watch_state re-push on this return value to avoid re-pushing
+        # watch_delivery.push_watch_state re-push on this return value to avoid re-pushing
         # (and potentially ping-ponging between two two-way-sync connections)
         # on a no-op delivery.
         movie = Media(id=13, media_type=MediaType.movie, title="A Movie")

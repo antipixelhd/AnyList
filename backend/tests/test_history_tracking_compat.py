@@ -52,7 +52,7 @@ class LegacyHistoryTrackingCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             yield self.db
 
         app.dependency_overrides[get_db] = session
-        self.push_patch = patch("routers.history._push_watch_state", new=AsyncMock())
+        self.push_patch = patch("core.watch_delivery.push_watch_state", new=AsyncMock())
         self.push_patch.start()
         self.outbound_patch = patch("core.local_outbound.dispatch_local_tracking_delta", new=AsyncMock())
         self.outbound_patch.start()

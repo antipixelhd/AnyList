@@ -81,8 +81,8 @@ async def propagate_media_server_pull(
                                       exclude_connection_id=conn.id)
             await db.commit()
             await dispatch_watch_intents(db, conn.user_id)
-            from routers.history import _push_watch_state
-            await _push_watch_state(db, conn.user_id, sorted(removed_watched_ids),
+            from core import watch_delivery
+            await watch_delivery.push_watch_state(db, conn.user_id, sorted(removed_watched_ids),
                                     watched=False, exclude_connection_id=conn.id,
                                     skip_stream_watch_writes=True)
         if watched_ids:

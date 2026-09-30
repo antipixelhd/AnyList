@@ -92,14 +92,14 @@ async def _flush_pull_cycle(state) -> None:
                 removal_groups.setdefault(excluded, set()).add(media_id)
             if removal_groups:
                 from core.watch_intents import queue_watch_intents, dispatch_watch_intents
-                from routers.history import _push_watch_state
+                from core import watch_delivery
                 for excluded, media_ids in removal_groups.items():
                     await queue_watch_intents(db, state.user_id, media_ids,
                                               exclude_connection_ids=set(excluded))
                 await db.commit()
                 await dispatch_watch_intents(db, state.user_id)
                 for excluded, media_ids in removal_groups.items():
-                    await _push_watch_state(
+                    await watch_delivery.push_watch_state(
                         db, state.user_id, sorted(media_ids), watched=False,
                         exclude_connection_ids=set(excluded),
                         skip_stream_watch_writes=True,

@@ -1916,7 +1916,7 @@ PLEX_WEBHOOK_RECONCILE_WINDOW = timedelta(minutes=10)
 # created directly by "mark as watched" in Scrob's own UI, not a webhook
 # receipt estimate. Marking something watched pushes to every push-enabled
 # connection synchronously, in the same request (see history.py's
-# _push_watch_state) - so a Plex play that shows up within a couple minutes
+# watch_delivery.push_watch_state) - so a Plex play that shows up within a couple minutes
 # of an existing confirmed watch for the same media is almost certainly that
 # same push echoing back, not an independent second viewing. Kept much
 # tighter than the provisional window: unlike a webhook's receipt-time

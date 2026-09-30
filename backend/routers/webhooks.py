@@ -1406,7 +1406,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                 ]
                 await db.commit()
                 if changed_ids:
-                    from routers.history import _push_watch_state
+                    from core import watch_delivery
                     # exclude_connection_id: this unwatch was itself reported BY this
                     # connection - pushing it right back to the same server is what
                     # causes the infinite webhook loop in #190. Still propagates to
@@ -1415,7 +1415,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
                     # push entirely when nothing was actually deleted - closing the
                     # multi-connection ping-pong case exclude_connection_id alone
                     # doesn't cover (see _handle_unwatch_toggle's docstring).
-                    await _push_watch_state(
+                    await watch_delivery.push_watch_state(
                         db, user.id, changed_ids, watched=False,
                         exclude_connection_id=conn.id if conn else None,
                     )
@@ -1640,8 +1640,8 @@ async def _handle_emby_webhook(request: Request, db: AsyncSession, api_key: str,
             ]
             await db.commit()
             if changed_ids:
-                from routers.history import _push_watch_state
-                await _push_watch_state(
+                from core import watch_delivery
+                await watch_delivery.push_watch_state(
                     db, user.id, changed_ids, watched=False,
                     exclude_connection_id=conn.id if conn else None,
                 )
@@ -1831,7 +1831,7 @@ async def _handle_jellyfin_scrobble_webhook(
                 ]
                 await db.commit()
                 if changed_ids:
-                    from routers.history import _push_watch_state
+                    from core import watch_delivery
                     # Unlike _handle_jellyfin_webhook, there's no exclude_connection_id
                     # here - a ScrobbleConnection has no url of its own, so it can't be
                     # matched against push-enabled MediaServerConnections to identify
@@ -1841,7 +1841,7 @@ async def _handle_jellyfin_scrobble_webhook(
                     # changed_ids still helps here too: skips the push when this
                     # delivery was a no-op (already unwatched), same reasoning as
                     # _handle_jellyfin_webhook.
-                    await _push_watch_state(db, user.id, changed_ids, watched=False)
+                    await watch_delivery.push_watch_state(db, user.id, changed_ids, watched=False)
 
     return {"status": "ok", "event": notification_type, "title": data["title"]}
 

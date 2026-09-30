@@ -1173,7 +1173,7 @@ class LocalTrackingRollbackDispatchTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("core.local_outbound.async_sessionmaker", return_value=lambda: _SessionCM(db)),
             patch("routers.sync.outbound_sync.fan_out_changes", fan_out),
-            patch("routers.history._push_watch_state", push_watch_state),
+            patch("core.watch_delivery.push_watch_state", push_watch_state),
             patch("core.watch_intents.queue_watch_intents", AsyncMock()),
             patch("core.watch_intents.dispatch_watch_intents", AsyncMock()),
             patch("core.tracking_delivery.start_tracking_delivery_job", start_job),

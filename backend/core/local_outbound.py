@@ -62,8 +62,8 @@ async def dispatch_local_tracking_delta(
                     durable_watch_media_ids=set(watched_ids),
                 )
             if removed_watched_ids:
-                from routers.history import _push_watch_state
-                await _push_watch_state(
+                from core import watch_delivery
+                await watch_delivery.push_watch_state(
                     db, user_id, sorted(removed_watched_ids), watched=False,
                     skip_stream_watch_writes=True,
                 )
@@ -88,7 +88,7 @@ async def dispatch_local_tracking_delta(
 async def dispatch_local_watch_rollback(user_id: int, media_ids: set[int], delivery_job_id: int | None = None) -> None:
     if not media_ids:
         return
-    from routers.history import _push_watch_state
+    from core import watch_delivery
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -100,7 +100,7 @@ async def dispatch_local_watch_rollback(user_id: int, media_ids: set[int], deliv
             await queue_watch_intents(db, user_id, media_ids)
             await db.commit()
             await dispatch_watch_intents(db, user_id)
-            await _push_watch_state(
+            await watch_delivery.push_watch_state(
                 db, user_id, sorted(media_ids), watched=False,
                 skip_stream_watch_writes=True,
             )

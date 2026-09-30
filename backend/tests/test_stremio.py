@@ -16,7 +16,7 @@ from models.base import MediaType
 from models.media import Media
 from schemas import MediaServerConnectionResponse, StremioLinkPollRequest
 from routers import auth
-from routers.history import _push_watch_state
+from core import watch_delivery
 from routers.sync import _apply_nuvio_watch_history, _pull_stremio_items, _stremio_records
 
 
@@ -377,7 +377,7 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             scalars=lambda: SimpleNamespace(all=lambda: [connection]),
         )
         settings_result = SimpleNamespace(scalar_one_or_none=lambda: settings)
-        # _push_watch_state selects (CollectionFile, Collection.media_id) and
+        # watch_delivery.push_watch_state selects (CollectionFile, Collection.media_id) and
         # reads it via .all() directly, not .scalars().all().
         files_result = SimpleNamespace(all=lambda: [])
         db = SimpleNamespace(
@@ -393,7 +393,7 @@ class StremioCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             patch("core.watch_intents.dispatch_watch_intents", dispatch),
             patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()),
         ):
-            await _push_watch_state(
+            await watch_delivery.push_watch_state(
                 db,
                 user_id=7,
                 media_ids=[10],

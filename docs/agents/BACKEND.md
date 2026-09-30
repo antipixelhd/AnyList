@@ -74,6 +74,9 @@ Peer change delivery lives in core/outbound_sync.py: destination selection,
 reconciliation gates, provider writes, and bounded batching. core/watch_echo.py
 tracks pending Jellyfin/Emby echoes; core/bingebase.py sends playback events.
 Their small independent tests are test_watch_echo.py and test_bingebase.py.
+Explicit watch/unwatch corrections live in core/watch_delivery.py, with focused
+regressions in test_watch_delivery.py. Streaming writes go through durable watch
+intents; provider rollback and exclusion rules do not depend on HTTP routes.
 
 For Nuvio outbound state, inspect core/nuvio_payloads.py for wire formatting and
 identity selection, and core/nuvio_projection.py for library, watch-history, and
