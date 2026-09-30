@@ -22,7 +22,7 @@ simultaneously. GitHub deployment is enabled. The initial beta database is empty
 and migrated; development databases were copied from it. Private addresses,
 identity values, and the deployment verification report are kept outside Git.
 
-Use **Actions → Preview Operations → Run workflow** for status, restart, redeploy,
+Use **Actions → preview: manual actions → Run workflow** for status, restart, redeploy,
 development DB reset and runtime reconstruction. Push `beta` for single-stream
 work, or either development branch for parallel work; **Preview Deploy** handles
 deployment automatically. Rebase a development branch onto beta, force-push with
@@ -109,7 +109,7 @@ are removed on success/failure. The destructive primitive itself refuses beta.
 
 ## GitHub operations
 
-Open **Actions → Preview Operations → Run workflow**, choose `main` for the workflow,
+Open **Actions → preview: manual actions → Run workflow**, choose `main` for the workflow,
 then the target preview and operation. Main contains only the orchestration workflows;
 the shared workflow reads validated control configuration from beta. GitHub requires
 dispatch workflows on the default branch, so main remains the default. Production's
