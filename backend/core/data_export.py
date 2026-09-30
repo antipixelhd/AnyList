@@ -21,6 +21,8 @@ import re
 import zipfile
 from datetime import datetime
 
+from core.export_fields import CONNECTION_EXPORT_FIELDS
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,24 +40,6 @@ from models.users import User, UserSettings
 
 HISTORY_CHUNK_SIZE = 2000
 COLLECTION_CHUNK_SIZE = 2000
-
-# Third-party sync-service credentials + preferences (Trakt/Simkl/MDBList/Radarr/Sonarr) — a superset
-# of _SAFE_SETTINGS_FIELDS below, since this bundle is opt-in and plaintext-secrets are expected.
-_CONNECTIONS_SETTINGS_FIELDS = (
-    "radarr_url", "radarr_token", "radarr_root_folder", "radarr_quality_profile", "radarr_tags",
-    "sonarr_url", "sonarr_token", "sonarr_root_folder", "sonarr_quality_profile", "sonarr_tags", "sonarr_season_folder",
-    "trakt_client_id", "trakt_client_secret", "trakt_access_token", "trakt_refresh_token", "trakt_token_expires_at",
-    "trakt_sync_watched", "trakt_sync_ratings", "trakt_sync_lists", "trakt_watchlist_split",
-    "trakt_push_watched", "trakt_push_ratings", "trakt_push_collection", "trakt_push_lists", "trakt_scrobble",
-    "trakt_auto_sync_interval", "trakt_auto_push_interval",
-    "simkl_client_id", "simkl_access_token",
-    "simkl_sync_watched", "simkl_sync_ratings", "simkl_sync_lists",
-    "simkl_push_watched", "simkl_push_ratings", "simkl_scrobble",
-    "simkl_auto_sync_interval", "simkl_auto_push_interval",
-    "mdblist_api_key", "mdblist_sync_watched", "mdblist_sync_ratings", "mdblist_sync_watchlist",
-    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_push_collection", "mdblist_scrobble",
-    "mdblist_auto_sync_interval", "mdblist_auto_push_interval",
-)
 
 _MEDIA_CONNECTION_FIELDS = (
     "type", "name", "url", "token", "server_user_id", "server_username",
@@ -375,7 +359,7 @@ async def build_scrobble_connections(db: AsyncSession, user_id: int) -> list[dic
 def build_connections(settings: UserSettings | None) -> dict:
     if settings is None:
         return {}
-    return {field: getattr(settings, field) for field in _CONNECTIONS_SETTINGS_FIELDS}
+    return {field: getattr(settings, field) for field in CONNECTION_EXPORT_FIELDS}
 
 
 def build_user_stats(

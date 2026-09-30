@@ -225,7 +225,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("url", out[0])
 
     async def test_connections_includes_third_party_secrets(self) -> None:
-        settings = SimpleNamespace(**{field: None for field in data_export._CONNECTIONS_SETTINGS_FIELDS})
+        settings = SimpleNamespace(**{field: None for field in data_export.CONNECTION_EXPORT_FIELDS})
         settings.trakt_access_token = "trakt-secret"
         settings.mdblist_api_key = "mdblist-secret"
 

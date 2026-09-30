@@ -13,7 +13,7 @@ from fastapi import HTTPException
 os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 
-from core import scrob_import
+from core import data_export, scrob_import
 from core.scrob_import import apply_scrob_import, parse_scrob_export, ScrobImportData
 from routers import export as export_router
 
@@ -351,8 +351,41 @@ class MediaConnectionsImportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConnectionsImportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exported_connections_restore_only_allowed_unset_fields(self) -> None:
+        backup_settings = SimpleNamespace(**{
+            field: 60 if field.endswith("_interval") else f"backup-{field}"
+            for field in data_export.CONNECTION_EXPORT_FIELDS
+        })
+        payload = data_export.build_connections(backup_settings)
+        payload["unrecognized_setting"] = "ignored"
+        for include in (False, True):
+            with self.subTest(include=include):
+                settings = SimpleNamespace(**{field: None for field in data_export.CONNECTION_EXPORT_FIELDS})
+                settings.trakt_access_token = "existing-token"
+                db = _FakeSession([[], [settings], []] if include else [[], []])
+                await apply_scrob_import(
+                    db, job_id=1, user_id=1, data=ScrobImportData(connections=payload), api_key=None,
+                    **{**_EMPTY_INCLUDE, "include_connections": include},
+                )
+                for field in data_export.CONNECTION_EXPORT_FIELDS:
+                    if field == "trakt_access_token":
+                        expected = "existing-token"
+                    elif include and field in scrob_import.CONNECTION_RESTORE_FIELDS:
+                        expected = payload[field]
+                    else:
+                        expected = None
+                    self.assertEqual(getattr(settings, field), expected, field)
+                self.assertFalse(hasattr(settings, "unrecognized_setting"))
+                for field in (
+                    "trakt_auto_sync_interval", "trakt_auto_push_interval",
+                    "simkl_auto_sync_interval", "simkl_auto_push_interval",
+                    "mdblist_auto_sync_interval", "mdblist_auto_push_interval",
+                ):
+                    self.assertEqual(payload[field], 60)
+                    self.assertIsNone(getattr(settings, field), field)
+
     async def test_only_fills_currently_unset_fields(self) -> None:
-        settings = SimpleNamespace(**{f: None for f in scrob_import._CONNECTIONS_SETTINGS_FIELDS})
+        settings = SimpleNamespace(**{f: None for f in scrob_import.CONNECTION_RESTORE_FIELDS})
         settings.trakt_client_id = "already-set"
         data = ScrobImportData(connections={"trakt_client_id": "imported-value", "mdblist_api_key": "imported-mdblist"})
         db = _FakeSession([[], [settings], []])

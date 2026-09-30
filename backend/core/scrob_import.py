@@ -16,6 +16,8 @@ from core.archive_reader import BoundedZipReader, MAX_ENTRY_SIZE, MAX_TOTAL_SIZE
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from core.export_fields import CONNECTION_RESTORE_FIELDS
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,22 +50,6 @@ logger = logging.getLogger(__name__)
 _READ_CHUNK_SIZE = 1024 * 1024
 
 WATCHLIST_SLUG = "__watchlist__"
-
-# Same third-party credential/preference fields as core/data_export.py's
-# _CONNECTIONS_SETTINGS_FIELDS — kept in sync manually since importing one
-# from the other would be a needless cross-module coupling for a plain tuple.
-_CONNECTIONS_SETTINGS_FIELDS = (
-    "radarr_url", "radarr_token", "radarr_root_folder", "radarr_quality_profile", "radarr_tags",
-    "sonarr_url", "sonarr_token", "sonarr_root_folder", "sonarr_quality_profile", "sonarr_tags", "sonarr_season_folder",
-    "trakt_client_id", "trakt_client_secret", "trakt_access_token", "trakt_refresh_token", "trakt_token_expires_at",
-    "trakt_sync_watched", "trakt_sync_ratings", "trakt_sync_lists", "trakt_watchlist_split",
-    "trakt_push_watched", "trakt_push_ratings", "trakt_push_collection", "trakt_push_lists", "trakt_scrobble",
-    "simkl_client_id", "simkl_access_token",
-    "simkl_sync_watched", "simkl_sync_ratings", "simkl_sync_lists",
-    "simkl_push_watched", "simkl_push_ratings", "simkl_scrobble",
-    "mdblist_api_key", "mdblist_sync_watched", "mdblist_sync_ratings", "mdblist_sync_watchlist",
-    "mdblist_push_watched", "mdblist_push_ratings", "mdblist_push_watchlist", "mdblist_push_collection", "mdblist_scrobble",
-)
 
 _HISTORY_RE = re.compile(r"^watched-history-\d+\.json$")
 _COLLECTION_MOVIES_RE = re.compile(r"^collection-movies-\d+\.json$")
@@ -671,7 +657,7 @@ async def apply_scrob_import(
         settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
         settings = settings_result.scalar_one_or_none()
         if settings:
-            for field_name in _CONNECTIONS_SETTINGS_FIELDS:
+            for field_name in CONNECTION_RESTORE_FIELDS:
                 if field_name not in data.connections:
                     continue
                 value = data.connections[field_name]
