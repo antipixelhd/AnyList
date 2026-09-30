@@ -9,6 +9,7 @@ on:
     secrets:
       TS_OAUTH_CLIENT_ID: {required: true}
       TS_AUDIENCE: {required: true}
+      PREVIEW_VPS_HOST: {required: true}
 permissions:
   contents: read
   id-token: write
@@ -18,7 +19,7 @@ jobs:
     steps:
       - name: Mask private preview hostname
         env:
-          HOST: ${{ vars.PREVIEW_VPS_HOST }}
+          HOST: ${{ secrets.PREVIEW_VPS_HOST }}
         run: |
           printf '::add-mask::%s\n' "$HOST"
           printf '::add-mask::%s\n' "${HOST%%.*}"
@@ -33,7 +34,7 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           SHA: ${{ inputs.sha }}
           FORCED: ${{ inputs.forced }}
-          PREVIEW_VPS_HOST: ${{ vars.PREVIEW_VPS_HOST }}
+          PREVIEW_VPS_HOST: ${{ secrets.PREVIEW_VPS_HOST }}
           CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           AUDIENCE: ${{ secrets.TS_AUDIENCE }}
         run: |
@@ -60,7 +61,7 @@ jobs:
           log-mode: quiet
       - name: Verify private connectivity
         env:
-          HOST: ${{ vars.PREVIEW_VPS_HOST }}
+          HOST: ${{ secrets.PREVIEW_VPS_HOST }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -72,7 +73,7 @@ jobs:
       - name: Verify restricted CI commands
         if: inputs.operation == 'status'
         env:
-          HOST: ${{ vars.PREVIEW_VPS_HOST }}
+          HOST: ${{ secrets.PREVIEW_VPS_HOST }}
         run: |
           set -euo pipefail
           for command in 'id' 'preview reset-db-from-beta beta'; do
@@ -92,7 +93,7 @@ jobs:
           echo 'Arbitrary commands, beta reset and privileged SSH accounts refused.'
       - name: Run installed preview entrypoint
         env:
-          HOST: ${{ vars.PREVIEW_VPS_HOST }}
+          HOST: ${{ secrets.PREVIEW_VPS_HOST }}
           SLOT: ${{ inputs.preview }}
           OPERATION: ${{ inputs.operation }}
           SHA: ${{ inputs.sha }}
