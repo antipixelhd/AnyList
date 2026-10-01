@@ -6,10 +6,15 @@ import tailwindcss from '@tailwindcss/vite';
 import node from '@astrojs/node';
 
 const previewHostname = process.env.PREVIEW_HOSTNAME;
+const cloudHostname = process.env.CLOUD_PREVIEW_HOSTNAME;
+if (cloudHostname && !/^[a-z0-9][a-z0-9.-]*$/i.test(cloudHostname)) {
+  throw new Error('CLOUD_PREVIEW_HOSTNAME must be a hostname without scheme or port');
+}
 if (previewHostname && !/^[a-z0-9][a-z0-9.-]*$/i.test(previewHostname)) {
   throw new Error('PREVIEW_HOSTNAME must be a hostname without scheme or port');
 }
 const allowedHosts = ['abstract-dev.bellamylab.com', 'scrob-dev.bellamylab.com',
+  ...(cloudHostname ? [cloudHostname] : []),
   ...(previewHostname ? [previewHostname] : [])];
 const previewUrl = previewHostname ? new URL(process.env.SERVER_URL || '') : undefined;
 
@@ -39,6 +44,7 @@ export default defineConfig({
     },
     server: {
       allowedHosts,
+      ...(process.env.ANYLIST_CLOUD_RUNTIME === '1' ? { strictPort: true } : {}),
       // Serve binds the same port on the Tailscale interface. Vite otherwise
       // probes the wildcard address and silently moves to another port.
       ...(previewHostname ? { host: '127.0.0.1', strictPort: true } : {}),

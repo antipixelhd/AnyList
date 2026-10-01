@@ -402,9 +402,9 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
     data.has_rpdb_key = bool(settings.rpdb_api_key)
-    data.has_global_tmdb_key = bool(gs and gs.tmdb_api_key)
+    data.has_global_tmdb_key = bool((gs and gs.tmdb_api_key) or app_settings.tmdb_api_key)
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key
-    data.has_global_tvdb_key = bool(gs and gs.tvdb_api_key)
+    data.has_global_tvdb_key = bool((gs and gs.tvdb_api_key) or app_settings.tvdb_api_key)
     data.has_effective_tvdb_key = bool(settings.tvdb_api_key) or data.has_global_tvdb_key
     # Same "all 4 fields set, user config first" rule as _effective_radarr/
     # _effective_sonarr in routers/media.py - inlined rather than imported to

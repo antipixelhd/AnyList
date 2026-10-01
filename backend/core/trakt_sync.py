@@ -972,7 +972,7 @@ async def run_trakt_sync(user_id: int, job_id: int, full_resync: bool = False):
             client_id = settings.trakt_client_id
             _gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
             _gs = _gs_result.scalar_one_or_none()
-            api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
+            api_key = settings.tmdb_api_key or settings_store.get_server_tmdb_key(_gs)
 
             history_cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
             history_start, history_end = _history_window(
@@ -1150,7 +1150,7 @@ async def run_trakt_export_sync(
 
             _gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
             _gs = _gs_result.scalar_one_or_none()
-            api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
+            api_key = settings.tmdb_api_key or settings_store.get_server_tmdb_key(_gs)
 
             source = ExportTraktSource(export_data)
             history_end = datetime.now(timezone.utc).replace(tzinfo=None)

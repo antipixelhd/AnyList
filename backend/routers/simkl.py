@@ -1,4 +1,4 @@
-from core import simkl_sync
+from core import settings_store, simkl_sync
 """Simkl integration router.
 
 Endpoints:
@@ -135,7 +135,7 @@ async def sync_simkl(
     if not _tmdb_key:
         _gs_r = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         _gs = _gs_r.scalar_one_or_none()
-        _tmdb_key = _gs.tmdb_api_key if _gs else None
+        _tmdb_key = settings_store.get_server_tmdb_key(_gs)
     if not _tmdb_key:
         raise HTTPException(status_code=400, detail="TMDB API key required for sync")
 

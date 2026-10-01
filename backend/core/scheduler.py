@@ -678,7 +678,7 @@ async def _show_metadata_refresher():
                 # Show is a shared, instance-wide table with no single
                 # "current user" for this sweep to scope to, but a TMDB key
                 # isn't tied to whichever account configured it - any valid
-                # one fetches the same public show metadata. Global -> an
+                # one fetches the same public show metadata. Global/environment -> an
                 # admin's own key -> any user's, so installs that skip the
                 # global key still get the sweep instead of it silently
                 # never running, while preferring an admin's key over a
@@ -686,9 +686,8 @@ async def _show_metadata_refresher():
                 gs = (await db.execute(
                     select(GlobalSettings).where(GlobalSettings.id == 1)
                 )).scalar_one_or_none()
-                api_key = gs.tmdb_api_key if gs else None
-                tvdb_key = gs.tvdb_api_key if gs else None
-                tvdb_pin = gs.tvdb_subscriber_pin if gs else None
+                api_key = settings_store.get_server_tmdb_key(gs)
+                tvdb_key, tvdb_pin = settings_store.get_server_tvdb_credentials(gs)
                 if not settings_store.check_tmdb_key(api_key):
                     api_key = (await db.execute(
                         select(UserSettings.tmdb_api_key)

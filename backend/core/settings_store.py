@@ -12,6 +12,16 @@ from models.global_settings import GlobalSettings
 from models.users import UserSettings
 
 
+def get_server_tmdb_key(global_settings: GlobalSettings | None) -> str | None:
+    return (global_settings.tmdb_api_key if global_settings else None) or settings.tmdb_api_key
+
+
+def get_server_tvdb_credentials(global_settings: GlobalSettings | None) -> tuple[str | None, str | None]:
+    if global_settings and global_settings.tvdb_api_key:
+        return global_settings.tvdb_api_key, global_settings.tvdb_subscriber_pin
+    return settings.tvdb_api_key, settings.tvdb_subscriber_pin
+
+
 async def get_global_settings(db: AsyncSession, *, cached: bool = True) -> GlobalSettings | None:
     if cached and "global_settings" in db.info:
         return db.info["global_settings"]
@@ -27,7 +37,7 @@ async def get_effective_tmdb_key(
     if user_settings and user_settings.tmdb_api_key:
         return user_settings.tmdb_api_key
     global_settings = await get_global_settings(db, cached=cached_global)
-    return global_settings.tmdb_api_key if global_settings else None
+    return get_server_tmdb_key(global_settings)
 
 
 async def get_user_tmdb_key(db: AsyncSession, user_id: int, *, cached: bool = True) -> str | None:
@@ -59,7 +69,8 @@ async def get_user_tvdb_key(db: AsyncSession, user_id: int) -> str | None:
         return s.tvdb_api_key
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
-    if gs and gs.tvdb_api_key:
-        tvdb.set_subscriber_pin(gs.tvdb_api_key, gs.tvdb_subscriber_pin)
-        return gs.tvdb_api_key
+    key, pin = get_server_tvdb_credentials(gs)
+    if key:
+        tvdb.set_subscriber_pin(key, pin)
+        return key
     return None

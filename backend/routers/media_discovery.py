@@ -287,7 +287,7 @@ async def public_poster_wall(request: Request, db: AsyncSession = Depends(get_db
         return _poster_wall_cache["data"]
 
     gs = await settings_store.get_global_settings(db)
-    api_key = gs.tmdb_api_key if gs else None
+    api_key = settings_store.get_server_tmdb_key(gs)
     if not settings_store.check_tmdb_key(api_key):
         return {"posters": _FALLBACK_POSTERS}
 
@@ -896,9 +896,9 @@ async def get_tmdb_list(
         # page access on. Re-checked here since this endpoint is reachable
         # directly, not just through the page.
         gs = await settings_store.get_global_settings(db)
-        if not (gs and gs.enable_logged_out_navigation and gs.tmdb_api_key):
+        if not (gs and gs.enable_logged_out_navigation and settings_store.get_server_tmdb_key(gs)):
             raise HTTPException(status_code=401, detail="Not authenticated")
-        tmdb_key = gs.tmdb_api_key
+        tmdb_key = settings_store.get_server_tmdb_key(gs)
         # No personal library/watch history to filter on without a user.
         collection, watch, arr = [], [], []
     else:
