@@ -29,7 +29,7 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
         current["rating_changed"] = bool(current.get("rating_changed") or previous.get("rating_changed"))
     if "rating_start_score" not in current and ("rating_first" in current or "rating_first" in previous):
         current["rating_first"] = bool(current.get("rating_first") or previous.get("rating_first"))
-    # The day card describes the full change, from its earliest score to the
+    # The window card describes the full change, from its earliest score to the
     # latest one, even when several writes or legacy rows were merged.
     if "rating_start_score" not in current and previous.get("previous_score") is not None:
         current["previous_score"] = previous["previous_score"]
@@ -41,7 +41,7 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
 
 
 def has_activity_event(status: str, details: dict) -> bool:
-    """Only persist and present cards with a qualifying daily action."""
+    """Only persist and present cards with a qualifying action."""
     status_event = bool(details.get("status_changed")) and (
         status != "watching" or details.get("started_watching") is True
     )
@@ -155,20 +155,45 @@ async def series_activity_span(db, media: Media, start: int, end: int) -> tuple[
     return beginning, ending, finished
 
 
+def activity_window_start(row: TrackingActivity) -> datetime:
+    """Legacy daily cards lack their first event; retain their UTC-day boundary."""
+    value = (row.payload or {}).get("window_started_at")
+    return datetime.fromisoformat(value) if value else row.created_at.replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+
+
+async def _active_activity_card(db, *, user_id: int, media_id: int, now: datetime):
+    row = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.created_at > now - timedelta(hours=24),
+        TrackingActivity.created_at <= now,
+    ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(1))).scalar_one_or_none()
+    if row and activity_window_start(row) <= now < activity_window_start(row) + timedelta(hours=24):
+        return row
+    return None
+
+
+def _set_activity_window(details: dict, row: TrackingActivity | None, now: datetime) -> None:
+    if "window_started_at" in details:
+        return
+    start = activity_window_start(row) if row else now
+    details["window_started_at"] = start.isoformat()
+    # Preserve legacy card keys when a pre-existing daily card is updated.
+    details["window_key"] = start.date().isoformat() if row else start.isoformat()
+
+
 async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
                                    progress: int, status: str, score: float | None,
                                    status_changed: bool = False, rating_changed: bool = False,
                                    previous_status: str | None = None, first_watching: bool | None = None,
                                    previous_score: float | None = None,
                                    now: datetime | None = None) -> TrackingActivity | None:
-    """Keep today's episode card equal to net forward progress after corrections."""
+    """Keep the fixed-window episode card equal to net forward progress."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    start = datetime(now.year, now.month, now.day)
-    row = (await db.execute(select(TrackingActivity).where(
-        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media.id,
-        TrackingActivity.created_at >= start, TrackingActivity.created_at < start + timedelta(days=1),
-    ).order_by(TrackingActivity.created_at.desc()).limit(1))).scalar_one_or_none()
+    row = await _active_activity_card(db, user_id=user_id, media_id=media.id, now=now)
     details = dict(row.payload or {}) if row else {}
+    _set_activity_window(details, row, now)
     baseline = details.get("progress_start")
     if baseline is None:
         prior_end = details.get("progress")
@@ -212,15 +237,11 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                                 previous_status: str | None = None, first_watching: bool | None = None,
                                 previous_score: float | None = None,
                                 now: datetime | None = None) -> TrackingActivity | None:
-    """Merge one title's updates into its UTC-day activity card."""
+    """Merge updates within 24 hours of this title card's first event."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    start = datetime(now.year, now.month, now.day)
-    end = start + timedelta(days=1)
-    row = (await db.execute(select(TrackingActivity).where(
-        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
-        TrackingActivity.created_at >= start, TrackingActivity.created_at < end,
-    ).order_by(TrackingActivity.created_at.desc()).limit(1))).scalar_one_or_none()
+    row = await _active_activity_card(db, user_id=user_id, media_id=media_id, now=now)
     details = merge_activity_payload(row.payload if row else None, {"episodes_watched": max(0, episodes_watched)})
+    _set_activity_window(details, row, now)
     if progress is not None: details["progress"] = progress
     if position is not None: details["position"] = position
     details["finished_seasons"] = sorted(set(details.get("finished_seasons", [])) | set(finished_seasons or []))

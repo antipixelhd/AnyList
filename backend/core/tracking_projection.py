@@ -1,4 +1,4 @@
-"""Shared display projections for tracked titles, entries, and daily activity.
+"""Shared display projections for tracked titles, entries, and activity.
 
 These functions read already-loaded values; they do not query or mutate state.
 """
@@ -108,7 +108,7 @@ def entry_data(entry, media, owner=False):
 
 
 def activity_data(rows, *, include_user=False, limit=12):
-    """Collapse legacy and current rows into one newest-first UTC-day card."""
+    """Present fixed-window cards, retaining UTC-day grouping for legacy rows."""
     from core.activity import has_activity_event, merge_activity_payload
 
     grouped = {}
@@ -119,11 +119,13 @@ def activity_data(rows, *, include_user=False, limit=12):
         key = (
             user.id if user else activity.user_id,
             media.id,
-            activity.created_at.date(),
+            (activity.payload or {}).get("window_key")
+            or (activity.payload or {}).get("window_started_at")
+            or activity.created_at.date().isoformat(),
         )
         if key not in grouped:
             grouped[key] = {
-                "key": f"{key[0]}:{key[1]}:{key[2].isoformat()}",
+                "key": f"{key[0]}:{key[1]}:{key[2]}",
                 **(
                     {
                         "user_id": user.id,

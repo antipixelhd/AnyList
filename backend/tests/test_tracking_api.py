@@ -654,8 +654,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
         friend_profile.privacy_level=PrivacyLevel.public
         self.db.add(Follow(follower_id=self.owner.id,following_id=self.friend.id))
-        # Cursor replacement is within one daily card, including at UTC midnight.
-        start=datetime.now(timezone.utc).replace(tzinfo=None,hour=12,minute=0,second=0,microsecond=0)-timedelta(minutes=10)
+        # Cursor replacement retains the fixed card key across UTC midnight.
+        start=datetime.now(timezone.utc).replace(tzinfo=None,hour=0,minute=0,second=0,microsecond=0)-timedelta(minutes=10)
         await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.movie.id,status='watching',score=None,
                                     status_changed=True,now=start)
         await record_daily_activity(self.db,user_id=self.friend.id,media_id=self.show.id,status='watching',score=None,
@@ -682,6 +682,76 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         invalid=await self.client.get('/tracking/activity',params={'cursor':'not-a-cursor'})
         self.assertEqual(invalid.status_code,422)
+
+    async def test_activity_fixed_window_crosses_midnight_and_survives_aging(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 23, 30)
+        row = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                        status='completed', score=None, status_changed=True, now=start)
+        await self.db.commit()
+        before = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'][0]
+        updated = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                            status='completed', score=8, rating_changed=True,
+                                            now=start + timedelta(hours=23))
+        await self.db.commit()
+        self.assertEqual(updated.id, row.id)
+        self.assertEqual(updated.payload['window_started_at'], start.isoformat())
+        with patch('core.activity.datetime', wraps=datetime) as clock:
+            clock.now.return_value = (start + timedelta(days=5)).replace(tzinfo=timezone.utc)
+            cards = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]['key'], before['key'])
+        self.assertEqual(cards[0]['created_at'], (start + timedelta(hours=23)).isoformat())
+        self.assertTrue(cards[0]['payload']['status_changed'])
+        self.assertTrue(cards[0]['payload']['rating_changed'])
+        self.assertEqual(cards[0]['score'], 8)
+
+    async def test_activity_window_does_not_extend_with_each_event(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 10)
+        for hours in (0, 23, 46):
+            await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                        status='watching', score=None, episodes_watched=1,
+                                        now=start + timedelta(hours=hours))
+            await self.db.commit()
+        cards = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual([card['payload']['episodes_watched'] for card in cards], [1, 2])
+        self.assertEqual([card['payload']['window_started_at'] for card in cards],
+                         [(start + timedelta(hours=46)).isoformat(), start.isoformat()])
+        self.assertNotEqual(cards[0]['key'], cards[1]['key'])
+
+    async def test_activity_exact_boundary_starts_distinct_card_on_same_date(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 10)
+        for hours in (0, 23, 24):
+            await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                        status='completed', score=hours, rating_changed=True,
+                                        now=start + timedelta(hours=hours))
+            await self.db.commit()
+        cards = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(cards), 2)
+        self.assertEqual([card['score'] for card in cards], [24, 23])
+        self.assertNotEqual(cards[0]['key'], cards[1]['key'])
+
+    async def test_progress_window_has_independent_episode_baselines(self):
+        from core.activity import record_progress_activity
+
+        start = datetime(2026, 10, 1, 23, 30)
+        with patch('core.activity.series_activity_span', new=AsyncMock(return_value=(None, None, []))):
+            for previous, progress, hours in ((0, 1, 0), (1, 3, 23), (3, 4, 24), (4, 3, 25)):
+                await record_progress_activity(self.db, user_id=self.owner.id, media=self.show,
+                                               previous_progress=previous, progress=progress,
+                                               status='watching', score=None,
+                                               now=start + timedelta(hours=hours))
+                await self.db.commit()
+                cards = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+                self.assertEqual([card['payload']['episodes_watched'] for card in cards],
+                                 [1] if hours == 0 else [3] if hours in (23, 25) else [1, 3])
+        self.assertEqual(cards[0]['payload']['progress_start'], 0)
+        self.assertEqual(cards[0]['payload']['progress'], 3)
 
     async def test_activity_never_claims_rated_without_a_score(self):
         friend_profile=(await self.db.execute(select(UserProfileData).where(UserProfileData.user_id==self.friend.id))).scalar_one()
