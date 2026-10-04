@@ -17,6 +17,45 @@ def session(*rows):
 
 
 class MetadataCredentialTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Tests must not inherit a developer's private provider defaults.
+        defaults = SimpleNamespace(tmdb_api_key=None, tvdb_api_key=None, tvdb_subscriber_pin=None)
+        self.defaults = patch.object(settings_store, "settings", defaults)
+        self.defaults.start()
+        self.addCleanup(self.defaults.stop)
+
+    async def test_tmdb_environment_survives_missing_database_settings(self):
+        settings_store.settings.tmdb_api_key = "environment-token"
+        self.assertEqual(await settings_store.get_user_tmdb_key(session(None, None), 7), "environment-token")
+
+    async def test_database_tmdb_override_wins_over_environment(self):
+        settings_store.settings.tmdb_api_key = "environment-token"
+        self.assertEqual(await settings_store.get_effective_tmdb_key(
+            session(SimpleNamespace(tmdb_api_key="database-token")), None), "database-token")
+
+    async def test_tvdb_environment_registers_only_its_own_pin(self):
+        settings_store.settings.tvdb_api_key = "environment-key"
+        settings_store.settings.tvdb_subscriber_pin = "environment-pin"
+        with patch("core.tvdb.set_subscriber_pin") as register:
+            self.assertEqual(await settings_store.get_user_tvdb_key(session(None, None), 7), "environment-key")
+        register.assert_called_once_with("environment-key", "environment-pin")
+
+    async def test_tvdb_database_override_does_not_inherit_environment_pin(self):
+        settings_store.settings.tvdb_api_key = "environment-key"
+        settings_store.settings.tvdb_subscriber_pin = "environment-pin"
+        db = session(None, SimpleNamespace(tvdb_api_key="database-key", tvdb_subscriber_pin=None))
+        with patch("core.tvdb.set_subscriber_pin") as register:
+            self.assertEqual(await settings_store.get_user_tvdb_key(db, 7), "database-key")
+        register.assert_called_once_with("database-key", None)
+
+    def test_provider_defaults_are_hidden_from_configuration_repr(self):
+        from core.config import Settings
+
+        config = Settings(_env_file=None, secret_key="test", tmdb_api_key="private-tmdb",
+                          tvdb_api_key="private-tvdb", tvdb_subscriber_pin="private-pin")
+        for credential in ("private-tmdb", "private-tvdb", "private-pin"):
+            self.assertNotIn(credential, repr(config))
+
     async def test_tvdb_personal_key_registers_its_pin_without_global_lookup(self):
         db = session(SimpleNamespace(tvdb_api_key="personal", tvdb_subscriber_pin="own-pin"))
         with patch("core.tvdb.set_subscriber_pin") as register:

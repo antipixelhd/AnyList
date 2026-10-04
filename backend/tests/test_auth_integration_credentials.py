@@ -507,6 +507,19 @@ class SettingsResponseEffectiveRadarrSonarrTests(unittest.IsolatedAsyncioTestCas
 
         return UserSettings(user_id=1, **radarr_sonarr_fields)
 
+    async def test_environment_metadata_defaults_are_advertised_without_disclosure(self) -> None:
+        with patch.object(auth.app_settings, "tmdb_api_key", "private-tmdb-token"), \
+             patch.object(auth.app_settings, "tvdb_api_key", "private-tvdb-key"):
+            result = await auth._settings_response(self._user_settings(), _GlobalSettingsFakeDB(None))
+        self.assertTrue(result.has_global_tmdb_key)
+        self.assertTrue(result.has_effective_tmdb_key)
+        self.assertTrue(result.has_global_tvdb_key)
+        self.assertTrue(result.has_effective_tvdb_key)
+        self.assertIsNone(result.tmdb_api_key)
+        self.assertIsNone(result.tvdb_api_key)
+        self.assertNotIn("private-tmdb-token", result.model_dump_json())
+        self.assertNotIn("private-tvdb-key", result.model_dump_json())
+
     async def test_neither_configured_is_false(self) -> None:
         settings = self._user_settings()
         result = await auth._settings_response(settings, _GlobalSettingsFakeDB(None))

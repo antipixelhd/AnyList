@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, Integer, String, func, ForeignKey
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, Integer, String, func, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,6 +40,8 @@ class User(Base):
     @property
     def has_password(self) -> bool:
         return self.password_hash is not None
+
+    __table_args__ = (Index("uq_users_email_normalized", func.lower(func.trim(email)), unique=True),)
 
     settings          : Mapped[Optional["UserSettings"]]   = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     profile           : Mapped[Optional["UserProfileData"]] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")

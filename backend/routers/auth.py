@@ -143,7 +143,7 @@ async def forgot_password(request: Request, body: schemas.ForgotPasswordRequest,
     if not app_settings.smtp_address:
         raise HTTPException(status_code=503, detail="Password reset is not configured.")
 
-    result = await db.execute(select(User).where(User.email == body.email))
+    result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == body.email.strip().lower()))
     user = result.scalar_one_or_none()
 
     if user:
@@ -204,7 +204,8 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
             detail="Registrations are disabled.",
         )
 
-    query = select(User).where((User.email == user_in.email) | (User.username == user_in.username))
+    email = user_in.email.strip().lower()
+    query = select(User).where((func.lower(func.trim(User.email)) == email) | (User.username == user_in.username)).limit(1)
     result = await db.execute(query)
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -217,7 +218,7 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
 
     email_confirmed = not app_settings.require_email_validation
     new_user = User(
-        email=user_in.email,
+        email=email,
         username=user_in.username,
         password_hash=get_password_hash(user_in.password),
         api_key=security.generate_opaque_token(),
@@ -231,7 +232,11 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
         email_confirmed=email_confirmed,
     )
     db.add(new_user)
-    await db.flush()  # get new_user.id before commit
+    try:
+        await db.flush()  # get new_user.id before commit
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="User with this email or username already exists")
 
     if app_settings.require_email_validation:
         token = secrets.token_urlsafe(32)
@@ -258,14 +263,16 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
             detail="Password login is disabled. Please use SSO.",
         )
 
-    query = select(User).where(User.username == form_data.username)
+    # OAuth2 calls this field "username"; password login uses the email value.
+    email = form_data.username.strip().lower()
+    query = select(User).where(func.lower(func.trim(User.email)) == email)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
     if not user or not user.password_hash or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -402,9 +409,9 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
     gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = gs_result.scalar_one_or_none()
     data.has_rpdb_key = bool(settings.rpdb_api_key)
-    data.has_global_tmdb_key = bool(gs and gs.tmdb_api_key)
+    data.has_global_tmdb_key = bool((gs and gs.tmdb_api_key) or app_settings.tmdb_api_key)
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key
-    data.has_global_tvdb_key = bool(gs and gs.tvdb_api_key)
+    data.has_global_tvdb_key = bool((gs and gs.tvdb_api_key) or app_settings.tvdb_api_key)
     data.has_effective_tvdb_key = bool(settings.tvdb_api_key) or data.has_global_tvdb_key
     # Same "all 4 fields set, user config first" rule as _effective_radarr/
     # _effective_sonarr in routers/media.py - inlined rather than imported to

@@ -1384,6 +1384,9 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
     progress_changed = entry.progress != old_progress
+    if old_score != score and score is None:
+        from core.activity import clear_recent_rating_activity
+        await clear_recent_rating_activity(db, user_id=viewer.id, media_id=media_id)
     if previous != entry.status or old_score != score or progress_changed:
         from core.activity import record_daily_activity, record_progress_activity, series_activity_details, suppress_initial_import_rating
         status_changed = previous != entry.status

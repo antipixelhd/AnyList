@@ -1,3 +1,4 @@
+from core import settings_store
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
@@ -39,7 +40,7 @@ async def run_yamtrack_import(user_id: int, job_id: int, data: ScrobImportData, 
             if not api_key:
                 gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
                 gs = gs_result.scalar_one_or_none()
-                api_key = gs.tmdb_api_key if gs else None
+                api_key = settings_store.get_server_tmdb_key(gs)
 
             stats = await apply_scrob_import(db, job_id, user_id, data, api_key, **include)
 
@@ -106,7 +107,7 @@ async def yamtrack_import_upload(
     if not _tmdb_key:
         gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         gs = gs_result.scalar_one_or_none()
-        _tmdb_key = gs.tmdb_api_key if gs else None
+        _tmdb_key = settings_store.get_server_tmdb_key(gs)
     if not _tmdb_key:
         raise HTTPException(status_code=400, detail="TMDB API key required for import")
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core import db_queries
+from core import db_queries, settings_store
 from core import simkl as simkl_client
 from core.catalog_import import (
     get_or_create_movie_media as _get_or_create_movie_media,
@@ -187,7 +187,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
 
             _gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
             _gs = _gs_result.scalar_one_or_none()
-            api_key = settings.tmdb_api_key or (_gs.tmdb_api_key if _gs else None)
+            api_key = settings.tmdb_api_key or settings_store.get_server_tmdb_key(_gs)
 
             stats: dict[str, int] = {"movies": 0, "episodes": 0, "ratings": 0, "rating_conflicts": 0, "lists": 0, "list_items": 0, "skipped": 0, "errors": 0}
             _new_watched: set[int] = set()

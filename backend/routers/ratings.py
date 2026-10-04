@@ -58,6 +58,17 @@ async def clear_all_ratings(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
+    from models.tracking import TrackedEntry, TrackingActivity
+    from core.activity import clear_recent_rating_activity
+
+    entries = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == current_user.id))).scalars().all()
+    media_ids = set((await db.execute(select(TrackingActivity.media_id).where(
+        TrackingActivity.user_id == current_user.id))).scalars().all())
+    for entry in entries:
+        entry.manual_score, entry.season_scores = None, {}
+        media_ids.add(entry.media_id)
+    for media_id in media_ids:
+        await clear_recent_rating_activity(db, user_id=current_user.id, media_id=media_id)
     await db.execute(delete(Rating).where(Rating.user_id == current_user.id))
     await db.commit()
     return {"status": "ok"}
@@ -171,7 +182,7 @@ async def submit_rating(
         await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id)
         from core.activity import record_daily_activity, suppress_initial_import_rating
         current_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
-        if previous_score != current_score and not suppress_initial_import_rating(entry):
+        if previous_score != current_score and (current_score is None or not suppress_initial_import_rating(entry)):
             await record_daily_activity(
                 db, user_id=current_user.id, media_id=media.id, status=entry.status,
                 score=current_score, rating_changed=True, previous_score=previous_score,
@@ -265,6 +276,29 @@ async def delete_rating(
     rating = result.scalar_one_or_none()
     if not rating:
         raise HTTPException(status_code=404, detail="Rating not found")
+    if mt in (MediaType.movie, MediaType.series) and effective_episode_order is None:
+        from models.tracking import TrackedEntry
+        from core.tracking_rules import effective_score
+        from core.activity import record_daily_activity
+
+        entry = (await db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == current_user.id, TrackedEntry.media_id == media.id,
+        ))).scalar_one_or_none()
+        if entry:
+            previous_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+            if effective_season is None:
+                entry.manual_score, entry.rating_mode = None, "manual"
+            else:
+                entry.season_scores = {key: value for key, value in (entry.season_scores or {}).items()
+                                       if int(key) != effective_season}
+            score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+            if score != previous_score:
+                await record_daily_activity(db, user_id=current_user.id, media_id=media.id,
+                                            status=entry.status, score=score, previous_score=previous_score,
+                                            rating_changed=True)
+        elif effective_season is None:
+            from core.activity import clear_recent_rating_activity
+            await clear_recent_rating_activity(db, user_id=current_user.id, media_id=media.id)
     await db.delete(rating)
     await db.commit()
     if effective_episode_order is not None:

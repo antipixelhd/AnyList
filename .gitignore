@@ -66,6 +66,7 @@ frontend/frontend.log
 
 # --- Databases ---
 .testdb/
+.cloud-runtime/
 *.db
 *.sqlite3
 

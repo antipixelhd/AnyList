@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -47,6 +48,11 @@ class Settings(BaseSettings):
     enable_registrations: bool = False
     registration_max_allowed_users: int = 0
 
+    # Server defaults survive database resets; account/global DB overrides win.
+    tmdb_api_key: Optional[str] = Field(default=None, repr=False)
+    tvdb_api_key: Optional[str] = Field(default=None, repr=False)
+    tvdb_subscriber_pin: Optional[str] = Field(default=None, repr=False)
+
     # Trakt.tv
     trakt_client_id: Optional[str] = None
     trakt_client_secret: Optional[str] = None
@@ -76,7 +82,8 @@ class Settings(BaseSettings):
     data_dir: Path = Path(__file__).parent.parent / "data"
 
     model_config = {
-        "env_file": Path(__file__).parent.parent.parent / ".env",
+        "env_file": (Path(__file__).parent.parent.parent / ".env.providers",
+                     Path(__file__).parent.parent.parent / ".env"),
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }

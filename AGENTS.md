@@ -22,5 +22,11 @@ Do not read the entire STATUS.md or phase plans by default.
 
 ## Testing
 
+For Linux Codex Cloud tasks, use `bash ops/cloud/setup.sh` for installation,
+`bash ops/cloud/start.sh` for services, and `bash ops/cloud/check.sh` for checks.
+Tests use a separate disposable database. Never point tests at a preview or
+production DB. Keep `.env.providers` and `.cloud-runtime` out of Git and logs;
+server metadata keys are private environment defaults, not database seed data.
+
 Use existing neighbouring tests as the primary guide: backend tests use Python
 `unittest`, including `IsolatedAsyncioTestCase`; frontend tests use `node:test`.

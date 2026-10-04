@@ -27,6 +27,7 @@ async def main():
         for username in ('provider-test','preview'):
             user=(await db.execute(select(User).where(User.username==username))).scalar_one_or_none()
             if not user:continue
+            lines.append(f'{username} email: {user.email}')
             password=previous.get(username)
             if not user.password_hash:
                 password=secrets.token_urlsafe(18)

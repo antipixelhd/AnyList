@@ -7,6 +7,7 @@ Type=simple
 User=@USER@
 Group=@USER@
 WorkingDirectory=/srv/anylist-preview/@BRANCH@/checkout/backend
+EnvironmentFile=-/etc/anylist-preview/providers.env
 EnvironmentFile=/etc/anylist-preview/@BRANCH@.env
 ExecStart=/srv/anylist-preview/@BRANCH@/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port @BACKEND_PORT@
 Restart=on-failure

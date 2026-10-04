@@ -107,3 +107,26 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertEqual([r["payload"]["episodes_watched"] for r in result], [3, 4, 5])
         self.assertEqual(result[0]["created_at"], newest.created_at)
         self.assertEqual([row.payload for row, _ in rows], before)
+
+    def test_fixed_windows_remain_distinct_when_latest_events_share_a_date(self):
+        media = _media()
+        rows = [
+            (SimpleNamespace(user_id=7, status='completed', score=8,
+                             created_at=datetime(2026, 10, 2, 10),
+                             payload={'rating_changed': True, 'window_started_at': '2026-10-02T10:00:00'}), media),
+            (SimpleNamespace(user_id=7, status='completed', score=None,
+                             created_at=datetime(2026, 10, 2, 9),
+                             payload={'status_changed': True, 'window_started_at': '2026-10-01T10:00:00'}), media),
+        ]
+        cards = tracking_projection.activity_data(rows)
+        self.assertEqual(len(cards), 2)
+        self.assertNotEqual(cards[0]['key'], cards[1]['key'])
+        self.assertEqual(cards[1]['created_at'], datetime(2026, 10, 2, 9))
+
+    def test_upgraded_legacy_window_keeps_its_original_daily_key(self):
+        row = SimpleNamespace(user_id=7, status='completed', score=8,
+                              created_at=datetime(2026, 10, 2, 10),
+                              payload={'rating_changed': True, 'window_started_at': '2026-10-02T00:00:00',
+                                       'window_key': '2026-10-02'})
+        cards = tracking_projection.activity_data([(row, _media())])
+        self.assertEqual(cards[0]['key'], '7:5:2026-10-02')

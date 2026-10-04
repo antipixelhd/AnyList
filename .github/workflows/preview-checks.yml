@@ -1,10 +1,10 @@
 name: Preview Infrastructure Checks
 on:
   pull_request:
-    paths: ['ops/preview/**', '.github/workflows/preview-*.yml']
+    paths: ['ops/preview/**', 'ops/cloud/**', '.github/workflows/preview-*.yml']
   push:
     branches: [codex/preview-control-plane, beta, development-1, development-2]
-    paths: ['ops/preview/**', '.github/workflows/preview-*.yml']
+    paths: ['ops/preview/**', 'ops/cloud/**', '.github/workflows/preview-*.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,9 +21,13 @@ jobs:
       - name: Unit and syntax checks
         run: |
           python -m unittest discover -s ops/preview/tests -v
+          python -m unittest discover -s ops/cloud/tests -v
           python -m compileall -q ops/preview
+          python -m compileall -q ops/cloud
           bash -n ops/preview/bootstrap.sh
           shellcheck ops/preview/bootstrap.sh
+          for script in ops/cloud/*.sh; do bash -n "$script"; done
+          shellcheck -x -e SC1091 ops/cloud/*.sh
       - name: Validate workflows
         env:
           ACTIONLINT_VERSION: '1.7.12'

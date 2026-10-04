@@ -662,7 +662,7 @@ async def require_anon_nav_allowed(db: AsyncSession) -> None:
     since these endpoints are reachable directly, not just through a page
     the frontend middleware already gated."""
     gs = await settings_store.get_global_settings(db)
-    if not (gs and gs.enable_logged_out_navigation and gs.tmdb_api_key):
+    if not (gs and gs.enable_logged_out_navigation and settings_store.get_server_tmdb_key(gs)):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
 

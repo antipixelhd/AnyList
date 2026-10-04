@@ -3018,7 +3018,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   function setupCollapsibleRows() {
+    if (!document.body.classList.contains('connections-settings-page')) return;
     document.querySelectorAll('.collapsible-header').forEach(header => {
+      if ((header as HTMLElement).dataset.connectionsCollapsibleInitialized) return;
+      (header as HTMLElement).dataset.connectionsCollapsibleInitialized = 'true';
       const targetId = header.getAttribute('data-target');
       const initialBody = targetId ? document.getElementById(targetId) : null;
       header.setAttribute('role', 'button');

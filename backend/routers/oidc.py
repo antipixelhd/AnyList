@@ -144,7 +144,7 @@ async def oidc_exchange(
 
     normalized_identifier = str(identifier).strip().lower()
     result = await db.execute(
-        select(User).where(func.lower(User.email) == normalized_identifier)
+        select(User).where(func.lower(func.trim(User.email)) == normalized_identifier)
     )
     user = result.scalar_one_or_none()
 
@@ -160,7 +160,7 @@ async def oidc_exchange(
         await db.rollback()
         await lock_account_bootstrap(db)
         result = await db.execute(
-            select(User).where(func.lower(User.email) == normalized_identifier)
+            select(User).where(func.lower(func.trim(User.email)) == normalized_identifier)
         )
         user = result.scalar_one_or_none()
 

@@ -40,7 +40,7 @@ if (Astro.request.method === "POST") {
     } else {
       // Auto login when email confirmation is not required
       const loginData = new FormData();
-      loginData.append("username", username);
+      loginData.append("username", newUser.email);
       loginData.append("password", password);
       const result = await api.auth.login(loginData);
 

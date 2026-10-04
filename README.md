@@ -17,6 +17,10 @@ A self-hosted movie and TV tracker for personal lists and shared discoveries.
 
 ## Development
 
+For Codex Cloud, see the [environment setup, startup, tests, and private provider
+defaults](ops/cloud/README.md). Metadata defaults can live outside the database so
+preview resets retain them.
+
 Private VPS source previews use GitHub as their control plane: **normal development
 does not require VPS SSH**. See [preview setup and operations](ops/preview/README.md)
 for beta, parallel development branches, GitHub controls, and the Stage 2 runbook.
@@ -74,3 +78,10 @@ shows the complete isolated test setup.
 Start with [backend behavior and module locations](docs/agents/BACKEND.md),
 [frontend structure and commands](frontend/README.md), or
 [frontend styling conventions](docs/agents/FRONTEND-STYLES.md) for the affected area.
+
+Password login uses the account email address (case-insensitive). Usernames are
+editable public handles; account data and sessions remain tied to the numeric
+user ID. OAuth password clients still send the email in the `username` form
+field. Migration `mt032` normalizes emails and enforces uniqueness; it stops and
+reports conflicting user IDs if existing addresses differ only by case or
+surrounding spaces. Resolve those accounts before retrying the migration.

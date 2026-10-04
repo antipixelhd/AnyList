@@ -29,7 +29,7 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
         current["rating_changed"] = bool(current.get("rating_changed") or previous.get("rating_changed"))
     if "rating_start_score" not in current and ("rating_first" in current or "rating_first" in previous):
         current["rating_first"] = bool(current.get("rating_first") or previous.get("rating_first"))
-    # The day card describes the full change, from its earliest score to the
+    # The window card describes the full change, from its earliest score to the
     # latest one, even when several writes or legacy rows were merged.
     if "rating_start_score" not in current and previous.get("previous_score") is not None:
         current["previous_score"] = previous["previous_score"]
@@ -41,7 +41,7 @@ def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
 
 
 def has_activity_event(status: str, details: dict) -> bool:
-    """Only persist and present cards with a qualifying daily action."""
+    """Only persist and present cards with a qualifying action."""
     status_event = bool(details.get("status_changed")) and (
         status != "watching" or details.get("started_watching") is True
     )
@@ -64,23 +64,80 @@ def _record_status_details(details: dict, *, status: str, status_changed: bool,
         )
 
 
+RATING_ACTIVITY_FIELDS = {
+    "rating_changed", "rating_first", "rating_start_score", "rating_first_score",
+    "previous_score", "first_rated_at",
+}
+
+
+async def clear_recent_rating_activity(db, *, user_id: int, media_id: int,
+                                      now: datetime | None = None) -> None:
+    """Erase rating evidence only from cards displayed in the preceding week."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    rows = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.created_at >= now - timedelta(days=7),
+        TrackingActivity.created_at <= now,
+    ))).scalars().all()
+    for row in rows:
+        details = {key: value for key, value in (row.payload or {}).items()
+                   if key not in RATING_ACTIVITY_FIELDS}
+        row.score, row.payload = None, details
+        if not has_activity_event(row.status, details):
+            await db.delete(row)
+    await db.flush()
+
+
+async def _prepare_rating_activity(db, *, user_id: int, media_id: int, status: str,
+                                   score: float | None, previous_score: float | None,
+                                   rating_changed: bool, now: datetime):
+    if not rating_changed:
+        return False, None
+    if score is None:
+        await clear_recent_rating_activity(db, user_id=user_id, media_id=media_id, now=now)
+        return False, None
+    if previous_score is None:
+        return True, None
+    rows = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.created_at >= now - timedelta(hours=72),
+        TrackingActivity.created_at <= now,
+    ))).scalars().all()
+    originals = [row for row in rows if (row.payload or {}).get("first_rated_at")]
+    original = max(originals, key=lambda row: row.payload["first_rated_at"], default=None)
+    if original:
+        started = datetime.fromisoformat(original.payload["first_rated_at"])
+        duration = timedelta(hours=72 if status in {"completed", "dropped"} else 24)
+        if started <= now < started + duration:
+            details = dict(original.payload)
+            details.update(rating_changed=True, rating_first=True)
+            details.pop("previous_score", None)
+            original.score, original.payload = score, details
+            # Neither display timestamp nor activity window advances for a correction.
+            await db.flush()
+            return False, original
+    return True, None
+
+
 def _record_rating_details(details: dict, *, rating_changed: bool,
-                           previous_score: float | None, score: float | None) -> None:
+                           previous_score: float | None, score: float | None,
+                           now: datetime) -> None:
     if not rating_changed:
         details["rating_changed"] = bool(details.get("rating_changed"))
         return
-    if "rating_start_score" not in details:
-        details["rating_start_score"] = (
-            None if details.get("rating_first") else details.get("previous_score", previous_score)
-        )
+    if previous_score is None:
+        for key in RATING_ACTIVITY_FIELDS:
+            details.pop(key, None)
+        details.update(rating_start_score=None, rating_first=True, rating_changed=True,
+                       first_rated_at=now.isoformat())
+        return
+    if details.get("rating_start_score") is None:
+        details["rating_start_score"] = details.get("previous_score", previous_score)
     start_score = details["rating_start_score"]
-    if start_score is None and score is not None and "rating_first_score" not in details:
-        details["rating_first_score"] = score
     details["rating_changed"] = start_score != score
-    details["rating_first"] = start_score is None and score is not None
-    comparison_score = details.get("rating_first_score") if start_score is None else start_score
-    if details["rating_changed"] and comparison_score is not None and comparison_score != score:
-        details["previous_score"] = comparison_score
+    details["rating_first"] = False
+    if details["rating_changed"]:
+        details["previous_score"] = start_score
     else:
         details.pop("previous_score", None)
 
@@ -155,20 +212,49 @@ async def series_activity_span(db, media: Media, start: int, end: int) -> tuple[
     return beginning, ending, finished
 
 
+def activity_window_start(row: TrackingActivity) -> datetime:
+    """Legacy daily cards lack their first event; retain their UTC-day boundary."""
+    value = (row.payload or {}).get("window_started_at")
+    return datetime.fromisoformat(value) if value else row.created_at.replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+
+
+async def _active_activity_card(db, *, user_id: int, media_id: int, now: datetime):
+    row = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.created_at > now - timedelta(hours=24),
+        TrackingActivity.created_at <= now,
+    ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(1))).scalar_one_or_none()
+    if row and activity_window_start(row) <= now < activity_window_start(row) + timedelta(hours=24):
+        return row
+    return None
+
+
+def _set_activity_window(details: dict, row: TrackingActivity | None, now: datetime) -> None:
+    if "window_started_at" in details:
+        return
+    start = activity_window_start(row) if row else now
+    details["window_started_at"] = start.isoformat()
+    # Preserve legacy card keys when a pre-existing daily card is updated.
+    details["window_key"] = start.date().isoformat() if row else start.isoformat()
+
+
 async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
                                    progress: int, status: str, score: float | None,
                                    status_changed: bool = False, rating_changed: bool = False,
                                    previous_status: str | None = None, first_watching: bool | None = None,
                                    previous_score: float | None = None,
                                    now: datetime | None = None) -> TrackingActivity | None:
-    """Keep today's episode card equal to net forward progress after corrections."""
+    """Keep the fixed-window episode card equal to net forward progress."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    start = datetime(now.year, now.month, now.day)
-    row = (await db.execute(select(TrackingActivity).where(
-        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media.id,
-        TrackingActivity.created_at >= start, TrackingActivity.created_at < start + timedelta(days=1),
-    ).order_by(TrackingActivity.created_at.desc()).limit(1))).scalar_one_or_none()
+    rating_changed, _ = await _prepare_rating_activity(
+        db, user_id=user_id, media_id=media.id, status=status, score=score,
+        previous_score=previous_score, rating_changed=rating_changed, now=now,
+    )
+    row = await _active_activity_card(db, user_id=user_id, media_id=media.id, now=now)
     details = dict(row.payload or {}) if row else {}
+    _set_activity_window(details, row, now)
     baseline = details.get("progress_start")
     if baseline is None:
         prior_end = details.get("progress")
@@ -185,7 +271,7 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
     _record_status_details(details, status=status, status_changed=status_changed,
                            previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
-                           previous_score=previous_score, score=score)
+                           previous_score=previous_score, score=score, now=now)
     if not has_activity_event(status, details):
         if row:
             await db.delete(row)
@@ -212,22 +298,25 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                                 previous_status: str | None = None, first_watching: bool | None = None,
                                 previous_score: float | None = None,
                                 now: datetime | None = None) -> TrackingActivity | None:
-    """Merge one title's updates into its UTC-day activity card."""
+    """Merge updates within 24 hours of this title card's first event."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    start = datetime(now.year, now.month, now.day)
-    end = start + timedelta(days=1)
-    row = (await db.execute(select(TrackingActivity).where(
-        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
-        TrackingActivity.created_at >= start, TrackingActivity.created_at < end,
-    ).order_by(TrackingActivity.created_at.desc()).limit(1))).scalar_one_or_none()
+    had_rating_change = rating_changed
+    rating_changed, rating_card = await _prepare_rating_activity(
+        db, user_id=user_id, media_id=media_id, status=status, score=score,
+        previous_score=previous_score, rating_changed=rating_changed, now=now,
+    )
+    if had_rating_change and not rating_changed and not status_changed and not episodes_watched and not finished_seasons:
+        return rating_card
+    row = await _active_activity_card(db, user_id=user_id, media_id=media_id, now=now)
     details = merge_activity_payload(row.payload if row else None, {"episodes_watched": max(0, episodes_watched)})
+    _set_activity_window(details, row, now)
     if progress is not None: details["progress"] = progress
     if position is not None: details["position"] = position
     details["finished_seasons"] = sorted(set(details.get("finished_seasons", [])) | set(finished_seasons or []))
     _record_status_details(details, status=status, status_changed=status_changed,
                            previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
-                           previous_score=previous_score, score=score)
+                           previous_score=previous_score, score=score, now=now)
     if not has_activity_event(status, details):
         if row:
             await db.delete(row)

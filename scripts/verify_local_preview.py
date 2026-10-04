@@ -10,10 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_USERS = ("provider-test", "preview")
 
 
-def verify_preview(username: str, password: str) -> None:
+def verify_preview(username: str, email: str, password: str) -> None:
     with httpx.Client(base_url="http://127.0.0.1:7340", timeout=30) as client:
         response = client.post("/login", headers={"Origin": str(client.base_url).rstrip("/")}, data={
-            "username": username, "password": password, "action": "login", "next": "/home",
+            "username": email, "password": password, "action": "login", "next": "/home",
         })
         assert response.status_code in (302, 303), f"Login failed: {response.status_code}"
         token = client.cookies.get("token")
@@ -54,8 +54,10 @@ def main() -> None:
     users = [username for username in PREVIEW_USERS if username in passwords]
     if not users:
         raise SystemExit("No preview login details found in .venv/LOCAL-LOGIN.txt.")
+    if any(f"{username} email" not in passwords for username in users):
+        raise SystemExit("Run scripts/prepare_local_login.py to refresh email login details.")
     for username in users:
-        verify_preview(username, passwords[username])
+        verify_preview(username, passwords[f"{username} email"], passwords[username])
 
 
 if __name__ == "__main__":

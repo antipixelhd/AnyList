@@ -13,6 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
 from sqlalchemy import delete, func, update
+from sqlalchemy.exc import IntegrityError
 
 from db import get_db, engine
 from models.users import User
@@ -115,7 +116,7 @@ async def create_user(
     email = body.email.strip().lower()
 
     existing = await db.execute(
-        select(User).where((User.email == email) | (User.username == username))
+        select(User).where((func.lower(func.trim(User.email)) == email) | (User.username == username)).limit(1)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -133,7 +134,11 @@ async def create_user(
         email_confirmed=True,
     )
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="A user with this email or username already exists")
     await db.refresh(user)
 
     return schemas.AdminUser(
