@@ -12,7 +12,7 @@ let errorMsg = "";
 const nextPath = safeReturnPath(Astro.url.searchParams.get("next"));
 
 try {
-  const { auth_url, state } = await api.auth.oidcAuthorize();
+  const { auth_url, state } = await api.auth.oidcAuthorize(Astro.cookies.get(sessionCookieName("token"))?.value, Astro.url.searchParams.get("reauth") === "true");
 
   Astro.cookies.set(sessionCookieName("oidc_state"), state, {
     path: "/",

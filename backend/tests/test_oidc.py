@@ -1,258 +1,428 @@
-import os
+from datetime import datetime, timezone
 import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlsplit
 
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jose import jwt, jwk
+from sqlalchemy import select
 from fastapi import HTTPException
-from models.base import UserRole
 
-os.environ.setdefault("SECRET_KEY", "test-secret")
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
-
+from account_security_helpers import AccountSecurityCase
+from core.config import settings
+from core.security import ALGORITHM
+from models.account_security import OidcIdentity
+from models.users import User
 from routers import oidc
 
 
-class _FakeResponse:
-    def __init__(self, status_code, json_data):
-        self.status_code = status_code
-        self._json_data = json_data
-
-    @property
-    def is_success(self):
-        return 200 <= self.status_code < 300
-
-    def json(self):
-        return self._json_data
-
-
-class _FakeHttpClient:
-    """Stands in for httpx.AsyncClient's token-exchange + userinfo calls."""
-
-    def __init__(self, token_response, userinfo_response):
-        self._token_response = token_response
-        self._userinfo_response = userinfo_response
+class ProviderClient:
+    def __init__(
+        self,
+        userinfo=None,
+        tokens=None,
+        keys=None,
+        issuer="https://accounts.google.com",
+    ):
+        self.userinfo = userinfo or {
+            "sub": "subject",
+            "email": "owner@example.com",
+            "email_verified": True,
+        }
+        self.tokens = tokens or {"access_token": "provider-token"}
+        self.keys = keys or {}
+        self.issuer = issuer
 
     async def __aenter__(self):
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
+    async def __aexit__(self, *args):
+        pass
 
-    async def post(self, url, **kwargs):
-        return self._token_response
+    async def post(self, *args, **kwargs):
+        return self.response(self.tokens)
+
+    def response(self, data):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(is_success=True, json=lambda: data)
 
     async def get(self, url, **kwargs):
-        return self._userinfo_response
+        if "well-known" in url:
+            return self.response(
+                {"issuer": self.issuer, "jwks_uri": "https://keys.example.com/jwks"}
+            )
+        if "keys.example.com" in url:
+            return self.response(self.keys)
+        return self.response(self.userinfo)
 
 
-class _UserResult:
-    def __init__(self, user):
-        self.user = user
-
-    def scalar_one_or_none(self):
-        return self.user
-
-
-class _CountResult:
-    def __init__(self, count):
-        self.count = count
-
-    def scalar_one(self):
-        return self.count
-
-
-class _FakeSession:
-    """Queues results for db.execute() in call order, mirroring the pattern
-    already established in tests/test_shows.py and tests/test_history.py."""
-
-    def __init__(self, results):
-        self.execute = AsyncMock(side_effect=results)
-        self.add = MagicMock()
-        self.commit = AsyncMock()
-        self.refresh = AsyncMock()
-        self.rollback = AsyncMock()
-
-
-class OidcExchangeFirstUserAdminTests(unittest.IsolatedAsyncioTestCase):
-    """The first Google OIDC-created account must receive both admin fields;
-    later OIDC-created accounts must receive neither."""
-
-    def _patched_settings(self):
-        return patch.multiple(
-            oidc.app_settings,
-            oidc_enabled=True,
-            oidc_auto_create_users=True,
-            oidc_require_verified_email=True,
-            oidc_identifier_field="email",
-            oidc_token_url="https://provider.example/token",
-            oidc_userinfo_url="https://provider.example/userinfo",
-            oidc_redirect_url="https://scrob.example/oidc-callback",
-            oidc_client_id="client-id",
-            oidc_client_secret="client-secret",
+class OidcAccountTests(AccountSecurityCase):
+    async def exchange(self, info=None, headers=None, reauth=False, auth_time=None):
+        response = await self.client.get(
+            f"/auth/oidc/authorize?reauth={str(reauth).lower()}", headers=headers or {}
         )
-
-    async def test_first_oidc_user_becomes_admin(self) -> None:
-        token_response = _FakeResponse(200, {"access_token": "provider-token"})
-        userinfo_response = _FakeResponse(200, {
-            "email": "new@example.com",
-            "email_verified": True,
-            "preferred_username": "new-user",
-        })
-        fake_client = _FakeHttpClient(token_response, userinfo_response)
-
-        # Query order: initial identity lookup, under-lock identity recheck,
-        # username uniqueness check, and user count.
-        db = _FakeSession([_UserResult(None), _UserResult(None), _UserResult(None), _CountResult(0)])
-
-        with self._patched_settings(), \
-             patch("routers.oidc.httpx.AsyncClient", return_value=fake_client), \
-             patch("routers.oidc.create_access_token", return_value="jwt-token"):
-            await oidc.oidc_exchange(oidc.OidcExchangeRequest(code="auth-code"), db)
-
-        created_user = db.add.call_args[0][0]
-        self.assertTrue(created_user.is_admin)
-        self.assertEqual(created_user.role, UserRole.admin)
-
-    async def test_subsequent_oidc_user_is_not_admin(self) -> None:
-        token_response = _FakeResponse(200, {"access_token": "provider-token"})
-        userinfo_response = _FakeResponse(200, {
-            "email": "second@example.com",
-            "email_verified": True,
-            "preferred_username": "second-user",
-        })
-        fake_client = _FakeHttpClient(token_response, userinfo_response)
-
-        db = _FakeSession([_UserResult(None), _UserResult(None), _UserResult(None), _CountResult(1)])
-
-        with self._patched_settings(), \
-             patch("routers.oidc.httpx.AsyncClient", return_value=fake_client), \
-             patch("routers.oidc.create_access_token", return_value="jwt-token"):
-            await oidc.oidc_exchange(oidc.OidcExchangeRequest(code="auth-code"), db)
-
-        created_user = db.add.call_args[0][0]
-        self.assertFalse(created_user.is_admin)
-        self.assertEqual(created_user.role, UserRole.user)
-
-    async def test_parallel_oidc_callback_reuses_account_found_by_under_lock_recheck(self) -> None:
-        existing = SimpleNamespace(id=42)
-        db = _FakeSession([_UserResult(None), _UserResult(existing)])
-        client = _FakeHttpClient(
-            _FakeResponse(200, {"access_token": "provider-token"}),
-            _FakeResponse(200, {
-                "email": "new@example.com",
-                "email_verified": True,
-                "preferred_username": "new-user",
-            }),
-        )
-
-        with self._patched_settings(), \
-             patch("routers.oidc.httpx.AsyncClient", return_value=client), \
-             patch("routers.oidc.create_access_token", return_value="jwt-token") as create_token:
-            result = await oidc.oidc_exchange(oidc.OidcExchangeRequest(code="auth-code"), db)
-
-        self.assertEqual(result, {"access_token": "jwt-token"})
-        create_token.assert_called_once_with(subject=42)
-        db.add.assert_not_called()
-        db.commit.assert_not_awaited()
-        db.rollback.assert_awaited_once()
-
-
-class OidcInviteOnlyGoogleTests(unittest.IsolatedAsyncioTestCase):
-    def _patched_settings(self, **overrides):
-        values = {
-            "oidc_enabled": True,
-            "oidc_auto_create_users": False,
-            "oidc_require_verified_email": True,
-            "oidc_identifier_field": "email",
-            "oidc_auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
-            "oidc_token_url": "https://oauth2.googleapis.com/token",
-            "oidc_userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
-            "oidc_redirect_url": "https://media.example/oidc-callback",
-            "oidc_client_id": "client-id.apps.googleusercontent.com",
-            "oidc_client_secret": "client-secret",
-        }
-        values.update(overrides)
-        return patch.multiple(oidc.app_settings, **values)
-
-    async def test_verified_google_email_matches_preprovisioned_account_case_insensitively(self) -> None:
-        existing = SimpleNamespace(id=42)
-        db = _FakeSession([_UserResult(existing)])
-        client = _FakeHttpClient(
-            _FakeResponse(200, {"access_token": "provider-token"}),
-            _FakeResponse(200, {
-                "sub": "google-subject",
-                "email": "Friend@Example.COM",
-                "email_verified": True,
-            }),
-        )
-
-        with self._patched_settings(), \
-             patch("routers.oidc.httpx.AsyncClient", return_value=client), \
-             patch("routers.oidc.create_access_token", return_value="jwt-token") as create_token:
-            result = await oidc.oidc_exchange(
-                oidc.OidcExchangeRequest(code="auth-code"),
-                db,
+        if response.status_code != 200:
+            return response
+        with (
+            patch.object(oidc.httpx, "AsyncClient", return_value=ProviderClient(info)),
+            patch.object(oidc, "_verify_id_token", AsyncMock(return_value=auth_time)),
+        ):
+            return await self.client.post(
+                "/auth/oidc/exchange",
+                headers=headers or {},
+                json={"code": "code", "state": response.json()["state"]},
             )
 
-        self.assertEqual(result, {"access_token": "jwt-token"})
-        create_token.assert_called_once_with(subject=42)
-        db.add.assert_not_called()
-        db.commit.assert_not_awaited()
-
-    async def test_unverified_google_email_is_rejected_before_account_lookup(self) -> None:
-        db = _FakeSession([])
-        client = _FakeHttpClient(
-            _FakeResponse(200, {"access_token": "provider-token"}),
-            _FakeResponse(200, {
-                "email": "friend@example.com",
-                "email_verified": False,
-            }),
-        )
-
-        with self._patched_settings(), patch(
-            "routers.oidc.httpx.AsyncClient",
-            return_value=client,
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                await oidc.oidc_exchange(
-                    oidc.OidcExchangeRequest(code="auth-code"),
-                    db,
-                )
-
-        self.assertEqual(raised.exception.status_code, 403)
-        db.execute.assert_not_awaited()
-
-    async def test_unknown_verified_email_is_not_auto_created(self) -> None:
-        db = _FakeSession([_UserResult(None)])
-        client = _FakeHttpClient(
-            _FakeResponse(200, {"access_token": "provider-token"}),
-            _FakeResponse(200, {
-                "email": "unknown@example.com",
+    async def test_verified_invitation_links_subject_and_preserves_account(self):
+        user = await self.user(password=None)
+        result = await self.exchange(
+            {
+                "sub": "google-subject",
+                "email": "OWNER@Example.COM",
                 "email_verified": True,
-            }),
+            }
+        )
+        self.assertEqual(result.status_code, 200, result.text)
+        link = (await self.db.execute(select(OidcIdentity))).scalar_one()
+        self.assertEqual((link.user_id, link.subject), (user.id, "google-subject"))
+        self.assertEqual(
+            jwt.decode(
+                result.json()["access_token"],
+                settings.secret_key,
+                algorithms=[ALGORITHM],
+            )["sub"],
+            str(user.id),
         )
 
-        with self._patched_settings(), patch(
-            "routers.oidc.httpx.AsyncClient",
-            return_value=client,
+    async def test_login_after_account_or_provider_email_changes_uses_stable_subject(
+        self,
+    ):
+        user = await self.user(password=None)
+        self.db.add(
+            OidcIdentity(
+                user_id=user.id,
+                provider="https://accounts.google.com",
+                subject="stable",
+            )
+        )
+        user.email = "changed@example.com"
+        await self.db.commit()
+        result = await self.exchange(
+            {
+                "sub": "stable",
+                "email": "provider-changed@example.com",
+                "email_verified": True,
+            }
+        )
+        self.assertEqual(result.status_code, 200, result.text)
+        claims = jwt.decode(
+            result.json()["access_token"], settings.secret_key, algorithms=[ALGORITHM]
+        )
+        self.assertEqual(claims["sub"], str(user.id))
+        self.assertEqual((await self.db.execute(select(User))).scalars().all(), [user])
+
+    async def test_another_subject_with_same_email_cannot_take_over_linked_account(
+        self,
+    ):
+        user = await self.user(password=None)
+        self.db.add(
+            OidcIdentity(
+                user_id=user.id,
+                provider="https://accounts.google.com",
+                subject="stable",
+            )
+        )
+        await self.db.commit()
+        result = await self.exchange(
+            {"sub": "another", "email": user.email, "email_verified": True}
+        )
+        self.assertEqual(result.status_code, 403, result.text)
+
+    async def test_edited_legacy_email_does_not_rebind_google_identity(self):
+        user = await self.user(password=None)
+        user.email = "new@example.com"
+        await self.db.commit()
+        result = await self.exchange(
+            {"sub": "attacker", "email": "new@example.com", "email_verified": True}
+        )
+        self.assertEqual(result.status_code, 403, result.text)
+        result = await self.exchange()
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(
+            (await self.db.execute(select(OidcIdentity))).scalar_one().user_id, user.id
+        )
+
+    async def test_unverified_email_unknown_identity_and_missing_subject_fail_closed(
+        self,
+    ):
+        await self.user()
+        for info, status in (
+            (
+                {
+                    "sub": "subject",
+                    "email": "owner@example.com",
+                    "email_verified": False,
+                },
+                403,
+            ),
+            (
+                {
+                    "sub": "unknown",
+                    "email": "unknown@example.com",
+                    "email_verified": True,
+                },
+                403,
+            ),
+            ({"email": "owner@example.com", "email_verified": True}, 403),
         ):
-            with self.assertRaises(HTTPException) as raised:
-                await oidc.oidc_exchange(
-                    oidc.OidcExchangeRequest(code="auth-code"),
-                    db,
+            response = await self.exchange(info)
+            self.assertEqual(response.status_code, status, response.text)
+        self.assertEqual(
+            (await self.db.execute(select(OidcIdentity))).scalars().all(), []
+        )
+
+    async def test_first_and_subsequent_auto_created_users_get_correct_admin_fields(
+        self,
+    ):
+        with patch.object(settings, "oidc_auto_create_users", True):
+            for index in range(2):
+                response = await self.exchange(
+                    {
+                        "sub": str(index),
+                        "email": f"user{index}@example.com",
+                        "email_verified": True,
+                    }
                 )
+                self.assertEqual(response.status_code, 200, response.text)
+        users = (await self.db.execute(select(User).order_by(User.id))).scalars().all()
+        self.assertTrue(users[0].is_admin)
+        self.assertEqual(users[0].role.value, "admin")
+        self.assertFalse(users[1].is_admin)
+        self.assertEqual(users[1].role.value, "user")
 
-        self.assertEqual(raised.exception.status_code, 403)
-        db.add.assert_not_called()
+    async def test_repeated_callback_reuses_identity(self):
+        user = await self.user()
+        for _ in range(2):
+            self.assertEqual((await self.exchange()).status_code, 200)
+        self.assertEqual(
+            len((await self.db.execute(select(OidcIdentity))).scalars().all()), 1
+        )
+        self.assertEqual((await self.db.execute(select(User))).scalars().all(), [user])
 
-    async def test_incomplete_enabled_configuration_fails_closed(self) -> None:
-        with self._patched_settings(oidc_auth_url=None):
-            with self.assertRaises(HTTPException) as raised:
-                await oidc.oidc_authorize()
+    async def test_reauth_matches_current_account_and_provides_short_lived_proof(self):
+        user = await self.user(password=None)
+        now = int(datetime.now(timezone.utc).timestamp())
+        response = await self.exchange(
+            headers=self.headers(user), reauth=True, auth_time=now
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        token = response.json()["access_token"]
+        claims = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        self.assertEqual(claims["oidc_auth_time"], now)
+        # Reauthentication also binds a legacy account's original verified identity.
+        self.assertEqual(
+            (await self.db.execute(select(OidcIdentity))).scalar_one().user_id, user.id
+        )
+        response = await self.client.post(
+            "/auth/change-password",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"new_password": "new"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
 
-        self.assertEqual(raised.exception.status_code, 503)
-        self.assertIn("OIDC_AUTH_URL", raised.exception.detail)
+    async def test_wrong_google_account_cannot_reauthenticate(self):
+        user = await self.user(password=None)
+        response = await self.exchange(
+            {"sub": "wrong", "email": "other@example.com", "email_verified": True},
+            headers=self.headers(user),
+            reauth=True,
+            auth_time=int(datetime.now(timezone.utc).timestamp()),
+        )
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(
+            (await self.db.execute(select(OidcIdentity))).scalars().all(), []
+        )
+
+    async def test_authorization_requests_nonce_and_google_account_chooser(self):
+        user = await self.user()
+        result = await self.client.get(
+            "/auth/oidc/authorize?reauth=true", headers=self.headers(user)
+        )
+        self.assertEqual(result.status_code, 200, result.text)
+        data = result.json()
+        params = parse_qs(urlsplit(data["auth_url"]).query)
+        self.assertEqual(params["prompt"], ["select_account"])
+        state = jwt.decode(data["state"], settings.secret_key, algorithms=[ALGORITHM])
+        self.assertEqual(state["reauth_user"], user.id)
+        self.assertEqual(params["nonce"], [state["nonce"]])
+        self.assertEqual(
+            (await self.client.get("/auth/oidc/authorize?reauth=true")).status_code, 401
+        )
+
+    async def test_expired_or_tampered_state_and_revoked_reauth_session_fail(self):
+        user = await self.user()
+        headers = self.headers(user)
+        state = (
+            await self.client.get("/auth/oidc/authorize?reauth=true", headers=headers)
+        ).json()["state"]
+        for candidate in (
+            state + "tampered",
+            jwt.encode(
+                {"sub": "oidc", "type": "oidc_state", "exp": 1},
+                settings.secret_key,
+                algorithm=ALGORITHM,
+            ),
+        ):
+            response = await self.client.post(
+                "/auth/oidc/exchange",
+                headers=headers,
+                json={"code": "code", "state": candidate},
+            )
+            self.assertEqual(response.status_code, 400, response.text)
+        user.session_version += 1
+        await self.db.commit()
+        response = await self.client.post(
+            "/auth/oidc/exchange",
+            headers=headers,
+            json={"code": "code", "state": state},
+        )
+        self.assertEqual(response.status_code, 401, response.text)
+
+    async def test_incomplete_configuration_and_generic_reauth_without_issuer_fail_closed(
+        self,
+    ):
+        with patch.object(settings, "oidc_auth_url", None):
+            result = await self.client.get("/auth/oidc/authorize")
+            self.assertEqual(result.status_code, 503, result.text)
+        user = await self.user()
+        with patch.object(
+            settings, "oidc_auth_url", "https://provider.example/authorize"
+        ):
+            result = await self.client.get(
+                "/auth/oidc/authorize?reauth=true", headers=self.headers(user)
+            )
+            self.assertEqual(result.status_code, 503, result.text)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class OidcSignatureTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.keys = {
+            "keys": [jwk.construct(cls.private_key.public_key(), "RS256").to_dict()]
+        }
+
+    async def verify(self, **overrides):
+        now = int(datetime.now(timezone.utc).timestamp())
+        claims = {
+            "iss": "https://accounts.google.com",
+            "aud": "client",
+            "sub": "subject",
+            "exp": now + 600,
+            "iat": now,
+            "nonce": "nonce",
+        }
+        claims.update(overrides)
+        signed = jwt.encode(claims, self.private_key, algorithm="RS256")
+        client = ProviderClient(tokens={"id_token": signed}, keys=self.keys)
+        state = {"nonce": "nonce", "reauth_user": 1, "started_at": now}
+        with patch.multiple(
+            settings,
+            oidc_issuer_url="https://accounts.google.com",
+            oidc_client_id="client",
+        ):
+            return await oidc._verify_id_token(client, client.tokens, state, "subject")
+
+    async def test_valid_signed_google_token_proves_recent_interactive_authorization(
+        self,
+    ):
+        self.assertIsInstance(await self.verify(), int)
+
+    async def test_wrong_issuer_audience_nonce_subject_and_stale_token_rejected(self):
+        now = int(datetime.now(timezone.utc).timestamp())
+        for changes in (
+            {"iss": "https://attacker.example"},
+            {"aud": "another-client"},
+            {"nonce": "wrong"},
+            {"sub": "wrong"},
+            {"azp": "wrong"},
+            {"exp": now - 60},
+            {"iat": now - 600},
+            {"iat": now + 60},
+        ):
+            with (
+                self.subTest(changes=changes),
+                self.assertRaises(HTTPException) as raised,
+            ):
+                await self.verify(**changes)
+            self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_untrusted_signature_rejected(self):
+        other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        now = int(datetime.now(timezone.utc).timestamp())
+        signed = jwt.encode(
+            {
+                "iss": "https://accounts.google.com",
+                "aud": "client",
+                "sub": "subject",
+                "exp": now + 600,
+                "iat": now,
+                "nonce": "nonce",
+            },
+            other,
+            algorithm="RS256",
+        )
+        client = ProviderClient(tokens={"id_token": signed}, keys=self.keys)
+        with (
+            patch.multiple(
+                settings,
+                oidc_issuer_url="https://accounts.google.com",
+                oidc_client_id="client",
+            ),
+            self.assertRaises(HTTPException),
+        ):
+            await oidc._verify_id_token(
+                client, client.tokens, {"nonce": "nonce"}, "subject"
+            )
+
+    async def test_generic_provider_requires_actual_recent_authentication_time(self):
+        now = int(datetime.now(timezone.utc).timestamp())
+        for auth_time in (None, now - 600, now):
+            claims = {
+                "iss": "https://idp.example",
+                "aud": "client",
+                "sub": "subject",
+                "exp": now + 600,
+                "iat": now,
+                "nonce": "nonce",
+            }
+            if auth_time is not None:
+                claims["auth_time"] = auth_time
+            signed = jwt.encode(claims, self.private_key, algorithm="RS256")
+            client = ProviderClient(
+                tokens={"id_token": signed},
+                keys=self.keys,
+                issuer="https://idp.example",
+            )
+            with patch.multiple(
+                settings, oidc_issuer_url="https://idp.example", oidc_client_id="client"
+            ):
+                if auth_time == now:
+                    self.assertEqual(
+                        await oidc._verify_id_token(
+                            client,
+                            client.tokens,
+                            {"nonce": "nonce", "reauth_user": 1, "started_at": now},
+                            "subject",
+                        ),
+                        now,
+                    )
+                else:
+                    with self.assertRaises(HTTPException):
+                        await oidc._verify_id_token(
+                            client,
+                            client.tokens,
+                            {"nonce": "nonce", "reauth_user": 1, "started_at": now},
+                            "subject",
+                        )

@@ -30,18 +30,22 @@ from core.security import (
     verify_password,
     get_password_hash,
     create_access_token,
+    create_session_token,
+    session_is_current,
     hash_opaque_token,
     generate_opaque_token,
     ALGORITHM,
 )
 from core.config import settings as app_settings
-from core.email import send_activation_email, send_password_reset_email
+from core.email import send_activation_email, send_password_reset_email, send_email_change_email
+from core.account_security import invalidate_account_links, require_account_proof, revoke_sessions
+from models.account_security import EmailChangeToken, OidcIdentity
 from core.url_validator import validate_service_url
 from core.limiter import limiter
 from core.backup import restore_backup
 from core.nuvio import NuvioAPIError, parse_profile_id
 import schemas
-from dependencies import get_current_user, DEVICE_TOKEN_TYPE
+from dependencies import get_current_user, DEVICE_TOKEN_TYPE, oauth2_scheme
 from fastapi import File, UploadFile
 
 logger = logging.getLogger(__name__)
@@ -143,7 +147,7 @@ async def forgot_password(request: Request, body: schemas.ForgotPasswordRequest,
     if not app_settings.smtp_address:
         raise HTTPException(status_code=503, detail="Password reset is not configured.")
 
-    result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == body.email.strip().lower()))
+    result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == body.email.strip().lower()).with_for_update().execution_options(populate_existing=True))
     user = result.scalar_one_or_none()
 
     if user:
@@ -180,13 +184,18 @@ async def reset_password(
         await db.commit()
         raise HTTPException(status_code=400, detail="expired")
 
-    user_result = await db.execute(select(User).where(User.id == record.user_id))
+    user_result = await db.execute(select(User).where(User.id == record.user_id).with_for_update())
     user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=400, detail="invalid")
 
+    # Recheck after locking the account: another recovery may have consumed this link.
+    record = (await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token))).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=400, detail="invalid")
     user.password_hash = get_password_hash(body.new_password)
-    await db.execute(delete(PasswordResetToken).where(PasswordResetToken.token == token))
+    revoke_sessions(user)
+    await invalidate_account_links(db, user.id)
     await db.commit()
     return {"message": "Password updated successfully."}
 
@@ -286,11 +295,11 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
         temp_token = create_access_token(
             subject=user.id,
             expires_delta=timedelta(minutes=10),
-            extra_claims={"type": "2fa_pending"},
+            extra_claims={"type": "2fa_pending", "session_version": (getattr(user, "session_version", 0) or 0)},
         )
         return {"requires_2fa": True, "temp_token": temp_token}
 
-    access_token = create_access_token(subject=user.id)
+    access_token = create_session_token(user)
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/activate/{token}", include_in_schema=False)
@@ -308,10 +317,12 @@ async def activate_email(token: str, db: AsyncSession = Depends(get_db)):
         await db.commit()
         return RedirectResponse(f"{frontend}/auth/activate/{token}?error=expired")
 
-    user_result = await db.execute(select(User).where(User.id == activation.user_id))
+    user_result = await db.execute(select(User).where(User.id == activation.user_id).with_for_update().execution_options(populate_existing=True))
     user = user_result.scalar_one_or_none()
-    if user:
-        user.email_confirmed = True
+    activation = (await db.execute(select(EmailActivation).where(EmailActivation.token == token))).scalar_one_or_none()
+    if activation is None or user is None or activation.email.strip().lower() != user.email.strip().lower():
+        raise HTTPException(status_code=400, detail="invalid")
+    user.email_confirmed = True
     await db.delete(activation)
     await db.commit()
 
@@ -333,10 +344,12 @@ async def activate_email_api(token: str, db: AsyncSession = Depends(get_db)):
         await db.commit()
         raise HTTPException(status_code=400, detail="expired")
 
-    user_result = await db.execute(select(User).where(User.id == activation.user_id))
+    user_result = await db.execute(select(User).where(User.id == activation.user_id).with_for_update().execution_options(populate_existing=True))
     user = user_result.scalar_one_or_none()
-    if user:
-        user.email_confirmed = True
+    activation = (await db.execute(select(EmailActivation).where(EmailActivation.token == token))).scalar_one_or_none()
+    if activation is None or user is None or activation.email.strip().lower() != user.email.strip().lower():
+        raise HTTPException(status_code=400, detail="invalid")
+    user.email_confirmed = True
     await db.delete(activation)
     await db.commit()
 
@@ -923,23 +936,103 @@ async def delete_scrobble_connection(
 @router.post("/change-password")
 async def change_password(
     password_in: schemas.PasswordUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.password_hash is None:
-        # OIDC-created account with no password — allow setting one directly
-        if not password_in.current_password:
-            current_user.password_hash = get_password_hash(password_in.new_password)
-            await db.commit()
-            return {"status": "password updated"}
-    if not password_in.current_password or not verify_password(password_in.current_password, current_user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Incorrect current password",
-        )
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> dict[str, str]:
+    current_user = (await db.execute(select(User).where(User.id == current_user.id)
+                                    .with_for_update().execution_options(populate_existing=True))).scalar_one()
+    require_account_proof(current_user, password_in.current_password, token)
     current_user.password_hash = get_password_hash(password_in.new_password)
+    revoke_sessions(current_user)
+    await invalidate_account_links(db, current_user.id)
     await db.commit()
     return {"status": "password updated"}
+
+
+@router.get("/account-security")
+async def account_security_status(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> dict:
+    linked = (await db.execute(select(OidcIdentity.id).where(OidcIdentity.user_id == current_user.id))).first() is not None
+    fresh = False
+    try:
+        require_account_proof(current_user, None, token)
+        fresh = True
+    except HTTPException:
+        pass
+    return {"oidc_linked": linked, "oidc_fresh": fresh,
+            "oidc_enabled": app_settings.oidc_enabled, "provider_name": app_settings.oidc_provider_name,
+            "smtp_configured": bool(app_settings.smtp_address)}
+
+
+@router.post("/change-email")
+@limiter.limit("5/hour")
+async def request_email_change(
+    request: Request,
+    body: schemas.EmailChangeRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> dict[str, str]:
+    if not app_settings.smtp_address:
+        raise HTTPException(status_code=503, detail="Email delivery is unavailable. Contact an administrator")
+    user = (await db.execute(select(User).where(User.id == current_user.id).with_for_update()
+                            .execution_options(populate_existing=True))).scalar_one()
+    require_account_proof(user, body.current_password, token)
+    email = str(body.email).strip().lower()
+    if email == user.email:
+        raise HTTPException(status_code=400, detail="This is already your email address")
+    duplicate = (await db.execute(select(User.id).where(func.lower(func.trim(User.email)) == email))).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="This email address is already in use")
+    await db.execute(delete(EmailChangeToken).where(EmailChangeToken.user_id == user.id))
+    raw_token = generate_opaque_token()
+    db.add(EmailChangeToken(user_id=user.id, token_hash=hash_opaque_token(raw_token), email=email,
+                           previous_email=user.email, session_version=user.session_version or 0))
+    try:
+        await send_email_change_email(email, raw_token)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Could not send the confirmation email. Please try again")
+    await db.commit()
+    return {"message": "Check your new email address to confirm the change."}
+
+
+@router.post("/confirm-email-change")
+@limiter.limit("10/minute")
+async def confirm_email_change(
+    request: Request,
+    body: schemas.EmailChangeConfirmation,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, str]:
+    digest = hash_opaque_token(body.token)
+    record = (await db.execute(select(EmailChangeToken).where(EmailChangeToken.token_hash == digest))).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=400, detail="This confirmation link is invalid or has expired")
+    user = (await db.execute(select(User).where(User.id == record.user_id).with_for_update()
+                            .execution_options(populate_existing=True))).scalar_one_or_none()
+    record = (await db.execute(select(EmailChangeToken).where(EmailChangeToken.token_hash == digest)
+                              .execution_options(populate_existing=True))).scalar_one_or_none()
+    if (user is None or record is None or record.previous_email != user.email
+            or record.session_version != user.session_version
+            or datetime.now(timezone.utc) - record.created_at.replace(tzinfo=timezone.utc) > timedelta(hours=1)):
+        raise HTTPException(status_code=400, detail="This confirmation link is invalid or has expired")
+    await invalidate_account_links(db, user.id)
+    if not user.oidc_login_email:
+        user.oidc_login_email = user.email
+    user.email = record.email
+    user.email_confirmed = True
+    revoke_sessions(user)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This email address is already in use")
+    return {"message": "Email address changed. Sign in again."}
+
 
 @router.post("/api-key/regenerate", response_model=schemas.User)
 async def regenerate_api_key(
@@ -1668,12 +1761,12 @@ async def verify_2fa_login(
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    if not user or not user.totp_enabled:
+    if not user or not user.totp_enabled or not session_is_current(user, payload):
         raise credentials_exception
 
     # Try TOTP code
     if pyotp.TOTP(user.totp_secret).verify(req.code, valid_window=1):
-        return {"access_token": create_access_token(subject=user.id), "token_type": "bearer"}
+        return {"access_token": create_session_token(user), "token_type": "bearer"}
 
     # Try backup code
     bc_result = await db.execute(
@@ -1687,7 +1780,7 @@ async def verify_2fa_login(
     if bc:
         bc.used = True
         await db.commit()
-        return {"access_token": create_access_token(subject=user.id), "token_type": "bearer"}
+        return {"access_token": create_session_token(user), "token_type": "bearer"}
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid verification code")
 

@@ -9,6 +9,7 @@ import type { OidcConfig } from "../lib/api";
 
 let error = "";
 let success = "";
+if (Astro.url.searchParams.get("email_changed") === "true") success = "Email address changed. Sign in again.";
 let showTotpStep = false;
 let tempToken = "";
 
@@ -102,7 +103,7 @@ if (Astro.request.method === "POST") {
 }
 
 const token = Astro.cookies.get(sessionCookieName("token"))?.value;
-if (token) {
+if (token && Astro.locals.user) {
   return Astro.redirect(nextPath);
 }
 

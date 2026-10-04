@@ -10,7 +10,7 @@ from db import get_db
 from models.users import User
 from models.oauth_device import OAuthDeviceGrant
 from core.config import settings
-from core.security import ALGORITHM
+from core.security import ALGORITHM, session_is_current
 import schemas
 
 # Scopes carried by device-authorization-grant access tokens (#331). These
@@ -77,7 +77,7 @@ async def get_current_user(
     )
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        if payload.get("type") == "2fa_pending":
+        if payload.get("type") not in (None, DEVICE_TOKEN_TYPE):
             raise credentials_exception
         if payload.get("type") == DEVICE_TOKEN_TYPE:
             # A device-grant token is scope-limited and must never satisfy the
@@ -95,7 +95,7 @@ async def get_current_user(
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     
-    if user is None:
+    if user is None or not session_is_current(user, payload):
         raise credentials_exception
     return user
 
@@ -113,7 +113,7 @@ async def get_optional_user(
         return None
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        if payload.get("type") == "2fa_pending":
+        if payload.get("type") not in (None, DEVICE_TOKEN_TYPE):
             return None
         if payload.get("type") == DEVICE_TOKEN_TYPE:
             # The inherited API's data-write token is distinct from the
@@ -132,7 +132,7 @@ async def get_optional_user(
     query = select(User).where(User.id == user_id).options(selectinload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
-    return user
+    return user if user is not None and session_is_current(user, payload) else None
 
 
 async def get_tracking_write_user(
@@ -154,7 +154,7 @@ async def get_tracking_write_user(
         raise credentials_exception
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        if payload.get("type") == "2fa_pending":
+        if payload.get("type") not in (None, DEVICE_TOKEN_TYPE):
             raise credentials_exception
         if payload.get("type") == DEVICE_TOKEN_TYPE:
             if payload.get("scope") != "tracking:write":
@@ -171,7 +171,7 @@ async def get_tracking_write_user(
 
     result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.profile)))
     user = result.scalar_one_or_none()
-    if user is None:
+    if user is None or not session_is_current(user, payload):
         raise credentials_exception
     return user
 

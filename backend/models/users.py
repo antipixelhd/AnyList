@@ -33,6 +33,9 @@ class User(Base):
     created_at    : Mapped[datetime]       = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at    : Mapped[datetime]       = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    oidc_login_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     @property
     def display_name(self) -> str:
         return self.username

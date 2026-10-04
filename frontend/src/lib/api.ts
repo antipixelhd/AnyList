@@ -697,10 +697,14 @@ export const api = {
       post<LoginResponse>("/auth/2fa/verify-login", body),
     oidcConfig: () =>
       get<OidcConfig>("/auth/oidc/config"),
-    oidcAuthorize: () =>
-      get<OidcAuthorizeResponse>("/auth/oidc/authorize"),
-    oidcExchange: (code: string) =>
-      post<OidcExchangeResponse>("/auth/oidc/exchange", { code }),
+    accountSecurity: (token: string) =>
+      get<{ oidc_linked: boolean; oidc_fresh: boolean; oidc_enabled: boolean; provider_name: string; smtp_configured: boolean }>("/auth/account-security", undefined, token),
+    confirmEmailChange: (token: string) =>
+      post<{ message: string }>("/auth/confirm-email-change", { token }),
+    oidcAuthorize: (token?: string, reauth = false) =>
+      get<OidcAuthorizeResponse>("/auth/oidc/authorize", { reauth }, token),
+    oidcExchange: (code: string, state: string, token?: string) =>
+      post<OidcExchangeResponse>("/auth/oidc/exchange", { code, state }, token),
   },
 
   media: {

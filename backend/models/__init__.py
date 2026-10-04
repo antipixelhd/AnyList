@@ -1,6 +1,7 @@
 # app/models/__init__.py
 from .base import Base, UserRole, MediaType, CollectionSource
 from .users import User, UserSettings, TotpBackupCode
+from .account_security import OidcIdentity, EmailChangeToken
 from .connections import MediaServerConnection
 from .scrobble_connection import ScrobbleConnection
 from .profile import UserProfileData
@@ -41,7 +42,7 @@ configure_millisecond_timestamps(Base)
 __all__ = [
     "Base",
     "UserRole", "MediaType", "CollectionSource",
-    "User", "UserSettings", "TotpBackupCode",
+    "User", "UserSettings", "TotpBackupCode", "OidcIdentity", "EmailChangeToken",
     "MediaServerConnection",
     "ScrobbleConnection",
     "UserProfileData",

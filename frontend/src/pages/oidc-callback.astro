@@ -30,7 +30,7 @@ if (!error) {
     Astro.cookies.delete(sessionCookieName("oidc_next"), { path: "/" });
 
     try {
-      const { access_token } = await api.auth.oidcExchange(code);
+      const { access_token } = await api.auth.oidcExchange(code, state, Astro.cookies.get(sessionCookieName("token"))?.value);
       Astro.cookies.set(sessionCookieName("token"), access_token, {
         path: "/",
         httpOnly: true,

@@ -451,7 +451,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
             {users.map((u: AdminUser) => (
               <>
                 <tr class="user-main-row border-b border-zinc-800/50 hover:bg-zinc-800/30 transition cursor-pointer select-none"
-                    data-user-id={u.id} data-user-name={u.username} data-is-admin={u.is_admin} data-api-key={u.api_key}>
+                    data-user-id={u.id} data-user-name={u.username} data-user-email={u.email} data-is-admin={u.is_admin} data-api-key={u.api_key}>
                   <td class="px-4 py-3 text-zinc-100 font-medium">
                     <div class="flex items-center gap-3">
                       <div class="w-8 h-8 shrink-0 rounded-full overflow-hidden bg-zinc-800 border border-zinc-700 flex items-center justify-center">
@@ -483,6 +483,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                       >
                         {u.is_admin ? "Remove Admin" : "Make Admin"}
                       </button>
+                      <button type="button" class="change-email-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Change email</button>
                       <button type="button" class="reset-password-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Reset password</button>
                       <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all active:scale-95 cursor-pointer">
                         Delete
@@ -522,7 +523,8 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                         >
                           {u.is_admin ? "Remove Admin" : "Make Admin"}
                         </button>
-                        <button type="button" class="reset-password-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Reset password</button>
+                        <button type="button" class="change-email-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Change email</button>
+                      <button type="button" class="reset-password-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Reset password</button>
                       <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all active:scale-95 cursor-pointer">
                           Delete
                         </button>
@@ -697,6 +699,22 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 </div>
 
 <!-- Delete User Confirmation Modal -->
+<dialog id="change-email-dialog" class="fixed inset-0 m-auto h-fit w-[calc(100%_-_2rem)] max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 text-zinc-100 p-6 backdrop:bg-black/70" aria-labelledby="change-email-title">
+  <form id="change-email-form" class="space-y-4">
+    <h2 id="change-email-title" class="text-lg font-semibold">Change email</h2>
+    <p id="change-email-account" class="text-sm text-zinc-400"></p>
+    <label class="block text-sm">New email
+      <input id="change-email-input" type="email" autocomplete="off" required maxlength="255" class="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2" />
+    </label>
+    <p class="text-sm text-zinc-400">This confirms the address and signs the user out.</p>
+    <p id="change-email-error" role="alert" class="hidden text-sm text-red-400"></p>
+    <div class="flex justify-end gap-2">
+      <button id="change-email-cancel" type="button" class="rounded-lg px-3 py-2 text-sm bg-zinc-800">Cancel</button>
+      <button id="change-email-submit" type="submit" class="rounded-lg px-3 py-2 text-sm bg-blue-600">Change email</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="reset-password-dialog" class="fixed inset-0 m-auto h-fit w-[calc(100%_-_2rem)] max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 text-zinc-100 p-6 backdrop:bg-black/70" aria-labelledby="reset-password-title">
   <form id="reset-password-form" class="space-y-4">
     <h2 id="reset-password-title" class="text-lg font-semibold">Reset password</h2>
@@ -1624,13 +1642,64 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         body: JSON.stringify({ password: resetInput.value }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Could not reset password');
+      const isSelf = resetUserId === currentUserId;
       resetDialog.close();
-      showMessage('Password reset.');
+      if (isSelf) window.location.assign('/login?password_reset=true');
+      else showMessage('Password reset.');
     } catch (error: unknown) {
       resetError.textContent = error instanceof Error ? error.message : 'Could not reset password';
       resetError.classList.remove('hidden');
     } finally {
       resetSubmit.disabled = false;
+    }
+  });
+
+  const emailDialog = document.getElementById('change-email-dialog') as HTMLDialogElement;
+  const emailForm = document.getElementById('change-email-form') as HTMLFormElement;
+  const emailInput = document.getElementById('change-email-input') as HTMLInputElement;
+  const emailSubmit = document.getElementById('change-email-submit') as HTMLButtonElement;
+  const emailError = document.getElementById('change-email-error')!;
+  let emailUserId: number | null = null;
+  document.getElementById('users-table-body')!.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest('.change-email-btn');
+    if (!button) return;
+    const row = button.closest('tr') as HTMLTableRowElement;
+    emailUserId = Number(row.dataset.userId || row.dataset.detailFor);
+    const mainRow = document.querySelector<HTMLTableRowElement>(`tr.user-main-row[data-user-id="${emailUserId}"]`)!;
+    document.getElementById('change-email-account')!.textContent = mainRow.dataset.userName || '';
+    emailInput.value = mainRow.dataset.userEmail || '';
+    emailError.classList.add('hidden');
+    emailDialog.showModal();
+    emailInput.focus();
+  });
+  document.getElementById('change-email-cancel')!.addEventListener('click', () => {
+    if (!emailSubmit.disabled) emailDialog.close();
+  });
+  emailDialog.addEventListener('cancel', (event) => {
+    if (emailSubmit.disabled) event.preventDefault();
+  });
+  emailDialog.addEventListener('close', () => {
+    emailForm.reset();
+    emailUserId = null;
+  });
+  emailForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (emailUserId === null || emailSubmit.disabled) return;
+    emailSubmit.disabled = true;
+    emailError.classList.add('hidden');
+    try {
+      const res = await fetch(`/api/proxy/admin/users/${emailUserId}/email`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailInput.value }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Could not change email');
+      window.location.reload();
+    } catch (error: unknown) {
+      emailError.textContent = error instanceof Error ? error.message : 'Could not change email';
+      emailError.classList.remove('hidden');
+    } finally {
+      emailSubmit.disabled = false;
     }
   });
 

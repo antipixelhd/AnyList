@@ -161,13 +161,14 @@ async def reset_user_password(
     _: Annotated[User, Depends(require_admin)],
 ) -> dict[str, str]:
     """Recover a local login without requiring SMTP."""
-    from models.password_reset import PasswordResetToken
 
-    target = (await db.execute(select(User).where(User.id == user_id).with_for_update())).scalar_one_or_none()
+    target = (await db.execute(select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     target.password_hash = security.get_password_hash(body.password)
-    await db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+    from core.account_security import invalidate_account_links, revoke_sessions
+    revoke_sessions(target)
+    await invalidate_account_links(db, user_id)
     await db.commit()
     return {"status": "password reset"}
 
@@ -534,3 +535,34 @@ async def reject_request(
     req.updated_at = func.now()
     await db.commit()
     return {"status": "rejected"}
+
+
+@router.patch("/users/{user_id}/email")
+async def change_user_email(
+    user_id: int,
+    body: schemas.EmailChangeRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[User, Depends(require_admin)],
+) -> dict[str, str]:
+    from core.account_security import invalidate_account_links, revoke_sessions
+    target = (await db.execute(select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    email = str(body.email).strip().lower()
+    if target.email == email:
+        return {"status": "email updated"}
+    duplicate = (await db.execute(select(User.id).where(func.lower(func.trim(User.email)) == email, User.id != user_id))).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="This email address is already in use")
+    await invalidate_account_links(db, user_id)
+    if not target.oidc_login_email:
+        target.oidc_login_email = target.email
+    target.email = email
+    target.email_confirmed = True
+    revoke_sessions(target)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This email address is already in use")
+    return {"status": "email updated"}
