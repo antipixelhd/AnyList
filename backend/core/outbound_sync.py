@@ -130,6 +130,7 @@ async def fan_out_streaming_library(
     exclude_connection_ids: set[int] | None = None,
     source_observed_at_by_media: dict[int, datetime] | None = None,
     source_connection_ids_by_media: dict[int, set[int]] | None = None,
+    desired_by_media: dict[int, bool] | None = None,
 ) -> None:
     """Persist and deliver an observed library delta to peer streaming accounts.
 
@@ -204,6 +205,7 @@ async def fan_out_streaming_library(
         exclude_connection_ids=excluded_ids,
         source_observed_at_by_media=source_observations,
         source_connection_ids_by_media=source_ids_by_media,
+        desired_by_media=desired_by_media,
     )
     # The queue is durable before any provider request starts. Failures remain
     # pending for the independent delivery retry worker.

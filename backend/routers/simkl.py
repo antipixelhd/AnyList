@@ -87,6 +87,7 @@ async def simkl_pin_start(
 
 @router.post("/auth/pin/poll")
 async def simkl_pin_poll(
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -116,6 +117,9 @@ async def simkl_pin_poll(
     settings.simkl_device_code = None
     await db.commit()
 
+    if background_tasks is not None:
+        from core.account_sync import request_automatic_pull
+        await request_automatic_pull(db, current_user.id, background_tasks)
     return {"status": "connected"}
 
 

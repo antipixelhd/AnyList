@@ -367,6 +367,8 @@ async def _apply_trakt_import(
                         # Store an inferred date locally so a later reliable
                         # observation can correct it in place.
                         watched_at = _parse_trakt_datetime(item.get("watched_at"))
+                        from core.sync_reconciliation import collect_watch
+                        collect_watch(media.id, watched_at)
                         corrected = bool(watched_at and await reconcile_inferred_watch_date(
                             db, user_id, media.id, watched_at,
                         ))
@@ -475,6 +477,8 @@ async def _apply_trakt_import(
                             # See the movie branch: an unknown date remains
                             # replaceable when better evidence arrives.
                             watched_at = _parse_trakt_datetime(entry.get("watched_at"))
+                            from core.sync_reconciliation import collect_watch
+                            collect_watch(media.id, watched_at)
                             corrected = bool(watched_at and await reconcile_inferred_watch_date(
                                 db, user_id, media.id, watched_at,
                             ))

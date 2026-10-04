@@ -115,14 +115,22 @@ async def _flush_pull_cycle(state) -> None:
                 api_key=state.library_api_key,
                 source_observed_at_by_media=state.library_observed_at_by_media,
                 source_connection_ids_by_media=state.library_source_ids_by_media,
+                desired_by_media=state.library_desired,
             )
+        # Rating sources are scoped to a title/season, not the whole cycle.
+        groups = {}
+        for key, score in state.new_ratings.items():
+            sources = state.rating_sources.get(key)
+            connections = {int(value.split(":")[1]) for value in sources or () if value.startswith("connection:")}
+            clouds = {CollectionSource(value) for value in sources or () if not value.startswith("connection:")}
+            if sources is None:
+                connections, clouds = state.excluded_connection_ids, state.excluded_cloud_sources
+            groups.setdefault((frozenset(connections), frozenset(clouds)), {})[key] = score
+        for (connections, clouds), ratings in groups.items():
+            await outbound_sync.fan_out_changes(db, state.user_id, None, set(), ratings, settings,
+                exclude_connection_ids=set(connections), exclude_cloud_sources=set(clouds))
         await outbound_sync.fan_out_changes(
-            db,
-            state.user_id,
-            None,
-            set(),
-            state.new_ratings,
-            settings,
+            db, state.user_id, None, set(), {}, settings,
             removed_ratings=state.removed_ratings,
             new_collected_ids=state.new_collected_ids,
             removed_collected_ids=state.removed_collected_ids,

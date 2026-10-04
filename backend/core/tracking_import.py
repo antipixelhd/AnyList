@@ -13,6 +13,11 @@ from core.status_provenance import mark_status_change
 
 async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | None = None,
                                   *, initial_import: bool = False):
+    from core.sync_reconciliation import collecting
+    state = collecting(user_id)
+    if state:
+        state.initial_import = state.initial_import or initial_import
+        return 0
     await db.execute(select(User.id).where(User.id==user_id).with_for_update())
     deleted=set((await db.execute(select(TrackingDeletion.media_id).where(TrackingDeletion.user_id==user_id))).scalars())
     existing={e.media_id:e for e in (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==user_id))).scalars()}

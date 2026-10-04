@@ -688,7 +688,7 @@ async def _track_imported_root(
     desired_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
     if is_new:
         entry.status = desired_status
-        mark_status_change(entry, "netflix-import")
+        mark_status_change(entry, "netflix-import", datetime.combine(max(accepted_dates), datetime.min.time()) if accepted_dates else None)
     elif outcome.get("status_overridden") and entry.status != desired_status:
         entry.status = desired_status
         mark_status_change(entry, "netflix-import")
@@ -911,6 +911,8 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
     maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with maker() as db:
+            from models import User
+            await db.execute(select(User.id).where(User.id == user_id).with_for_update())
             session = (await db.execute(select(NetflixImportSession).where(
                 NetflixImportSession.id == session_id,
                 NetflixImportSession.user_id == user_id,
@@ -954,6 +956,8 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
             session.error_message = None
             session.expires_at = _now() + timedelta(days=36500)
             await db.commit()
+        from core.account_sync import pull_after_import
+        await pull_after_import(user_id)
     except ImportCancelled:
         async with maker() as db:
             session = (await db.execute(select(NetflixImportSession).where(

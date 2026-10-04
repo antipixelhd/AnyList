@@ -23,6 +23,8 @@ class PullCycleState:
     user_id: int
     new_watched_ids: set[int] = field(default_factory=set)
     new_ratings: RatingChanges = field(default_factory=dict)
+    rating_sources: dict[RatingKey, set[str]] = field(default_factory=dict)
+    library_desired: dict[int, bool] = field(default_factory=dict)
     removed_ratings: set[RatingKey] = field(default_factory=set)
     new_collected_ids: set[int] = field(default_factory=set)
     removed_collected_ids: set[int] = field(default_factory=set)

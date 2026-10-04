@@ -136,6 +136,8 @@ async def _run_provider(user_id: int, job_id: int) -> None:
             await db.commit()
             return
         await db.commit()
+    from core.sync_reconciliation import _source, source_key
+    source_token = _source.set(source_key(provider, connection_id))
     try:
         if connection_id:
             await SERVER_RUNNERS[provider](user_id, job_id, 0, 0, connection_id)
@@ -147,12 +149,16 @@ async def _run_provider(user_id: int, job_id: int) -> None:
                 status=SyncStatus.failed, error_message="Provider pull failed"))
             await db.commit()
         return
+    finally:
+        _source.reset(source_token)
     async with factory() as db:
         job = await db.get(SyncJob, job_id)
         if job and job.status == SyncStatus.completed and check.checkpoint and not job.errors and not job.warnings:
             stats = job.stats or {}
             if not stats.get("errors") and stats.get("provider_snapshot_complete", True):
-                job.stats = {**stats, "provider_checkpoint": check.checkpoint}
+                from core.sync_reconciliation import collecting
+                key = "provider_pending_checkpoint" if collecting(user_id) else "provider_checkpoint"
+                job.stats = {**stats, key: check.checkpoint}
                 await db.commit()
 
 
@@ -167,22 +173,37 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
             return
         parent = await db.get(SyncJob, job_id)
         children = list((parent.stats or {}).get("child_job_ids", []))
+    from core.sync_reconciliation import Reconciliation, _current, initialize, finalize
+    reconciliation = Reconciliation(user_id)
+    token = _current.set(reconciliation)
     failed = False
+    reconciled = False
+    followup = False
     try:
         async with coordinated_pull_cycle(user_id) as state:
+            async with factory() as db:
+                await initialize(db, reconciliation)
             results = await asyncio.gather(*(_run_provider(user_id, child_id) for child_id in children), return_exceptions=True)
             failed = any(isinstance(result, BaseException) for result in results)
             async with factory() as db:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(current_step="Reconciling and delivering changes"))
                 await db.commit()
-            with allow_cycle_delivery(state):
-                await _flush_pull_cycle(state)
+            async with factory() as db:
+                parent = await db.get(SyncJob, job_id)
+                if not (parent.stats or {}).get("cancel_requested"):
+                    await finalize(db, reconciliation, state)
+                    reconciled = True
+            if reconciled:
+                with allow_cycle_delivery(state):
+                    await _flush_pull_cycle(state)
     except asyncio.CancelledError:
         raise
     except Exception:
         failed = True
     finally:
+        _current.reset(token)
         async with factory() as db:
+            await db.execute(select(User.id).where(User.id == user_id).with_for_update())
             # No worker may leave a pending child stranded after the cycle ends.
             await db.execute(update(SyncJob).where(SyncJob.id.in_(children), SyncJob.status.in_(ACTIVE)).values(
                 status=SyncStatus.failed, error_message="Account pull did not finish"))
@@ -191,14 +212,32 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
             if parent:
                 cancelled = (parent.stats or {}).get("cancel_requested", False) or SyncStatus.cancelled in statuses
                 failed = failed or SyncStatus.failed in statuses
+                for child_id in children:
+                    child = await db.get(SyncJob, child_id)
+                    if child and child.stats and "provider_pending_checkpoint" in child.stats:
+                        stats = dict(child.stats)
+                        checkpoint = stats.pop("provider_pending_checkpoint")
+                        if reconciled:
+                            stats["provider_checkpoint"] = checkpoint
+                        child.stats = stats
+                followup = bool((parent.stats or {}).get("followup_requested")) and not cancelled
                 parent.status = SyncStatus.cancelled if cancelled else SyncStatus.failed if failed else SyncStatus.completed
                 parent.processed_items = len(children)
                 parent.errors = sum(status == SyncStatus.failed for status in statuses)
                 parent.current_step = "Cancelled" if cancelled else "Completed with errors" if failed else "Completed"
                 parent.updated_at = datetime.utcnow()
                 if failed:
+                    # A failed shared reconcile must be retried even if the
+                    # provider fetch itself had already saved a checkpoint.
+                    for child_id in children:
+                        child = await db.get(SyncJob, child_id)
+                        if child and child.stats and "provider_checkpoint" in child.stats:
+                            child.stats = {key: value for key, value in child.stats.items() if key != "provider_checkpoint"}
                     parent.error_message = "Some providers or outbound delivery failed; see provider jobs"
                 await db.commit()
+
+    if followup:
+        await pull_after_import(user_id)
 
 
 async def request_cycle_cancel(db, parent: SyncJob) -> None:
@@ -214,3 +253,34 @@ async def start_account_pull(background_tasks, db, user_id: int) -> dict:
     job = await queue_account_pull(db, user_id)
     background_tasks.add_task(run_account_pull, user_id, job.id)
     return {"status": "started", "job_id": job.id, "message": "Account sync started"}
+
+
+async def request_automatic_pull(db, user_id: int, background_tasks=None) -> int | None:
+    """Coalesce connection/import triggers without allowing overlapping cycles."""
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+    active = (await db.execute(select(SyncJob).where(SyncJob.user_id == user_id,
+        SyncJob.job_type == "pull_cycle", SyncJob.status.in_(ACTIVE)))).scalar_one_or_none()
+    if active:
+        # The running cycle captured its targets before the new connection or
+        # import existed. One follow-up includes all subsequent additions.
+        active.stats = {**(active.stats or {}), "followup_requested": True}
+        await db.commit()
+        return None
+    try:
+        job = await queue_account_pull(db, user_id)
+    except HTTPException as exc:
+        if exc.status_code not in (400, 409):
+            raise
+        await db.commit()
+        return None  # No pull target/key yet, or a recovery operation is active.
+    if background_tasks is not None:
+        background_tasks.add_task(run_account_pull, user_id, job.id)
+    return job.id
+
+
+async def pull_after_import(user_id: int) -> None:
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with factory() as db:
+        job_id = await request_automatic_pull(db, user_id)
+    if job_id is not None:
+        await run_account_pull(user_id, job_id)

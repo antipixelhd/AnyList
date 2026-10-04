@@ -281,6 +281,16 @@ async def observe_stream_snapshot(
     removed_watched_ids=None, fresh_import=False, source_started_at=None,
     changed_media_ids=None, cw_visibility=None,
 ):
+    from core.sync_reconciliation import collecting, playback_allowed, replaying, changed_local_fields
+    state = collecting(conn.user_id)
+    if state:
+        from copy import deepcopy
+        state.snapshots.append(dict(connection_id=conn.id, identity_version=conn.identity_version, library=deepcopy(library), watched=deepcopy(watched),
+            progress=deepcopy(progress), tmdb_ids=dict(tmdb_ids), complete=complete,
+            touched=set(touched) if touched is not None else None, removed_library=removed_library,
+            sync_playback=sync_playback, sync_watched=sync_watched, fresh_import=fresh_import,
+            source_started_at=source_started_at, cw_visibility=deepcopy(cw_visibility)))
+        return set()
     if fresh_import and not complete:
         raise ValueError("A full resync requires a complete provider snapshot")
     # Partial/failed pulls cannot establish or advance a trusted baseline.
@@ -466,6 +476,8 @@ async def observe_stream_snapshot(
             media = lookup.get((mappings.get(str(row.get('content_id'))), row.get('content_type')))
             if not media or media.id not in existing_ids:
                 continue
+            if playback_allowed(conn.user_id, conn.id, media.id) is not None:
+                continue
             entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == conn.user_id, TrackedEntry.media_id == media.id))).scalar_one()
             proposed = observed_status(entry.status, False, True)
             if proposed == entry.status:
@@ -490,14 +502,15 @@ async def observe_stream_snapshot(
             continue
         media=lookup.get((mappings.get(key),old.get('content_type')))
         if not media:continue
+        if playback_allowed(conn.user_id, conn.id, media.id) is False:continue
         entry=(await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==conn.user_id,TrackedEntry.media_id==media.id))).scalar_one_or_none()
         if not entry or entry.status=='completed':continue
         if conn.type in ('nuvio', 'stremio') and entry.status != 'watching':continue
         pending=(await db.execute(select(SyncReview.id).where(SyncReview.user_id==conn.user_id,SyncReview.media_id==media.id,SyncReview.state=='pending',SyncReview.kind.in_(['playback_removed','conflict'])))).first()
-        if pending:continue
+        if pending and playback_allowed(conn.user_id, conn.id, media.id) is not True:continue
         # A local edit since the prior source observation has uncertain ordering.
         changed_at=status_changed_at(entry)
-        conflict=bool(changed_at and baseline.observed_at and changed_at>baseline.observed_at)
+        conflict=bool(changed_at and baseline.observed_at and changed_at>baseline.observed_at) and playback_allowed(conn.user_id, conn.id, media.id) is not True
         proposed='dropped' if media.media_type==MediaType.movie else 'paused'
         auto_confirm = bool(preferences and preferences.auto_confirm and not conflict and baseline.approved)
         db.add(SyncReview(user_id=conn.user_id,connection_id=conn.id,media_id=media.id,kind='conflict' if conflict else 'playback_removed',state='confirmed' if auto_confirm else 'pending',
@@ -520,7 +533,7 @@ async def observe_stream_snapshot(
                     status_changed=True,previous_status=prior_status)
     # Only changed observations advance an existing tracked entry. Repeated
     # polling must not restore cleared dates or reinterpret the same playback.
-    if not first:
+    if not first or replaying(conn.user_id):
         # Retire legacy status reviews that offer no actual choice, even when
         # the next snapshot has no playback delta to process.
         redundant = (await db.execute(select(SyncReview).join(TrackedEntry,
@@ -601,13 +614,15 @@ async def observe_stream_snapshot(
             media = lookup.get((mappings.get(str(row.get('content_id'))), row.get('content_type')))
             if not media or media.id in deleted:
                 continue
+            if playback_allowed(conn.user_id, conn.id, media.id) is False:
+                continue
             entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == conn.user_id, TrackedEntry.media_id == media.id))).scalar_one_or_none()
             if not entry:
                 continue
             newly_tracked = media.id not in existing_ids
             pending = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,
                 SyncReview.media_id == media.id, SyncReview.state == 'pending', SyncReview.kind.in_(['conflict','playback_removed'])))).first()
-            if pending:
+            if pending and playback_allowed(conn.user_id, conn.id, media.id) is not True:
                 continue
             previous_status = entry.status
             previous_start_date = entry.start_date
@@ -635,6 +650,8 @@ async def observe_stream_snapshot(
                     ordering='apply' if previous_row and playback_rank(row)>playback_rank(previous_row) else 'stale' if previous_row else 'conflict'
                 else:
                     ordering='conflict'
+            if playback_allowed(conn.user_id, conn.id, media.id) is True:
+                ordering = 'apply'
             if ordering=='stale':
                 continue
             if media.media_type==MediaType.series and ordering=='apply':
@@ -677,10 +694,14 @@ async def observe_stream_snapshot(
                 # sends only that visibility setting back to the source.
                 from core.stream_actions import queue_dismissals
                 await queue_dismissals(db, conn, media)
+            protected_dates = {field: getattr(entry, field) for field in changed_local_fields(conn.user_id, entry)
+                               if field in ('start_date', 'finish_date')}
             entry.start_date, entry.finish_date = default_dates(previous_status, entry.status, entry.start_date, entry.finish_date, date.today())
             if newly_tracked:
                 if entry.status=='watching' and entry.start_date is None:entry.start_date=date.today()
                 if entry.status=='completed' and entry.finish_date is None:entry.finish_date=date.today()
+            for field, value in protected_dates.items():
+                setattr(entry, field, value)
             progress_changed = entry.progress != previous_progress
             if changed_media_ids is not None and (entry.status != previous_status or progress_changed or newly_tracked):
                 changed_media_ids.add(media.id)
@@ -713,6 +734,8 @@ async def observe_stream_snapshot(
             media = lookup.get((tmdb_id, 'series')) or lookup.get((tmdb_id, 'movie'))
             if media is None:
                 continue
+            if playback_allowed(conn.user_id, conn.id, media.id) is False:
+                continue
             entry = (await db.execute(select(TrackedEntry).where(
                 TrackedEntry.user_id == conn.user_id,
                 TrackedEntry.media_id == media.id,
@@ -728,14 +751,14 @@ async def observe_stream_snapshot(
                 SyncReview.state == 'pending',
                 SyncReview.kind.in_(['playback_removed', 'conflict']),
             ))).first()
-            if pending:
+            if pending and playback_allowed(conn.user_id, conn.id, media.id) is not True:
                 continue
             # Playback rows from this same pull may update status provenance
             # before dismissal reconciliation. Compare against the local clock
             # captured before processing this snapshot, so only an edit that
             # predated the pull can create the newer-local-edit conflict.
             changed_at = visibility_status_times.get(media.id, status_changed_at(entry))
-            conflict = bool(changed_at and prior_observed_at and changed_at > prior_observed_at)
+            conflict = bool(changed_at and prior_observed_at and changed_at > prior_observed_at) and playback_allowed(conn.user_id, conn.id, media.id) is not True
             auto_confirm = bool(preferences and preferences.auto_confirm
                 and not conflict and baseline.approved)
             db.add(SyncReview(
@@ -777,7 +800,7 @@ async def observe_stream_snapshot(
     watched=[row for row in watched if str(row.get('content_id')) not in deleted_keys]
     progress=[row for row in progress if str(row.get('content_id')) not in deleted_keys]
     completed=[row for row in completed if str(row.get('content_id')) not in deleted_keys]
-    baseline.snapshot={'library':sorted(library_ids),'progress':active,'mappings':mappings,'resume':resume,
+    baseline.snapshot={**(baseline.snapshot or {}), 'library':sorted(library_ids),'progress':active,'mappings':mappings,'resume':resume,
         'outbound':outbound if not first else {},
         'nuvio_visibility':nuvio_visibility,
         'cw_visibility_echo':visibility_echo,
@@ -791,7 +814,7 @@ async def observe_stream_snapshot(
     baseline.observed_at=datetime.now(timezone.utc).replace(tzinfo=None)
     propagated_watch_ids = set()
     if can_propagate_watches:
-        if sync_watched and conn.push_watched and removed_watched_ids is not None:
+        if sync_watched and conn.push_watched and removed_watched_ids is not None and not replaying(conn.user_id):
             from models.watch_intent import WatchIntent
             old_rows = previous.get('records', {}).get('watched', [])
             now_keys = {watch_key(row) for row in watched_rows}

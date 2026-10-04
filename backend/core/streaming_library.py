@@ -379,6 +379,7 @@ async def queue_provider_library_changes(
     exclude_connection_ids: set[int],
     source_observed_at_by_media: dict[int, datetime],
     source_connection_ids_by_media: dict[int, set[int]] | None = None,
+    desired_by_media: dict[int, bool] | None = None,
 ) -> int:
     """Persist an accepted provider collection delta for eligible peers.
 
@@ -430,7 +431,7 @@ async def queue_provider_library_changes(
         intent = existing_intents.get(media_id)
         if intent is not None and intent.updated_at is not None and intent.updated_at > observed_at:
             continue
-        desired = media_id in collections
+        desired = desired_by_media.get(media_id, media_id in collections) if desired_by_media else media_id in collections
         if intent is None:
             intent = StreamingLibraryIntent(
                 user_id=user_id,

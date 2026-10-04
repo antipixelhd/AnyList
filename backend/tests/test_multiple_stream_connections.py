@@ -271,6 +271,16 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self._count(MediaServerConnection), 3)
         self.assertEqual(validate.await_count, 4)
 
+    async def test_new_connection_requests_account_wide_sync(self):
+        from fastapi import BackgroundTasks
+        tasks = BackgroundTasks()
+        body = auth.schemas.MediaServerConnectionCreate(type="stremio", name="Stremio", url="ignored", token="fixture")
+        with patch.object(stremio, "validate_auth_key", AsyncMock(return_value={"_id": "new", "email": "new@example.test"})), \
+             patch("core.account_sync.request_automatic_pull", AsyncMock()) as trigger:
+            connection = await auth.create_connection(body, tasks, self.db, self.owner)
+        self.assertIsNotNone(connection.id)
+        trigger.assert_awaited_once_with(self.db, self.owner.id, tasks)
+
     async def test_stremio_reconnect_rejects_an_account_already_attached_to_another_row(self):
         await self._connection(provider="stremio", account_id="remote-a")
         second = await self._connection(provider="stremio", account_id="remote-b")

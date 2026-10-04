@@ -106,6 +106,16 @@ async def reconcile_cloud_watch_events(
     newly_tracked_ids: set[int] | None = None,
     observed_after: datetime | None = None,
 ) -> dict[str, int]:
+    from core.sync_reconciliation import collecting
+    state = collecting(user_id)
+    if state:
+        from models.tracking import StreamBaseline
+        baseline = await db.get(StreamBaseline, connection_id) if connection_id else (await db.execute(select(CloudBaseline).where(
+            CloudBaseline.user_id == user_id, CloudBaseline.provider == provider))).scalar_one_or_none()
+        state.histories.append(dict(provider=provider, connection_id=connection_id, initial=initial_import_override if initial_import_override is not None else baseline is None,
+                                    new_media_ids=set(new_media_ids), initial_import_override=initial_import_override,
+                                    observed_after=observed_after))
+        return {"applied": 0, "conflicts": 0, "preserved": 0}
     stats = {"applied": 0, "conflicts": 0, "preserved": 0}
     dismissed_legacy = await _dismiss_legacy_watch_conflicts(
         db, user_id=user_id, provider=provider, connection_id=connection_id,
@@ -155,6 +165,11 @@ async def reconcile_cloud_watch_events(
             TrackedEntry.media_id == root_id,
         ))).scalar_one_or_none()
         if entry is None:
+            continue
+        from core.sync_reconciliation import changed_local_fields
+        local_fields = changed_local_fields(user_id, entry)
+        if {"status", "progress"} & local_fields:
+            stats["preserved"] += 1
             continue
         latest_at = max(
             (_naive_utc(event.watched_at) for event, _ in item["events"]
@@ -207,6 +222,10 @@ async def reconcile_cloud_watch_events(
             proposed_start = earliest_at.date()
         if latest_at and proposed_status == "completed":
             proposed_finish = latest_at.date()
+        if "start_date" in local_fields:
+            proposed_start = entry.start_date
+        if "finish_date" in local_fields:
+            proposed_finish = entry.finish_date
         changes = _history_changes(
             entry,
             proposed_status=proposed_status,

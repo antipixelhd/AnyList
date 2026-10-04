@@ -208,7 +208,9 @@ async def queue_progress_update(db, source, media, record):
         return
     # Playback accepted from either Nuvio client must clear the other client's
     # presentation state too, without echoing watch progress back to its source.
-    if source.type == 'nuvio' and source.push_playback:
+    from core.sync_reconciliation import replaying
+    combined = replaying(source.user_id)
+    if source.type == 'nuvio' and source.push_playback and not combined:
         await _queue_nuvio_next_up_show(db, source.user_id, media, [source])
     targets = (await db.execute(select(MediaServerConnection).where(
         MediaServerConnection.user_id == source.user_id,
@@ -217,6 +219,9 @@ async def queue_progress_update(db, source, media, record):
         MediaServerConnection.push_playback.is_(True),
     ))).scalars().all()
     for conn in targets:
+        decision = combined.playback.get(media.id) if combined else None
+        if decision and f"connection:{conn.id}" in decision.sources:
+            continue
         baseline = await db.get(StreamBaseline, conn.id)
         if not baseline or not baseline.approved:
             continue

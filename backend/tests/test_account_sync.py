@@ -84,6 +84,34 @@ class AccountSyncRulesTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(parent.stats["cancel_requested"])
 
 
+    async def test_automatic_trigger_queues_account_cycle_and_keeps_creation_response_independent(self):
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[result(), result()]), commit=AsyncMock())
+        tasks = BackgroundTasks()
+        with patch.object(account_sync, "queue_account_pull", AsyncMock(return_value=SimpleNamespace(id=42))) as queue:
+            self.assertEqual(await account_sync.request_automatic_pull(db, 7, tasks), 42)
+        queue.assert_awaited_once_with(db, 7)
+        self.assertEqual(tasks.tasks[0].args, (7, 42))
+
+    async def test_automatic_triggers_coalesce_into_one_followup_while_cycle_runs(self):
+        parent = SimpleNamespace(stats={"child_job_ids": [1, 2]})
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[result(), result(parent), result(), result(parent)]),
+                             commit=AsyncMock())
+        tasks = BackgroundTasks()
+        with patch.object(account_sync, "queue_account_pull", AsyncMock()) as queue:
+            await account_sync.request_automatic_pull(db, 7, tasks)
+            await account_sync.request_automatic_pull(db, 7, tasks)
+        self.assertTrue(parent.stats["followup_requested"])
+        self.assertEqual(parent.stats["child_job_ids"], [1, 2])
+        self.assertFalse(tasks.tasks)
+        queue.assert_not_awaited()
+
+    async def test_missing_import_prerequisites_do_not_fail_connection_creation(self):
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[result(), result()]), commit=AsyncMock())
+        with patch.object(account_sync, "queue_account_pull", AsyncMock(side_effect=HTTPException(400, "No pull targets"))):
+            self.assertIsNone(await account_sync.request_automatic_pull(db, 7, BackgroundTasks()))
+        db.commit.assert_awaited_once()
+
+
 class AccountSchedulerTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_account_does_not_block_other_due_accounts(self):
         from core import scheduler

@@ -221,6 +221,8 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                             if not media:
                                 stats["skipped"] += 1
                                 continue
+                            from core.sync_reconciliation import collect_watch
+                            collect_watch(media.id, _parse_watched_at(item.get("last_watched_at")))
                             if media.id not in existing_watched:
                                 watched_at = _parse_watched_at(item.get("last_watched_at"))
                                 db.add(WatchEvent(
@@ -303,6 +305,8 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                         if not media:
                                             stats["errors"] += 1
                                             continue
+                                        from core.sync_reconciliation import collect_watch
+                                        collect_watch(media.id, _parse_watched_at(ep_entry.get("watched_at")))
                                         if media.id not in existing_watched:
                                             watched_at = _parse_watched_at(ep_entry.get("watched_at"))
                                             event = WatchEvent(

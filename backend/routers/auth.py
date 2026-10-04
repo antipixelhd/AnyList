@@ -5,7 +5,7 @@ import secrets
 import pyotp
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -461,6 +461,7 @@ async def get_user_settings(
 @router.patch("/settings", response_model=schemas.UserSettings)
 async def update_user_settings(
     settings_in: schemas.UserSettings,
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -513,6 +514,7 @@ async def update_user_settings(
         if field in update_data and update_data[field]:
             update_data[field] = await validate_service_url(update_data[field], label)
 
+    new_cloud_connection = bool(update_data.get("mdblist_api_key") and update_data["mdblist_api_key"] != settings.mdblist_api_key)
     for field, value in update_data.items():
         if hasattr(settings, field):
             setattr(settings, field, value)
@@ -522,6 +524,9 @@ async def update_user_settings(
 
     await db.commit()
     await db.refresh(settings)
+    if new_cloud_connection and background_tasks is not None:
+        from core.account_sync import request_automatic_pull
+        await request_automatic_pull(db, current_user.id, background_tasks)
     return await _settings_response(settings, db)
 
 
@@ -543,6 +548,7 @@ async def list_connections(
 @router.post("/connections", response_model=schemas.MediaServerConnectionResponse, status_code=201)
 async def create_connection(
     body: schemas.MediaServerConnectionCreate,
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -652,6 +658,9 @@ async def create_connection(
     db.add(conn)
     await _commit_stream_connection(db)
     await db.refresh(conn)
+    if background_tasks is not None:
+        from core.account_sync import request_automatic_pull
+        await request_automatic_pull(db, current_user.id, background_tasks)
     return conn
 
 
@@ -1275,6 +1284,7 @@ async def start_stremio_link(
 @router.post("/stremio/link/poll")
 async def poll_stremio_link(
     body: schemas.StremioLinkPollRequest,
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1352,6 +1362,9 @@ async def poll_stremio_link(
     db.add(connection)
     await _commit_stream_connection(db)
     await db.refresh(connection)
+    if background_tasks is not None:
+        from core.account_sync import request_automatic_pull
+        await request_automatic_pull(db, current_user.id, background_tasks)
     return {
         "status": "connected",
         "connection": schemas.MediaServerConnectionResponse.model_validate(connection),

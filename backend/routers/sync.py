@@ -274,6 +274,7 @@ async def trigger_library_scan(
 async def save_connection_libraries(
     connection_id: int,
     body: dict,
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -291,6 +292,9 @@ async def save_connection_libraries(
                 if lid in name_map:
                     db.add(selection(user_id=current_user.id, connection_id=conn.id, library_id=lid, library_name=name_map[lid]))
             await db.commit()
+            if background_tasks is not None:
+                from core.account_sync import request_automatic_pull
+                await request_automatic_pull(db, current_user.id, background_tasks)
             return {"saved": len(library_ids)}
 
         elif conn.type == "plex":
@@ -302,6 +306,9 @@ async def save_connection_libraries(
                 if key in name_map:
                     db.add(PlexLibrarySelection(user_id=current_user.id, connection_id=conn.id, library_key=key, library_name=name_map[key]))
             await db.commit()
+            if background_tasks is not None:
+                from core.account_sync import request_automatic_pull
+                await request_automatic_pull(db, current_user.id, background_tasks)
             return {"saved": len(library_keys)}
 
         elif conn.type in ("nuvio", "stremio", "arvio"):

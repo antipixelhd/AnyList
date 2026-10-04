@@ -315,6 +315,8 @@ async def _import_watched(
                         stats["skipped"] += 1
                         continue
                     watched_at = _utc_naive_optional(entry.get("watched_at") or entry.get("last_watched_at"))
+                    from core.sync_reconciliation import collect_watch
+                    collect_watch(media.id, watched_at)
                     if watched_at is not None and await reconcile_inferred_watch_date(
                         db, user_id, media.id, watched_at,
                     ):

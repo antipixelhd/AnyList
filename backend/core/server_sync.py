@@ -1276,6 +1276,9 @@ async def sync_items(
 
                 if media_id_for_watch is not None:
                     watch_state = extract_watch_state(item, source)
+                    if sync_watched and watch_state["completed"]:
+                        from core.sync_reconciliation import collect_watch
+                        collect_watch(media_id_for_watch, watch_state["last_played"])
                     if sync_watched and (watch_state["completed"] or watch_state["play_count"] > 0):
                         from core.watch_dates import (
                             inferred_watch_datetime,
@@ -1743,6 +1746,11 @@ async def _push_watched_back_to_source(
     so it stamps its own receipt time (see PlexPendingPush). Returns how many
     pushes succeeded.
     """
+    from core.sync_reconciliation import collecting
+    state = collecting(user_id)
+    if state:
+        state.deferred_push_back.setdefault(conn.id, {}).update(push_back)
+        return 0
     if not push_back or not conn.push_watched or conn.type not in ("plex", "jellyfin", "emby"):
         return 0
 
@@ -2684,6 +2692,9 @@ async def _apply_nuvio_progress(
     *,
     fresh_import: bool = False,
 ) -> None:
+    from core.sync_reconciliation import collecting
+    if collecting(user_id):
+        return  # The complete snapshot supplies proposals to the shared reconciler.
     from models.tracking import StreamBaseline
     baseline = await db.get(StreamBaseline, conn.id) if conn else None
     previous_progress = {
@@ -3988,6 +3999,10 @@ async def _apply_arvio_playback_progress(
     if not media:
         return False
 
+    from core.sync_reconciliation import collect_raw_progress
+    if await collect_raw_progress(db, user_id, media.id, int(position_seconds), progress_pct,
+                                  arvio_payloads.parse_timestamp(item.get("updatedAtMs") or item.get("updatedAt"))):
+        return True
     pp_res = await db.execute(
         select(PlaybackProgress).where(
             PlaybackProgress.user_id == user_id,
@@ -4158,6 +4173,12 @@ async def _run_arvio_sync(
                 )
             )
             await db.commit()
+            from core.sync_reconciliation import collecting
+            if collecting(user_id):
+                from core.media_server_reconciliation import record_media_server_import
+                await record_media_server_import(db, conn, {"watched": len(watched_movies)+len(watched_episodes),
+                    "progress": len(progress_items)}, complete=True)
+                await db.commit()
             logger.info("ARVIO sync completed for user %s, job %s: movies=%s episodes=%s cw=%s", user_id, job_id, len(watched_movies), len(watched_episodes), len(progress_items))
 
         except SyncCancelled:

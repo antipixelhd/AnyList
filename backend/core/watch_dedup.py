@@ -85,6 +85,8 @@ async def find_duplicate_watch_event(
 
     Callers that follow a None result by inserting the new WatchEvent get
     race protection for free: see _acquire_dedup_lock."""
+    from core.sync_reconciliation import collect_watch
+    collect_watch(media_id, candidate_time)
     if not window_minutes:
         return None
     await _acquire_dedup_lock(db, user_id, media_id)
@@ -125,6 +127,8 @@ def is_duplicate_watch_time(
 ) -> bool:
     """In-memory counterpart to find_duplicate_watch_event, for loops that
     preloaded existing times with load_existing_watch_times."""
+    from core.sync_reconciliation import collect_watch
+    collect_watch(media_id, candidate_time)
     if not window_minutes:
         return False
     at = candidate_time or datetime.utcnow()

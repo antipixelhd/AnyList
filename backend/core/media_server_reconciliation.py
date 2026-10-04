@@ -19,6 +19,14 @@ async def _reconcile_ratings(db, conn, observed: RatingChanges, previous: Stream
     changed: RatingChanges = {}
     if not observed:
         return changed, 0
+    from core.sync_reconciliation import collecting, collect_rating, _MISSING
+    if collecting(conn.user_id):
+        prior = (previous.snapshot or {}).get("ratings", {}) if previous else {}
+        for key, score in observed.items():
+            await collect_rating(db, conn.user_id, conn.type, key[0], key[1], score, None,
+                                 conn=conn, previous=prior.get(_rating_key(key), _MISSING),
+                                 observed_after=previous.observed_at if previous else None)
+        return {}, 0
     media_ids = {media_id for media_id, _ in observed}
     ratings = (await db.execute(select(Rating).where(
         Rating.user_id == conn.user_id,
@@ -98,6 +106,12 @@ async def record_media_server_import(
     """Record a complete import summary; return whether outbound is approved."""
     if not complete:
         return False
+    from core.sync_reconciliation import collecting
+    state = collecting(conn.user_id)
+    if state:
+        state.server_imports[conn.id] = (dict(stats), dict(observed_ratings or {}))
+        baseline = await db.get(StreamBaseline, conn.id)
+        return bool(baseline and baseline.approved)
     baseline = await db.get(StreamBaseline, conn.id)
     if baseline is None:
         baseline = StreamBaseline(
@@ -114,6 +128,7 @@ async def record_media_server_import(
             ),
         ))
     baseline.snapshot = {
+        **(baseline.snapshot or {}),
         "kind": "media_server", "summary": dict(stats),
         "ratings": {_rating_key(key): score for key, score in (observed_ratings or {}).items()},
     }
