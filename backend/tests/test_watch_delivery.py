@@ -125,7 +125,8 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_jellyfin_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id):
+        async def fake_mark_watched(url, token, user_id, source_id, *, played_at=None):
+            self.assertEqual(played_at, datetime(2020, 1, 1))
             return True
 
         with patch("core.watch_delivery.jellyfin_client.mark_watched", fake_mark_watched), \
@@ -141,7 +142,8 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_emby_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id):
+        async def fake_mark_watched(url, token, user_id, source_id, *, played_at=None):
+            self.assertEqual(played_at, datetime(2020, 1, 1))
             return True
 
         with patch("core.watch_delivery.emby_client.mark_watched", fake_mark_watched), \

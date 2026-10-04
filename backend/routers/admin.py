@@ -7,6 +7,7 @@ import io
 import json
 import struct
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
@@ -150,6 +151,25 @@ async def create_user(
         created_at=user.created_at,
         avatar_url=None,
     )
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: int,
+    body: schemas.AdminPasswordReset,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[User, Depends(require_admin)],
+) -> dict[str, str]:
+    """Recover a local login without requiring SMTP."""
+    from models.password_reset import PasswordResetToken
+
+    target = (await db.execute(select(User).where(User.id == user_id).with_for_update())).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    target.password_hash = security.get_password_hash(body.password)
+    await db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+    await db.commit()
+    return {"status": "password reset"}
 
 
 @router.patch("/users/{user_id}/toggle-admin", response_model=schemas.AdminUser)

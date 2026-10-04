@@ -12,7 +12,7 @@ from core import enrichment, show_metadata
 def session(row=None):
     return SimpleNamespace(
         execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: row)),
-        flush=AsyncMock(), add=Mock(),
+        flush=AsyncMock(), add=Mock(), begin_nested=Mock(return_value=AsyncMock()),
     )
 
 

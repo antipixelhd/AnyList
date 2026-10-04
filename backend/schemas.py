@@ -559,6 +559,10 @@ class AdminUser(BaseModel):
         from_attributes = True
 
 
+class AdminPasswordReset(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
 class AdminUserCreate(BaseModel):
     username : str = Field(min_length=1, max_length=150)
     email    : EmailStr

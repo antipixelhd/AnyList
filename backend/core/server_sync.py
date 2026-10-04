@@ -45,6 +45,7 @@ from core.enrichment import (
     enrich_series_from_show,
     is_unmapped_tvdb_episode,
 )
+from core.episode_order import load_tvdb_episode_id_positions, reconcile_divergent_episode_media
 from core.identity import coerce_id
 from core.image_cache import pre_cache_all_collected_bg
 from core.jellyfin import get_jellyfin_tmdb_id
@@ -639,6 +640,79 @@ def _expand_multi_episode_items(items: list, media_type: MediaType, source: Coll
     return expanded
 
 
+def _canonical_episode_position(
+    item: dict, series_tmdb_id: int | None, positions: dict[tuple[int, int], tuple[int, int]]
+) -> tuple[int, int] | None:
+    """The canonical TMDB (season, episode) of a Jellyfin/Emby episode item, found
+    through the episode's own TVDB id (#447), or None to keep the raw numbers.
+
+    The server's SeasonNumber/EpisodeNumber follow whatever metadata provider it
+    uses, so they are never assumed to be TVDB's - only an exact episode-id match
+    against an EpisodeOrderMapping row counts. A multi-episode file is skipped: its
+    ProviderIds belong to the first episode only, not to each expanded copy."""
+    if not series_tmdb_id or item.get("IndexNumberEnd") is not None:
+        return None
+    tvdb_id = jellyfin.get_jellyfin_tvdb_id(item.get("ProviderIds") or {})
+    return positions.get((series_tmdb_id, tvdb_id)) if tvdb_id else None
+
+
+async def _fold_divergent_episodes(
+    db: AsyncSession,
+    items: list,
+    show_map: dict,
+    show_id_to_tmdb: dict,
+    tvdb_positions: dict[tuple[int, int], tuple[int, int]],
+    media_by_episode: dict,
+) -> tuple[bool, list[Media]]:
+    """#447: settle divergent twins of translated items before the sync loop. Returns
+    (changed, moved_rows): changed is True when any row moved or merged, so the caller
+    must reload its lookup maps; moved_rows are the rows repositioned onto a canonical
+    slot, which still lack their TMDB data and need enriching."""
+    # A divergent twin from before this ran (or from the webhook path) holds the
+    # watch history. Where the canonical row exists, fold the twin into it; where
+    # it was never created, move the twin itself to the canonical position. Either
+    # way this sync then neither duplicates the file nor records the watch twice.
+    reconcile_show_ids: set[int] = set()
+    moved_rows: list[Media] = []
+    for it in items:
+        sid = show_map.get(str(it.get("SeriesId")))
+        pos = _canonical_episode_position(it, show_id_to_tmdb.get(sid), tvdb_positions)
+        raw = (sid, it.get("ParentIndexNumber"), it.get("IndexNumber"))
+        divergent = media_by_episode.get(raw) if pos and sid else None
+        if divergent is None:
+            continue
+        canonical = media_by_episode.get((sid, *pos))
+        if canonical is divergent:
+            continue
+        if canonical is not None:
+            reconcile_show_ids.add(sid)
+            continue
+        # Only a row provably this very episode may be moved: the raw slot can
+        # just as well hold a genuinely different TMDB episode. Same identity
+        # rule as reconcile_divergent_episode_media (tmdb_id only as the legacy
+        # stand-in for a TVDB id when tvdb_id was never set).
+        item_tvdb_id = jellyfin.get_jellyfin_tvdb_id(it.get("ProviderIds") or {})
+        row_tvdb_id = divergent.tvdb_id if divergent.tvdb_id is not None else divergent.tmdb_id
+        if row_tvdb_id != item_tvdb_id:
+            continue
+        divergent.season_number, divergent.episode_number = pos
+        del media_by_episode[raw]
+        media_by_episode[(sid, *pos)] = divergent
+        moved_rows.append(divergent)
+    if moved_rows:
+        await db.flush()
+    merged_any = bool(moved_rows)
+    for sid in reconcile_show_ids:
+        show_row = await db.get(Show, sid)
+        if show_row:
+            try:
+                stats_r = await reconcile_divergent_episode_media(db, show_row)
+                merged_any = merged_any or bool(stats_r.get("merged"))
+            except Exception:
+                logger.exception("Pre-sync episode reconciliation failed for show=%s", sid)
+    return merged_any, moved_rows
+
+
 async def sync_items(
     items: list,
     media_type: MediaType,
@@ -753,6 +827,49 @@ async def sync_items(
             for m in medias:
                 media_by_tmdb[(m.tmdb_id, m.media_type)] = m
 
+    # #447: Jellyfin/Emby report their own numbering, which for a show whose TVDB and
+    # TMDB layouts diverge is not the canonical TMDB position every other path uses.
+    # Resolve each item through its episode-level TVDB id so the lookups below land
+    # on the canonical row instead of creating a divergent twin on every sync.
+    tvdb_positions: dict[tuple[int, int], tuple[int, int]] = {}
+    moved_rows: list[Media] = []
+    if media_type == MediaType.episode and source in _MEDIA_BROWSER_ITEM_SOURCES and show_ids:
+        series_ids = sorted({t for t in show_id_to_tmdb.values() if t})
+        item_tvdb_ids = sorted({
+            tid for it in items
+            if it.get("IndexNumberEnd") is None
+            and (tid := jellyfin.get_jellyfin_tvdb_id(it.get("ProviderIds") or {}))
+        })
+        tvdb_positions = await load_tvdb_episode_id_positions(db, series_ids, item_tvdb_ids)
+
+    if tvdb_positions:
+        merged_any, moved_rows = await _fold_divergent_episodes(
+            db, items, show_map, show_id_to_tmdb, tvdb_positions, media_by_episode
+        )
+        if merged_any:
+            await db.commit()
+            media_by_episode.clear()
+            for m in await _select_in_chunks(
+                db,
+                lambda chunk: select(Media).where(Media.media_type == MediaType.episode, Media.show_id.in_(chunk)),
+                show_ids,
+            ):
+                media_by_episode[(m.show_id, m.season_number, m.episode_number)] = m
+            # The CollectionFiles were keyed on the rows' old positions.
+            files_q = await db.execute(
+                select(CollectionFile, Collection.media_id, Media)
+                .join(Collection, Collection.id == CollectionFile.collection_id)
+                .join(Media, Media.id == Collection.media_id)
+                .where(Collection.user_id == user_id, CollectionFile.source == source)
+            )
+            files_rows = files_q.all()
+            existing_files = {(f.source_id, m.episode_number): (f, media_id, m) for f, media_id, m in files_rows}
+            files_by_media_source = {(media_id, f.source): f for f, media_id, _ in files_rows}
+            colls_q = await db.execute(
+                select(Collection.id, Collection.media_id).where(Collection.user_id == user_id)
+            )
+            existing_coll_by_media_id = {media_id: coll_id for coll_id, media_id in colls_q.all()}
+
     # Reverse lookup: media.id → Media object (for healing unenriched items in skipped branch)
     media_by_id: dict[int, Media] = {m.id: m for _, _, m in files_rows}
     for m in list(media_by_episode.values()) + list(media_by_tmdb.values()):
@@ -803,6 +920,9 @@ async def sync_items(
 
     # ── Phase 2: Main sync loop (no N+1 queries, savepoints for error isolation) ──
     new_media_for_enrichment: list[tuple] = []  # (Media, series_tmdb_id | None)
+    # Rows moved onto their canonical slot above: fill in the TMDB data (and tmdb_id)
+    # they never had, exactly like a newly created episode.
+    new_media_for_enrichment.extend((m, show_id_to_tmdb.get(m.show_id)) for m in moved_rows)
     skipped_warnings: list[dict] = []
 
     # collection_id → earliest add-date seen this run, applied in batches so a
@@ -842,6 +962,12 @@ async def sync_items(
                     name = item.get("Name")
                     season_num = item.get("ParentIndexNumber")
                     episode_num = item.get("IndexNumber")
+                    if tvdb_positions:
+                        canonical_pos = _canonical_episode_position(
+                            item, show_id_to_tmdb.get(show_map.get(str(parent_id))), tvdb_positions
+                        )
+                        if canonical_pos:
+                            season_num, episode_num = canonical_pos
                 else:  # Plex
                     source_id = str(item.get("ratingKey"))
                     quality = plex.extract_quality(item.get("Media", []))
@@ -4423,6 +4549,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     for media_id, season_number, rating in ratings_result.all()
                 }
 
+            watched_at_by_media = (
+                await db_queries.latest_watched_at(db, user_id, list(watched_ids))
+                if watched_ids and conn.type in ("jellyfin", "emby") else {}
+            )
             all_media_ids = watched_ids | {media_id for media_id, _ in ratings_map}
             if not all_media_ids:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.completed, total_items=0, processed_items=0))
@@ -4464,6 +4594,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             lookup_media_ids = missing_ids | season_rating_ids
             media_info: dict[int, Media] = {}
             show_tmdb_map: dict[int, int] = {}  # show.id → show.tmdb_id
+            show_tvdb_map: dict[int, int] = {}  # show.id → show.tvdb_id, fallback for TVDB-only shows (#436)
             show_title_map: dict[int, str] = {}  # show.id → show.title, for grouping lookup-failed warnings (#400)
 
             if lookup_media_ids:
@@ -4480,10 +4611,12 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                     show_ids_list = list(show_ids_needed)
                     for i in range(0, len(show_ids_list), _MAX_IN_PARAMS):
                         chunk = show_ids_list[i : i + _MAX_IN_PARAMS]
-                        show_rows = await db.execute(select(Show.id, Show.tmdb_id, Show.title).where(Show.id.in_(chunk)))
+                        show_rows = await db.execute(select(Show.id, Show.tmdb_id, Show.tvdb_id, Show.title).where(Show.id.in_(chunk)))
                         for row in show_rows.all():
                             show_tmdb_map[row[0]] = row[1]
-                            show_title_map[row[0]] = row[2]
+                            if row[2] is not None:
+                                show_tvdb_map[row[0]] = row[2]
+                            show_title_map[row[0]] = row[3]
 
             # For Jellyfin/Emby, AnyProviderIdEquals can't be trusted to
             # narrow results on every server version - a per-item lookup can
@@ -4495,12 +4628,23 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
             # request against the unreliable filter.
             jellyfin_movie_index: dict[int, str] = {}
             jellyfin_series_index: dict[int, str] = {}
+            jellyfin_series_tvdb_index: dict[int, str] = {}
             if conn.type in ("jellyfin", "emby") and media_info:
                 client_mod = jellyfin if conn.type == "jellyfin" else emby
                 if any(m.media_type == MediaType.movie for m in media_info.values()):
                     jellyfin_movie_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Movie")
                 if any(m.media_type == MediaType.episode for m in media_info.values()):
                     jellyfin_series_index = await client_mod.build_tmdb_index(conn.url, conn.token, "Series")
+                    # Shows Scrob only ever matched via TVDB (e.g. a legacy-agent
+                    # Plex library) have no Show.tmdb_id at all, so the index
+                    # above can never resolve them - only build this second,
+                    # TVDB-keyed index when at least one such show is actually
+                    # in play (#436).
+                    if any(
+                        m.media_type == MediaType.episode and m.show_id and not show_tmdb_map.get(m.show_id) and show_tvdb_map.get(m.show_id)
+                        for m in media_info.values()
+                    ):
+                        jellyfin_series_tvdb_index = await client_mod.build_tvdb_index(conn.url, conn.token, "Series")
 
             # Build push list: (action, source_id, [rating])
             push_items: list[tuple] = []
@@ -4609,9 +4753,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
 
             async def _find_source_id(mid: int) -> str | None:
                 m = media_info.get(mid)
-                if not m or not m.tmdb_id:
+                if not m:
                     return None
                 if m.media_type == MediaType.movie:
+                    if not m.tmdb_id:
+                        return None
                     if conn.type == "plex":
                         found = await plex.find_movie_by_tmdb_id(conn.url, conn.token, m.tmdb_id)
                     else:
@@ -4620,12 +4766,17 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                         return jellyfin_movie_index.get(m.tmdb_id)
                 elif m.media_type == MediaType.episode:
                     show_tmdb = show_tmdb_map.get(m.show_id) if m.show_id else None
-                    if not show_tmdb or m.season_number is None or m.episode_number is None:
+                    show_tvdb = show_tvdb_map.get(m.show_id) if m.show_id else None
+                    if (not show_tmdb and not show_tvdb) or m.season_number is None or m.episode_number is None:
                         return None
                     if conn.type == "plex":
+                        if not show_tmdb:
+                            return None
                         found = await plex.find_episode_by_ids(conn.url, conn.token, show_tmdb, m.season_number, m.episode_number)
                     else:
-                        series_id = jellyfin_series_index.get(show_tmdb)
+                        series_id = jellyfin_series_index.get(show_tmdb) if show_tmdb else None
+                        if not series_id and show_tvdb:
+                            series_id = jellyfin_series_tvdb_index.get(show_tvdb)
                         if not series_id:
                             return None
                         client_mod = jellyfin if conn.type == "jellyfin" else emby
@@ -4686,9 +4837,9 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                     await outbound_sync.record_plex_pending_push(user_id, item[2])
                                 return ok
                             elif conn.type == "jellyfin":
-                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(item[2]))
                             else:
-                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(item[2]))
                         else:
                             sid, rating = item[1], item[2]
                             if conn.type == "plex":
@@ -4739,10 +4890,10 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 return ok
                             elif conn.type == "jellyfin":
                                 watch_echo.mark_pushed_watched(user_id, mid)
-                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(mid))
                             else:
                                 watch_echo.mark_pushed_watched(user_id, mid)
-                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                                return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=watched_at_by_media.get(mid))
                         else:
                             rating = item[2]
                             if conn.type == "plex":
@@ -4775,10 +4926,14 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                             return True
                         for mid in mids:
                             watch_echo.mark_pushed_watched(user_id, mid)
+                        group_played_at = max(
+                            (watched_at_by_media[mid] for mid in mids if watched_at_by_media.get(mid) is not None),
+                            default=None,
+                        )
                         if conn.type == "jellyfin":
-                            return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                            return await jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=group_played_at)
                         else:
-                            return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client)
+                            return await emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, client=client, played_at=group_played_at)
                     except Exception:
                         return False
 

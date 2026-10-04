@@ -426,6 +426,12 @@ async def fan_out_changes(
                 )
             return True
 
+        watched_at_by_media = (
+            await _latest_watched_at(db, user_id, list(new_watched_ids))
+            if new_watched_ids and any(conn.type in ("jellyfin", "emby") and conn.push_watched for conn in push_candidates)
+            else {}
+        )
+
         for conn in push_candidates:
             if conn.type in ('stremio', 'nuvio', 'jellyfin', 'emby', 'plex'):
                 from core.tracking_snapshot import require_stream_reconciliation
@@ -483,10 +489,10 @@ async def fan_out_changes(
                             # UserDataSaved webhook can echo this back fast enough that a
                             # post-await registration would already be too late (#247/#251).
                             watch_echo.mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
+                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
                         elif conn.type == "emby":
                             watch_echo.mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
+                            push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
             if conn.push_ratings:
                 for (mid, season_number), rating in server_rating_changes.items():
                     media = media_by_id.get(mid)
