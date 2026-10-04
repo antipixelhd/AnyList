@@ -78,3 +78,10 @@ shows the complete isolated test setup.
 Start with [backend behavior and module locations](docs/agents/BACKEND.md),
 [frontend structure and commands](frontend/README.md), or
 [frontend styling conventions](docs/agents/FRONTEND-STYLES.md) for the affected area.
+
+Password login uses the account email address (case-insensitive). Usernames are
+editable public handles; account data and sessions remain tied to the numeric
+user ID. OAuth password clients still send the email in the `username` form
+field. Migration `mt032` normalizes emails and enforces uniqueness; it stops and
+reports conflicting user IDs if existing addresses differ only by case or
+surrounding spaces. Resolve those accounts before retrying the migration.
