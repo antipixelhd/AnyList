@@ -33,7 +33,7 @@ function firstRating(details: any) {
 
 export function activityRating(activity: any) {
   const details = activity.payload || {};
-  if (!details.rating_changed) return null;
+  if (!details.rating_changed || typeof activity.score !== 'number' || activity.score <= 0) return null;
   const previous = typeof details.previous_score === 'number' ? details.previous_score : null;
   const current = typeof activity.score === 'number' ? activity.score : null;
   const label = previous == null

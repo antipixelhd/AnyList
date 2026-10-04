@@ -482,7 +482,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity[0]['score'], 7)
         self.assertTrue(activity[0]['payload']['rating_changed'])
 
-    async def test_rating_activity_retains_first_rating_for_day_then_marks_later_change(self):
+    async def test_rating_activity_retains_first_rating_during_cooldown_then_marks_later_change(self):
         self.assertEqual((await self.save(self.movie, status='watching')).status_code, 200)
         first = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'][0]
         self.assertFalse(first['payload'].get('rating_changed', False))
@@ -494,13 +494,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(today[0]['score'], 8)
         self.assertTrue(today[0]['payload']['rating_changed'])
         self.assertTrue(today[0]['payload']['rating_first'])
-        self.assertEqual(today[0]['payload']['previous_score'], 7)
+        self.assertNotIn('previous_score', today[0]['payload'])
 
         row = (await self.db.execute(select(TrackingActivity).where(
             TrackingActivity.user_id == self.owner.id,
             TrackingActivity.media_id == self.movie.id,
         ))).scalar_one()
-        row.created_at -= timedelta(days=1)
+        row.created_at -= timedelta(days=4)
+        row.payload = {**row.payload, 'first_rated_at': row.created_at.isoformat(),
+                       'window_started_at': row.created_at.isoformat()}
         await self.db.commit()
 
         self.assertEqual((await self.save(self.movie, status='completed', manual_score=9)).status_code, 200)
@@ -511,6 +513,205 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(activity[0]['payload'].get('rating_first', False))
         self.assertEqual(activity[0]['payload']['previous_score'], 8)
         self.assertTrue(activity[0]['payload']['status_changed'])
+
+    async def test_completed_rating_correction_preserves_original_card_time_and_order(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 10)
+        original = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                             status='completed', score=6, status_changed=True,
+                                             rating_changed=True, now=start)
+        await self.db.commit()
+        other = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                          status='watching', score=None, episodes_watched=1,
+                                          now=start + timedelta(days=1))
+        await self.db.commit()
+        corrected = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                              status='completed', score=8, previous_score=6,
+                                              rating_changed=True, now=start + timedelta(hours=48))
+        await self.db.commit()
+        self.assertEqual(corrected.id, original.id)
+        self.assertEqual(original.created_at, start)
+        self.assertEqual(original.payload['first_rated_at'], start.isoformat())
+        self.assertNotIn('previous_score', original.payload)
+        cards = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual([card['media']['id'] for card in cards], [other.media_id, original.media_id])
+        self.assertEqual(cards[1]['score'], 8)
+        changed = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                             status='completed', score=9, previous_score=8,
+                                             rating_changed=True, now=start + timedelta(hours=72))
+        await self.db.commit()
+        self.assertNotEqual(changed.id, original.id)
+        self.assertEqual(original.score, 8)
+        self.assertFalse(changed.payload['rating_first'])
+        self.assertEqual(changed.payload['previous_score'], 8)
+
+    async def test_rating_cooldown_starts_when_rated_not_when_activity_window_starts(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 10)
+        await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                    status='watching', score=None, episodes_watched=1, now=start)
+        await self.db.commit()
+        first = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                           status='watching', score=6, rating_changed=True,
+                                           now=start + timedelta(hours=23))
+        await self.db.commit()
+        corrected = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                               status='watching', score=8, previous_score=6,
+                                               rating_changed=True, now=start + timedelta(hours=25))
+        await self.db.commit()
+        self.assertEqual(corrected.id, first.id)
+        self.assertEqual(first.created_at, start + timedelta(hours=23))
+        self.assertEqual(first.payload['window_started_at'], start.isoformat())
+        self.assertEqual(first.payload['first_rated_at'], (start + timedelta(hours=23)).isoformat())
+        self.assertEqual(first.score, 8)
+        self.assertNotIn('previous_score', first.payload)
+        changed = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                             status='watching', score=9, previous_score=8,
+                                             rating_changed=True, now=start + timedelta(hours=47))
+        await self.db.commit()
+        self.assertNotEqual(changed.id, first.id)
+
+    async def test_episode_progress_during_rating_cooldown_keeps_independent_cards(self):
+        from core.activity import record_daily_activity, record_progress_activity
+
+        start = datetime(2026, 10, 1, 10)
+        original = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                             status='watching', score=None, episodes_watched=1, now=start)
+        await self.db.commit()
+        await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.show.id,
+                                    status='watching', score=6, rating_changed=True,
+                                    now=start + timedelta(hours=23))
+        await self.db.commit()
+        with patch('core.activity.series_activity_span', new=AsyncMock(return_value=('S1E2', 'S1E2', []))):
+            current = await record_progress_activity(self.db, user_id=self.owner.id, media=self.show,
+                                                    previous_progress=1, progress=2, status='watching', score=8,
+                                                    previous_score=6, rating_changed=True,
+                                                    now=start + timedelta(hours=25))
+            await self.db.commit()
+        self.assertNotEqual(current.id, original.id)
+        self.assertEqual(current.payload['episodes_watched'], 1)
+        self.assertFalse(current.payload['rating_changed'])
+        self.assertEqual(original.score, 8)
+        self.assertEqual(original.payload['episodes_watched'], 1)
+        self.assertEqual(original.created_at, start + timedelta(hours=23))
+        self.assertNotIn('previous_score', original.payload)
+
+    async def test_rating_cooldown_duration_uses_current_status(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 10)
+        for status, duration in (('watching', 24), ('paused', 24), ('planning', 24),
+                                 ('completed', 72), ('dropped', 72)):
+            with self.subTest(status=status):
+                await self.db.execute(delete(TrackingActivity))
+                first = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                                   status=status, score=6, rating_changed=True, now=start)
+                await self.db.commit()
+                corrected = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                                       status=status, score=7, previous_score=6,
+                                                       rating_changed=True, now=start + timedelta(hours=duration - 1))
+                await self.db.commit()
+                self.assertEqual(corrected.id, first.id)
+                changed = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                                     status=status, score=8, previous_score=7,
+                                                     rating_changed=True, now=start + timedelta(hours=duration))
+                await self.db.commit()
+                self.assertNotEqual(changed.id, first.id)
+        await self.db.execute(delete(TrackingActivity))
+        first = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                           status='watching', score=6, rating_changed=True, now=start)
+        await self.db.commit()
+        extended = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                              status='completed', score=7, previous_score=6,
+                                              rating_changed=True, now=start + timedelta(hours=48))
+        await self.db.commit()
+        self.assertEqual(extended.id, first.id)
+        shortened = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                               status='watching', score=8, previous_score=7,
+                                               rating_changed=True, now=start + timedelta(hours=49))
+        await self.db.commit()
+        self.assertNotEqual(shortened.id, first.id)
+
+    async def test_rating_removal_erases_recent_rated_and_changed_events_only(self):
+        from core.activity import clear_recent_rating_activity
+
+        now = datetime(2026, 10, 10, 10)
+        old = TrackingActivity(user_id=self.owner.id, media_id=self.movie.id, status='completed', score=6,
+                               payload={'rating_changed': True, 'previous_score': 5},
+                               created_at=now - timedelta(days=7, seconds=1))
+        boundary = TrackingActivity(user_id=self.owner.id, media_id=self.movie.id, status='completed', score=7,
+                                    payload={'rating_changed': True}, created_at=now - timedelta(days=7))
+        mixed = TrackingActivity(user_id=self.owner.id, media_id=self.movie.id, status='completed', score=8,
+                                 payload={'status_changed': True, 'rating_changed': True, 'previous_score': 7,
+                                          'first_rated_at': (now - timedelta(days=2)).isoformat()},
+                                 created_at=now - timedelta(days=2))
+        rated = TrackingActivity(user_id=self.owner.id, media_id=self.movie.id, status='completed', score=8,
+                                 payload={'rating_first': True, 'rating_changed': True}, created_at=now - timedelta(days=1))
+        changed = TrackingActivity(user_id=self.owner.id, media_id=self.movie.id, status='completed', score=9,
+                                   payload={'rating_changed': True, 'previous_score': 8}, created_at=now)
+        other_user = TrackingActivity(user_id=self.friend.id, media_id=self.movie.id, status='completed', score=9,
+                                      payload={'rating_changed': True}, created_at=now)
+        other_media = TrackingActivity(user_id=self.owner.id, media_id=self.show.id, status='completed', score=9,
+                                       payload={'rating_changed': True}, created_at=now)
+        self.db.add_all([old, boundary, mixed, rated, changed, other_user, other_media])
+        await self.db.commit()
+        await clear_recent_rating_activity(self.db, user_id=self.owner.id, media_id=self.movie.id, now=now)
+        await self.db.commit()
+        rows = (await self.db.execute(select(TrackingActivity))).scalars().all()
+        self.assertEqual({row.id for row in rows}, {old.id, mixed.id, other_user.id, other_media.id})
+        self.assertEqual(old.score, 6)
+        self.assertEqual(old.payload['previous_score'], 5)
+        self.assertIsNone(mixed.score)
+        self.assertEqual(mixed.payload, {'status_changed': True})
+        self.assertEqual(mixed.created_at, now - timedelta(days=2))
+
+    async def test_rating_removal_and_restoration_starts_fresh_cooldown(self):
+        from core.activity import record_daily_activity
+
+        start = datetime(2026, 10, 1, 10)
+        await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                    status='completed', score=6, rating_changed=True, now=start)
+        await self.db.commit()
+        removed = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                              status='completed', score=None, previous_score=6,
+                                              rating_changed=True, now=start + timedelta(hours=2))
+        await self.db.commit()
+        self.assertIsNone(removed)
+        self.assertEqual((await self.db.execute(select(TrackingActivity))).scalars().all(), [])
+        restored = await record_daily_activity(self.db, user_id=self.owner.id, media_id=self.movie.id,
+                                              status='completed', score=8, rating_changed=True,
+                                              now=start + timedelta(hours=3))
+        await self.db.commit()
+        self.assertEqual(restored.payload['first_rated_at'], (start + timedelta(hours=3)).isoformat())
+        self.assertTrue(restored.payload['rating_first'])
+        self.assertNotIn('previous_score', restored.payload)
+
+    async def test_rating_delete_endpoint_clears_tracked_score_and_activity(self):
+        await self.client.post('/ratings', json={'media_id': self.movie.id, 'media_type': 'movie', 'rating': 8})
+        deleted = await self.client.delete('/ratings', params={'media_id': self.movie.id, 'media_type': 'movie'})
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        entry = (await self.db.execute(select(TrackedEntry).where(TrackedEntry.media_id == self.movie.id))).scalar_one()
+        self.assertIsNone(entry.manual_score)
+        self.assertEqual((await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'], [])
+        restored = await self.client.post('/ratings', json={'media_id': self.movie.id, 'media_type': 'movie', 'rating': 7})
+        self.assertEqual(restored.status_code, 200, restored.text)
+        card = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity'][0]
+        self.assertTrue(card['payload']['rating_first'])
+
+    async def test_clear_all_ratings_cleans_recent_activity_and_keeps_completion(self):
+        await self.save(self.movie, status='completed', manual_score=8)
+        await self.client.post('/ratings', json={'media_id': self.show.id, 'media_type': 'series', 'rating': 7})
+        cleared = await self.client.delete('/ratings/all')
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        cards = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()['recent_activity']
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]['status'], 'completed')
+        self.assertIsNone(cards[0]['score'])
+        self.assertFalse(cards[0]['payload'].get('rating_changed'))
+        entries = (await self.db.execute(select(TrackedEntry))).scalars().all()
+        self.assertTrue(all(entry.manual_score is None and not entry.season_scores for entry in entries))
 
     async def test_rating_api_marks_existing_score_change_and_omits_unchanged_rating(self):
         first = await self.client.post('/ratings', json={
