@@ -1,80 +1,40 @@
 ---
-import {samples, artwork, type SampleKey} from '../../components/dev/detail-fixtures';
+import Tracker from '../../layouts/Tracker.astro';
+import Icon from '../../components/Icon.astro';
+import DetailHeading from '../../components/dev/DetailHeading.astro';
+import DetailTracking from '../../components/dev/DetailTracking.astro';
+import DetailSections from '../../components/dev/DetailSections.astro';
+import DetailDesignNotes from '../../components/dev/DetailDesignNotes.astro';
+import {samples, type SampleKey} from '../../components/dev/detail-fixtures';
 import '../../styles/dev-details.css';
 if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(Astro.url.hostname)) return new Response('Not found', {status:404});
-const design = Astro.url.searchParams.get('design') === 'afterlight' ? 'afterlight' : 'atlas';
+const design = Astro.url.searchParams.get('design') === 'panorama' ? 'panorama' : 'folio';
 const requested = Astro.url.searchParams.get('media') || 'series';
-const key: SampleKey = Object.hasOwn(samples, requested) ? requested as SampleKey : 'series';
-const item = samples[key];
+const kind: SampleKey = Object.hasOwn(samples, requested) ? requested as SampleKey : 'series';
+const item = samples[kind];
 const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}`;
-const sectionTitle = {series:'Episodes',movie:'Extras',game:'Achievements',book:'Contents'}[key];
 ---
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>{design === 'atlas' ? 'Atlas' : 'Afterlight'} · Detail study · AnyList</title></head>
-<body class={design}>
-  <header class="workbench">
-    <a class="lab-home" href="/dev/cards">← Card lab</a><span class="lab-label">DETAIL STUDIES</span>
-    <nav class="switch" aria-label="Design concept"><a href={href('atlas',key)} aria-current={design==='atlas'?'page':undefined}>01 Atlas</a><a href={href('afterlight',key)} aria-current={design==='afterlight'?'page':undefined}>02 Afterlight</a></nav>
-    <nav class="media-switch" aria-label="Sample media">{Object.entries(samples).map(([id,sample])=><a href={href(design,id)} aria-current={key===id?'page':undefined}>{sample.kind}</a>)}</nav>
-    <span class="local-label">LOCAL ONLY · FICTIONAL DATA</span>
-  </header>
-  <div class="app-nav"><a href="/dev/details" class="brand"><span class="brand-icon">a</span> anylist<span class="brand-dot">.</span></a><nav aria-label="Page sections"><a href="#overview">Overview</a><a href="#journey">Your journey</a><a href="#related">Discover more</a></nav><span class="avatar" title="Sample profile">JD</span></div>
-  <main>
-    <div class="hero" style={`--scene:url("${artwork(item.color)}")`}><span class="hero-caption">{item.subtitle}</span><span class="art-credit">ORIGINAL CONCEPT ART / {item.year}</span></div>
-    <div class="page-grid">
-      <aside class="sidebar">
-        <div class="poster" style={`background-image:url("${artwork(item.color)}")`} role="img" aria-label={`Illustrated landscape cover for ${item.title}`}><span>ANYLIST ORIGINAL COLLECTION</span><strong>{item.title}</strong><small>{item.creator}</small></div>
-        <div class="tracker" id="journey">
-          <label class="sr-only" for="status">Your list status</label><select id="status"><option>{item.action}</option>{['Planning','Completed','Paused','Dropped'].filter(x=>x!==item.action).map(x=><option>{x}</option>)}</select>
-          <div class="tracking-row"><span>Your progress</span><button id="favorite" aria-label="Add to favorites" aria-pressed="false">♡</button></div>
-          <div class="progress-control"><label for="progress" class="sr-only">Completed {item.unit}</label><input id="progress" type="number" value={item.progress} min="0" max={item.total}/><span>/ {item.total} {item.unit}</span><button id="increment" aria-label={`Add one ${key==='book'?'page':key==='game'?'achievement':key==='movie'?'watch':'episode'}`}>+</button></div>
-          <progress id="progress-bar" value={item.progress} max={item.total} aria-label="Your completion progress"></progress>
-          <div class="rating-row"><label for="rating">Your score</label><select id="rating"><option value="">— / 10</option>{Array.from({length:10},(_,i)=><option value={10-i}>{10-i} / 10</option>)}</select></div>
-        </div>
-        <section class="facts"><h2>Information</h2><dl>{item.facts.map(([label,value])=><div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>
-        <section class="themes"><h2>Themes & moods</h2>{item.tags.map((tag,i)=><div><span>{tag}</span><small>{96-i*7}%</small></div>)}</section>
-        <p class="data-note">Design fixture. Titles, people, ratings, activity, and availability are illustrative. All controls stay in this page.</p>
-      </aside>
-      <div class="main-column">
-        <header class="title-block"><div class="eyebrow">{item.kind} <span> / </span> {item.year} <span> / </span> {item.status}</div><h1>{item.title}</h1><p class="byline">{item.creator}<span>·</span>{item.length}</p><div class="title-tags">{item.tags.slice(0,3).map(tag=><span>{tag}</span>)}</div></header>
-        <nav class="section-nav" aria-label="Detail sections"><a class="selected" href="#overview">Overview</a><a href="#chapters">{sectionTitle}</a><a href="#people">{key==='book'||key==='game'?'Creators':'Cast & crew'}</a><a href="#community">Community</a></nav>
-        <div class="content-grid" id="overview">
-          <div class="primary-content">
-            <section class="synopsis"><div class="section-heading"><h2>The story</h2><span class="subtle">No spoilers</span></div><p>{item.summary}</p></section>
-            <section class="next-card"><span class="next-icon">{key==='book'?'▤':key==='game'?'✧':'▷'}</span><div><span class="eyebrow">{key==='movie'?'MAKE TIME FOR A STORY':'YOUR NEXT CHAPTER'}</span><h3>{item.next}</h3><p>{item.nextMeta}</p></div><button id="log-next" aria-label="Log next progress">{key==='movie'?'Mark watched':'Log progress'} <span>→</span></button></section>
-            <section id="chapters"><div class="section-heading"><h2>{sectionTitle}</h2>{key==='series'?<label class="season-label">Season <select id="season"><option value="1">01</option><option value="2">02</option></select></label>:<span class="subtle">{item.chapters.length} {key==='movie'?'features':'milestones'}</span>}</div><div class="chapter-list">{item.chapters.map((chapter,i)=><div class="chapter" data-chapter data-index={i}><span class="chapter-number">{String(i+1).padStart(2,'0')}</span><div><strong data-chapter-title>{chapter}</strong><small>{key==='series'?`${i===5?'Up next · ':''}48 min`:key==='movie'?'Behind the scenes':key==='book'?'Reading milestone':'Exploration achievement'}</small></div>{key==='series'?<button class="episode-check" data-episode={i} aria-label={`Mark episode ${i+1} watched`} aria-pressed={item.progress > i?'true':'false'}>{item.progress > i?'✓':'○'}</button>:<span class="chapter-end">{key==='game'?'◇':'↗'}</span>}</div>)}</div></section>
-            <section id="people"><div class="section-heading"><h2>{key==='game'||key==='book'?'The people behind it':'Cast & characters'}</h2><span class="subtle">Featured</span></div><div class="people">{item.people.map((person,i)=><article><span class={`portrait portrait-${i}`}>{person.split(' ').map(s=>s[0]).slice(0,2).join('')}</span><div><h3>{person}</h3><p>{item.roles[i]}</p></div></article>)}</div></section>
-            <section id="community"><div class="section-heading"><h2>Between friends</h2><span class="subtle">Sample activity</span></div><article class="activity"><span class="avatar">AL</span><div><p><strong>Alex</strong> {key==='movie'?'watched this':key==='book'?'started reading':key==='game'?'started playing':'watched episode 5'} <span class="subtle">· 2h ago</span></p><blockquote>“The kind of world you want to spend a little longer in.”</blockquote><span class="activity-score">★ 9 / 10</span></div></article></section>
-          </div>
-          <aside class="context-column"><section class="score-card"><span class="eyebrow">COMMUNITY SCORE</span><div><strong>{item.score}<small>%</small></strong><span class="score-face">☺</span></div><p>From {item.count} ratings</p><div class="histogram" aria-label="Illustrative ratings distribution">{[9,13,8,17,23,38,55,80,100,66].map((height,i)=><span style={`height:${height}%`} title={`${i+1} out of 10`}></span>)}</div><div class="score-labels"><span>1</span><span>10</span></div></section>
-            <section class="community-stats"><div><strong>#{key==='movie'?'24':'18'}</strong><span>Highest rated {item.year}</span></div><div><strong>{item.count}</strong><span>People tracking</span></div></section>
-            <section class="availability"><span class="eyebrow">{key==='book'?'YOUR EDITION':key==='game'?'IN YOUR LIBRARY':'IN YOUR LIBRARY'}</span><h3>{key==='book'?'Hardcover':key==='game'?'Steam':'Jellyfin'}</h3><p>{key==='book'?'English · First edition':key==='game'?'PC · Controller supported':'4K · Original audio · Subtitles'}</p><span class="availability-badge">● {key==='series'?'Season 1 available':'Available'}</span><small>Illustrative local availability</small></section>
-            <section class="note-card"><label for="note">A note to yourself</label><textarea id="note" rows="4" placeholder="A thought worth keeping…"></textarea><span class="subtle">Private · Preview only</span></section>
-          </aside>
-        </div>
-        <section id="related" class="related"><div class="section-heading"><h2>A little more like this</h2><span class="subtle">Across your interests</span></div><div class="related-grid">{Object.entries(samples).filter(([id])=>id!==key).map(([id,sample],i)=><a href={href(design,id)}><div style={`background-image:url("${artwork(sample.color,i)}")`}><span>{sample.kind}</span></div><h3>{sample.title}</h3><p>{sample.tags[0]} · {sample.year}</p></a>)}</div></section>
+<Tracker title={`${item.title} · ${design === 'folio' ? 'Folio' : 'Panorama'}`}>
+  <div class:list={['detail-lab', `concept-${design}`]} data-detail-lab data-media-kind={kind}>
+    <div class="lab-workbench"><div class="lab-workbench-inner"><a href="/dev" class="lab-workbench-label"><span class="lab-status-dot"></span> Detail lab</a><nav aria-label="Design concept" class="lab-concept-switch"><a href={href('folio',kind)} aria-current={design === 'folio' ? 'page' : undefined}><span>01</span> Folio</a><a href={href('panorama',kind)} aria-current={design === 'panorama' ? 'page' : undefined}><span>02</span> Panorama</a></nav><nav aria-label="Sample media" class="lab-media-switch">{Object.entries(samples).map(([id,sample]) => <a href={href(design,id)} aria-current={kind === id ? 'page' : undefined}>{sample.kind === 'Movie' ? 'Movies' : sample.kind === 'Game' ? 'Games' : sample.kind === 'Book' ? 'Books' : 'Series'}</a>)}</nav><button class="lab-notes-trigger" type="button" data-lab-action="notes"><Icon name="sliders"/><span>Design notes</span></button></div></div>
+    <div class="lab-hero"><img class="lab-hero-image" src={item.backdrop} alt="" fetchpriority="high"/><div class="lab-hero-shade"></div>
+      {design === 'panorama' && <div class="lab-hero-content"><img class="lab-hero-poster" src={item.poster} alt={`${item.title} cover`}/><DetailHeading item={item}/><button class="lab-hero-art-button" type="button" data-lab-image={item.backdrop} data-lab-image-caption={kind === 'book' ? 'Dune: Part Two · Film adaptation artwork' : `${item.title} · Backdrop`} aria-label="Expand backdrop"><Icon name="grid"/></button></div>}
+      <span class="lab-art-credit">{kind === 'book' ? 'Dune: Part Two · Adaptation artwork' : kind === 'game' ? 'Artwork · Remedy Entertainment' : `Artwork · ${item.source}`}</span>
+    </div>
+    <div class="lab-layout">
+      {design === 'folio' && <aside class="lab-sidebar"><button class="lab-poster-button" type="button" data-lab-image={item.poster} data-lab-image-caption={`${item.title} · Cover`} aria-label={`Expand ${item.title} cover`}><img class="lab-poster" src={item.poster} alt={`${item.title} cover`} fetchpriority="high"/></button><DetailTracking item={item} kind={kind}/><section class="lab-facts"><h2>Information</h2><dl>{item.facts.map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section><div class="lab-source-links"><a href={item.sourceUrl} target="_blank" rel="noreferrer">{item.source}<Icon name="external"/></a><a href={item.officialUrl} target="_blank" rel="noreferrer">Official site<Icon name="external"/></a></div></aside>}
+      <div class="lab-main">
+        {design === 'folio' ? <DetailHeading item={item}/> : <DetailTracking item={item} kind={kind}/>}
+        <DetailSections item={item} kind={kind} design={design}/>
       </div>
     </div>
-    <footer><strong>{design==='atlas'?'01 / Atlas':'02 / Afterlight'}</strong><p>{design==='atlas'?'A calm catalogue. Poster-led, easy to scan, with your progress always close.':'A cinematic journal. Immersive artwork, warm details, and a little room to get lost.'}</p><span>Shared foundation · adaptable metadata, progress units, and content modules</span></footer>
-  </main>
-  <div id="feedback" role="status" aria-live="polite"></div>
-  <script define:vars={{total:item.total, kind:key, chapters:item.chapters}}>
-    const progress = document.querySelector('#progress');
-    const bar = document.querySelector('#progress-bar');
-    const feedback = document.querySelector('#feedback');
-    let timer;
-    const notify = (message) => { feedback.textContent=message; feedback.classList.add('visible'); clearTimeout(timer); timer=setTimeout(()=>feedback.classList.remove('visible'),2800); };
-    const update = (value) => { const count=Math.max(0,Math.min(total,Math.floor(Number(value)||0))); progress.value=count; bar.value=count; document.querySelector('#increment').disabled=count===total; document.querySelector('#log-next').disabled=count===total; if(count===total) document.querySelector('#status').value='Completed'; return count; };
-    const watched = new Set(Array.from({length:kind==='series'?Number(progress.value):0},(_,i)=>i));
-    const syncEpisodes = () => { const offset=(Number(document.querySelector('#season')?.value||1)-1)*8; document.querySelectorAll('[data-episode]').forEach(button=>{const yes=watched.has(offset+Number(button.dataset.episode));button.setAttribute('aria-pressed',String(yes));button.textContent=yes?'✓':'○';}); };
-    const setProgress = (value) => {const count=update(value); if(kind==='series'){watched.clear();for(let i=0;i<count;i++)watched.add(i);syncEpisodes();} notify('Progress updated for this preview.');};
-    progress.addEventListener('change',()=>setProgress(progress.value));
-    document.querySelector('#increment').addEventListener('click',()=>setProgress(Number(progress.value)+1));
-    document.querySelector('#log-next').addEventListener('click',()=>setProgress(Number(progress.value)+(kind==='book'?10:1)));
-    document.querySelector('#favorite').addEventListener('click',event=>{const button=event.currentTarget;const selected=button.getAttribute('aria-pressed')!=='true';button.setAttribute('aria-pressed',String(selected));button.setAttribute('aria-label',selected?'Remove from favorites':'Add to favorites');button.textContent=selected?'♥':'♡';notify(selected?'Added to preview favorites.':'Removed from preview favorites.');});
-    document.querySelector('#status').addEventListener('change',()=>notify('List status updated for this preview.'));
-    document.querySelector('#rating').addEventListener('change',()=>notify('Score updated for this preview.'));
-    document.querySelectorAll('[data-episode]').forEach(button=>button.addEventListener('click',()=>{const index=(Number(document.querySelector('#season').value)-1)*8+Number(button.dataset.episode);watched.has(index)?watched.delete(index):watched.add(index);update(watched.size);syncEpisodes();notify('Episode updated for this preview.');}));
-    document.querySelector('#season')?.addEventListener('change',event=>{const second=event.target.value==='2';document.querySelectorAll('[data-chapter-title]').forEach((title,i)=>title.textContent=second?['A new shore','The return','A familiar stranger','The observatory','Far from home','A thousand suns','What remains','Into the light'][i]:chapters[i]);syncEpisodes();});
-  </script>
-</body></html>
+    <footer class="lab-footer"><p><strong>{design === 'folio' ? '01 / Folio' : '02 / Panorama'}</strong><span>Local design preview · Sample metadata</span></p><button class="lab-text-button" type="button" data-lab-action="notes">Sources & feature notes<Icon name="arrow-right"/></button></footer>
+    <script id="lab-fixture" type="application/json" set:html={JSON.stringify(item).replaceAll('<','\u003c')}/>
+    <DetailDesignNotes/>
+    <dialog class="lab-dialog lab-lightbox" id="lab-lightbox" aria-labelledby="lab-lightbox-caption"><button type="button" data-lab-close-dialog aria-label="Close artwork"><Icon name="close"/></button><img id="lab-lightbox-image" alt=""/><p id="lab-lightbox-caption"></p></dialog>
+    <div class="lab-toast" id="lab-feedback" role="status" aria-live="polite"><Icon name="check"/><span data-lab-feedback-text></span></div>
+  </div>
+</Tracker>
+<script>
+  import '../../components/dev/detail-preview';
+</script>

@@ -1,0 +1,29 @@
+---
+import Icon from '../Icon.astro';
+import type {DetailSample, SampleKey} from './detail-fixtures';
+const {item, kind} = Astro.props as {item: DetailSample; kind: SampleKey};
+// An illustrative distribution of AnyList ratings, not a reconstruction of TMDB votes.
+const counts = kind === 'series' ? [2,1,2,3,5,8,15,37,88,79] : [2,2,3,4,7,12,26,68,74,42];
+const total = counts.reduce((sum,n) => sum+n,0);
+---
+<section class="lab-public-score lab-module" aria-label="Ratings">
+  {item.score ? <>
+    <p class="lab-kicker">Audience score</p>
+    <div class="lab-big-score"><Icon name="star"/><strong>{item.score}</strong><span>/ 10</span></div>
+    <p>{item.votes} votes on TMDB</p>
+    <details class="lab-score-disclosure">
+      <summary>Score distribution <Icon name="chevron-down"/></summary>
+      <div class="lab-distribution">
+        <p>AnyList · Sample scores</p>
+        <ol aria-label={`Sample distribution of ${total} AnyList ratings`}>
+          {counts.map((count,i) => <li aria-label={`${i+1} out of 10: ${count} votes`}><span>{i+1}</span><span class="lab-distribution-track" aria-hidden="true"><i style={`--bar-width:${count/Math.max(...counts)*100}%`}></i></span><span>{Math.round(count/total*100)}%</span></li>)}
+        </ol>
+        <small>{total} ratings · Independent of TMDB</small>
+      </div>
+    </details>
+  </> : <>
+    <p class="lab-kicker">Your experience</p>
+    <div class="lab-big-score"><Icon name="star"/><strong data-lab-personal-score>—</strong><span>/ 10</span></div>
+    <button class="lab-text-button" type="button" data-lab-action="rate">{kind === 'game' ? 'Rate your playthrough' : 'Rate this book'} <Icon name="arrow-right"/></button>
+  </>}
+</section>

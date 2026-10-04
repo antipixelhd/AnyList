@@ -1,0 +1,19 @@
+---
+import Icon from '../Icon.astro';
+import type {DetailSample} from './detail-fixtures';
+const {item} = Astro.props as {item: DetailSample};
+---
+{item.seasons && <section class="lab-panel lab-season-panel" id="panel-seasons" role="tabpanel" aria-labelledby="tab-seasons" hidden>
+  <div class="lab-section-title"><h2>Seasons</h2><button class="lab-text-button" data-lab-action="spoilers" type="button" aria-pressed="false"><Icon name="eye-slash"/><span data-lab-spoiler-label>Titles hidden</span></button></div>
+  <div class="lab-season-rating-rule"><label><input id="lab-season-average" type="checkbox"/> Use season average for your show score</label><span data-lab-average-preview>9.0 / 10</span></div>
+  <div class="lab-season-cards">{item.seasons.map((season,s) => <article class="lab-season-card">
+    <div class="lab-season-head">
+      <div class="lab-season-identity"><span class="lab-season-number">{String(s+1).padStart(2,'0')}</span><div><h3>Season {s+1}</h3><p>{s === 0 ? '2022' : '2025'} · {season.length} episodes</p></div></div>
+      <button class="lab-season-rate" type="button" data-lab-rate-season={s} aria-label={`Rate season ${s+1}`} aria-haspopup="dialog"><span>Your season score</span><strong><Icon name="star"/><span data-lab-season-score={s}>—</span></strong></button>
+    </div>
+    <div class="lab-season-toolbar"><span data-lab-season-progress={s}></span><button class="lab-text-button" data-lab-action="season-watched" data-season={s} type="button">Mark season watched <Icon name="check"/></button><button class="lab-season-expand" type="button" data-lab-expand-season={s} aria-expanded={s === 0 ? 'true' : 'false'} aria-controls={`lab-season-episodes-${s}`}><span>Episodes</span><Icon name="chevron-down"/></button></div>
+    <div class="lab-episode-list" id={`lab-season-episodes-${s}`} data-lab-season={s} hidden={s !== 0}>{season.map((ep,e) => <article class="lab-episode" data-lab-episode-row={`${s}:${e}`}>
+      <span class="lab-episode-number">{String(e+1).padStart(2,'0')}</span>{ep.image ? <div class="lab-episode-image"><img src={ep.image} alt="" loading="lazy"/></div> : <div class="lab-episode-image lab-episode-placeholder" aria-hidden="true"><Icon name="play"/></div>}<div class="lab-episode-copy"><h3 data-lab-episode-title={ep.title}>{e < item.progress && s === 0 ? ep.title : `Episode ${e+1}`}</h3><p>{ep.minutes} min<span>·</span>{ep.date}</p></div><button class="lab-episode-check" type="button" data-lab-episode={`${s}:${e}`} aria-label={`Mark season ${s+1} episode ${e+1} watched`} aria-pressed={s === 0 && e < item.progress ? 'true' : 'false'}><Icon name="check"/></button>
+    </article>)}</div>
+  </article>)}</div>
+</section>}

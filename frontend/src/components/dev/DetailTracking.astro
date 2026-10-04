@@ -1,0 +1,21 @@
+---
+import Icon from '../Icon.astro';
+import type {DetailSample, SampleKey} from './detail-fixtures';
+const {item, kind} = Astro.props as {item: DetailSample; kind: SampleKey};
+---
+<section class="lab-tracking" id="lab-tracking" aria-label="Your tracking">
+  <div class="lab-status-field">
+    <label for="lab-status">Your list</label>
+    <div class="lab-select-wrap"><select id="lab-status" data-native-select>
+      {[item.action, 'Planning', 'Completed', 'Paused', 'Dropped'].filter((v,i,a) => a.indexOf(v) === i).map(status => <option value={status}>{status}</option>)}
+    </select><Icon name="chevron-down" /></div>
+  </div>
+  <div class="lab-progress-field">
+    <label for="lab-progress">{kind === 'game' ? 'Play time' : 'Progress'}</label>
+    <div class="lab-progress-control"><input id="lab-progress" type="number" min="0" max={kind === 'game' ? undefined : item.total} step={kind === 'game' ? '0.5' : '1'} value={item.progress}/><span>{kind === 'game' ? 'hours' : `/ ${item.total} ${item.unit}`}</span>{(kind === 'series' || kind === 'movie') && <button type="button" data-lab-action="increment" aria-label={kind === 'series' ? 'Log one episode' : 'Mark watched'}><Icon name="plus" /></button>}</div>
+    {kind !== 'game' && <progress id="lab-progress-bar" value={item.progress} max={item.total} aria-label="Your completion progress"></progress>}
+  </div>
+  <div class="lab-rating-field"><span class="lab-field-label">{kind === 'series' ? 'Your show score' : 'Your score'}</span><button id="lab-rating" class="lab-rating-control" type="button" data-lab-action="rate" aria-label={`Rate ${item.title}`} aria-haspopup="dialog"><Icon name="star"/><strong data-lab-personal-score>—</strong><span>/ 10</span></button>{kind === 'series' && <small data-lab-rating-mode>Separate show score</small>}</div>
+  <button type="button" class="lab-favorite" data-lab-action="favorite" aria-label="Add to favorites" aria-pressed="false"><Icon name="heart"/><span data-lab-favorite-label>Favorite</span></button>
+  {(kind === 'series' || kind === 'movie') && <button type="button" class="lab-library" data-lab-action="library" aria-pressed="false"><Icon name="list"/><span data-lab-library-label>Add to library</span></button>}
+</section>

@@ -1,0 +1,10 @@
+---
+import type {DetailSample} from './detail-fixtures';
+const {item} = Astro.props as {item: DetailSample};
+---
+<div class="lab-heading">
+  <p class="lab-kicker"><span>{item.kind}</span><span>{item.year}</span><span>{item.creator}</span></p>
+  <h1>{item.title}</h1>
+  <p class="lab-tagline">{item.subtitle}</p>
+  <div class="lab-genres">{item.genres.map(genre => <span>{genre}</span>)}</div>
+</div>
