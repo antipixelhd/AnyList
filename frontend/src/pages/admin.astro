@@ -1753,3 +1753,21 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   loadCacheStats();
   });
 </script>
+
+
+<style>
+  #users-table-body :is(.toggle-admin-btn, .change-email-btn, .reset-password-btn, .delete-user-btn) {
+    flex-shrink: 0;
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: var(--type-meta-size);
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 767px) {
+    #users-table-body :is(.toggle-admin-btn, .change-email-btn, .reset-password-btn, .delete-user-btn) {
+      min-height: 40px;
+    }
+  }
+</style>
