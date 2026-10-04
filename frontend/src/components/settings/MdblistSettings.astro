@@ -4,10 +4,8 @@ import type { UserSettings } from "../../lib/api";
 
 interface Props {
   settings: UserSettings;
-  hasTmdbKey: boolean;
-  autoSyncOptions: readonly { value: number; label: string }[];
 }
-const { settings, hasTmdbKey, autoSyncOptions } = Astro.props;
+const { settings } = Astro.props;
 ---
 
 <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
@@ -86,13 +84,6 @@ const { settings, hasTmdbKey, autoSyncOptions } = Astro.props;
               <input type="checkbox" name="mdblist_sync_dropped" id="mdblist_sync_dropped" checked={settings.mdblist_sync_dropped !== false} class="sync-pref-checkbox w-4 h-4 rounded accent-violet-500 cursor-pointer" />
               <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Dropped shows</span>
             </label>
-            <button
-              type="button"
-              data-action="sync_mdblist"
-              disabled={!settings.mdblist_connected || !hasTmdbKey}
-              title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull watched history, ratings, and watchlist from MDBList"}
-              class="js-action-btn text-sm bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-            >Pull</button>
           </div>
         )}
         {settings.mdblist_connected && (
@@ -121,20 +112,6 @@ const { settings, hasTmdbKey, autoSyncOptions } = Astro.props;
               class="js-action-btn text-sm bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
               title="Push watched states, ratings, and the managed watchlist to MDBList"
             >Push</button>
-          </div>
-        )}
-        {settings.mdblist_connected && (
-          <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-            <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
-            <div class="flex items-center justify-between gap-4">
-              <label class="text-sm text-zinc-300">Pull interval</label>
-              <select name="mdblist_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all cursor-pointer">
-                <option value="" selected={!settings.mdblist_auto_sync_interval}>Disabled</option>
-                {autoSyncOptions.map(({ value, label }) => (
-                  <option value={String(value)} selected={settings.mdblist_auto_sync_interval === value}>{label}</option>
-                ))}
-              </select>
-            </div>
           </div>
         )}
       </div>

@@ -749,6 +749,8 @@ export const api = {
   },
 
   sync: {
+    getPullSchedule: (token: string) =>
+      get<{ interval: number | null; next_due_at: string | null }>("/sync/schedule", undefined, token),
     getSeasonOverrides: (token: string) =>
       get<ShowSeasonOverride[]>("/sync/season-overrides", undefined, token),
   },

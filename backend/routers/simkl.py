@@ -146,32 +146,9 @@ async def sync_simkl(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
-    settings = result.scalar_one_or_none()
+    from core.account_sync import start_account_pull
+    return await start_account_pull(background_tasks, db, current_user.id)
 
-    _require_simkl_config(settings)
-
-    if not settings or not settings.simkl_access_token:
-        raise HTTPException(status_code=400, detail="Simkl is not connected")
-
-    _tmdb_key = settings.tmdb_api_key if settings else None
-    if not _tmdb_key:
-        _gs_r = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-        _gs = _gs_r.scalar_one_or_none()
-        _tmdb_key = settings_store.get_server_tmdb_key(_gs)
-    if not _tmdb_key:
-        raise HTTPException(status_code=400, detail="TMDB API key required for sync")
-
-    job = SyncJob(user_id=current_user.id, source=CollectionSource.simkl, status=SyncStatus.pending)
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    background_tasks.add_task(simkl_sync.run_simkl_sync, current_user.id, job.id)
-    return {"status": "started", "job_id": job.id, "message": "Simkl sync is running in the background"}
-
-
-# ── Push (Scrob → Simkl) ──────────────────────────────────────────────────────
 
 @router.post("/push")
 async def push_simkl(

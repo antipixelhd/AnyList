@@ -3155,6 +3155,9 @@ async def _run_nuvio_sync(
             # allow export. Verified streaming-library deltas are mirrored separately.
             stats["succeeded"] = len(changed_media_ids)
             stats["failed"] = stats["errors"]
+            stats["provider_snapshot_complete"] = complete_snapshot and all(
+                adapter.platform in data.get("cw_visibility", {}) for adapter in nuvio.SETTINGS_ADAPTERS
+            )
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)

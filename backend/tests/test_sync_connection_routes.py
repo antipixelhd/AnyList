@@ -28,7 +28,7 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_routes_preserve_provider_job_and_limits(self):
         for provider in ("jellyfin", "emby", "plex"):
             with self.subTest(provider=provider):
-                db = session(SimpleNamespace(), SimpleNamespace(id=7))
+                db = session(None, None, SimpleNamespace(), SimpleNamespace(id=7))
                 tasks = BackgroundTasks()
                 with patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
                     response = await getattr(sync, f"sync_{provider}")(tasks, 3, 5, db, SimpleNamespace(id=2))
@@ -50,16 +50,24 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
             for key, connection, detail in [(None, None, "TMDB API key required"),
                                             ("key", None, f"No {provider.capitalize()} connection configured")]:
                 with self.subTest(provider=provider, detail=detail):
-                    db = session(SimpleNamespace(), connection)
+                    db = session(None, None, SimpleNamespace(), connection)
                     tasks = BackgroundTasks()
                     with patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=key)):
                         with self.assertRaises(HTTPException) as raised:
-                            await getattr(sync, f"sync_{provider}")(tasks, 0, 0, db, SimpleNamespace(id=2))
+                            await getattr(sync, f"sync_{provider}")(tasks, 3, 5, db, SimpleNamespace(id=2))
                     self.assertEqual((raised.exception.status_code, raised.exception.detail), (400, detail))
                     db.add.assert_not_called()
                     db.commit.assert_not_awaited()
                     self.assertEqual(tasks.tasks, [])
-                    self.assertEqual(db.execute.await_count, 1 if key is None else 2)
+                    self.assertEqual(db.execute.await_count, 3 if key is None else 4)
+
+    async def test_normal_legacy_routes_use_the_account_cycle(self):
+        for provider in ("jellyfin", "emby", "plex"):
+            with patch.object(sync, "sync_account", AsyncMock(return_value={"job_id": 23})) as account:
+                db, tasks, user = session(), BackgroundTasks(), SimpleNamespace(id=2)
+                response = await getattr(sync, f"sync_{provider}")(tasks, 0, 0, db, user)
+                self.assertEqual(response, {"job_id": 23})
+                account.assert_awaited_once_with(tasks, db, user)
 
     async def test_library_selection_filters_supported_types_and_keeps_provider_storage(self):
         available = [{"Id": "movie", "Name": "Movies", "CollectionType": "movies"},

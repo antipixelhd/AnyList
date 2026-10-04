@@ -144,6 +144,11 @@ async def sync_trakt(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not full:
+        from core.account_sync import start_account_pull
+        return await start_account_pull(background_tasks, db, current_user.id)
+    from core.account_sync import require_idle_account
+    await require_idle_account(db, current_user.id)
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = result.scalar_one_or_none()
 

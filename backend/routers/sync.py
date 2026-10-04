@@ -2,9 +2,9 @@ from core import server_sync
 from core import settings_store
 from core.connection_identity import refresh_stream_connection
 import asyncio
-from typing import Literal
+from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, or_
 from sqlalchemy.orm import selectinload
@@ -33,6 +33,55 @@ from core.translations import get_user_metadata_language
 
 from dependencies import get_current_user, get_current_user_or_api_key
 router = APIRouter()
+SyncDb = Annotated[AsyncSession, Depends(get_db)]
+SyncUser = Annotated[User, Depends(get_current_user)]
+
+
+@router.post("/account")
+async def sync_account(
+    background_tasks: BackgroundTasks,
+    db: SyncDb,
+    current_user: SyncUser,
+):
+    from core.account_sync import start_account_pull
+
+    return await start_account_pull(background_tasks, db, current_user.id)
+
+
+class PullScheduleBody(BaseModel):
+    interval: float | None = Field(default=None, ge=0.25, le=168, allow_inf_nan=False)
+
+
+@router.get("/schedule")
+async def get_pull_schedule(
+    db: SyncDb,
+    current_user: SyncUser,
+):
+    from core.account_sync import next_pull_due, TERMINAL
+
+    settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))).scalar_one_or_none()
+    interval = settings.pull_sync_interval if settings else None
+    last = (await db.execute(select(SyncJob.updated_at).where(
+        SyncJob.user_id == current_user.id, SyncJob.job_type == "pull_cycle", SyncJob.status.in_(TERMINAL),
+    ).order_by(SyncJob.updated_at.desc()).limit(1))).scalar_one_or_none()
+    next_due = next_pull_due(last, interval)
+    return {"interval": interval, "next_due_at": next_due if last else None}
+
+
+@router.put("/schedule")
+async def save_pull_schedule(
+    body: PullScheduleBody,
+    db: SyncDb,
+    current_user: SyncUser,
+):
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))).scalar_one_or_none()
+    if settings is None:
+        settings = UserSettings(user_id=current_user.id)
+        db.add(settings)
+    settings.pull_sync_interval = body.interval
+    await db.commit()
+    return {"interval": body.interval}
 
 # Global semaphore — at most one sync running at a time across all users
 # Keep the legacy router-level lock map as an alias for any in-process callers
@@ -277,6 +326,10 @@ async def sync_connection(
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
+    if not full and not movie_limit and not show_limit:
+        return await sync_account(background_tasks, db, current_user)
+    from core.account_sync import require_idle_account
+    await require_idle_account(db, current_user.id)
 
     if conn.type in ("stremio", "nuvio"):
         await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
@@ -389,7 +442,7 @@ async def clear_connection_data(
 
     active = (await db.execute(select(SyncJob.id).where(
         SyncJob.user_id == current_user.id,
-        SyncJob.connection_id == connection_id,
+        or_(SyncJob.connection_id == connection_id, SyncJob.job_type == "pull_cycle"),
         SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
     ).limit(1))).scalar_one_or_none()
     if active:
@@ -431,6 +484,10 @@ async def _start_server_sync(
     db: AsyncSession,
     current_user: User,
 ):
+    if not movie_limit and not show_limit:
+        return await sync_account(background_tasks, db, current_user)
+    from core.account_sync import require_idle_account
+    await require_idle_account(db, current_user.id)
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
     if not await settings_store.get_effective_tmdb_key(db, settings):
@@ -542,10 +599,18 @@ async def abort_sync(
     current_user: User = Depends(get_current_user),
 ):
     """Cancel active sync jobs, preserving destructive clears already running."""
+    from core.account_sync import request_cycle_cancel
+    parents = (await db.execute(select(SyncJob).where(
+        SyncJob.user_id == current_user.id, SyncJob.job_type == "pull_cycle",
+        SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
+    ))).scalars().all()
+    for parent in parents:
+        await request_cycle_cancel(db, parent)
     await db.execute(
         update(SyncJob)
         .where(SyncJob.user_id == current_user.id)
         .where(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]))
+        .where(SyncJob.job_type != "pull_cycle")
         .where(~((SyncJob.job_type == "clear") & (SyncJob.status == SyncStatus.running)))
         .values(status=SyncStatus.cancelled, error_message="Cancelled by user", updated_at=func.now())
     )
@@ -565,6 +630,14 @@ async def cancel_sync_job(
     raise_if_cancelled), so the job may keep running briefly after this returns.
     A destructive clear that has started must finish its verification instead.
     """
+    parent = (await db.execute(select(SyncJob).where(
+        SyncJob.id == job_id, SyncJob.user_id == current_user.id,
+        SyncJob.job_type == "pull_cycle", SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
+    ))).scalar_one_or_none()
+    if parent:
+        from core.account_sync import request_cycle_cancel
+        await request_cycle_cancel(db, parent)
+        return {"status": "ok", "job_id": job_id}
     result = await db.execute(
         update(SyncJob)
         .where(SyncJob.id == job_id, SyncJob.user_id == current_user.id)

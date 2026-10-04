@@ -5,9 +5,8 @@ import type { UserSettings } from "../../lib/api";
 interface Props {
   settings: UserSettings;
   hasTmdbKey: boolean;
-  autoSyncOptions: readonly { value: number; label: string }[];
 }
-const { settings, hasTmdbKey, autoSyncOptions } = Astro.props;
+const { settings, hasTmdbKey } = Astro.props;
 ---
 
 <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
@@ -126,13 +125,6 @@ const { settings, hasTmdbKey, autoSyncOptions } = Astro.props;
             <div class="flex flex-wrap gap-2">
               <button
                 type="button"
-                data-action="sync_trakt"
-                disabled={!hasTmdbKey}
-                title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Pull new Trakt history since the last successful sync"}
-                class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
-              >Pull</button>
-              <button
-                type="button"
                 data-action="full_sync_trakt"
                 disabled={!hasTmdbKey}
                 title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : "Scan all Trakt watch history again"}
@@ -168,20 +160,7 @@ const { settings, hasTmdbKey, autoSyncOptions } = Astro.props;
             >Push</button>
           </div>
         )}
-        {settings.trakt_connected && (
-          <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-            <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
-            <div class="flex items-center justify-between gap-4">
-              <label class="text-sm text-zinc-300">Pull interval</label>
-              <select name="trakt_auto_sync_interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
-                <option value="" selected={!settings.trakt_auto_sync_interval}>Disabled</option>
-                {autoSyncOptions.map(({ value, label }) => (
-                  <option value={String(value)} selected={settings.trakt_auto_sync_interval === value}>{label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-        )}
+
       </div>
     </div>
     <div class="border-t border-zinc-800 px-6 py-4 flex gap-2">

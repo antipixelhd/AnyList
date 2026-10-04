@@ -12,13 +12,14 @@ import type { DeviceGrant } from "../lib/api";
 import { connectionIconHtml } from "../lib/connectionIcons";
 
 const { token } = Astro.locals;
-const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGrants] = await Promise.all([
+const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGrants, pullSchedule] = await Promise.all([
   api.auth.getSettings(token!),
   api.auth.me(token!),
   api.auth.getConnections(token!),
   api.auth.getScrobbleConnections(token!),
   api.sync.getSeasonOverrides(token!).catch(() => []),
   api.auth.deviceGrants(token!).catch(() => [] as DeviceGrant[]),
+  api.sync.getPullSchedule(token!),
 ]);
 const fmtGrantDate = (v: string | null) =>
   v ? new Date(v.endsWith("Z") ? v : v + "Z").toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
@@ -42,6 +43,21 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
     <div class="space-y-12 grid-cols-1 min-w-0 w-full">
       {!me.is_admin && <MetadataConnections settings={settings} />}
+      <section class="space-y-3">
+        <h2 class="section-headline border-b border-zinc-800 pb-2">Synchronization</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" data-action="sync_account" disabled={!hasTmdbKey} data-sync-available={String(hasTmdbKey)} class="js-action-btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg cursor-pointer disabled:opacity-50">Sync now</button>
+          <label for="account-pull-interval" class="text-sm text-zinc-400">Pull interval</label>
+          <select id="account-pull-interval" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100">
+            <option value="" selected={pullSchedule.interval === null}>Disabled</option>
+            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
+              <option value={String(value)} selected={pullSchedule.interval === value}>{label}</option>
+            ))}
+          </select>
+          <button type="button" data-action="save_pull_schedule" class="js-action-btn text-sm bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-lg cursor-pointer">Save</button>
+          <span id="account-sync-status" role="status" class="text-sm text-zinc-400"></span>
+        </div>
+      </section>
       <section>
         <form id="connections-form" class="space-y-6 min-w-0 w-full">
           <!-- ======== SYNC SECTION ======== -->
@@ -214,12 +230,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                           </label>
                         ))}
                         <div class="flex flex-wrap items-center gap-3">
-                          <button type="button" data-action="sync_connection" data-conn-id={conn.id} data-conn-type={conn.type} data-conn-name={conn.name}
-                            data-connection-job-control data-connection-action-kind="pull" data-config-disabled={String(!hasTmdbKey)}
-                            disabled={!hasTmdbKey}
-                            title={!hasTmdbKey ? "TMDB Read Access Token is required for sync" : conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? `Sync ${typeLabel} library, watched status, and playback progress` : `Pull from ${conn.name}`}
-                            class={`js-action-btn text-sm px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${hasTmdbKey ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700" : "bg-zinc-800 text-zinc-400 border border-zinc-700 opacity-50"}`}
-                          >{conn.type === "nuvio" || conn.type === "stremio" || conn.type === "arvio" ? "Sync now" : "Pull"}</button>
                           {isStreamProvider && (
                             <button type="button" data-action="full_resync_connection" data-conn-id={conn.id} data-conn-name={conn.name}
                               data-connection-job-control data-connection-action-kind="full-resync" data-config-disabled={String(!hasTmdbKey)}
@@ -264,18 +274,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                         </div>
                       </div>
                       )}
-                      <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
-                        <div class="flex items-center justify-between gap-4">
-                          <label class="text-sm text-zinc-300">Pull interval</label>
-                          <select class="conn-auto-sync bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer" data-conn-id={conn.id}>
-                            <option value="" selected={!conn.auto_sync_interval}>Disabled</option>
-                            {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (
-                              <option value={String(value)} selected={conn.auto_sync_interval === value}>{label}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
                       {conn.type === "plex" && me.is_admin && (
                         <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
                           <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Watchlist → Radarr / Sonarr</p>
@@ -447,16 +445,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                         <input type="checkbox" id="new-push-playback" class="w-4 h-4 rounded cursor-pointer" disabled />
                         <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">Playback progress</span>
                       </label>
-                    </div>
-                    <div class="bg-zinc-950 rounded-xl p-4 space-y-3">
-                      <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Scheduled Pull</p>
-                      <div class="flex items-center justify-between gap-4">
-                        <label class="text-sm text-zinc-300">Pull interval</label>
-                        <select id="new-auto-sync" class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 cursor-pointer">
-                          <option value="">Disabled</option>
-                          {AUTO_SYNC_INTERVAL_OPTIONS.map(({ value, label }) => (<option value={String(value)}>{label}</option>))}
-                        </select>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -631,11 +619,11 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           <div class="space-y-3 mt-8">
             <h2 class="section-headline border-b border-zinc-800 pb-2">Tracking services</h2>
 
-            <TraktSettings settings={settings} hasTmdbKey={hasTmdbKey} autoSyncOptions={AUTO_SYNC_INTERVAL_OPTIONS} />
+            <TraktSettings settings={settings} hasTmdbKey={hasTmdbKey} />
 
-            <SimklSettings settings={settings} hasTmdbKey={hasTmdbKey} autoSyncOptions={AUTO_SYNC_INTERVAL_OPTIONS} />
+            <SimklSettings settings={settings} />
 
-            <MdblistSettings settings={settings} hasTmdbKey={hasTmdbKey} autoSyncOptions={AUTO_SYNC_INTERVAL_OPTIONS} />
+            <MdblistSettings settings={settings} />
 
             <BingebaseSettings settings={settings} />
 
@@ -1301,6 +1289,17 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     jobMonitor = undefined;
     if (!document.querySelector('[data-connections-page]')) return;
     jobMonitor = createSyncJobMonitor(document.getElementById('app-data')?.dataset.token ?? '');
+    void jobMonitor.watch('account-cycle', {
+      matches: job => job.job_type === 'pull_cycle',
+      onUpdate: active => {
+        const button = document.querySelector<HTMLButtonElement>('[data-action="sync_account"]');
+        if (button) { button.dataset.cycleActive = String(active); button.disabled = active || button.dataset.syncAvailable !== 'true'; }
+      },
+      render: job => {
+        const status = document.getElementById('account-sync-status');
+        if (status) status.textContent = job ? (job.current_step || job.status) : '';
+      },
+    });
     const ids = new Set(Array.from(document.querySelectorAll<HTMLElement>('[data-connection-id]')).map(card => card.dataset.connectionId!));
     ids.forEach(startConnPoller);
     startSimklPoller();
@@ -1541,7 +1540,18 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           let syncConnId: string | null = null; // set for sync/push actions to start progress poller
           const trackingSettings = readTrackingServiceSettings(action);
 
-          if (action === 'test_connection') {
+          if (action === 'save_pull_schedule') {
+            const value = (document.getElementById('account-pull-interval') as HTMLSelectElement).value;
+            const response = await fetch('/api/proxy/sync/schedule', {
+              method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ interval: value ? Number(value) : null }),
+            });
+            if (!response.ok) throw new Error('Could not save pull interval');
+            showMessage('Pull interval saved.');
+            return;
+          } else if (action === 'sync_account') {
+            url = '/api/proxy/sync/account';
+          } else if (action === 'test_connection') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connType = newBtn.getAttribute('data-conn-type');
             const card = document.querySelector(`[data-connection-id="${connId}"]`);
@@ -1609,10 +1619,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               token: (card?.querySelector('.conn-token-input') as HTMLInputElement)?.value || undefined,
               server_user_id: (card?.querySelector('.conn-user-id-input') as HTMLInputElement)?.value || null,
               server_username: (card?.querySelector('.conn-username-input') as HTMLInputElement)?.value || null,
-              auto_sync_interval: (() => {
-                const v = (card?.querySelector('.conn-auto-sync') as HTMLSelectElement)?.value;
-                return v ? parseFloat(v) : null;
-              })(),
             };
             card?.querySelectorAll('.conn-pref-checkbox').forEach((cb: any) => {
               body[cb.getAttribute('data-pref')] = cb.checked;
@@ -1770,37 +1776,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             renderConnProgress(connId, { status: 'pending', job_type: 'pull', processed_items: 0, total_items: 0, updated_at: new Date().toISOString() });
             url = `/api/proxy/sync/connection/${connId}?full=true`;
             syncConnId = connId;
-          } else if (action === 'sync_connection') {
-            const connId = newBtn.getAttribute('data-conn-id');
-            if (!connId) throw new Error('Connection ID is missing');
-            const connName = newBtn.getAttribute('data-conn-name') || 'this server';
-            const card = document.querySelector(`[data-connection-id="${connId}"]`);
-            const pullPrefLabels: Record<string, string> = {
-              sync_collection: 'collection status',
-              sync_watched: 'watched status',
-              sync_ratings: 'ratings',
-              sync_playback: 'playback events',
-              plex_sync_watchlist: 'watchlist',
-            };
-            const pulling: string[] = [];
-            card?.querySelectorAll('.conn-pref-checkbox').forEach((el: any) => {
-              const pref = el.getAttribute('data-pref');
-              if (pref && pullPrefLabels[pref] && el.checked) pulling.push(pullPrefLabels[pref]);
-            });
-            const noPull = pulling.length === 0;
-            const ok = await showConfirmModal(
-              noPull ? 'Nothing to pull' : `Pull from ${connName}?`,
-              noPull
-                ? `Your current settings have nothing selected to pull from ${connName}. Enable at least one option in the "${connName} → AnyList" section.`
-                : `This will import ${formatList(pulling)} from ${connName} into AnyList.`,
-              noPull ? 'Got it' : 'Pull',
-              noPull
-            );
-            if (!ok) return;
-            // Show "queued" state immediately — don't wait for the first poll
-            renderConnProgress(connId, { status: 'pending', job_type: 'pull', processed_items: 0, total_items: 0, updated_at: new Date().toISOString() });
-            url = `/api/proxy/sync/connection/${connId}`;
-            syncConnId = connId;
           } else if (action === 'push_upstream') {
             const connId = newBtn.getAttribute('data-conn-id');
             const connName = newBtn.getAttribute('data-conn-name') || 'this server';
@@ -1870,8 +1845,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               throw error;
             }
             return;
-          } else if (action === 'sync_trakt' || action === 'full_sync_trakt') {
-            const fullResync = action === 'full_sync_trakt';
+          } else if (action === 'full_sync_trakt') {
+            const fullResync = true;
             const traktPullLabels: Record<string, string> = {
               trakt_sync_watched: 'watched history',
               trakt_sync_ratings: 'ratings',
@@ -1896,28 +1871,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             );
             if (!ok) return;
             url = `/api/proxy/trakt/sync${fullResync ? '?full=true' : ''}`;
-          } else if (action === 'sync_simkl') {
-            const simklPullLabels: Record<string, string> = {
-              simkl_sync_watched: 'watched history',
-              simkl_sync_ratings: 'ratings',
-              simkl_sync_lists: 'lists',
-            };
-            const pulling: string[] = [];
-            document.querySelectorAll('.sync-pref-checkbox').forEach((el: any) => {
-              const name = el.getAttribute('name');
-              if (name && simklPullLabels[name] && el.checked) pulling.push(simklPullLabels[name]);
-            });
-            const noPull = pulling.length === 0;
-            const ok = await showConfirmModal(
-              noPull ? 'Nothing to pull' : 'Pull from Simkl?',
-              noPull
-                ? 'Your current settings have nothing selected to pull from Simkl. Enable at least one option in the "Simkl → AnyList" section.'
-                : `This will import your ${formatList(pulling)} from Simkl into AnyList.`,
-              noPull ? 'Got it' : 'Pull',
-              noPull
-            );
-            if (!ok) return;
-            url = `/api/proxy/simkl/sync`;
           } else if (action === 'push_simkl') {
             const simklPushLabels: Record<string, string> = {
               simkl_push_watched: 'watched history',
@@ -1962,28 +1915,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             );
             if (!ok) return;
             url = `/api/proxy/trakt/push`;
-          } else if (action === 'sync_mdblist') {
-            const labels: Record<string, string> = {
-              mdblist_sync_watched: 'watched history',
-              mdblist_sync_ratings: 'ratings',
-              mdblist_sync_watchlist: 'watchlist',
-              mdblist_sync_dropped: 'dropped shows',
-            };
-            const selected = Array.from(document.querySelectorAll<HTMLInputElement>('.sync-pref-checkbox'))
-              .filter(el => el.checked && labels[el.name])
-              .map(el => labels[el.name]);
-            const empty = selected.length === 0;
-            const ok = await showConfirmModal(
-              empty ? 'Nothing to pull' : 'Pull from MDBList?',
-              empty
-                ? 'Enable at least one option in the "MDBList → AnyList" section.'
-                : `This will import your ${formatList(selected)} from MDBList into AnyList.`,
-              empty ? 'Got it' : 'Pull',
-              empty
-            );
-            if (!ok) return;
-            await persistMdblistPreferences(Object.keys(labels));
-            url = '/api/proxy/mdblist/sync';
           } else if (action === 'push_mdblist') {
             const labels: Record<string, string> = {
               mdblist_push_watched: 'watched history',
@@ -2022,13 +1953,14 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           if (res.ok) {
 
             showMessage(data.message || 'Action successful!', 'success');
+            if (action === 'sync_account') { newBtn.dataset.cycleActive = 'true'; setupJobMonitoring(); }
             if (syncConnId) {
               setConnectionJobActive(syncConnId, true);
               startConnPoller(syncConnId);
             }
-            if (action === 'sync_simkl' || action === 'push_simkl') startSimklPoller();
-            if (action === 'sync_trakt' || action === 'full_sync_trakt' || action === 'push_trakt') startTraktPoller();
-            if (action === 'sync_mdblist' || action === 'push_mdblist') startMdblistPoller();
+            if (action === 'push_simkl') startSimklPoller();
+            if (action === 'full_sync_trakt' || action === 'push_trakt') startTraktPoller();
+            if (action === 'push_mdblist') startMdblistPoller();
           } else {
             if (syncConnId) renderConnProgress(syncConnId, null);
             throw new Error(data.detail || 'Action failed');
@@ -2047,7 +1979,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           if (newBtn.hasAttribute('data-connection-job-control') && actionConnId) {
             updateConnectionActionControls(actionConnId);
           } else {
-            newBtn.disabled = false;
+            newBtn.disabled = action === 'sync_account' && (newBtn.dataset.cycleActive === 'true' || newBtn.dataset.syncAvailable !== 'true');
           }
         }
       });
@@ -2595,10 +2527,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                 push_collection: (document.querySelector<HTMLInputElement>('#new-push-collection'))?.checked ?? false,
                 push_watched: (document.getElementById('new-push-watched') as HTMLInputElement)?.checked ?? false,
                 push_playback: (document.querySelector<HTMLInputElement>('#new-push-playback'))?.checked ?? false,
-                auto_sync_interval: (() => {
-                  const value = (document.querySelector<HTMLSelectElement>('#new-auto-sync'))?.value;
-                  return value ? parseFloat(value) : null;
-                })(),
               }),
             });
             const result = await pollResponse.json();
@@ -2776,10 +2704,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             push_collection: type === 'nuvio' && ((document.querySelector<HTMLInputElement>('#new-push-collection'))?.checked ?? false),
             push_playback: type === 'nuvio' && ((document.querySelector<HTMLInputElement>('#new-push-playback'))?.checked ?? false),
             push_ratings: type === 'nuvio' ? false : ((document.getElementById('new-push-ratings') as HTMLInputElement)?.checked ?? false),
-            auto_sync_interval: (() => {
-              const value = (document.querySelector<HTMLSelectElement>('#new-auto-sync'))?.value;
-              return value ? parseFloat(value) : null;
-            })(),
           };
           if (type === 'plex') {
             body.server_username = username;

@@ -39,17 +39,8 @@ async def sync_mdblist(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
-    settings = _require_key(result.scalar_one_or_none())
-    if not any((settings.mdblist_sync_watched, settings.mdblist_sync_ratings, settings.mdblist_sync_watchlist, settings.mdblist_sync_dropped)):
-        raise HTTPException(status_code=400, detail="Enable at least one MDBList pull option")
-
-    job = SyncJob(user_id=current_user.id, source=CollectionSource.mdblist, status=SyncStatus.pending)
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-    background_tasks.add_task(mdblist_sync.run_mdblist_sync, current_user.id, job.id)
-    return {"status": "started", "job_id": job.id, "message": "MDBList sync is running in the background"}
+    from core.account_sync import start_account_pull
+    return await start_account_pull(background_tasks, db, current_user.id)
 
 
 @router.post("/push")
