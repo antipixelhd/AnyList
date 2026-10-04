@@ -390,7 +390,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                     <div id="new-nuvio-profile-row" class="space-y-2 hidden">
                       <label for="new-nuvio-profile" class="block text-sm font-medium text-zinc-400">Nuvio Profile</label>
                       <select id="new-nuvio-profile" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer">
-                        <option value="">Sign in to load profiles</option>
+                        <option value="">Select profile</option>
                       </select>
                     </div>
                     <div id="new-stremio-link-row" class="hidden rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-3">
@@ -2380,8 +2380,38 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     const tokenInput = document.querySelector<HTMLInputElement>('#new-conn-token');
     const tokenLabel = document.getElementById('new-conn-token-label');
     const nuvioProfileSelect = document.querySelector<HTMLSelectElement>('#new-nuvio-profile');
+    const nuvioEmailInput = document.querySelector<HTMLInputElement>('#new-nuvio-email');
+    const createBtn = document.querySelector<HTMLButtonElement>('#create-connection-btn');
+    const testNewBtn = document.querySelector<HTMLButtonElement>('#test-new-connection-btn');
+    const defaultTestClasses = testNewBtn?.className || '';
     let pendingNuvioRefreshToken = '';
+    let nuvioCredentialsRevision = 0;
     let previousType = typeSelect?.value ?? 'jellyfin';
+
+    const updateNuvioActions = () => {
+      const isNuvio = typeSelect?.value === 'nuvio';
+      const isStremio = typeSelect?.value === 'stremio';
+      const ready = !!pendingNuvioRefreshToken;
+      nuvioProfileRow?.classList.toggle('hidden', isNuvio ? !ready : typeSelect?.value !== 'arvio');
+      createBtn?.classList.toggle('hidden', isStremio || (isNuvio && !ready));
+      if (createBtn) createBtn.disabled = isNuvio && (!ready || !nuvioProfileSelect?.value);
+      if (testNewBtn) {
+        testNewBtn.className = isNuvio ? createBtn?.className || defaultTestClasses : defaultTestClasses;
+        testNewBtn.classList.toggle('hidden', isStremio || (isNuvio && ready));
+      }
+    };
+    const resetNuvioAuthentication = () => {
+      nuvioCredentialsRevision++;
+      pendingNuvioRefreshToken = '';
+      if (nuvioProfileSelect) nuvioProfileSelect.innerHTML = '<option value="">Select profile</option>';
+      updateNuvioActions();
+    };
+    for (const input of [nuvioEmailInput, tokenInput, urlInput]) {
+      input?.addEventListener('input', () => {
+        if (typeSelect?.value === 'nuvio') resetNuvioAuthentication();
+      });
+    }
+    nuvioProfileSelect?.addEventListener('change', updateNuvioActions);
 
     const updateTypeFields = () => {
       const type = typeSelect?.value ?? 'jellyfin';
@@ -2393,13 +2423,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       userIdRow?.classList.toggle('hidden', isPlex || isCloud);
       usernameRow?.classList.toggle('hidden', !isPlex);
       nuvioEmailRow?.classList.toggle('hidden', !(isNuvio || isArvio));
-      nuvioProfileRow?.classList.toggle('hidden', !(isNuvio || isArvio));
       stremioLinkRow?.classList.toggle('hidden', !isStremio);
       document.getElementById('new-plex-login-row')?.classList.toggle('hidden', !isPlex);
       urlRow?.classList.toggle('hidden', isStremio);
       tokenRow?.classList.toggle('hidden', isStremio);
-      document.querySelector<HTMLButtonElement>('#create-connection-btn')?.classList.toggle('hidden', isStremio);
-      document.querySelector<HTMLButtonElement>('#test-new-connection-btn')?.classList.toggle('hidden', isStremio);
       if (urlInput) {
         if (isNuvio) {
           urlInput.value = 'https://api.nuvio.tv';
@@ -2443,7 +2470,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       if (pullHeading) pullHeading.textContent = `${providerName} → AnyList`;
       if (pushHeading) pushHeading.textContent = `AnyList → ${providerName}`;
       if (type !== previousType) {
-        pendingNuvioRefreshToken = '';
+        resetNuvioAuthentication();
         if (stremioPollTimer !== null) {
           window.clearTimeout(stremioPollTimer);
           stremioPollTimer = null;
@@ -2452,12 +2479,14 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         resetPlexLogin?.();
       }
       previousType = type;
+      updateNuvioActions();
     };
     typeSelect?.addEventListener('change', updateTypeFields);
     updateTypeFields();
 
     const authenticateNuvio = async () => {
       const type = typeSelect?.value ?? 'nuvio';
+      const credentialsRevision = nuvioCredentialsRevision;
       const isArvio = type === 'arvio';
       const email = (document.querySelector<HTMLInputElement>('#new-nuvio-email'))?.value.trim() || '';
       const password = tokenInput?.value || '';
@@ -2496,9 +2525,13 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       }
 
       if (!response || !response.ok) throw new Error(data?.detail || `${isArvio ? 'ARVIO' : 'Nuvio'} sign-in failed`);
+      if (type === 'nuvio' && credentialsRevision !== nuvioCredentialsRevision) {
+        throw new Error('Credentials changed. Test the connection again.');
+      }
+      if (!(data.profiles || []).length) throw new Error(`No ${isArvio ? 'ARVIO' : 'Nuvio'} profile is available for this account.`);
       pendingNuvioRefreshToken = data.refresh_token || password;
       if (nuvioProfileSelect) {
-        nuvioProfileSelect.innerHTML = (data.profiles || []).map((profile: any) => {
+        nuvioProfileSelect.innerHTML = (isArvio ? '' : '<option value="">Select profile</option>') + (data.profiles || []).map((profile: any) => {
           const pid = String(profile.profile_index !== undefined && profile.profile_index !== null ? profile.profile_index : profile.id);
           const pname = profile.name || `Profile ${pid}`;
           return `<option value="${esc(pid)}">${esc(pname)}</option>`;
@@ -2507,7 +2540,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           nuvioProfileSelect.value = selectedProfile;
         }
       }
-      if (!nuvioProfileSelect?.value) throw new Error(`No ${isArvio ? 'ARVIO' : 'Nuvio'} profile is available for this account.`);
+      if (isArvio && !nuvioProfileSelect?.value) throw new Error('No ARVIO profile is available for this account.');
+      if (type === 'nuvio') updateNuvioActions();
       return data;
     };
 
@@ -2671,7 +2705,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     });
 
     // Test new connection button
-    const testNewBtn = document.querySelector<HTMLButtonElement>('#test-new-connection-btn');
     if (testNewBtn) {
       testNewBtn.addEventListener('click', async () => {
         const type = typeSelect?.value ?? 'jellyfin';
@@ -2700,12 +2733,12 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         } finally {
           testNewBtn.disabled = false;
           testNewBtn.textContent = orig;
+          if (typeSelect?.value === 'nuvio') updateNuvioActions();
         }
       });
     }
 
     // Create connection button
-    const createBtn = document.querySelector<HTMLButtonElement>('#create-connection-btn');
     if (createBtn) {
       createBtn.addEventListener('click', async () => {
         const name = (document.querySelector<HTMLInputElement>('#new-conn-name'))?.value.trim();
@@ -2714,6 +2747,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         let connectionToken = (document.querySelector<HTMLInputElement>('#new-conn-token'))?.value.trim();
         let userId = (document.querySelector<HTMLInputElement>('#new-conn-user-id'))?.value.trim() || null;
         const username = (document.querySelector<HTMLInputElement>('#new-conn-username'))?.value.trim() || null;
+        if (type === 'nuvio' && (!pendingNuvioRefreshToken || !nuvioProfileSelect?.value)) {
+          showMessage(pendingNuvioRefreshToken ? 'Select a Nuvio profile.' : 'Test the Nuvio connection first.', 'error');
+          return;
+        }
         if (!name || !u || !connectionToken) {
           showMessage(type === 'nuvio' || type === 'arvio' ? `Name, ${type === 'arvio' ? 'ARVIO' : 'Nuvio'} email and password are required.` : 'Name, URL and Token are required.', 'error');
           return;
@@ -2725,7 +2762,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
         try {
           if (type === 'nuvio' || type === 'arvio') {
-            await authenticateNuvio();
+            if (type === 'arvio') await authenticateNuvio();
             connectionToken = pendingNuvioRefreshToken;
             userId = nuvioProfileSelect?.value || null;
           }
@@ -2771,6 +2808,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           showMessage(errorMessage(e), 'error');
           createBtn.disabled = false;
           createBtn.textContent = orig;
+          updateNuvioActions();
         }
       });
     }
