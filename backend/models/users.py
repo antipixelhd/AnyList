@@ -33,6 +33,9 @@ class User(Base):
     created_at    : Mapped[datetime]       = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at    : Mapped[datetime]       = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    oidc_login_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     @property
     def display_name(self) -> str:
         return self.username
@@ -95,6 +98,8 @@ class UserSettings(Base):
     # in Scrob, which would be a surprising side effect for existing users.
     trakt_sync_dropped       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     trakt_history_cursor_at  : Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # One account-wide pull cadence; provider pull flags still select data.
+    pull_sync_interval      : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Trakt outbound push flags (Scrob → Trakt)
     trakt_push_watched       : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

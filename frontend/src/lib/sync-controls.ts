@@ -1,7 +1,12 @@
-type CancellableJob = { id: number; job_type?: string };
+type CancellableJob = { id: number; job_type?: string; stats?: Record<string, unknown> | null };
 const cancellations = new WeakMap<HTMLButtonElement, { jobId: number; requested: boolean }>();
 
-/** Bind the same cancellation behavior on connections and maintenance jobs. */
+export function resetCancelButton(button: HTMLButtonElement): void {
+  cancellations.delete(button);
+  button.onclick = null;
+}
+
+/** Cancellation belongs to the whole account cycle, never an individual provider. */
 export function wireCancelButton(
   button: HTMLButtonElement | null,
   job: CancellableJob,
@@ -9,18 +14,26 @@ export function wireCancelButton(
   onError: (message: string) => void,
 ): void {
   if (!button) return;
-  if (job.job_type === 'clear') {
-    cancellations.delete(button);
+  if (job.job_type !== 'pull_cycle') {
+    resetCancelButton(button);
     button.classList.add('hidden');
     button.onclick = null;
     return;
   }
+  if (job.stats?.phase === 'reconciling') {
+    resetCancelButton(button);
+    button.classList.remove('hidden');
+    button.disabled = true;
+    button.textContent = 'Syncing…';
+    return;
+  }
   let state = cancellations.get(button);
   if (!state || state.jobId !== job.id) {
-    state = { jobId: job.id, requested: false };
+    state = { jobId: job.id, requested: !!job.stats?.cancel_requested };
     cancellations.set(button, state);
   }
   const current = state;
+  current.requested ||= !!job.stats?.cancel_requested;
   button.classList.remove('hidden');
   button.disabled = current.requested;
   button.textContent = current.requested ? 'Cancelling…' : 'Cancel';

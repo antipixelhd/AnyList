@@ -91,3 +91,12 @@ async def send_password_reset_email(to: str, token: str) -> None:
     </html>
     """
     await send_email(to, "Reset your AnyList password", html)
+
+
+async def send_email_change_email(to: str, token: str) -> None:
+    from html import escape
+    link = escape(f"{settings.server_url.rstrip('/')}/confirm-email-change/{token}", quote=True)
+    await send_email(to, "Confirm your new AnyList email address",
+                     f'<p>Confirm your new email address for AnyList.</p><p><a href="{link}">Confirm email change</a></p>'
+                     '<p>This link expires in one hour. Your current email stays active until you confirm.</p>'
+                     '<p>If you did not request this change, ignore this email.</p>')

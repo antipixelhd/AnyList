@@ -23,6 +23,8 @@ class PullCycleState:
     user_id: int
     new_watched_ids: set[int] = field(default_factory=set)
     new_ratings: RatingChanges = field(default_factory=dict)
+    rating_sources: dict[RatingKey, set[str]] = field(default_factory=dict)
+    library_desired: dict[int, bool] = field(default_factory=dict)
     removed_ratings: set[RatingKey] = field(default_factory=set)
     new_collected_ids: set[int] = field(default_factory=set)
     removed_collected_ids: set[int] = field(default_factory=set)
@@ -36,6 +38,8 @@ class PullCycleState:
     library_observed_at_by_media: dict[int, datetime] = field(default_factory=dict)
     watched_exclusions: dict[int, tuple[set[int], set[CollectionSource]]] = field(default_factory=dict)
     removed_watch_exclusions: dict[int, set[int]] = field(default_factory=dict)
+    push_back: dict[int, dict[int, str]] = field(default_factory=dict)
+    connection_versions: dict[int, int] = field(default_factory=dict)
 
 
 _states: dict[int, PullCycleState] = {}

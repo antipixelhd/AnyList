@@ -3,8 +3,6 @@
 Parsing does not read configuration, query the database, or deliver provider writes.
 Handlers own authentication, media resolution, and accepted state changes.
 """
-import re
-from typing import Optional
 
 from core.jellyfin import extract_quality
 
@@ -161,23 +159,12 @@ def parse_plex_payload(payload: dict) -> dict | None:
     tvdb_id = plex_client.extract_tvdb_id(guids)
     imdb_id = plex_client.extract_imdb_id(guids)
 
-    # Extract series identifiers from grandparent
-    grandparent_guid = metadata.get("grandparentGuid", "")
-    grandparent_tmdb_id: Optional[str] = None
-    grandparent_tvdb_id: Optional[str] = None
-    grandparent_imdb_id: Optional[str] = None
-
-    # Try regex on grandparentGuid — handle both modern short forms (tmdb://, tvdb://)
-    # and legacy Plex agent forms (com.plexapp.agents.themoviedb://, thetvdb://)
-    tmdb_match = re.search(r'(?:^tmdb|themoviedb(?:\.com)?)://(\d+)', grandparent_guid, re.IGNORECASE)
-    if tmdb_match:
-        grandparent_tmdb_id = tmdb_match.group(1)
-    tvdb_match = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', grandparent_guid, re.IGNORECASE)
-    if tvdb_match:
-        grandparent_tvdb_id = tvdb_match.group(1)
-    imdb_match = re.search(r'imdb://(tt\d+)', grandparent_guid, re.IGNORECASE)
-    if imdb_match:
-        grandparent_imdb_id = imdb_match.group(1)
+    # Use the same extractors for episode and show GUIDs, including HAMA.
+    grandparent_guids = [{"id": metadata.get("grandparentGuid", "")}]
+    gp_tmdb = plex_client.extract_tmdb_id(grandparent_guids)
+    grandparent_tmdb_id = str(gp_tmdb) if gp_tmdb else None
+    grandparent_tvdb_id = plex_client.extract_tvdb_id(grandparent_guids)
+    grandparent_imdb_id = plex_client.extract_imdb_id(grandparent_guids)
 
     view_offset_ms = metadata.get("viewOffset", 0)
     duration_ms = metadata.get("duration", 0)
@@ -268,7 +255,9 @@ def parse_kodi_payload(payload: dict) -> dict | None:
         "episode_number": item.get("episode"),
         "progress_percent": progress_percent,
         "progress_seconds": position_seconds,
+        "total_seconds": total_seconds or None,
         "is_paused": notification_type == "pause",
         "ended": ended,
+        "library_update": payload.get("source") == "library_update",
         "session_id": str(item.get("id") or payload.get("session_id") or "0"),
     }

@@ -32,7 +32,6 @@ async def lifespan(app: FastAPI):
 
 
     await netflix_sessions.cleanup_expired_netflix_imports()
-    await netflix_sessions.resume_incomplete_netflix_imports()
 
     # Clean up stuck sync jobs and orphaned playback sessions on startup
     from db import async_sessionmaker
@@ -45,6 +44,8 @@ async def lifespan(app: FastAPI):
         )
         await db.execute(delete(PlaybackSession))
         await db.commit()
+
+    await netflix_sessions.resume_incomplete_netflix_imports()
 
     async with scheduler.background_jobs():
         yield

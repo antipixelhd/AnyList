@@ -174,7 +174,7 @@ async def upcoming_seasons(db: AsyncSession = Depends(get_db), viewer: User = De
 
 
 def review_priority(review: SyncReview) -> str:
-    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import'}:
+    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import','library_conflict','watch_conflict','progress_conflict'}:
         return 'high'
     if review.kind == 'outbound_pending':
         return 'medium'
@@ -427,9 +427,18 @@ class ReviewResolution(BaseModel):
 
 @router.post('/recent-events/{event_id}')
 async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:BackgroundTasks,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+    await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     event=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id).with_for_update())).scalar_one_or_none()
     if not event:raise HTTPException(404,'Event not found')
     if event.state!='pending':raise HTTPException(409,'This event has already been resolved')
+    if event.provider == 'combined':
+        from core.sync_reconciliation import resolve_category_review, deliver_category_review
+        if await resolve_category_review(db, event, body.action):
+            event.state = 'confirmed' if body.action == 'confirm' else 'corrected'
+            await db.commit()
+            background_tasks.add_task(deliver_category_review, viewer.id, event.media_id,
+                                      (event.payload or {}).get('category'))
+            return {'state': event.state}
     if event.kind in {'new_season_release_date','new_season_release'}:
         if event.kind != 'new_season_release' or body.action not in {'add_watching','add_planning'}:
             raise HTTPException(422,'Dismiss this season notice or choose a release action')
@@ -484,7 +493,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
         raise HTTPException(409,'This operation requires the connection dispatcher; it cannot be marked successful manually')
     elif event.kind=='rating_conflict':
         if body.action=='change':raise HTTPException(422,'Use the title editor to choose a different rating')
-        if event.proposed_score is None or event.previous_score is None:raise HTTPException(409,'This rating conflict is incomplete; import the provider again')
+        if event.proposed_score is None or (event.previous_score is None and event.provider != 'combined'):raise HTTPException(409,'This rating conflict is incomplete; import the provider again')
         if body.action=='confirm':
             entry=(await db.execute(select(TrackedEntry).where(
                 TrackedEntry.user_id==viewer.id,TrackedEntry.media_id==event.media_id))).scalar_one_or_none()
@@ -613,8 +622,21 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
             # Provider-inferred removals are applied locally before review.
             # Confirmation still needs to release their queued outbound work.
             dispatch_hidden_status = True
+    if event.provider == 'combined' and event.kind == 'rating_conflict' and body.action == 'keep':
+        kept = (await db.execute(select(Rating).where(Rating.user_id == viewer.id,
+            Rating.media_id == event.media_id, Rating.season_number == event.season_number,
+            Rating.episode_order.is_(None)))).scalar_one_or_none()
+        if kept:
+            kept.rated_at = datetime.utcnow()
     event.state='confirmed' if body.action=='confirm' else 'corrected'
     await db.commit()
+    if event.provider == 'combined' and event.kind == 'rating_conflict':
+        from core.local_outbound import dispatch_local_tracking_delta
+        score = event.proposed_score if body.action == 'confirm' else event.previous_score
+        key = (event.media_id, event.season_number)
+        background_tasks.add_task(dispatch_local_tracking_delta, viewer.id, set(),
+                                  {key: score} if score is not None else {},
+                                  {key} if score is None else set())
     if dispatch_hidden_status:
         from core.local_outbound import dispatch_queued_tracking_actions
         background_tasks.add_task(dispatch_queued_tracking_actions, viewer.id)
@@ -1199,35 +1221,8 @@ async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), vi
 
 
 async def released_episodes(db, media):
-    if media.media_type == MediaType.movie:
-        return [media] if not media.release_date or media.release_date[:10] <= date.today().isoformat() else []
-    terms = []
-    if media.tmdb_id:
-        terms.append(Show.tmdb_id == media.tmdb_id)
-    if media.tvdb_id:
-        terms.append(Show.tvdb_id == media.tvdb_id)
-    if not terms:
-        return []
-    show = (await db.execute(select(Show).where(or_(*terms)))).scalars().first()
-    if not show:
-        return []
-    imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
-    query = select(Media).where(
-        Media.show_id == show.id,
-        Media.media_type == MediaType.episode,
-        Media.season_number > 0,
-        or_(
-            (Media.release_date.is_not(None) & (Media.release_date <= date.today().isoformat())),
-            imported_release,
-        ),
-    )
-    catalogue_ids = (media.tmdb_data or {}).get('tracking_episode_ids')
-    imported_ids = (media.tmdb_data or {}).get('tracking_import_episode_media_ids') or []
-    if catalogue_ids is not None:
-        provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
-        identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
-        query = query.where(or_(identity.in_(catalogue_ids), Media.id.in_(imported_ids), imported_release))
-    return (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
+    from core.tracking_metadata import released_episodes as load_released_episodes
+    return await load_released_episodes(db, media)
 
 
 class SeasonProgressPatch(BaseModel):

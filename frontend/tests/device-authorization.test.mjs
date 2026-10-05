@@ -149,3 +149,12 @@ test("expiry ends authorization before another provider request", async t => {
   assert.deepEqual(state.errors, ["Authorization timed out. Please try again."]);
   assert.equal(env.timers.size, 0);
 });
+
+test("a non-JSON provider failure reports the HTTP error and never displays a PIN", async t => {
+  environment(t, async () => new Response("upstream unavailable", { status: 502 }));
+  const state = session();
+  await state.auth.start();
+  assert.deepEqual(state.codes, []);
+  assert.equal(state.errors.length, 1);
+  assert.match(state.errors[0], /authorization failed.*HTTP 502/);
+});

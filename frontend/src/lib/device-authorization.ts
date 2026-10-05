@@ -53,7 +53,12 @@ export function createDeviceAuthorization(options: AuthorizationOptions) {
           body: body ? JSON.stringify(body) : undefined,
           signal,
         });
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch {
+          throw new Error(`${options.provider} authorization failed (HTTP ${response.status}). Try again in a moment.`);
+        }
         if (signal.aborted) throw new Error("Authorization cancelled");
         if (!response.ok) throw new Error(data.detail || `${options.provider} authorization failed`);
         return data;
@@ -81,7 +86,12 @@ export function createDeviceAuthorization(options: AuthorizationOptions) {
             if (signal.aborted) throw cause;
             continue;
           }
-          const data = await response.json();
+          let data;
+          try {
+            data = await response.json();
+          } catch {
+            throw new Error(`${options.provider} authorization failed (HTTP ${response.status}). Try again in a moment.`);
+          }
           if (signal.aborted) return;
           if (!response.ok) throw new Error(data.detail || `${options.provider} authorization failed`);
           if (data.status === "connected") {

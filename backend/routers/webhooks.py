@@ -4,7 +4,6 @@ from core import enrichment
 from core import show_metadata
 from core import scrobble_delivery, settings_store, outbound_sync, watch_echo, webhook_payloads
 import json
-import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -1646,6 +1645,33 @@ async def _backfill_jellyfin_runtimes(
         await db.commit()
 
 
+async def _backfill_kodi_runtime(
+    db: AsyncSession, media: Media, data: dict, tmdb_key: str | None,
+) -> None:
+    """Fill Media.runtime when a Kodi-style webhook event finds it missing,
+    from the event's own total length (exact for the file) or, failing that,
+    TMDB - then commit. The Plex and Jellyfin/Emby paths already do this
+    (_backfill_plex_runtime, _backfill_jellyfin_runtimes); this webhook used
+    the length only for the progress ratio and dropped it, so an episode TMDB
+    has no runtime for yet (a freshly aired one, typically) left the Now
+    Playing bar's live progress frozen at the last reported percentage (#383).
+    """
+    if media.runtime:
+        return
+    minutes: int | None = None
+    total_seconds = data.get("total_seconds")
+    if total_seconds:
+        try:
+            minutes = round(int(total_seconds) / 60) or None
+        except (TypeError, ValueError):
+            minutes = None
+    if not minutes:
+        minutes = await _runtime_from_tmdb(db, media, tmdb_key)
+    if minutes and minutes > 0:
+        media.runtime = minutes
+        await db.commit()
+
+
 async def _backfill_credits_stingers(db: AsyncSession, media: Media, tmdb_key: str | None) -> None:
     """Actively fills in a movie's mid/post-credits-scene flags (#319) when a
     webhook event finds them missing from tmdb_data - a movie enriched before
@@ -1758,38 +1784,22 @@ async def find_or_create_media_plex(
                 show_item = await plex_client.get_item(conn.url, conn.token, data["grandparent_rating_key"])
                 if show_item:
                     # get_guids() falls back to the lowercase 'guid' string a
-                    # legacy-agent show has instead of a Guid array, so an
-                    # older/manually-matched show can still resolve here.
+                    # legacy-agent show has instead of a Guid array, and
+                    # extract_tmdb_id/extract_tvdb_id understand the HAMA
+                    # agent's packed scheme too, so an older/manually-matched
+                    # or HAMA-scanned show can still resolve here.
                     show_guids = plex_client.get_guids(show_item)
-                    for g in show_guids:
-                        gid = g.get("id", "")
-                        if gid.startswith("tmdb://"):
-                            try:
-                                series_tmdb_id = int(gid.replace("tmdb://", ""))
-                            except ValueError:
-                                pass
-                            break
-                        elif re.search(r'themoviedb(?:\.com)?://(\d+)', gid, re.IGNORECASE):
-                            m = re.search(r'themoviedb(?:\.com)?://(\d+)', gid, re.IGNORECASE)
-                            if m:
-                                try:
-                                    series_tmdb_id = int(m.group(1))
-                                except ValueError:
-                                    pass
-                            break
-                    # Also try TVDB/IMDB on the show if TMDB still not found
+                    series_tmdb_id = plex_client.extract_tmdb_id(show_guids)
+                    # Also try TVDB on the show if TMDB still not found
                     if not series_tmdb_id:
-                        for g in show_guids:
-                            gid = g.get("id", "")
-                            tvdb_m = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', gid, re.IGNORECASE)
-                            if tvdb_m:
-                                try:
-                                    res = await tmdb.find_by_external_id(tvdb_m.group(1), "tvdb_id", api_key=api_key)
-                                    if res.get("tv_results"):
-                                        series_tmdb_id = res["tv_results"][0]["id"]
-                                        break
-                                except Exception:
-                                    pass
+                        show_tvdb_id = plex_client.extract_tvdb_id(show_guids)
+                        if show_tvdb_id:
+                            try:
+                                res = await tmdb.find_by_external_id(show_tvdb_id, "tvdb_id", api_key=api_key)
+                                if res.get("tv_results"):
+                                    series_tmdb_id = res["tv_results"][0]["id"]
+                            except Exception:
+                                pass
             except Exception:
                 pass
 
@@ -2160,16 +2170,14 @@ async def _handle_plex_webhook(request: Request, db: AsyncSession, api_key: str,
                         "grandparent_imdb_id": None,
                         "quality": item_quality,
                     }
-                    gp_guid = plex_item.get("grandparentGuid", "")
-                    m = re.search(r'(?:^tmdb|themoviedb(?:\.com)?)://(\d+)', gp_guid, re.IGNORECASE)
-                    if m:
-                        item_data["grandparent_tmdb_id"] = m.group(1)
-                    m = re.search(r'(?:^tvdb|thetvdb(?:\.com)?)://(\d+)', gp_guid, re.IGNORECASE)
-                    if m:
-                        item_data["grandparent_tvdb_id"] = m.group(1)
-                    m = re.search(r'imdb://(tt\d+)', gp_guid, re.IGNORECASE)
-                    if m:
-                        item_data["grandparent_imdb_id"] = m.group(1)
+                    # Same extract_* helpers as item_guids above (not raw
+                    # regex) so a HAMA-agent show's grandparentGuid resolves
+                    # here too - see the matching comment in parse_plex_payload.
+                    grandparent_guids = [{"id": plex_item.get("grandparentGuid", "")}]
+                    _gp_tmdb_id = plex_client.extract_tmdb_id(grandparent_guids)
+                    item_data["grandparent_tmdb_id"] = str(_gp_tmdb_id) if _gp_tmdb_id else None
+                    item_data["grandparent_tvdb_id"] = plex_client.extract_tvdb_id(grandparent_guids)
+                    item_data["grandparent_imdb_id"] = plex_client.extract_imdb_id(grandparent_guids)
 
                     try:
                         item_media = await find_or_create_media_plex(
@@ -2654,6 +2662,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
     media = await find_or_create_media_kodi(data, db, api_key=tmdb_key, user_id=user.id)
     if media is None:
         return {"status": "ignored", "reason": "could not identify media"}
+    await _backfill_kodi_runtime(db, media, data, tmdb_key)
 
     session_key = f"kodi:{user.id}:{data['session_id']}"
 
@@ -2693,6 +2702,20 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
         await db.commit()
 
     elif notification_type == "stop":
+        # A library mark-as-watched of something Scrob already has a play for
+        # adds nothing. Without this, Kodi echoing back a playcount Scrob just
+        # synced to it was recorded as a brand new play each time, and the
+        # growing count made the next sync write it to Kodi again, forever.
+        if data.get("library_update"):
+            already = await db.execute(
+                select(func.count()).select_from(WatchEvent).where(
+                    WatchEvent.user_id == user.id,
+                    WatchEvent.media_id == media.id,
+                )
+            )
+            if already.scalar_one() > 0:
+                return {"status": "ignored", "reason": "already watched", "title": data["title"]}
+
         session = await _close_session(db, session_key)
         progress_percent = data["progress_percent"] or (session.progress_percent if session else 0.0)
         progress_seconds = data["progress_seconds"] or (session.progress_seconds if session else 0)

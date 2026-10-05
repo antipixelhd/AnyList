@@ -24,7 +24,6 @@ for (const [provider, name, credentials] of [
       name,
       body: {
         ...Object.fromEntries(credentials.map(key => [`${provider}_${key}`, "test-value"])),
-        ...(provider === "bingebase" ? {} : { [`${provider}_auto_sync_interval`]: 0.5 }),
         [`${provider}_push_watched`]: true,
         [`${provider}_scrobble`]: false,
       },
@@ -32,15 +31,15 @@ for (const [provider, name, credentials] of [
   });
 }
 
-test("blank credentials and scheduling selections clear settings without inventing checkbox values", () => {
+test("provider saves leave the account schedule alone", () => {
   assert.deepEqual(readTrackingServiceSettings("save_trakt_settings", form({})), {
     name: "Trakt",
-    body: { trakt_client_id: null, trakt_client_secret: null, trakt_auto_sync_interval: null },
+    body: { trakt_client_id: null, trakt_client_secret: null },
   });
   const result = readTrackingServiceSettings("save_simkl_settings", form({
     '[name="simkl_auto_sync_interval"]': { value: "0" },
   }));
-  assert.equal(result.body.simkl_auto_sync_interval, 0);
+  assert.equal(Object.hasOwn(result.body, 'simkl_auto_sync_interval'), false);
 });
 
 test("other page actions do not read or serialize settings", () => {

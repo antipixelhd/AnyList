@@ -32,9 +32,35 @@ async def _flush_pull_cycle(state) -> None:
     from core.stream_actions import dispatch_stream_actions
     from db import async_sessionmaker
     from models import Collection, UserSettings
+    from core.sync_delivery_targets import connection_matches, dispatch_queues, queue_handoff
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as db:
+        if queue_handoff():
+            from core.watch_intents import dispatch_watch_intents
+            from core.streaming_library import dispatch_pending_library_deliveries
+            await dispatch_watch_intents(db, state.user_id)
+            await dispatch_pending_library_deliveries(db, state.user_id)
+            await dispatch_stream_actions(db, state.user_id)
+            await dispatch_cloud_actions(db, state.user_id)
+            return
+        errors = []
+        async def deliver(*args, **kwargs):
+            try:
+                await outbound_sync.fan_out_changes(*args, **kwargs, require_success=True)
+            except Exception as error:
+                errors.append(error)
+        # A retry must never replay a rating over a newer canonical edit.
+        from models.ratings import Rating
+        keys = set(state.new_ratings) | state.removed_ratings
+        current_ratings = {}
+        if keys:
+            current_ratings = {(row.media_id, row.season_number): row.rating for row in
+                (await db.execute(select(Rating).where(Rating.user_id == state.user_id,
+                    Rating.media_id.in_({key[0] for key in keys}), Rating.episode_order.is_(None)))).scalars()}
+        state.new_ratings = {key: score for key, score in state.new_ratings.items()
+                             if current_ratings.get(key) == score}
+        state.removed_ratings -= current_ratings.keys()
         changed_collection_ids = state.new_collected_ids | state.removed_collected_ids
         if changed_collection_ids:
             present = set((await db.execute(select(Collection.media_id).where(
@@ -47,6 +73,8 @@ async def _flush_pull_cycle(state) -> None:
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == state.user_id
         ))).scalar_one_or_none()
+        if state.library_new_ids or state.library_removed_ids:
+            state.library_api_key = await settings_store.get_effective_tmdb_key(db, settings)
         changed_watch_ids = state.new_watched_ids
         final_watched_ids = set()
         if changed_watch_ids:
@@ -69,9 +97,10 @@ async def _flush_pull_cycle(state) -> None:
                     exclude_connection_ids=set(exclusions[0]),
                 )
             await db.commit()
-            await dispatch_watch_intents(db, state.user_id)
+            if dispatch_queues():
+                await dispatch_watch_intents(db, state.user_id)
         for exclusions, media_ids in watched_groups.items():
-            await outbound_sync.fan_out_changes(
+            await deliver(
                 db, state.user_id, None, media_ids, {}, settings,
                 exclude_connection_ids=set(exclusions[0]),
                 exclude_cloud_sources=set(exclusions[1]),
@@ -98,12 +127,13 @@ async def _flush_pull_cycle(state) -> None:
                     await queue_watch_intents(db, state.user_id, media_ids,
                                               exclude_connection_ids=set(excluded))
                 await db.commit()
-                await dispatch_watch_intents(db, state.user_id)
+                if dispatch_queues():
+                    await dispatch_watch_intents(db, state.user_id)
                 for excluded, media_ids in removal_groups.items():
                     await watch_delivery.push_watch_state(
                         db, state.user_id, sorted(media_ids), watched=False,
                         exclude_connection_ids=set(excluded),
-                        skip_stream_watch_writes=True,
+                        skip_stream_watch_writes=True, require_success=True,
                     )
         if state.library_new_ids or state.library_removed_ids:
             await outbound_sync.fan_out_streaming_library(
@@ -115,22 +145,43 @@ async def _flush_pull_cycle(state) -> None:
                 api_key=state.library_api_key,
                 source_observed_at_by_media=state.library_observed_at_by_media,
                 source_connection_ids_by_media=state.library_source_ids_by_media,
+                desired_by_media=state.library_desired,
             )
-        await outbound_sync.fan_out_changes(
-            db,
-            state.user_id,
-            None,
-            set(),
-            state.new_ratings,
-            settings,
+        # Rating sources are scoped to a title/season, not the whole cycle.
+        groups = {}
+        for key, score in state.new_ratings.items():
+            sources = state.rating_sources.get(key)
+            connections = {int(value.split(":")[1]) for value in sources or () if value.startswith("connection:")}
+            clouds = {CollectionSource(value) for value in sources or () if not value.startswith("connection:")}
+            if sources is None:
+                connections, clouds = state.excluded_connection_ids, state.excluded_cloud_sources
+            groups.setdefault((frozenset(connections), frozenset(clouds)), {})[key] = score
+        for (connections, clouds), ratings in groups.items():
+            await deliver(db, state.user_id, None, set(), ratings, settings,
+                exclude_connection_ids=set(connections), exclude_cloud_sources=set(clouds))
+        await deliver(
+            db, state.user_id, None, set(), {}, settings,
             removed_ratings=state.removed_ratings,
             new_collected_ids=state.new_collected_ids,
             removed_collected_ids=state.removed_collected_ids,
             exclude_connection_ids=state.excluded_connection_ids,
             exclude_cloud_sources=state.excluded_cloud_sources,
         )
-        await dispatch_stream_actions(db, state.user_id)
-        await dispatch_cloud_actions(db, state.user_id)
+        if dispatch_queues():
+            await dispatch_stream_actions(db, state.user_id)
+            await dispatch_cloud_actions(db, state.user_id)
+        from models import MediaServerConnection
+        from core.server_sync import _push_watched_back_to_source
+        for connection_id, items in state.push_back.items():
+            conn = await db.get(MediaServerConnection, connection_id)
+            if not connection_matches(connection_id) or not conn or conn.user_id != state.user_id or conn.identity_version != state.connection_versions.get(connection_id):
+                continue
+            try:
+                await _push_watched_back_to_source(db, state.user_id, conn, items, require_success=True)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError("Accepted sync delivery is pending retry") from errors[0]
 
 
 async def _run_scheduled_pull_cycle(user_id: int, pulls: list[tuple[str, object]]) -> None:
@@ -154,279 +205,100 @@ async def _run_scheduled_pull_cycle(user_id: int, pulls: list[tuple[str, object]
             print(f"Scheduled pull fan-out failed for user {user_id}: {type(error).__name__}")
 
 
-async def _auto_sync_scheduler():
-    from datetime import datetime, timedelta, timezone
+async def _queue_scheduled_push(db, *, user_id, source, interval, runner, connection_id=None):
+    """Keep full-push scheduling independent from the account pull cadence."""
+    from datetime import datetime, timedelta
 
-    from db import async_sessionmaker
+    active = (await db.execute(select(SyncJob.id).where(
+        SyncJob.user_id == user_id, SyncJob.source == source,
+        SyncJob.connection_id == connection_id,
+        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
+    ).limit(1))).scalar_one_or_none()
+    if active is not None:
+        return
+    last = (await db.execute(select(SyncJob.updated_at).where(
+        SyncJob.user_id == user_id, SyncJob.source == source,
+        SyncJob.connection_id == connection_id, SyncJob.job_type == "push",
+        SyncJob.status.in_((SyncStatus.completed, SyncStatus.failed)),
+    ).order_by(SyncJob.updated_at.desc()).limit(1))).scalar_one_or_none()
+    if last is not None and last + timedelta(hours=interval) > datetime.utcnow():
+        return
+    job = SyncJob(user_id=user_id, source=source, connection_id=connection_id,
+                  job_type="push", status=SyncStatus.pending)
+    db.add(job)
+    await db.flush()
+    await db.commit()
+    if connection_id is None:
+        asyncio.create_task(runner(user_id, job.id))
+    else:
+        asyncio.create_task(runner(user_id, connection_id, job.id))
+
+
+async def _schedule_sync_tick(db):
+    from fastapi import HTTPException
+    from core.account_sync import queue_account_pull, run_account_pull
+    from core.cloud_reconciliation import cloud_push_is_approved
+    from core.tracking_snapshot import require_stream_reconciliation
     from models.connections import MediaServerConnection
     from models.users import UserSettings
 
+    connections = list((await db.execute(select(MediaServerConnection).where(
+        MediaServerConnection.auto_push_interval.isnot(None),
+    ))).scalars())
+    for conn in connections:
+        interval = conn.scheduled_auto_push_interval
+        if interval is None or not conn.push_enabled or conn.type not in {"jellyfin", "emby", "plex"}:
+            continue
+        try:
+            await require_stream_reconciliation(db, conn)
+        except HTTPException:
+            continue
+        await _queue_scheduled_push(db, user_id=conn.user_id, source=CollectionSource(conn.type),
+                                    interval=interval, runner=server_sync._run_full_push, connection_id=conn.id)
 
-    # Trakt/Simkl/MDBList are single, user-level cloud connections (no
-    # MediaServerConnection row, no connection_id) — same due-date logic as
-    # the media-connection loop below, just keyed by user_id + source alone.
-    cloud_sync_config = [
-        {
-            "source": CollectionSource.trakt,
-            "connected_field": "trakt_access_token",
-            "auto_sync_field": "trakt_auto_sync_interval",
-            "auto_push_field": "trakt_auto_push_interval",
-            "push_flags": ("trakt_push_watched", "trakt_push_ratings", "trakt_push_collection", "trakt_push_dropped"),
-            "pull_runner": trakt_sync.run_trakt_sync,
-            "push_runner": trakt_sync._run_trakt_push,
-        },
-        {
-            "source": CollectionSource.simkl,
-            "connected_field": "simkl_access_token",
-            "auto_sync_field": "simkl_auto_sync_interval",
-            "auto_push_field": "simkl_auto_push_interval",
-            "push_flags": ("simkl_push_watched", "simkl_push_ratings"),
-            "pull_runner": simkl_sync.run_simkl_sync,
-            "push_runner": simkl_sync._run_simkl_push,
-        },
-        {
-            "source": CollectionSource.mdblist,
-            "connected_field": "mdblist_api_key",
-            "auto_sync_field": "mdblist_auto_sync_interval",
-            "auto_push_field": "mdblist_auto_push_interval",
-            "push_flags": (
-                "mdblist_push_watched",
-                "mdblist_push_ratings",
-                "mdblist_push_watchlist",
-                "mdblist_push_collection",
-                "mdblist_push_dropped",
-            ),
-            "pull_runner": mdblist_sync.run_mdblist_sync,
-            "push_runner": mdblist_sync.run_mdblist_push,
-        },
-    ]
+    cloud_pushes = (
+        ("trakt", "access_token", trakt_sync._run_trakt_push,
+         ("push_watched", "push_ratings", "push_collection", "push_dropped")),
+        ("simkl", "access_token", simkl_sync._run_simkl_push, ("push_watched", "push_ratings")),
+        ("mdblist", "api_key", mdblist_sync.run_mdblist_push,
+         ("push_watched", "push_ratings", "push_watchlist", "push_collection", "push_dropped")),
+    )
+    settings_rows = list((await db.execute(select(UserSettings))).scalars())
+    # Capture IDs before rollback/commit expires any ORM objects.
+    account_ids = [row.user_id for row in settings_rows if row.pull_sync_interval is not None]
+    for row in settings_rows:
+        for provider, credential, runner, flags in cloud_pushes:
+            interval = getattr(row, f"{provider}_auto_push_interval")
+            if interval is None or not getattr(row, f"{provider}_{credential}"):
+                continue
+            if not any(getattr(row, f"{provider}_{flag}") for flag in flags):
+                continue
+            if not await cloud_push_is_approved(db, row.user_id, provider):
+                continue
+            await _queue_scheduled_push(db, user_id=row.user_id, source=CollectionSource(provider),
+                                        interval=interval, runner=runner)
+    for user_id in account_ids:
+        try:
+            cycle = await queue_account_pull(db, user_id, scheduled=True)
+            await db.commit()  # Release admission lock when not due.
+            if cycle:
+                asyncio.create_task(run_account_pull(user_id, cycle.id))
+        except HTTPException:
+            await db.rollback()
 
-    check_interval = 300  # seconds between scheduler ticks
-    source_map = {
-        "jellyfin": CollectionSource.jellyfin,
-        "emby": CollectionSource.emby,
-        "plex": CollectionSource.plex,
-        "nuvio": CollectionSource.nuvio,
-        "stremio": CollectionSource.stremio,
-    }
-    runner_map = {
-        "jellyfin": server_sync.run_jellyfin_sync,
-        "emby": server_sync.run_emby_sync,
-        "plex": server_sync.run_plex_sync,
-        "nuvio": server_sync.run_nuvio_sync,
-        "stremio": server_sync.run_stremio_sync,
-    }
+
+async def _auto_sync_scheduler():
+    from db import async_sessionmaker
 
     while True:
-        await asyncio.sleep(check_interval)
+        await asyncio.sleep(300)  # Preserve the existing five-minute tick.
         try:
-
             await netflix_sessions.cleanup_expired_netflix_imports()
-            async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-            async with async_session() as db:
-                result = await db.execute(
-                    select(MediaServerConnection).where(
-                        or_(
-                            MediaServerConnection.auto_sync_interval.isnot(None),
-                            MediaServerConnection.auto_push_interval.isnot(None),
-                        )
-                    )
-                )
-                connections = result.scalars().all()
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
-                pull_batches: dict[int, list[tuple[str, object]]] = {}
-
-                for conn in connections:
-                    source = source_map.get(conn.type)
-                    pull_runner = runner_map.get(conn.type)
-                    if not source or not pull_runner:
-                        continue
-
-                    active_q = await db.execute(
-                        select(SyncJob)
-                        .where(
-                            SyncJob.user_id == conn.user_id,
-                            SyncJob.source == source,
-                            SyncJob.connection_id == conn.id,
-                            SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
-                        )
-                        .limit(1)
-                    )
-                    if active_q.scalar_one_or_none():
-                        continue
-
-                    schedules: list[tuple[str, float, object]] = []
-                    if conn.auto_sync_interval is not None:
-                        schedules.append(("pull", conn.auto_sync_interval, pull_runner))
-                    auto_push_interval = conn.scheduled_auto_push_interval
-                    if auto_push_interval is not None and conn.push_enabled:
-                        from fastapi import HTTPException
-
-                        from core.tracking_snapshot import require_stream_reconciliation
-                        try:
-                            await require_stream_reconciliation(db, conn)
-                        except HTTPException:
-                            pass
-                        else:
-                            schedules.append(("push", auto_push_interval, server_sync._run_full_push))
-
-                    due: list[tuple[datetime, str, object]] = []
-                    for job_type, interval, runner in schedules:
-                        last_q = await db.execute(
-                            select(SyncJob)
-                            .where(
-                                SyncJob.user_id == conn.user_id,
-                                SyncJob.source == source,
-                                SyncJob.connection_id == conn.id,
-                                SyncJob.job_type == job_type,
-                                SyncJob.status.in_([SyncStatus.completed, SyncStatus.failed]),
-                            )
-                            .order_by(SyncJob.updated_at.desc())
-                            .limit(1)
-                        )
-                        last_job = last_q.scalar_one_or_none()
-                        next_run = (
-                            last_job.updated_at + timedelta(hours=interval)
-                            if last_job
-                            else datetime.min
-                        )
-                        if next_run <= now:
-                            due.append((next_run, job_type, runner))
-
-                    if not due:
-                        continue
-                    _, job_type, runner = min(due, key=lambda item: item[0])
-                    job = SyncJob(
-                        user_id=conn.user_id,
-                        source=source,
-                        status=SyncStatus.pending,
-                        connection_id=conn.id,
-                        job_type=job_type,
-                    )
-                    db.add(job)
-                    await db.flush()
-                    job_id = job.id
-                    await db.commit()
-
-                    print(
-                        f"Auto-{job_type}: queuing {conn.type} for user {conn.user_id}, "
-                        f"connection {conn.id} (job {job_id})"
-                    )
-                    if job_type == "push":
-                        asyncio.create_task(runner(conn.user_id, conn.id, job_id))
-                    else:
-                        pull_batches.setdefault(conn.user_id, []).append((
-                            f"{conn.type}:{conn.id}",
-                            lambda runner=runner, user_id=conn.user_id, job_id=job_id, connection_id=conn.id:
-                                runner(user_id, job_id, 0, 0, connection_id),
-                        ))
-
-                cloud_settings_result = await db.execute(
-                    select(UserSettings).where(
-                        or_(
-                            *[
-                                getattr(UserSettings, cfg["auto_sync_field"]).isnot(None)
-                                for cfg in cloud_sync_config
-                            ],
-                            *[
-                                getattr(UserSettings, cfg["auto_push_field"]).isnot(None)
-                                for cfg in cloud_sync_config
-                            ],
-                        )
-                    )
-                )
-                cloud_settings_rows = cloud_settings_result.scalars().all()
-
-                for settings_row in cloud_settings_rows:
-                    for cfg in cloud_sync_config:
-                        source = cfg["source"]
-                        auto_sync = getattr(settings_row, cfg["auto_sync_field"])
-                        auto_push = getattr(settings_row, cfg["auto_push_field"])
-                        if auto_sync is None and auto_push is None:
-                            continue
-                        if not getattr(settings_row, cfg["connected_field"]):
-                            continue
-
-                        active_q = await db.execute(
-                            select(SyncJob)
-                            .where(
-                                SyncJob.user_id == settings_row.user_id,
-                                SyncJob.source == source,
-                                SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
-                            )
-                            .limit(1)
-                        )
-                        if active_q.scalar_one_or_none():
-                            continue
-
-                        schedules: list[tuple[str, float, object]] = []
-                        if auto_sync is not None:
-                            schedules.append(("pull", auto_sync, cfg["pull_runner"]))
-                        from core.cloud_reconciliation import cloud_push_is_approved
-                        push_approved = await cloud_push_is_approved(
-                            db, settings_row.user_id, source.value
-                        )
-                        if auto_push is not None and push_approved and any(
-                            getattr(settings_row, flag) for flag in cfg["push_flags"]
-                        ):
-                            schedules.append(("push", auto_push, cfg["push_runner"]))
-
-                        due: list[tuple[datetime, str, object]] = []
-                        for job_type, interval, runner in schedules:
-                            last_q = await db.execute(
-                                select(SyncJob)
-                                .where(
-                                    SyncJob.user_id == settings_row.user_id,
-                                    SyncJob.source == source,
-                                    SyncJob.job_type == job_type,
-                                    SyncJob.status.in_([SyncStatus.completed, SyncStatus.failed]),
-                                )
-                                .order_by(SyncJob.updated_at.desc())
-                                .limit(1)
-                            )
-                            last_job = last_q.scalar_one_or_none()
-                            next_run = (
-                                last_job.updated_at + timedelta(hours=interval)
-                                if last_job
-                                else datetime.min
-                            )
-                            if next_run <= now:
-                                due.append((next_run, job_type, runner))
-
-                        if not due:
-                            continue
-                        _, job_type, runner = min(due, key=lambda item: item[0])
-                        job = SyncJob(
-                            user_id=settings_row.user_id,
-                            source=source,
-                            status=SyncStatus.pending,
-                            job_type=job_type,
-                        )
-                        db.add(job)
-                        await db.flush()
-                        job_id = job.id
-                        await db.commit()
-
-                        print(
-                            f"Auto-{job_type}: queuing {source.value} for user "
-                            f"{settings_row.user_id} (job {job_id})"
-                        )
-                        if job_type == "push":
-                            asyncio.create_task(runner(settings_row.user_id, job_id))
-                        else:
-                            pull_batches.setdefault(settings_row.user_id, []).append((
-                                source.value,
-                                lambda runner=runner, user_id=settings_row.user_id, job_id=job_id:
-                                    runner(user_id, job_id),
-                            ))
-
-                for user_id, pulls in pull_batches.items():
-                    asyncio.create_task(_run_scheduled_pull_cycle(user_id, pulls))
-
-        except Exception as e:
-            print(f"Auto-sync scheduler error: {e}")
-            import traceback
-            traceback.print_exc()
+            factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with factory() as db:
+                await _schedule_sync_tick(db)
+        except Exception as error:
+            print(f"Auto-sync scheduler error: {type(error).__name__}")
 
 
 async def _manual_session_completer():
@@ -462,6 +334,8 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
         expire_on_commit=False,
         class_=AsyncSession,
     )
+    from core.sync_delivery import retry_cycle_deliveries
+    await retry_cycle_deliveries(factory)
     async with factory() as db:
         pending_users = select(StreamAction.user_id).where(StreamAction.state == "pending").union(
             select(CloudAction.user_id).where(CloudAction.state == "pending"),
@@ -504,11 +378,14 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
 
 async def _stream_action_retry_scheduler():
     while True:
-        await asyncio.sleep(60)
         try:
             await _dispatch_pending_stream_actions_once()
+            await netflix_sessions.retry_committed_import_pulls()
+            from core.account_sync import retry_automatic_pulls
+            await retry_automatic_pulls()
         except Exception as error:
             print(f"Stream action retry scheduler error: {type(error).__name__}")
+        await asyncio.sleep(60)
 
 
 async def _rating_push_scheduler():

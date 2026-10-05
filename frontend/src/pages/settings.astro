@@ -9,6 +9,7 @@ const [settings, me] = await Promise.all([
   Astro.locals.settings ?? api.auth.getSettings(token!),
   api.auth.me(token!),
 ]);
+const security = await api.auth.accountSecurity(token!);
 let backupCodes: TotpBackupCode[] = [];
 if (me.totp_enabled) {
   try {
@@ -248,10 +249,14 @@ if (me.totp_enabled) {
           </div>
         )}
 
-        <h3 class="text-base font-semibold text-zinc-300 mt-8 mb-3">Change Password</h3>
+        {security.oidc_enabled && <div class="mt-8">
+          {security.oidc_fresh ? <p class="text-sm text-green-400">Account verified</p> :
+            <a href="/oidc-start?reauth=true&next=%2Fsettings" class="inline-block rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-semibold">Verify with {security.provider_name}</a>}
+        </div>}
+        <h3 class="text-base font-semibold text-zinc-300 mt-8 mb-3">{me.has_password ? "Change Password" : "Set Password"}</h3>
         <form id="password-form" class="space-y-6 max-w-md">
           <div class="space-y-4">
-            {me.has_password && <div class="space-y-2">
+            {me.has_password && !security.oidc_fresh && <div class="space-y-2">
               <label for="current_password" class="block text-sm font-medium text-zinc-400">Current Password</label>
               <div class="relative group/field">
                 <input
@@ -314,6 +319,7 @@ if (me.totp_enabled) {
           </div>
           <div class="pt-2">
             <button
+              disabled={!me.has_password && !security.oidc_fresh}
               id="update-password-btn"
               type="submit"
               class="bg-zinc-800 text-zinc-100 font-bold px-8 py-2 rounded-lg hover:bg-zinc-700 transition-colors cursor-pointer border border-zinc-700 disabled:opacity-50"
@@ -322,6 +328,18 @@ if (me.totp_enabled) {
             </button>
           </div>
         </form>
+        {security.smtp_configured && me.has_password && <a href="/forgot-password" class="inline-block mt-3 text-sm text-zinc-400 hover:text-zinc-100">Forgot password?</a>}
+        <h3 class="text-base font-semibold text-zinc-300 mt-8 mb-3">Email Address</h3>
+        <p class="text-sm text-zinc-400 mb-4">{me.email}</p>
+        {security.smtp_configured ? <form id="email-form" class="space-y-4 max-w-md">
+          <label class="block text-sm font-medium text-zinc-400">New Email
+            <input type="email" name="email" required maxlength="255" autocomplete="email" class="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-100" />
+          </label>
+          {me.has_password && !security.oidc_fresh && <label class="block text-sm font-medium text-zinc-400">Current Password
+            <input type="password" name="current_password" required autocomplete="current-password" class="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-100" />
+          </label>}
+          <button type="submit" disabled={!me.has_password && !security.oidc_fresh} class="rounded-lg border border-zinc-700 bg-zinc-800 px-6 py-2 font-semibold text-zinc-100 disabled:opacity-50">Change Email</button>
+        </form> : <p class="text-sm text-zinc-400">Contact an administrator to change your email address.</p>}
       </section>
 
       <!-- Export Data -->
@@ -694,8 +712,7 @@ if (me.totp_enabled) {
         });
 
         if (res.ok) {
-          showMessage('Password updated successfully!');
-          form.reset();
+          window.location.assign('/login?password_reset=true');
         } else {
           const data = await res.json();
           throw new Error(data.detail || 'Failed to update password');
@@ -705,6 +722,33 @@ if (me.totp_enabled) {
       } finally {
         updateBtn.disabled = false;
         updateBtn.textContent = originalText;
+      }
+    });
+  }
+
+  function setupEmailForm() {
+    const form = document.querySelector<HTMLFormElement>('#email-form');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      if (button.disabled) return;
+      const data = new FormData(form);
+      button.disabled = true;
+      try {
+        const res = await fetch('/api/proxy/auth/change-email', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: data.get('email'), current_password: data.get('current_password') || null }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.detail || 'Could not change email');
+        showMessage(result.message);
+        form.reset();
+      } catch (error) {
+        showMessage(errorMessage(error), 'error');
+      } finally {
+        button.disabled = false;
       }
     });
   }
@@ -763,6 +807,7 @@ if (me.totp_enabled) {
   setupActions();
   setupSettingsForm();
   setupPasswordForm();
+  setupEmailForm();
 
   // Keep browser display preferences in sync with the account values.
   if (appData) {
@@ -779,6 +824,7 @@ if (me.totp_enabled) {
     setupActions();
     setupSettingsForm();
     setupPasswordForm();
+    setupEmailForm();
     setupExportData();
   });
 

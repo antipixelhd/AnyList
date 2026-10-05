@@ -245,3 +245,18 @@ test("navigation aborts in-flight requests, timers and visibility wake listeners
   assert.deepEqual(rendered, []);
   assert.equal(env.timers.size, 0);
 });
+
+
+test('persistent account watch notices a later scheduled cycle while the page stays open', async t => {
+  const env = environment(t), rendered = [];
+  const responses = [[], [job(1, 'manual')], [job(1, 'manual', 'completed')], [], [job(2, 'manual')]];
+  t.mock.method(globalThis, 'fetch', async () => Response.json(responses.shift() || []));
+  const monitor = createSyncJobMonitor('token');
+  await monitor.watch('account', { matches: () => true, persistent: true, render: value => rendered.push(value?.id) });
+  await env.tick();
+  await env.tick();
+  await env.tick();
+  await env.tick();
+  assert.equal(rendered.at(-1), 2);
+  monitor.stop();
+});

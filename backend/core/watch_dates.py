@@ -100,4 +100,10 @@ async def reconcile_inferred_watch_date(db, user_id: int, media_id: int, watched
     if (not candidates[0].date_shared and current is not None and current.date() == normalized.date()
             and (not authoritative or current == normalized or normalized.time() == time.min)):
         return True
+    from core.sync_reconciliation import collecting, _source, collect_watch
+    state = collecting(user_id)
+    if state:
+        collect_watch(media_id, normalized)
+        state.date_corrections.append((_source.get(), media_id, candidates[0].id, candidates[0].watched_at, normalized))
+        return True
     return replace_inferred_watch_date(candidates[0], normalized, inferred=False)

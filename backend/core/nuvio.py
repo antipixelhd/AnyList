@@ -541,6 +541,35 @@ async def _pull_watch_progress(
     return [_canonical_content_type(row) for row in rows]
 
 
+async def pull_change_marker(
+    url: str, refresh_token: str, profile_id: int, *, on_refresh: OnRefresh = None,
+) -> dict[str, Any]:
+    """Read complete profile change coverage without downloading its library/history.
+
+    Data cursors alone omit visibility settings. Include the small settings
+    blobs too; an unavailable cursor/settings endpoint means coverage is unknown.
+    The caller holds the same connection lock as normal pulls and token writes.
+    """
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
+        profiles = await get_profiles(url, session.access_token, client=client)
+        if not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
+            raise NuvioAPIError("Nuvio profile was not found")
+        marker = {}
+        for category in ("library", "watched_items", "watch_progress"):
+            cursor = await _rpc(client, url, session.access_token,
+                                f"sync_get_{category}_delta_cursor", {"p_profile_id": profile_id})
+            if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
+                raise NuvioAPIError("Nuvio returned an invalid change cursor")
+            marker[category] = cursor
+        for adapter in SETTINGS_ADAPTERS:
+            marker[adapter.platform] = await _pull_profile_settings(
+                client, url, session.access_token, profile_id, adapter)
+        return marker
+
+
 async def pull_sync_data(
     url: str,
     refresh_token: str,

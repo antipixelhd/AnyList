@@ -47,8 +47,8 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
     def _coll_files(self):
         # (CollectionFile, Collection.media_id) - push_watch_state selects
         # both columns, joining in the owning collection's media_id.
-        cf1 = SimpleNamespace(source=CollectionSource.jellyfin, source_id="item-1")
-        cf2 = SimpleNamespace(source=CollectionSource.jellyfin, source_id="item-2")
+        cf1 = SimpleNamespace(source=CollectionSource.jellyfin, source_id="item-1", connection_id=1)
+        cf2 = SimpleNamespace(source=CollectionSource.jellyfin, source_id="item-2", connection_id=2)
         return (cf1, 10), (cf2, 10)
 
     async def test_excludes_only_the_originating_connection(self) -> None:
@@ -73,6 +73,19 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("http://origin.local", calls)
         self.assertIn("http://other.local", calls)
+
+    async def test_strict_delivery_surfaces_false_and_exception_results(self):
+        origin, other = self._connections()
+        for failure in (False, RuntimeError("offline")):
+            with self.subTest(failure=type(failure).__name__):
+                db = _FakeSession([[origin, other], None, list(self._coll_files())])
+                push = AsyncMock(side_effect=[failure, True])
+                with patch("core.watch_delivery.jellyfin_client.mark_unwatched", push):
+                    with self.assertRaises(RuntimeError):
+                        await watch_delivery.push_watch_state(db, 7, [10], watched=False, require_success=True)
+                self.assertEqual(push.await_count, 2)
+                self.assertEqual([(call.args[0], call.args[-1]) for call in push.await_args_list],
+                                 [(origin.url, "item-1"), (other.url, "item-2")])
 
     async def test_no_exclusion_pushes_to_every_connection(self) -> None:
         # Baseline: without exclude_connection_id (e.g. a manual UI mark, not
@@ -118,14 +131,15 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
     def _fixture(self, conn_type):
         conn = SimpleNamespace(id=1, type=conn_type, url="http://srv.local",
                                token="t", server_user_id="u1")
-        cf = SimpleNamespace(source=CollectionSource[conn_type], source_id="item-1")
+        cf = SimpleNamespace(source=CollectionSource[conn_type], source_id="item-1", connection_id=1)
         # query order: 1. connections, 2. settings, 3. collection files
         return _FakeSession([[conn], None, [(cf, 42)]])
 
     async def test_jellyfin_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id):
+        async def fake_mark_watched(url, token, user_id, source_id, *, played_at=None):
+            self.assertEqual(played_at, datetime(2020, 1, 1))
             return True
 
         with patch("core.watch_delivery.jellyfin_client.mark_watched", fake_mark_watched), \
@@ -141,7 +155,8 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_emby_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id):
+        async def fake_mark_watched(url, token, user_id, source_id, *, played_at=None):
+            self.assertEqual(played_at, datetime(2020, 1, 1))
             return True
 
         with patch("core.watch_delivery.emby_client.mark_watched", fake_mark_watched), \
@@ -222,6 +237,22 @@ class PushWatchStateTraktTokenTests(unittest.IsolatedAsyncioTestCase):
                 watched_at_by_media={5: datetime(2024, 1, 1)},
             )
         add_movie.assert_not_awaited()
+
+    async def test_unrefreshable_token_leaves_strict_delivery_pending(self):
+        db = _FakeSession([[], self._settings(trakt_token_expires_at=1)])
+        with patch("core.trakt_auth.trakt_client.validate_token", AsyncMock(return_value=False)):
+            with self.assertRaises(RuntimeError):
+                await watch_delivery.push_watch_state(db, 1, [5], watched=False, require_success=True)
+
+    async def test_scoped_cloud_delivery_does_not_write_other_cloud_accounts(self):
+        from core.sync_delivery_targets import destination_scope
+        db = _FakeSession([[], self._settings(mdblist_push_watched=True, mdblist_api_key="fixture"), [self._movie()]])
+        with destination_scope("trakt"), \
+             patch("core.watch_delivery.trakt_client.remove_movie_from_history", AsyncMock()) as remove, \
+             patch("core.mdblist.remove_watched", AsyncMock()) as other:
+            await watch_delivery.push_watch_state(db, 1, [5], watched=False, require_success=True)
+        remove.assert_awaited_once()
+        other.assert_not_awaited()
 
 
 class StreamingWatchDeliveryTests(unittest.IsolatedAsyncioTestCase):

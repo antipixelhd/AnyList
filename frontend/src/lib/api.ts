@@ -392,6 +392,7 @@ export interface MediaServerConnection {
   sync_watched: boolean;
   sync_ratings: boolean;
   sync_playback: boolean;
+  libraries_confirmed: boolean;
   push_watched: boolean;
   push_collection: boolean;
   push_playback: boolean;
@@ -697,10 +698,14 @@ export const api = {
       post<LoginResponse>("/auth/2fa/verify-login", body),
     oidcConfig: () =>
       get<OidcConfig>("/auth/oidc/config"),
-    oidcAuthorize: () =>
-      get<OidcAuthorizeResponse>("/auth/oidc/authorize"),
-    oidcExchange: (code: string) =>
-      post<OidcExchangeResponse>("/auth/oidc/exchange", { code }),
+    accountSecurity: (token: string) =>
+      get<{ oidc_linked: boolean; oidc_fresh: boolean; oidc_enabled: boolean; provider_name: string; smtp_configured: boolean }>("/auth/account-security", undefined, token),
+    confirmEmailChange: (token: string) =>
+      post<{ message: string }>("/auth/confirm-email-change", { token }),
+    oidcAuthorize: (token?: string, reauth = false) =>
+      get<OidcAuthorizeResponse>("/auth/oidc/authorize", { reauth }, token),
+    oidcExchange: (code: string, state: string, token?: string) =>
+      post<OidcExchangeResponse>("/auth/oidc/exchange", { code, state }, token),
   },
 
   media: {
@@ -745,6 +750,8 @@ export const api = {
   },
 
   sync: {
+    getPullSchedule: (token: string) =>
+      get<{ interval: number | null; next_due_at: string | null }>("/sync/schedule", undefined, token),
     getSeasonOverrides: (token: string) =>
       get<ShowSeasonOverride[]>("/sync/season-overrides", undefined, token),
   },

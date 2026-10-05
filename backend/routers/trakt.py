@@ -70,6 +70,7 @@ async def trakt_device_start(
 
 @router.post("/auth/device/poll")
 async def trakt_device_poll(
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -106,6 +107,9 @@ async def trakt_device_poll(
     settings.trakt_history_cursor_at = None
     await db.commit()
 
+    if background_tasks is not None:
+        from core.account_sync import request_automatic_pull
+        await request_automatic_pull(db, current_user.id, background_tasks)
     return {"status": "connected"}
 
 
@@ -144,6 +148,11 @@ async def sync_trakt(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not full:
+        from core.account_sync import start_account_pull
+        return await start_account_pull(background_tasks, db, current_user.id)
+    from core.account_sync import require_idle_account
+    await require_idle_account(db, current_user.id)
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = result.scalar_one_or_none()
 

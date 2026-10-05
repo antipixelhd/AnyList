@@ -46,3 +46,15 @@ def generate_opaque_token() -> str:
     """URL-safe, ~256 bits of entropy."""
     return secrets.token_urlsafe(32)
 
+
+
+def session_is_current(user, claims: dict) -> bool:
+    version = claims.get("session_version", 0)
+    return type(version) is int and version == (getattr(user, "session_version", 0) or 0)
+
+
+def create_session_token(user, *, oidc_auth_time: int | None = None) -> str:
+    claims = {"session_version": getattr(user, "session_version", 0) or 0}
+    if oidc_auth_time is not None:
+        claims["oidc_auth_time"] = oidc_auth_time
+    return create_access_token(user.id, extra_claims=claims)

@@ -28,6 +28,7 @@ from models.show import Show
 from models.users import UserSettings
 from models.ratings import Rating, RatingChanges, RatingKey
 from models.plex_pending_push import PlexPendingPush
+from core.sync_delivery_targets import connection_clause, cloud_matches, dispatch_queues
 
 logger = logging.getLogger(__name__)
 TMDB_CONCURRENCY = 5
@@ -130,6 +131,7 @@ async def fan_out_streaming_library(
     exclude_connection_ids: set[int] | None = None,
     source_observed_at_by_media: dict[int, datetime] | None = None,
     source_connection_ids_by_media: dict[int, set[int]] | None = None,
+    desired_by_media: dict[int, bool] | None = None,
 ) -> None:
     """Persist and deliver an observed library delta to peer streaming accounts.
 
@@ -204,11 +206,13 @@ async def fan_out_streaming_library(
         exclude_connection_ids=excluded_ids,
         source_observed_at_by_media=source_observations,
         source_connection_ids_by_media=source_ids_by_media,
+        desired_by_media=desired_by_media,
     )
     # The queue is durable before any provider request starts. Failures remain
     # pending for the independent delivery retry worker.
     await db.commit()
-    await dispatch_pending_library_deliveries(db, user_id)
+    if dispatch_queues():
+        await dispatch_pending_library_deliveries(db, user_id)
 
 
 
@@ -226,6 +230,7 @@ async def fan_out_changes(
     exclude_connection_ids: set[int] | None = None,
     exclude_cloud_sources: set[CollectionSource] | None = None,
     durable_watch_media_ids: set[int] | None = None,
+    require_success: bool = False,
 ) -> None:
     """Push an inbound sync delta to every enabled media server and cloud target.
 
@@ -237,6 +242,7 @@ async def fan_out_changes(
     removed_collected_ids = removed_collected_ids or set()
     durable_watch_media_ids = set(durable_watch_media_ids or ())
     directly_pushed_watch_ids = set(new_watched_ids) - durable_watch_media_ids
+    delivery_failed = False
     if not new_watched_ids and not new_ratings and not removed_ratings and not new_collected_ids and not removed_collected_ids:
         return
 
@@ -257,6 +263,7 @@ async def fan_out_changes(
     if exclude_connection_id is not None:
         excluded_connection_ids.add(exclude_connection_id)
     excluded_cloud_sources = set(exclude_cloud_sources or ())
+    excluded_cloud_sources.update(source for source in CollectionSource if not cloud_matches(source))
     if exclude_cloud_source is not None:
         excluded_cloud_sources.add(exclude_cloud_source)
 
@@ -288,7 +295,7 @@ async def fan_out_changes(
         shows_by_id = {s.id: s for s in shows_list}
 
     # ── Media server fan-out ─────────────────────────────────────────────────
-    conns_filter = [MediaServerConnection.user_id == user_id]
+    conns_filter = [MediaServerConnection.user_id == user_id, connection_clause(MediaServerConnection.id)]
     if excluded_connection_ids:
         conns_filter.append(MediaServerConnection.id.not_in(excluded_connection_ids))
     other_conns_result = await db.execute(
@@ -426,6 +433,12 @@ async def fan_out_changes(
                 )
             return True
 
+        watched_at_by_media = (
+            await _latest_watched_at(db, user_id, list(new_watched_ids))
+            if new_watched_ids and any(conn.type in ("jellyfin", "emby") and conn.push_watched for conn in push_candidates)
+            else {}
+        )
+
         for conn in push_candidates:
             if conn.type in ('stremio', 'nuvio', 'jellyfin', 'emby', 'plex'):
                 from core.tracking_snapshot import require_stream_reconciliation
@@ -445,6 +458,7 @@ async def fan_out_changes(
                         skip_watch_media_ids=durable_watch_media_ids,
                     )
                 except Exception:
+                    delivery_failed = True
                     logger.exception(
                         "Stremio fan-out failed for connection %s",
                         conn.id,
@@ -483,10 +497,10 @@ async def fan_out_changes(
                             # UserDataSaved webhook can echo this back fast enough that a
                             # post-await registration would already be too late (#247/#251).
                             watch_echo.mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
+                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
                         elif conn.type == "emby":
                             watch_echo.mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid)))
+                            push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
             if conn.push_ratings:
                 for (mid, season_number), rating in server_rating_changes.items():
                     media = media_by_id.get(mid)
@@ -541,6 +555,7 @@ async def fan_out_changes(
         try:
             trakt_access_token = await trakt_auth.ensure_valid_trakt_token_for_user(user_id)
         except Exception as exc:  # best-effort fan-out - don't fail the whole sync
+            delivery_failed = True
             logger.warning("Skipping Trakt fan-out for user %s: %s", user_id, exc)
             trakt_access_token = None
             push_trakt_watched = push_trakt_ratings = push_trakt_collection = False
@@ -960,11 +975,14 @@ async def fan_out_changes(
         for i in range(0, len(push_tasks), FAN_OUT_CHUNK_SIZE):
             chunk = push_tasks[i:i + FAN_OUT_CHUNK_SIZE]
             results = await asyncio.gather(*chunk, return_exceptions=True)
-            failed += sum(1 for r in results if isinstance(r, Exception))
+            failed += sum(1 for r in results if isinstance(r, Exception) or (require_success and r is False))
         if failed:
+            delivery_failed = True
             print(f"  {failed}/{len(push_tasks)} fan-out push tasks failed (non-fatal)")
     if any(conn.type in ("nuvio", "stremio") for conn in push_candidates):
         await db.commit()
+    if require_success and delivery_failed:
+        raise RuntimeError("Accepted sync delivery is pending retry")
 
 
 

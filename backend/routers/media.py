@@ -40,7 +40,7 @@ from core.translations import (
     upsert_media_translation,
     apply_translations,
 )
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID, require_admin
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, get_optional_user, ANON_USER_ID, require_admin
 from models.users import User, UserSettings
 from models.show import Show as ShowModel
 from models.global_settings import GlobalSettings
@@ -2026,9 +2026,6 @@ async def get_media_recommendations(
 
 
 from fastapi.responses import FileResponse, RedirectResponse
-from jose import jwt, JWTError
-from core.security import ALGORITHM
-from core.config import settings
 
 async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db)) -> int | None:
     credentials_exception = HTTPException(
@@ -2057,14 +2054,10 @@ async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db
             return None
         raise credentials_exception
 
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        if payload.get("type") == "2fa_pending":
-            raise credentials_exception
-        user_id: int = int(payload.get("sub"))
-        return user_id
-    except (JWTError, TypeError, ValueError):
+    user = await get_optional_user(db=db, token=token)
+    if user is None:
         raise credentials_exception
+    return user.id
 
 
 @router.get("/image/{size}/{path:path}")

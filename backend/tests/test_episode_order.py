@@ -580,6 +580,11 @@ class EnsureEpisodeOrderMappingForSeasonTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MergeEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        patcher = patch("core.episode_order._repoint_remaining_episode_references", AsyncMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     """#162: _merge_episode_media moves every reference from a divergent
     (TVDB-numbered) episode Media row onto the canonical (TMDB-numbered) one,
     deduplicating instead of moving wherever that would violate a table's
@@ -690,6 +695,11 @@ class MergeEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReconcileDivergentEpisodeMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        patcher = patch("core.episode_order._repoint_remaining_episode_references", AsyncMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _show(self):
         return SimpleNamespace(id=9, tmdb_id=100, tvdb_id=389597)
 

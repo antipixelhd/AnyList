@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from core import tmdb
 from core.identity import coerce_id, link_show_ids, show_tvdb_id_is_free
@@ -118,6 +119,13 @@ async def find_or_create_show(db: AsyncSession, series_tmdb_id: int, api_key: st
                 ],
             },
         )
-        db.add(show)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(show)
+                await db.flush()
+        except IntegrityError:
+            winner = (await db.execute(select(Show).where(Show.tmdb_id == series_tmdb_id))).scalar_one_or_none()
+            if winner is None:
+                raise
+            return winner
     return show

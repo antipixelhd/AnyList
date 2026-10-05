@@ -155,6 +155,9 @@ async def record_rewatch_progress(db: AsyncSession, user_id: int, media_id: int,
     episode. No-ops unless that episode's show has an active rewatch for
     this user. Only flushes - never commits - so it composes with whatever
     transaction the caller is already managing around the WatchEvent write."""
+    from core.sync_reconciliation import collecting
+    if collecting(user_id):
+        return  # Rewatch progress is recorded with the accepted, persisted play.
     media_result = await db.execute(select(Media).where(Media.id == media_id))
     media = media_result.scalar_one_or_none()
     if not media or media.media_type != MediaType.episode or not media.show_id:

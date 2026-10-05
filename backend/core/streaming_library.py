@@ -379,6 +379,7 @@ async def queue_provider_library_changes(
     exclude_connection_ids: set[int],
     source_observed_at_by_media: dict[int, datetime],
     source_connection_ids_by_media: dict[int, set[int]] | None = None,
+    desired_by_media: dict[int, bool] | None = None,
 ) -> int:
     """Persist an accepted provider collection delta for eligible peers.
 
@@ -403,6 +404,8 @@ async def queue_provider_library_changes(
         MediaServerConnection.type.in_(("stremio", "nuvio")),
         MediaServerConnection.push_collection.is_(True),
     )
+    from core.sync_delivery_targets import connection_clause
+    target_query = target_query.where(connection_clause(MediaServerConnection.id))
     if legacy_source_ids and source_connection_ids_by_media is None:
         target_query = target_query.where(MediaServerConnection.id.not_in(legacy_source_ids))
     all_targets = (await db.execute(target_query.order_by(MediaServerConnection.id))).scalars().all()
@@ -430,7 +433,7 @@ async def queue_provider_library_changes(
         intent = existing_intents.get(media_id)
         if intent is not None and intent.updated_at is not None and intent.updated_at > observed_at:
             continue
-        desired = media_id in collections
+        desired = desired_by_media.get(media_id, media_id in collections) if desired_by_media else media_id in collections
         if intent is None:
             intent = StreamingLibraryIntent(
                 user_id=user_id,

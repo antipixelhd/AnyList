@@ -1,4 +1,4 @@
-from core import settings_store, simkl_sync
+from core import simkl_sync
 """Simkl integration router.
 
 Endpoints:
@@ -9,6 +9,9 @@ Endpoints:
   POST   /simkl/push             – Push Scrob history/ratings to Simkl
 """
 
+
+import httpx
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
@@ -21,7 +24,8 @@ from dependencies import get_current_user
 from models.base import CollectionSource
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
-from models.global_settings import GlobalSettings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -49,7 +53,25 @@ async def simkl_pin_start(
 
     _require_simkl_config(settings)
 
-    data = await simkl_client.start_pin_auth(settings.simkl_client_id)
+    # Simkl answers a bad Client ID with an HTTP error or a 200 carrying
+    # result "KO" and no user_code; either used to escape as a bare 500.
+    try:
+        data = await simkl_client.start_pin_auth(settings.simkl_client_id)
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Simkl PIN start rejected: HTTP %s", exc.response.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Simkl rejected the request (HTTP {exc.response.status_code}). Check that the Client ID is correct.",
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Simkl PIN start failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not reach Simkl. Try again in a moment.")
+    if not isinstance(data, dict) or not data.get("user_code"):
+        message = data.get("message") if isinstance(data, dict) else None
+        raise HTTPException(
+            status_code=502,
+            detail=f"Simkl did not return a PIN{f': {message}' if message else ''}. Check that the Client ID is correct.",
+        )
 
     settings.simkl_device_code = data["user_code"]
     await db.commit()
@@ -64,6 +86,7 @@ async def simkl_pin_start(
 
 @router.post("/auth/pin/poll")
 async def simkl_pin_poll(
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -93,6 +116,9 @@ async def simkl_pin_poll(
     settings.simkl_device_code = None
     await db.commit()
 
+    if background_tasks is not None:
+        from core.account_sync import request_automatic_pull
+        await request_automatic_pull(db, current_user.id, background_tasks)
     return {"status": "connected"}
 
 
@@ -123,32 +149,9 @@ async def sync_simkl(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
-    settings = result.scalar_one_or_none()
+    from core.account_sync import start_account_pull
+    return await start_account_pull(background_tasks, db, current_user.id)
 
-    _require_simkl_config(settings)
-
-    if not settings or not settings.simkl_access_token:
-        raise HTTPException(status_code=400, detail="Simkl is not connected")
-
-    _tmdb_key = settings.tmdb_api_key if settings else None
-    if not _tmdb_key:
-        _gs_r = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-        _gs = _gs_r.scalar_one_or_none()
-        _tmdb_key = settings_store.get_server_tmdb_key(_gs)
-    if not _tmdb_key:
-        raise HTTPException(status_code=400, detail="TMDB API key required for sync")
-
-    job = SyncJob(user_id=current_user.id, source=CollectionSource.simkl, status=SyncStatus.pending)
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    background_tasks.add_task(simkl_sync.run_simkl_sync, current_user.id, job.id)
-    return {"status": "started", "job_id": job.id, "message": "Simkl sync is running in the background"}
-
-
-# ── Push (Scrob → Simkl) ──────────────────────────────────────────────────────
 
 @router.post("/push")
 async def push_simkl(

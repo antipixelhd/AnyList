@@ -1,0 +1,41 @@
+---
+import Icon from '../Icon.astro';
+import DetailAudienceScore from './DetailAudienceScore.astro';
+import DetailSeasons from './DetailSeasons.astro';
+import type {DetailSample, SampleKey} from './detail-fixtures';
+const {item, kind, design} = Astro.props as {item: DetailSample; kind: SampleKey; design: string};
+const peopleTitle = kind === 'series' || kind === 'movie' ? 'Cast & crew' : 'Creators';
+const nextImage = item.seasons?.[0][5].image;
+const artworkKey = (url: string) => url ? new URL(url).pathname.split('/').pop() : '';
+const primaryArt = new Set([artworkKey(item.poster), artworkKey(item.backdrop), ...(item.seasons ? [artworkKey(item.seasons[0][5].image)] : [])]);
+const gallery = item.gallery.filter((url,i,all) => !primaryArt.has(artworkKey(url)) && all.findIndex(other => artworkKey(other) === artworkKey(url)) === i);
+const relationOrder = ['Previous entry','Next entry','Source','Adaptation','Spin-off','Shared universe','Expansion'];
+const relations = [...item.relations].sort((a,b) => relationOrder.indexOf(a.relation)-relationOrder.indexOf(b.relation));
+const relatedUrl = (url: string) => url.startsWith('/dev/details') ? `${url}&design=${design}` : url;
+const tabs = [{id:'overview', label:'Overview'}, ...(kind === 'series' ? [{id:'seasons', label:'Seasons'}] : []), {id:'people', label:peopleTitle}, ...(gallery.length ? [{id:'artwork', label:'Artwork'}] : [])];
+---
+<div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map((tab,i) => <button type="button" role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} data-lab-tab={tab.id}>{tab.label}</button>)}</div><a class="lab-official" href={item.officialUrl} target="_blank" rel="noreferrer">Official site <Icon name="external"/></a></div>
+<div class="lab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+  <div class="lab-overview-grid">
+    <div class="lab-primary-column">
+    <section class="lab-story lab-module"><div class="lab-section-title"><h2>Overview</h2></div><p>{item.summary}</p><p id="lab-more-story" hidden>{item.more}</p><button class="lab-text-button" type="button" data-lab-action="synopsis" aria-expanded="false" aria-controls="lab-more-story">Read more <Icon name="chevron-down"/></button></section>
+    {(kind === 'series' || kind === 'movie') && <section class:list={['lab-next lab-module', {'lab-next-movie': kind === 'movie'}]} data-lab-next>
+      {nextImage && <img src={nextImage} alt="" loading="lazy"/>}
+      <div class="lab-next-copy"><p class="lab-kicker">{kind === 'movie' ? 'On your watchlist' : 'Pick up where you left off'}</p><h2 data-lab-next-title>{item.next}</h2><p data-lab-next-meta>{item.nextMeta}</p><button class="lab-primary-button" data-lab-action="increment" type="button"><Icon name="check"/><span>{kind === 'movie' ? 'Mark watched' : 'Mark episode watched'}</span></button></div>
+    </section>}
+    <section class="lab-inline-facts lab-module"><h2>Details</h2><dl>{item.facts.slice(0,6).map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>
+    <section class="lab-people-preview lab-module"><div class="lab-section-title"><h2>{peopleTitle}</h2><button class="lab-text-button" data-lab-open-tab="people" type="button">View all <Icon name="arrow-right"/></button></div><div class="lab-person-grid">{item.people.map(person => <a class:list={['lab-person', {'lab-person-no-photo': !person.image}]} href={person.url} target="_blank" rel="noreferrer">{person.image ? <img src={person.image} alt="" loading="lazy"/> : <span class="lab-person-initials" aria-hidden="true">{person.name.split(' ').map(n => n[0]).slice(0,2).join('')}</span>}<div><h3>{person.name}</h3><p>{person.role}</p></div></a>)}</div></section>
+    {gallery.length > 0 && <section class="lab-art-preview lab-module"><div class="lab-section-title"><h2>In the frame</h2><button class="lab-text-button" data-lab-open-tab="artwork" type="button">Gallery <Icon name="arrow-right"/></button></div><button class="lab-art-image" type="button" data-lab-art-preview data-lab-image={gallery[0]} data-lab-image-caption={`${item.title} · Scene`} aria-label={`Expand ${item.title} scene`}><img src={gallery[0]} alt={`${item.title} scene`} loading="lazy"/><span><Icon name="grid"/> View artwork</span></button></section>}
+    </div>
+    <div class="lab-secondary-column">
+    <DetailAudienceScore item={item} kind={kind}/>
+    <section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span>3</span></div><div class="lab-friend"><span class="lab-friend-avatar friend-one">M</span><div><h3>Maya</h3><p>Completed</p></div><strong>9.0</strong></div><div class="lab-friend"><span class="lab-friend-avatar friend-two">J</span><div><h3>Jamie</h3><p>{item.action === 'Planning' ? 'Completed' : item.action}</p></div><strong>8.5</strong></div><div class="lab-friend"><span class="lab-friend-avatar friend-three">A</span><div><h3>Alex</h3><p>Planning</p></div><strong>—</strong></div></section>
+    <section class="lab-note lab-module"><div class="lab-section-title"><h2><label for="lab-note">Personal note</label></h2><Icon name="lock"/></div><textarea id="lab-note" rows="3" placeholder="Something worth remembering…">{item.note}</textarea><div class="lab-note-footer"><small data-lab-note-state>Private</small><button class="lab-text-button" type="button" data-lab-action="save-note">Save <Icon name="check"/></button></div></section>
+    </div>
+    {relations.length > 0 && <section class="lab-related lab-module"><div class="lab-section-title"><h2>Relations</h2></div><div class="lab-related-grid">{relations.map(related => <a href={relatedUrl(related.url)} class="lab-related-card" target={related.url.startsWith('https:') ? '_blank' : undefined} rel={related.url.startsWith('https:') ? 'noreferrer' : undefined}><img src={related.image} alt="" loading="lazy"/><div><span class="lab-relation-type">{related.relation}</span><h3>{related.title}</h3><p>{related.detail}</p></div></a>)}</div></section>}
+    {item.similar && <section class="lab-similar lab-module"><div class="lab-section-title"><h2>Similar {kind === 'series' ? 'series' : 'movies'}</h2></div><div class="lab-similar-grid">{item.similar.map(work => <a href={work.url} target="_blank" rel="noreferrer"><img src={work.image} alt="" loading="lazy"/><div><h3>{work.title}</h3><p>{work.detail}</p></div><Icon name="arrow-right"/></a>)}</div></section>}
+  </div>
+</div>
+<DetailSeasons item={item}/>
+<section class="lab-panel" id="panel-people" role="tabpanel" aria-labelledby="tab-people" hidden><div class="lab-section-title"><h2>{peopleTitle}</h2><a class="lab-text-button" href={item.sourceUrl} target="_blank" rel="noreferrer">Full credits on {item.source}<Icon name="external"/></a></div><div class="lab-full-people">{item.people.map(person => <a href={person.url} target="_blank" rel="noreferrer">{person.image ? <img src={person.image} alt="" loading="lazy"/> : <span class="lab-person-initials" aria-hidden="true">{person.name.split(' ').map(n => n[0]).slice(0,2).join('')}</span>}<h3>{person.name}</h3><p>{person.role}</p></a>)}</div><div class="lab-credit-line"><span>{item.creator}</span><a href={item.sourceUrl} target="_blank" rel="noreferrer">{item.source}<Icon name="external"/></a></div></section>
+{gallery.length > 0 && <section class="lab-panel" id="panel-artwork" role="tabpanel" aria-labelledby="tab-artwork" hidden><div class="lab-section-title"><h2>Artwork</h2><span>{gallery.length} images</span></div><div class="lab-gallery">{gallery.map((url,i) => <button type="button" data-lab-image={url} data-lab-image-caption={`${item.title} · Image ${i+1}`} aria-label={`Expand image ${i+1}`}><img src={url} alt={`${item.title}, image ${i+1}`} loading="lazy"/></button>)}</div></section>}

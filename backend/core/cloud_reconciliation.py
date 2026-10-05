@@ -20,7 +20,9 @@ async def record_cloud_import(db, user_id: int, provider: str, summary: dict) ->
     if first:
         baseline = CloudBaseline(user_id=user_id, provider=provider, approved=False)
         db.add(baseline)
-    baseline.snapshot = dict(summary or {})
+    observations = (baseline.snapshot or {}).get("rating_observations", {})
+    baseline.snapshot = {**dict(summary or {}), "rating_observations": observations,
+                         "watch_observations": (baseline.snapshot or {}).get("watch_observations", {})}
     baseline.observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if first:
         label = {"trakt": "Trakt", "simkl": "Simkl", "mdblist": "MDBList"}[provider]

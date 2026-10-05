@@ -64,6 +64,9 @@ async def reconcile_cloud_rating(
     changed: dict[tuple[int, int | None], float],
 ) -> str:
     """Return ``applied``, ``skipped``, or ``conflict`` for one remote value."""
+    from core.sync_reconciliation import collect_rating
+    if await collect_rating(db, user_id, provider, media.id, season_number, remote_score, remote_rated_at):
+        return "skipped"
     remote_score = float(remote_score)
     if not 0 < remote_score <= 10:
         raise ValueError("Rating must be between 0.5 and 10")

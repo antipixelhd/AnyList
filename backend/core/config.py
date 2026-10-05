@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # OIDC / SSO
     oidc_enabled: bool = False
+    oidc_issuer_url: Optional[str] = None
     oidc_provider_name: str = "SSO"
     oidc_client_id: Optional[str] = None
     oidc_client_secret: Optional[str] = None

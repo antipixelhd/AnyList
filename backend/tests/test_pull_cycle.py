@@ -283,7 +283,7 @@ class PullCycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.await_args_list[-1].kwargs['exclude_connection_ids'], {7})
         push_unwatched.assert_awaited_once_with(
             db, 61, [13], watched=False, exclude_connection_ids={7},
-            skip_stream_watch_writes=True,
+            skip_stream_watch_writes=True, require_success=True,
         )
 
     async def test_failed_pull_does_not_cancel_peer_or_skip_cycle_flush(self):

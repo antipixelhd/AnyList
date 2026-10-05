@@ -244,8 +244,10 @@ class JellyfinFindByIdsUserScopedTests(unittest.IsolatedAsyncioTestCase):
             requested_paths.append(request.url.path)
             if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
                 return httpx.Response(200, json={"Items": [{"Id": "series-item-id", "ProviderIds": {"Tmdb": "1399"}}]})
-            if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "episode-item-id", "SeriesId": "series-item-id"}]})
+            if request.url.path == "/Shows/series-item-id/Episodes":
+                self.assertEqual(request.url.params.get("season"), "1")
+                self.assertEqual(request.url.params.get("userId"), "user-id")
+                return httpx.Response(200, json={"Items": [{"Id": "episode-item-id", "IndexNumber": 1, "SeriesId": "series-item-id"}]})
             return httpx.Response(200, json={"Id": "episode-item-id", "Type": "Episode"})
 
         transport = httpx.MockTransport(handler)
@@ -461,9 +463,9 @@ class JellyfinItemsBatchTests(unittest.IsolatedAsyncioTestCase):
                     {"Id": "wrong-series-id", "ProviderIds": {"Tmdb": "9999"}},
                     {"Id": "right-series-id", "ProviderIds": {"Tmdb": "1399"}},
                 ]})
-            if request.url.path == "/Items":
-                self.assertEqual(request.url.params.get("SeriesId"), "right-series-id")
-                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "SeriesId": "right-series-id"}]})
+            if request.url.path == "/Shows/right-series-id/Episodes":
+                self.assertEqual(request.url.params.get("season"), "1")
+                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "IndexNumber": 1, "SeriesId": "right-series-id"}]})
             return httpx.Response(200, json={"Id": "episode-id"})
 
         transport = httpx.MockTransport(handler)
@@ -482,8 +484,8 @@ class JellyfinItemsBatchTests(unittest.IsolatedAsyncioTestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/Items" and request.url.params.get("IncludeItemTypes") == "Series":
                 return httpx.Response(200, json={"Items": [{"Id": "right-series-id", "ProviderIds": {"Tmdb": "1399"}}]})
-            if request.url.path == "/Items":
-                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "SeriesId": "some-other-series-id"}]})
+            if request.url.path == "/Shows/right-series-id/Episodes":
+                return httpx.Response(200, json={"Items": [{"Id": "episode-id", "IndexNumber": 1, "SeriesId": "some-other-series-id"}]})
             return httpx.Response(200, json={"Id": "episode-id"})
 
         transport = httpx.MockTransport(handler)

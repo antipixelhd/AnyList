@@ -39,7 +39,7 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
 class ResetPasswordRequest(BaseModel):
-    new_password: str
+    new_password: str = Field(min_length=1, max_length=1024)
 
 class Token(BaseModel):
     access_token: Optional[str] = None
@@ -333,6 +333,7 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
     id: int
     user_id: int
     created_at: datetime
+    libraries_confirmed: bool = True
 
     @model_validator(mode="after")
     def redact_cloud_credentials(self):
@@ -370,7 +371,7 @@ class ScrobbleConnectionResponse(ScrobbleConnectionCreate):
 
 class PasswordUpdate(BaseModel):
     current_password: Optional[str] = None
-    new_password: str
+    new_password: str = Field(min_length=1, max_length=1024)
 
 class WatchEventCreate(BaseModel):
     # Any one of media_id / tmdb_id / tvdb_id identifies the item (see
@@ -559,8 +560,21 @@ class AdminUser(BaseModel):
         from_attributes = True
 
 
+class AdminPasswordReset(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
 class AdminUserCreate(BaseModel):
     username : str = Field(min_length=1, max_length=150)
     email    : EmailStr
     password : Optional[str] = Field(default=None, min_length=1)
     is_admin : bool = False
+
+
+class EmailChangeRequest(BaseModel):
+    email: EmailStr
+    current_password: Optional[str] = None
+
+
+class EmailChangeConfirmation(BaseModel):
+    token: str = Field(min_length=1, max_length=256)

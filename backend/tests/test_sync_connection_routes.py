@@ -28,7 +28,7 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_routes_preserve_provider_job_and_limits(self):
         for provider in ("jellyfin", "emby", "plex"):
             with self.subTest(provider=provider):
-                db = session(SimpleNamespace(), SimpleNamespace(id=7))
+                db = session(None, None, SimpleNamespace(), SimpleNamespace(id=7))
                 tasks = BackgroundTasks()
                 with patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
                     response = await getattr(sync, f"sync_{provider}")(tasks, 3, 5, db, SimpleNamespace(id=2))
@@ -50,16 +50,24 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
             for key, connection, detail in [(None, None, "TMDB API key required"),
                                             ("key", None, f"No {provider.capitalize()} connection configured")]:
                 with self.subTest(provider=provider, detail=detail):
-                    db = session(SimpleNamespace(), connection)
+                    db = session(None, None, SimpleNamespace(), connection)
                     tasks = BackgroundTasks()
                     with patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=key)):
                         with self.assertRaises(HTTPException) as raised:
-                            await getattr(sync, f"sync_{provider}")(tasks, 0, 0, db, SimpleNamespace(id=2))
+                            await getattr(sync, f"sync_{provider}")(tasks, 3, 5, db, SimpleNamespace(id=2))
                     self.assertEqual((raised.exception.status_code, raised.exception.detail), (400, detail))
                     db.add.assert_not_called()
                     db.commit.assert_not_awaited()
                     self.assertEqual(tasks.tasks, [])
-                    self.assertEqual(db.execute.await_count, 1 if key is None else 2)
+                    self.assertEqual(db.execute.await_count, 3 if key is None else 4)
+
+    async def test_normal_legacy_routes_use_the_account_cycle(self):
+        for provider in ("jellyfin", "emby", "plex"):
+            with patch.object(sync, "sync_account", AsyncMock(return_value={"job_id": 23})) as account:
+                db, tasks, user = session(), BackgroundTasks(), SimpleNamespace(id=2)
+                response = await getattr(sync, f"sync_{provider}")(tasks, 0, 0, db, user)
+                self.assertEqual(response, {"job_id": 23})
+                account.assert_awaited_once_with(tasks, db, user)
 
     async def test_library_selection_filters_supported_types_and_keeps_provider_storage(self):
         available = [{"Id": "movie", "Name": "Movies", "CollectionType": "movies"},
@@ -89,7 +97,7 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
                 db.execute.side_effect = None
                 with patch.object(sync, "_get_connection_or_404", AsyncMock(return_value=conn)), \
                      patch.object(getattr(sync, provider), "get_libraries", AsyncMock(return_value=[{"Id": "tv", "Name": "TV"}])):
-                    response = await sync.save_connection_libraries(7, {"library_ids": ["tv", "unknown"]}, db, SimpleNamespace(id=2))
+                    response = await sync.save_connection_libraries(7, {"library_ids": ["tv", "unknown"]}, db=db, current_user=SimpleNamespace(id=2))
                 self.assertEqual(response, {"saved": 2})
                 deletion = db.execute.call_args.args[0]
                 self.assertEqual(deletion.table.name, model.__tablename__)
@@ -108,7 +116,39 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(sync, "_get_connection_or_404", AsyncMock(return_value=conn)), \
                      patch.object(getattr(sync, provider), "get_libraries", AsyncMock(side_effect=RuntimeError("offline"))):
                     with self.assertRaises(HTTPException) as raised:
-                        await sync.save_connection_libraries(7, {"library_ids": []}, db, SimpleNamespace(id=2))
+                        await sync.save_connection_libraries(7, {"library_ids": []}, db=db, current_user=SimpleNamespace(id=2))
                 self.assertEqual((raised.exception.status_code, raised.exception.detail), (502, "Could not reach server: offline"))
                 db.execute.assert_not_awaited()
                 db.commit.assert_not_awaited()
+
+    async def test_library_save_enables_first_pull_only_after_commit_for_every_media_server(self):
+        for provider in ("jellyfin", "emby", "plex"):
+            with self.subTest(provider=provider):
+                conn = SimpleNamespace(id=7, type=provider, url="url", token="token",
+                                       server_user_id="remote", libraries_confirmed=False)
+                available = [{"key": "tv", "title": "TV"}] if provider == "plex" else [{"Id": "tv", "Name": "TV"}]
+                payload = {"library_keys" if provider == "plex" else "library_ids": ["tv"]}
+                tasks, order = BackgroundTasks(), []
+                db = session()
+                db.execute.side_effect = None
+                db.commit.side_effect = lambda: order.append("commit")
+                async def trigger(*args):
+                    self.assertTrue(conn.libraries_confirmed)
+                    order.append("trigger")
+                with patch.object(sync, "_get_connection_or_404", AsyncMock(return_value=conn)), \
+                     patch.object(getattr(sync, provider), "get_libraries", AsyncMock(return_value=available)), \
+                     patch("core.account_sync.request_automatic_pull", trigger):
+                    await sync.save_connection_libraries(7, payload, tasks, db, SimpleNamespace(id=2))
+                self.assertEqual(order, ["commit", "trigger"])
+
+    async def test_failed_library_fetch_does_not_enable_first_pull(self):
+        conn = SimpleNamespace(id=7, type="plex", url="url", token="token", libraries_confirmed=False)
+        db = session()
+        with patch.object(sync, "_get_connection_or_404", AsyncMock(return_value=conn)), \
+             patch.object(sync.plex, "get_libraries", AsyncMock(side_effect=RuntimeError("offline"))), \
+             patch("core.account_sync.request_automatic_pull", AsyncMock()) as trigger:
+            with self.assertRaises(HTTPException):
+                await sync.save_connection_libraries(7, {"library_keys": []}, BackgroundTasks(), db, SimpleNamespace(id=2))
+        self.assertFalse(conn.libraries_confirmed)
+        db.commit.assert_not_awaited()
+        trigger.assert_not_awaited()

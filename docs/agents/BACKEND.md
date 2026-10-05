@@ -34,6 +34,23 @@ session; job lookups with an existing settings row refresh the global fallback.
 
 ## Behavior to preserve
 
+- Browser JWTs carry `users.session_version`. Password changes/recovery and
+  email changes increment it and invalidate pending activation, password reset,
+  and email change links. Integration API keys and approved device grants remain
+  independent credentials.
+- OIDC accounts bind to a configured issuer (or legacy token endpoint) and `sub`
+  in `oidc_identities`. A verified email only bridges an unlinked invitation once;
+  `users.oidc_login_email` preserves that original address through email edits.
+  Never rebind an existing provider subject by matching an edited email.
+- Sensitive account changes require the current password or SSO verification
+  within five minutes. Google uses explicit account selection and a newly issued,
+  signed, nonce-bound ID token; this verifies the Google session without promising
+  a new Google password prompt. Other issuers require `OIDC_ISSUER_URL` and a fresh
+  signed `auth_time`. Google issuer discovery is automatic.
+- Self-service email changes require SMTP, a hashed, single-use confirmation
+  token, and verification of the new address within one hour. The old address
+  remains active until confirmation. Admin email changes confirm the address
+  immediately and preserve provider links and two-factor settings.
 - List status, granular watch history, playback position, and streaming-library
   membership are separate concepts.
 - Database timestamp columns use millisecond precision. Python assignments,

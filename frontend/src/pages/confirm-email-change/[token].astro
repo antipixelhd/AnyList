@@ -1,0 +1,29 @@
+---
+import Base from "../../layouts/Base.astro";
+import { api } from "../../lib/api";
+import { sessionCookieName } from "../../lib/session-cookies";
+
+let error = "";
+if (Astro.request.method === "POST") {
+  try {
+    await api.auth.confirmEmailChange(Astro.params.token!);
+    Astro.cookies.delete(sessionCookieName("token"), { path: "/" });
+    return Astro.redirect("/login?email_changed=true");
+  } catch (e: unknown) {
+    error = e instanceof Error ? e.message.replace(/^API \d+: \S+ /, "") : "Could not confirm this email change.";
+  }
+}
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<Base title="Confirm Email" hideNav>
+  <div class="max-w-md mx-auto mt-16 p-8 rounded-xl border border-zinc-800 bg-zinc-900">
+    <h1 class="text-2xl font-bold text-zinc-100 mb-6">Confirm email change</h1>
+    {error ? <p role="alert" class="text-sm text-red-400 mb-4">{error}</p> :
+      <form method="POST">
+        <button type="submit" class="rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white">Confirm New Email</button>
+      </form>}
+    <a href="/login" class="inline-block mt-6 text-sm text-zinc-400">Back to login</a>
+  </div>
+</Base>

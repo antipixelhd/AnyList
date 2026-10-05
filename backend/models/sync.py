@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum, Integer, String, func, ForeignKey
+from sqlalchemy import DateTime, Enum, Integer, String, func, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +17,11 @@ class SyncStatus(str, enum.Enum):
 
 class SyncJob(Base):
     __tablename__ = "sync_jobs"
+    __table_args__ = (Index(
+        "uq_sync_jobs_active_account_cycle", "user_id", unique=True,
+        postgresql_where=text("job_type = 'pull_cycle' AND status IN ('pending', 'running')"),
+        sqlite_where=text("job_type = 'pull_cycle' AND status IN ('pending', 'running')"),
+    ),)
 
     id             : Mapped[int]            = mapped_column(Integer, primary_key=True)
     user_id        : Mapped[int]            = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
