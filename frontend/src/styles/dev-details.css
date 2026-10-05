@@ -11,16 +11,18 @@
 /* Skeletons use the real elements' boxes, so every design reserves its own
    final geometry without maintaining a second placeholder layout. */
 .detail-lab { --lab-skeleton: color-mix(in srgb, var(--border) 65%, var(--panel)); }
-.detail-lab :is(.lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs) { position: relative; }
-.detail-lab :is(.lab-hero, .lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs)::after {
+.detail-lab :is(.lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs, .lab-art-image) { position: relative; }
+.detail-lab :is(.lab-hero, .lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs, .lab-art-image)::after {
   content: ''; position: absolute; inset: 0; border-radius: var(--lab-radius);
   pointer-events: none; opacity: 0; visibility: hidden;
   transition: opacity .18s ease, visibility .18s; z-index: 2;
 }
-.detail-lab[data-lab-loading] :is(.lab-hero, .lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs)::after { opacity: 1; visibility: visible; animation: lab-skeleton-pulse 1.6s ease-in-out infinite alternate; }
-.detail-lab[data-lab-loading] :is(.lab-hero-image, .lab-art-credit, .lab-hero-art-button, .lab-heading > *, .lab-poster-button, .lab-poster-button > *, .lab-module > *, .lab-tracking > *, .lab-facts > *, .lab-tabs > *, .lab-source-links, .lab-official) { visibility: hidden; }
+.detail-lab [data-lab-loading]::after { opacity: 1; visibility: visible; animation: lab-skeleton-pulse 1.6s ease-in-out infinite alternate; }
+.detail-lab :is(.lab-heading, .lab-module, .lab-tracking, .lab-facts, .lab-tabs):is([data-lab-pending], [data-lab-loading]) > * { visibility: hidden; }
+.detail-lab :is(.lab-poster-button, .lab-art-image):is([data-lab-pending], [data-lab-loading]) { visibility: hidden; }
+.detail-lab .lab-hero:is([data-lab-pending], [data-lab-loading]) > :is(.lab-hero-image, .lab-art-credit), .detail-lab .lab-hero:is([data-lab-pending], [data-lab-loading]) .lab-hero-art-button { visibility: hidden; }
 .detail-lab .lab-hero::after { background: linear-gradient(0deg, var(--bg), transparent), linear-gradient(110deg, var(--panel), var(--lab-skeleton), var(--panel)); z-index: 0; border-radius: 0; }
-.detail-lab .lab-poster-button::after { background: var(--lab-skeleton); }
+.detail-lab :is(.lab-poster-button, .lab-art-image)::after { background: var(--lab-skeleton); }
 .detail-lab .lab-heading::after {
   inset: 24px 0 28px; background:
     linear-gradient(var(--lab-skeleton) 0 0) 0 0 / 38% 10px,
@@ -41,9 +43,9 @@
 .detail-lab .lab-tracking::after { background: repeating-linear-gradient(transparent 0 22px, var(--lab-skeleton) 22px 52px, transparent 52px 78px); }
 .detail-lab .lab-tabs::after { inset: 0 0 17px; background: repeating-linear-gradient(90deg, var(--lab-skeleton) 0 64px, transparent 64px 90px); }
 @keyframes lab-skeleton-pulse { from { opacity: .6; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .detail-lab[data-lab-loading] :is(.lab-hero, .lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs)::after { animation: none; transition: none; } }
-.detail-lab[data-lab-loading] :is(.lab-hero-image, .lab-heading, .lab-panel, .lab-in-view) { animation-play-state: paused; }
-.detail-lab[data-lab-loading] :is(.lab-heading, .lab-panel, .lab-in-view) { animation-name: none; }
+@media (prefers-reduced-motion: reduce) { .detail-lab [data-lab-loading]::after { animation: none; transition: none; } }
+.detail-lab .lab-hero:is([data-lab-pending], [data-lab-loading]) .lab-hero-image { animation-play-state: paused; }
+.detail-lab :is([data-lab-pending], [data-lab-loading]) { animation-name: none; }
 .detail-lab h1,.detail-lab h2,.detail-lab h3,.detail-lab p { margin: 0; }
 .detail-lab h1,.detail-lab h2,.detail-lab h3 { color: var(--bright); font-family: var(--font-navigation); }
 .detail-lab h2 { font-size: var(--type-panel-size); font-weight: 600; line-height: 1.4; }

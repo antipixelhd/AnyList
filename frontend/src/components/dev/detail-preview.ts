@@ -233,28 +233,14 @@ function initializeDetails() {
   });
   noteInput.value = state.note;
   render();
-  const artwork = [...root.querySelectorAll<HTMLImageElement>('.lab-hero-image, .lab-hero-poster img, .lab-sidebar .lab-poster')];
-  let entranceTimer: ReturnType<typeof setTimeout> | undefined;
-  const ready = Promise.all([document.fonts.ready, ...artwork.map(img => img.decode().catch(() => {}))]);
-  const deadline = new Promise<void>(resolve => { entranceTimer = setTimeout(resolve, 1000); });
-  void Promise.race([ready, deadline]).then(async () => {
-    clearTimeout(entranceTimer);
-    // Let font metrics and any development stylesheet updates reach layout.
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    if (signal.aborted || !root.isConnected) return;
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      observer = new IntersectionObserver(entries => entries.forEach(entry => {if (entry.isIntersecting) {entry.target.classList.add('lab-in-view');observer?.unobserve(entry.target);}}),{threshold:.05});
-      root.querySelectorAll('.lab-module').forEach(el => {
-        const bounds = el.getBoundingClientRect();
-        if (bounds.top < innerHeight && bounds.bottom > 0) el.classList.add('lab-in-view');
-        else observer!.observe(el);
-      });
-    }
-    root.removeAttribute('data-lab-loading');
-    root.setAttribute('aria-busy', 'false');
-    root.dispatchEvent(new Event('lab:ready'));
-  });
-  signal.addEventListener('abort', () => clearTimeout(entranceTimer), {once: true});
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    observer = new IntersectionObserver(entries => entries.forEach(entry => {if (entry.isIntersecting) {entry.target.classList.add('lab-in-view');observer?.unobserve(entry.target);}}),{threshold:.05});
+    root.querySelectorAll('.lab-module').forEach(el => {
+      const bounds = el.getBoundingClientRect();
+      if (bounds.top < innerHeight && bounds.bottom > 0) el.classList.add('lab-in-view');
+      else observer!.observe(el);
+    });
+  }
   document.addEventListener('astro:before-swap',() => {listeners?.abort();observer?.disconnect();clearTimeout(toastTimer);},{once:true,signal});
 }
 
