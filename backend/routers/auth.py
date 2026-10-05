@@ -649,6 +649,7 @@ async def create_connection(
         sync_ratings=body.sync_ratings if not cloud_media_provider else False,
         sync_playback=body.sync_playback,
         push_watched=body.push_watched,
+        libraries_confirmed=cloud_media_provider,
         push_collection=body.push_collection if cloud_media_provider else False,
         push_playback=body.push_playback if cloud_media_provider else False,
         push_ratings=body.push_ratings if not cloud_media_provider else False,
@@ -658,7 +659,7 @@ async def create_connection(
     db.add(conn)
     await _commit_stream_connection(db)
     await db.refresh(conn)
-    if background_tasks is not None:
+    if background_tasks is not None and cloud_media_provider:
         from core.account_sync import request_automatic_pull
         await request_automatic_pull(db, current_user.id, background_tasks)
     return conn

@@ -68,6 +68,16 @@ class AccountSyncRulesTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await account_sync.queue_account_pull(db, 7, scheduled=True))
         db.add.assert_not_called()
 
+    async def test_only_unconfigured_media_server_returns_setup_error_without_creating_jobs(self):
+        pending = SimpleNamespace(type="plex", id=3, sync_watched=True, libraries_confirmed=False)
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[result(), result(values=[pending])]), add=Mock())
+        with patch.object(account_sync, "require_idle_account", AsyncMock()):
+            with self.assertRaises(HTTPException) as error:
+                await account_sync.queue_account_pull(db, 7)
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIn("Save library selection", error.exception.detail)
+        db.add.assert_not_called()
+
     async def test_account_route_schedules_only_authenticated_account(self):
         tasks, db = BackgroundTasks(), object()
         with patch.object(account_sync, "queue_account_pull", AsyncMock(return_value=SimpleNamespace(id=42))) as queue:
@@ -281,6 +291,47 @@ class AccountSyncDatabaseTests(unittest.IsolatedAsyncioTestCase):
                            status=SyncStatus.completed, updated_at=datetime.utcnow()))
             await db.commit()
             self.assertIsNone(await account_sync.queue_account_pull(db, self.user.id, scheduled=True))
+
+    async def test_manual_and_scheduled_cycles_exclude_pending_library_selection(self):
+        async with self.factory() as db:
+            pending = MediaServerConnection(user_id=self.user.id, type="jellyfin", name="Pending",
+                url="http://invalid", token="fixture", libraries_confirmed=False)
+            db.add(pending)
+            await db.commit()
+        with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
+            for scheduled in (False, True):
+                async with self.factory() as db:
+                    parent = await account_sync.queue_account_pull(db, self.user.id, scheduled=scheduled)
+                    children = [await db.get(SyncJob, child_id) for child_id in parent.stats["child_job_ids"]]
+                    self.assertEqual(len(children), 1)
+                    self.assertNotEqual(children[0].connection_id, pending.id)
+                    for child in children:
+                        child.status = SyncStatus.failed
+                    parent.status = SyncStatus.failed
+                    parent.updated_at = datetime.utcnow()-timedelta(hours=2)
+                    await db.commit()
+
+    async def test_legacy_server_workers_do_not_fetch_before_library_confirmation(self):
+        from core import server_sync
+        with patch.object(server_sync, "async_sessionmaker", return_value=self.factory), \
+             patch.object(server_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
+            for provider in ("jellyfin", "emby", "plex"):
+                async with self.factory() as db:
+                    conn = MediaServerConnection(user_id=self.user.id, type=provider, name="Pending",
+                        url="http://invalid", token="fixture", server_user_id="remote", libraries_confirmed=False)
+                    db.add(conn)
+                    await db.flush()
+                    job = SyncJob(user_id=self.user.id, source=CollectionSource(provider), connection_id=conn.id,
+                                  job_type="pull", status=SyncStatus.pending)
+                    db.add(job)
+                    await db.commit()
+                with patch.object(getattr(server_sync, provider), "get_libraries", AsyncMock()) as fetch:
+                    await getattr(server_sync, f"run_{provider}_sync")(self.user.id, job.id, 0, 0, conn.id)
+                    fetch.assert_not_awaited()
+                async with self.factory() as db:
+                    current = await db.get(SyncJob, job.id)
+                    self.assertEqual(current.status, SyncStatus.failed)
+                    self.assertIn("Save library selection", current.error_message)
 
     async def test_cycle_holds_admission_until_final_outbound_delivery_finishes(self):
         from core import scheduler

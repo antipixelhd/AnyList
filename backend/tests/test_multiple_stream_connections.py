@@ -281,6 +281,22 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(connection.id)
         trigger.assert_awaited_once_with(self.db, self.owner.id, tasks)
 
+    async def test_new_media_servers_wait_for_saved_library_selection(self):
+        from fastapi import BackgroundTasks
+        from core.account_sync import has_pull_options
+        for provider in ("plex", "jellyfin", "emby"):
+            with self.subTest(provider=provider):
+                tasks = BackgroundTasks()
+                body = auth.schemas.MediaServerConnectionCreate(type=provider, name=provider,
+                    url="http://invalid", token="fixture", server_user_id="remote")
+                with patch.object(auth, "validate_service_url", AsyncMock(return_value=body.url)), \
+                     patch("core.account_sync.request_automatic_pull", AsyncMock()) as trigger:
+                    connection = await auth.create_connection(body, tasks, self.db, self.owner)
+                self.assertFalse(connection.libraries_confirmed)
+                self.assertFalse(has_pull_options(connection))
+                trigger.assert_not_awaited()
+                self.assertFalse(tasks.tasks)
+
     async def test_stremio_reconnect_rejects_an_account_already_attached_to_another_row(self):
         await self._connection(provider="stremio", account_id="remote-a")
         second = await self._connection(provider="stremio", account_id="remote-b")

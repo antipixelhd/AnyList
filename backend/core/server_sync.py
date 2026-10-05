@@ -1510,6 +1510,8 @@ async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id
                 err = "Missing Jellyfin connection or TMDB API key"
             elif provider == "emby" and (not conn or not conn.url or not conn.token or not conn.server_user_id):
                 err = "Missing Emby connection (URL, Token, or User ID)"
+            if conn and not getattr(conn, "libraries_confirmed", True):
+                err = "Save library selection before syncing this connection"
             if err:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=err))
                 await db.commit()
@@ -2121,6 +2123,12 @@ async def _run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit
             if not conn or not conn.url or not conn.token:
                 err = "Missing Plex connection (URL or Token)"
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(status=SyncStatus.failed, error_message=err))
+                await db.commit()
+                return
+
+            if not getattr(conn, "libraries_confirmed", True):
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.failed, error_message="Save library selection before syncing this connection"))
                 await db.commit()
                 return
 

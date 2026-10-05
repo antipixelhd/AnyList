@@ -291,6 +291,7 @@ async def save_connection_libraries(
             for lid in library_ids:
                 if lid in name_map:
                     db.add(selection(user_id=current_user.id, connection_id=conn.id, library_id=lid, library_name=name_map[lid]))
+            conn.libraries_confirmed = True
             await db.commit()
             if background_tasks is not None:
                 from core.account_sync import request_automatic_pull
@@ -305,6 +306,7 @@ async def save_connection_libraries(
             for key in library_keys:
                 if key in name_map:
                     db.add(PlexLibrarySelection(user_id=current_user.id, connection_id=conn.id, library_key=key, library_name=name_map[key]))
+            conn.libraries_confirmed = True
             await db.commit()
             if background_tasks is not None:
                 from core.account_sync import request_automatic_pull

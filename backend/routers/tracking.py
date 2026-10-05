@@ -1221,35 +1221,8 @@ async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), vi
 
 
 async def released_episodes(db, media):
-    if media.media_type == MediaType.movie:
-        return [media] if not media.release_date or media.release_date[:10] <= date.today().isoformat() else []
-    terms = []
-    if media.tmdb_id:
-        terms.append(Show.tmdb_id == media.tmdb_id)
-    if media.tvdb_id:
-        terms.append(Show.tvdb_id == media.tvdb_id)
-    if not terms:
-        return []
-    show = (await db.execute(select(Show).where(or_(*terms)))).scalars().first()
-    if not show:
-        return []
-    imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
-    query = select(Media).where(
-        Media.show_id == show.id,
-        Media.media_type == MediaType.episode,
-        Media.season_number > 0,
-        or_(
-            (Media.release_date.is_not(None) & (Media.release_date <= date.today().isoformat())),
-            imported_release,
-        ),
-    )
-    catalogue_ids = (media.tmdb_data or {}).get('tracking_episode_ids')
-    imported_ids = (media.tmdb_data or {}).get('tracking_import_episode_media_ids') or []
-    if catalogue_ids is not None:
-        provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
-        identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
-        query = query.where(or_(identity.in_(catalogue_ids), Media.id.in_(imported_ids), imported_release))
-    return (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
+    from core.tracking_metadata import released_episodes as load_released_episodes
+    return await load_released_episodes(db, media)
 
 
 class SeasonProgressPatch(BaseModel):

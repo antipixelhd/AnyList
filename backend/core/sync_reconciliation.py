@@ -1150,14 +1150,25 @@ async def resolve_category_review(db, event, action):
             entry.finish_date = datetime.utcnow().date() if watched else None
             mark_status_change(entry, "local")
         elif entry:
-            if action == "confirm" and not watched and media.show_id:
+            if action == "confirm" and media.show_id:
                 await db.flush()
-                remaining = len(set((await db.execute(select(WatchEvent.media_id).join(Media, Media.id == WatchEvent.media_id)
+                watched_ids = set((await db.execute(select(WatchEvent.media_id).join(Media, Media.id == WatchEvent.media_id)
                     .where(WatchEvent.user_id == event.user_id, WatchEvent.completed.is_(True),
-                           Media.show_id == media.show_id, Media.season_number > 0))).scalars()))
-                entry.progress = remaining
-                if entry.status == "completed":
-                    entry.status, entry.finish_date = ("watching" if remaining else "planning"), None
+                           Media.show_id == media.show_id, Media.season_number > 0))).scalars())
+                entry.progress = len(watched_ids)
+                if watched:
+                    from core.tracking_metadata import released_episodes
+                    from core.tracking_rules import observed_status, default_dates
+                    root = await db.get(Media, root_id)
+                    released = await released_episodes(db, root)
+                    complete = bool((root.tmdb_data or {}).get("tracking_catalogue_refreshed_at")
+                                    and released and all(episode.id in watched_ids for episode in released))
+                    previous = entry.status
+                    entry.status = observed_status(previous, complete, bool(watched_ids))
+                    entry.start_date, entry.finish_date = default_dates(previous, entry.status,
+                        entry.start_date, entry.finish_date, datetime.utcnow().date())
+                elif entry.status == "completed":
+                    entry.status, entry.finish_date = ("watching" if watched_ids else "planning"), None
             mark_status_change(entry, "local")
         await db.flush()
         await queue_watch_intents(db, event.user_id, {event.media_id})

@@ -333,6 +333,7 @@ class MediaServerConnectionResponse(MediaServerConnectionBase):
     id: int
     user_id: int
     created_at: datetime
+    libraries_confirmed: bool = True
 
     @model_validator(mode="after")
     def redact_cloud_credentials(self):

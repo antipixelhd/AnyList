@@ -30,6 +30,8 @@ CLOUD_RUNNERS = {
 
 
 def has_pull_options(conn) -> bool:
+    if not getattr(conn, "libraries_confirmed", True):
+        return False
     fields = ("sync_collection", "sync_watched", "sync_playback")
     if conn.type in {"jellyfin", "emby", "plex"}:
         fields += ("sync_ratings",)
@@ -92,6 +94,8 @@ async def queue_account_pull(db, user_id: int, *, scheduled: bool = False,
     if not targets:
         if scheduled:
             return None
+        if any(not getattr(conn, "libraries_confirmed", True) for conn in connections):
+            raise HTTPException(400, "Save library selection before syncing a new media server")
         raise HTTPException(400, "Connect a provider and enable at least one pull option")
     if not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(400, "TMDB API key required for sync")
@@ -124,6 +128,11 @@ async def _run_provider(user_id: int, job_id: int) -> None:
         if connection_id and (conn is None or conn.user_id != user_id):
             job.status = SyncStatus.failed
             job.error_message = "Connection no longer exists"
+            await db.commit()
+            return
+        if conn and not getattr(conn, "libraries_confirmed", True):
+            job.status = SyncStatus.failed
+            job.error_message = "Save library selection before syncing this connection"
             await db.commit()
             return
         check = await check_provider_changes(db, user_id=user_id, provider=provider, settings=settings, conn=conn)

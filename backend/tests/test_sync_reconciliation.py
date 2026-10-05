@@ -81,6 +81,84 @@ class ResolutionTests(unittest.TestCase):
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")
 class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_confirmed_watched_episode_updates_series_progress_status_and_dates(self):
+        from models import Media, Show, WatchEvent
+        from models.base import MediaType
+        from models.tracking import TrackedEntry, SyncReview
+        from core.sync_reconciliation import resolve_category_review
+        from sqlalchemy import select
+        for previous, have_history, catalogue_complete, expected in (
+            ("planning", False, False, "watching"),
+            ("watching", True, True, "completed"),
+            ("completed", True, False, "completed"),
+        ):
+            with self.subTest(previous=previous):
+                async with self.factory() as db:
+                    show = Show(tmdb_id=72001, title="Confirmed series")
+                    db.add(show)
+                    await db.flush()
+                    root = Media(tmdb_id=show.tmdb_id, media_type=MediaType.series, title=show.title,
+                        tmdb_data={"tracking_catalogue_refreshed_at": self.now.isoformat()} if catalogue_complete else {})
+                    episodes = [Media(show_id=show.id, media_type=MediaType.episode, title="Episode",
+                        season_number=1, episode_number=number, release_date="2020-01-01") for number in (1, 2)]
+                    special = Media(show_id=show.id, media_type=MediaType.episode, title="Special",
+                                    season_number=0, episode_number=1)
+                    db.add_all([root, *episodes, special])
+                    await db.flush()
+                    old_finish = self.now.date() if previous == "completed" else None
+                    entry = TrackedEntry(user_id=self.user.id, media_id=root.id, status=previous,
+                                         progress=0, finish_date=old_finish)
+                    db.add(entry)
+                    if have_history:
+                        db.add_all([WatchEvent(user_id=self.user.id, media_id=episodes[0].id, completed=True)
+                                    for _ in range(2)])
+                    db.add(WatchEvent(user_id=self.user.id, media_id=special.id, completed=True))
+                    await db.flush()
+                    review = SyncReview(user_id=self.user.id, provider="combined", media_id=episodes[1].id,
+                        kind="watch_conflict", message="fixture", payload={"category": "watched state",
+                            "observations": [{"source": "trakt", "value": True}]})
+                    self.assertTrue(await resolve_category_review(db, review, "confirm"))
+                    self.assertEqual(entry.progress, 2 if have_history else 1)
+                    self.assertEqual(entry.status, expected)
+                    self.assertEqual(entry.status_source, "local")
+                    if previous == "completed":
+                        self.assertEqual(entry.finish_date, old_finish)
+                    elif expected == "completed":
+                        self.assertEqual(entry.finish_date, datetime.utcnow().date())
+                    else:
+                        self.assertIsNotNone(entry.start_date)
+                    count = len((await db.execute(select(WatchEvent).where(
+                        WatchEvent.media_id == episodes[1].id, WatchEvent.user_id == self.user.id))).scalars().all())
+                    self.assertEqual(count, 1)
+                    await db.rollback()
+
+    async def test_keeping_episode_review_preserves_history_and_confirming_unwatched_reopens_series(self):
+        from models import Media, Show, WatchEvent
+        from models.base import MediaType
+        from models.tracking import TrackedEntry, SyncReview
+        from core.sync_reconciliation import resolve_category_review
+        async with self.factory() as db:
+            show = Show(tmdb_id=72002, title="Reviewed series")
+            db.add(show)
+            await db.flush()
+            root = Media(tmdb_id=show.tmdb_id, media_type=MediaType.series, title=show.title)
+            episode = Media(show_id=show.id, media_type=MediaType.episode, title="Episode",
+                            season_number=1, episode_number=1)
+            db.add_all([root, episode])
+            await db.flush()
+            entry = TrackedEntry(user_id=self.user.id, media_id=root.id, status="completed",
+                                 progress=1, finish_date=self.now.date())
+            db.add_all([entry, WatchEvent(user_id=self.user.id, media_id=episode.id, completed=True)])
+            await db.flush()
+            review = SyncReview(user_id=self.user.id, provider="combined", media_id=episode.id,
+                kind="watch_conflict", message="fixture", payload={"category": "watched state",
+                    "observations": [{"source": "trakt", "value": False}]})
+            await resolve_category_review(db, review, "keep")
+            self.assertEqual((entry.progress, entry.status, entry.finish_date), (1, "completed", self.now.date()))
+            await resolve_category_review(db, review, "confirm")
+            self.assertEqual((entry.progress, entry.status, entry.finish_date), (0, "planning", None))
+            await db.rollback()
+
     async def asyncSetUp(self):
         from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
         from models import User, UserSettings, Media, MediaServerConnection

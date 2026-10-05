@@ -55,6 +55,9 @@ class MediaServerConnection(Base):
     sync_watched     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     sync_ratings     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
     sync_playback    : Mapped[bool] = mapped_column(Boolean, nullable=False, default=True,  server_default="true")
+    # Existing connections keep their selection semantics; new media servers
+    # wait for the library picker to be saved before any pull can include them.
+    libraries_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
     # Outbound push flags (Scrob → source)
     push_watched     : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

@@ -392,6 +392,7 @@ export interface MediaServerConnection {
   sync_watched: boolean;
   sync_ratings: boolean;
   sync_playback: boolean;
+  libraries_confirmed: boolean;
   push_watched: boolean;
   push_collection: boolean;
   push_playback: boolean;
