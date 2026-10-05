@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from core.sync_reconciliation import Observation, Reconciliation, resolve, _ratings, _library, initialize, _current
+from core.sync_reconciliation import Observation, Reconciliation, resolve, _ratings, _library, initialize, _current, add_watch_event
 from core.pull_cycle import PullCycleState
 
 
@@ -57,6 +57,27 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(resolve(True, baseline-timedelta(hours=1), [observation]).value, False)
         self.assertTrue(resolve(True, self.now, [observation]).conflict)
 
+    def test_snapshot_delta_orders_later_cycles_but_not_same_cycle_disagreements(self):
+        removal = Observation("a", False, previous=True, observed_after=self.now-timedelta(hours=2))
+        decision = resolve(True, self.now-timedelta(hours=1), [removal], started_at=self.now)
+        self.assertFalse(decision.value)
+        self.assertEqual(decision.changed_at, self.now)
+        competing = Observation("b", True, self.now-timedelta(minutes=1))
+        for order in itertools.permutations([removal, competing]):
+            self.assertTrue(resolve(True, self.now-timedelta(hours=1), order, started_at=self.now).conflict)
+
+    def test_completion_resolves_covered_positions_but_preserves_later_episode(self):
+        from core.sync_reconciliation import reconcile_completions
+        positions = [Observation(source, ("watching", 1, 3, position, 100), self.now-timedelta(minutes=5))
+                     for source, position in (("a", 20), ("b", 30))]
+        complete = Observation("c", ("watching", 1, 3, None, None), self.now)
+        for order in itertools.permutations(positions):
+            self.assertEqual(reconcile_completions(order, [complete]), [complete])
+        later = Observation("b", ("watching", 1, 4, 20, 100), self.now)
+        self.assertEqual(reconcile_completions([later], [complete]), [later])
+        unknown = Observation("a", ("watching", 1, 3, 20, 100))
+        self.assertTrue(resolve(None, None, reconcile_completions([unknown], [complete])).conflict)
+
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")
 class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -95,7 +116,6 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_independent_ratings_have_independent_source_exclusions(self):
-        from models import Rating
         state, cycle = Reconciliation(self.user.id), PullCycleState(self.user.id)
         state.ratings = {(self.media[0].id, None): [Observation("trakt", 8, self.now)],
                          (self.media[1].id, None): [Observation("mdblist", 9, self.now)]}
@@ -218,7 +238,7 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 collect_watch(movie.id, self.now+timedelta(minutes=5))
                 new = WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True,
                                  watched_at=self.now+timedelta(minutes=5))
-                db.add(new)
+                add_watch_event(db, new)
                 await db.commit()
                 state.collecting = False
                 await _watches(db, state, cycle)
@@ -247,7 +267,7 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
             token, source = _current.set(state), _source.set("trakt")
             try:
                 collect_watch(movie.id, self.now)
-                db.add(WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True, watched_at=self.now))
+                add_watch_event(db, WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True, watched_at=self.now))
                 await db.commit()
                 state.collecting = False
                 await _watches(db, state, cycle)
@@ -267,7 +287,7 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
             token, source = _current.set(state), _source.set("trakt")
             try:
                 collect_watch(movie.id, self.now)
-                db.add(WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True, watched_at=self.now))
+                add_watch_event(db, WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True, watched_at=self.now))
                 await db.commit()
                 _source.reset(source)
                 source = _source.set("")
@@ -285,7 +305,7 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_arvio_and_stream_progress_resolve_in_one_comparison(self):
         from core.sync_reconciliation import _playback
         from models import PlaybackProgress
-        from models.tracking import TrackedEntry, StreamBaseline
+        from models.tracking import TrackedEntry
         from sqlalchemy import select
         state, cycle = Reconciliation(self.user.id, collecting=False), PullCycleState(self.user.id)
         movie, conn = self.media[0], self.connections[0]
@@ -332,7 +352,7 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
             token, source = _current.set(state), _source.set("trakt")
             try:
                 collect_watch(movie.id, self.now+timedelta(minutes=5))
-                db.add(WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True,
+                add_watch_event(db, WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True,
                                  watched_at=self.now+timedelta(minutes=5)))
                 await db.commit()
                 cycle.new_watched_ids.add(movie.id)
@@ -345,8 +365,8 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == self.user.id))).scalars().all(), [original.id])
 
     async def test_failed_finalize_rolls_back_all_category_decisions(self):
-        from core.sync_reconciliation import finalize
-        from models import Rating
+        from core.sync_reconciliation import finalize, _source
+        from models import Rating, WatchEvent
         from sqlalchemy import select
         state, cycle = Reconciliation(self.user.id), PullCycleState(self.user.id)
         async with self.factory() as db:
@@ -354,13 +374,18 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
             state.ratings[(self.media[0].id, None)] = [Observation("trakt", 8, self.now)]
             with patch("core.sync_reconciliation._library", side_effect=RuntimeError("test failure")):
                 token = _current.set(state)
+                source = _source.set("trakt")
                 try:
+                    add_watch_event(db, WatchEvent(user_id=self.user.id, media_id=self.media[0].id,
+                        completed=True, watched_at=self.now))
                     with self.assertRaises(RuntimeError):
                         await finalize(db, state, cycle)
                 finally:
+                    _source.reset(source)
                     _current.reset(token)
             await db.rollback()
             self.assertFalse((await db.execute(select(Rating.id).where(Rating.user_id == self.user.id))).all())
+            self.assertFalse((await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == self.user.id))).all())
 
 
     async def test_inferred_watch_dates_merge_independently_of_provider_order(self):
@@ -475,3 +500,174 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 _current.reset(token)
             self.assertEqual(rating.rating, 8.2)
             self.assertFalse(cycle.new_ratings)
+
+
+    async def test_staged_history_is_invisible_then_deduplicated_at_atomic_commit(self):
+        from core.sync_reconciliation import _source, finalize
+        from models import WatchEvent
+        from sqlalchemy import select
+        state, cycle = Reconciliation(self.user.id), PullCycleState(self.user.id)
+        async with self.factory() as db:
+            await initialize(db, state)
+            token = _current.set(state)
+            try:
+                for provider in ("trakt", "mdblist"):
+                    source = _source.set(provider)
+                    try:
+                        add_watch_event(db, WatchEvent(user_id=self.user.id, media_id=self.media[0].id,
+                            completed=True, watched_at=self.now))
+                        await db.commit()
+                    finally:
+                        _source.reset(source)
+                async with self.factory() as observer:
+                    self.assertFalse((await observer.execute(select(WatchEvent.id).where(
+                        WatchEvent.user_id == self.user.id))).all())
+                await finalize(db, state, cycle)
+                rows = (await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == self.user.id))).all()
+                self.assertEqual(len(rows), 1)
+            finally:
+                _current.reset(token)
+
+    async def test_cancelled_cycle_does_not_persist_staged_history(self):
+        from core import account_sync
+        from core.sync_reconciliation import _source
+        from models import WatchEvent
+        from models.sync import SyncJob, SyncStatus
+        from sqlalchemy import select
+        async def provider(user_id, job_id):
+            async with self.factory() as db:
+                source = _source.set("trakt")
+                try:
+                    add_watch_event(db, WatchEvent(user_id=user_id, media_id=self.media[0].id,
+                        completed=True, watched_at=self.now))
+                    await db.commit()
+                finally:
+                    _source.reset(source)
+                parents = (await db.execute(select(SyncJob).where(SyncJob.user_id == user_id,
+                    SyncJob.job_type == "pull_cycle"))).scalars().all()
+                await account_sync.request_cycle_cancel(db, parents[0])
+        with (patch.object(account_sync, "engine", self.engine),
+              patch.object(account_sync.settings_store, "get_effective_tmdb_key", return_value="fixture"),
+              patch.object(account_sync, "_run_provider", side_effect=provider),
+              patch("core.scheduler._flush_pull_cycle") as flush):
+            async with self.factory() as db:
+                job = await account_sync.queue_account_pull(db, self.user.id)
+            await account_sync.run_account_pull(self.user.id, job.id)
+            flush.assert_not_called()
+        async with self.factory() as db:
+            self.assertFalse((await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == self.user.id))).all())
+            self.assertEqual((await db.get(SyncJob, job.id)).status, SyncStatus.cancelled)
+
+    async def test_movie_completion_does_not_generate_its_own_removal_conflict(self):
+        from core.sync_reconciliation import finalize
+        from models import WatchEvent, PlaybackProgress
+        from models.tracking import StreamBaseline, TrackedEntry, SyncReview
+        from sqlalchemy import select
+        state, cycle = Reconciliation(self.user.id), PullCycleState(self.user.id)
+        movie, conn = self.media[0], self.connections[0]
+        old = dict(content_id="fixture", content_type="movie", position=50000, duration=100000,
+                   modified_at=self.now.isoformat()+"Z")
+        watched = dict(content_id="fixture", content_type="movie", watched_at=(self.now+timedelta(minutes=5)).isoformat()+"Z")
+        async with self.factory() as db:
+            db.add(TrackedEntry(user_id=self.user.id, media_id=movie.id, status="watching",
+                               status_changed_at=self.now, status_source="local"))
+            db.add(PlaybackProgress(user_id=self.user.id, media_id=movie.id,
+                progress_seconds=50, progress_percent=0.5, updated_at=self.now))
+            baseline = await db.get(StreamBaseline, conn.id)
+            baseline.snapshot = {"progress": {"fixture": old}, "mappings": {"fixture": movie.tmdb_id},
+                "records": {"progress": [old], "watched": [], "library": []}}
+            await db.commit()
+            await initialize(db, state)
+            state.snapshots = [dict(connection_id=conn.id, identity_version=conn.identity_version,
+                library=[], watched=[watched], progress=[], tmdb_ids={"fixture": movie.tmdb_id},
+                complete=True, sync_playback=True, sync_watched=True)]
+            from core.sync_reconciliation import _source
+            token, source = _current.set(state), _source.set(f"connection:{conn.id}")
+            try:
+                add_watch_event(db, WatchEvent(user_id=self.user.id, media_id=movie.id,
+                    completed=True, watched_at=self.now+timedelta(minutes=5)))
+                await finalize(db, state, cycle)
+            finally:
+                _source.reset(source)
+                _current.reset(token)
+            entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id))).scalar_one()
+            self.assertEqual(entry.status, "completed")
+            self.assertFalse((await db.execute(select(PlaybackProgress.id).where(PlaybackProgress.user_id == self.user.id))).all())
+            self.assertFalse(state.playback[movie.id].conflict)
+            self.assertFalse((await db.execute(select(SyncReview.id).where(SyncReview.user_id == self.user.id,
+                SyncReview.state == "pending", SyncReview.kind.in_(["conflict", "playback_removed"])))).all())
+
+    async def test_series_conflict_filters_episode_history_by_tracking_root(self):
+        from core.sync_reconciliation import _history, Decision
+        from models import Media, Show
+        from models.base import MediaType
+        async with self.factory() as db:
+            show = Show(tmdb_id=71001, title="Series fixture")
+            db.add(show)
+            await db.flush()
+            episode = Media(show_id=show.id, media_type=MediaType.episode, title="Episode", season_number=1, episode_number=1)
+            root = Media(tmdb_id=show.tmdb_id, media_type=MediaType.series, title=show.title)
+            db.add_all([root, episode])
+            await db.flush()
+            state = Reconciliation(self.user.id, collecting=False)
+            state.histories = [dict(provider="trakt", new_media_ids={episode.id}, initial=False)]
+            state.playback[root.id] = Decision(("watching", None, None, None, None), conflict=True)
+            with patch("core.cloud_history_reconciliation.reconcile_cloud_watch_events") as reconcile:
+                await _history(db, state, PullCycleState(self.user.id), set())
+                reconcile.assert_not_called()
+            await db.rollback()
+
+
+    async def test_completed_episode_clears_covered_resume_but_keeps_later_episode(self):
+        from core.sync_reconciliation import _clear_completed_playback, Decision
+        from models import Media, Show, PlaybackProgress
+        from models.base import MediaType
+        from sqlalchemy import select
+        async with self.factory() as db:
+            show = Show(tmdb_id=71002, title="Resume fixture")
+            db.add(show)
+            await db.flush()
+            root = Media(tmdb_id=show.tmdb_id, media_type=MediaType.series, title=show.title)
+            episodes = [Media(show_id=show.id, media_type=MediaType.episode, title="Episode",
+                season_number=1, episode_number=number) for number in (3, 4)]
+            db.add_all([root, *episodes])
+            await db.flush()
+            for episode in episodes:
+                db.add(PlaybackProgress(user_id=self.user.id, media_id=episode.id,
+                    progress_seconds=50, progress_percent=0.5, updated_at=self.now))
+            await db.flush()
+            state = Reconciliation(self.user.id)
+            decision = Decision(("watching", 1, 3, None, None), frozenset({"trakt"}), self.now)
+            await _clear_completed_playback(db, state, root.id, decision)
+            remaining = (await db.execute(select(PlaybackProgress.media_id).where(
+                PlaybackProgress.user_id == self.user.id))).scalars().all()
+            self.assertEqual(remaining, [episodes[1].id])
+            await db.rollback()
+
+    async def test_progress_only_completion_is_not_a_dismissal(self):
+        from core.sync_reconciliation import _playback
+        from models.tracking import StreamBaseline, TrackedEntry
+        from sqlalchemy import select
+        movie, conn = self.media[0], self.connections[0]
+        old = dict(content_id="fixture", content_type="movie", position=50000, duration=100000,
+                   modified_at=self.now.isoformat()+"Z")
+        completed = {**old, "position": 95000, "modified_at": (self.now+timedelta(minutes=5)).isoformat()+"Z"}
+        state, cycle = Reconciliation(self.user.id, collecting=False), PullCycleState(self.user.id)
+        state.snapshots = [dict(connection_id=conn.id, identity_version=conn.identity_version,
+            library=[], watched=[], progress=[completed], tmdb_ids={"fixture": movie.tmdb_id},
+            complete=True, sync_playback=True, sync_watched=False)]
+        async with self.factory() as db:
+            db.add(TrackedEntry(user_id=self.user.id, media_id=movie.id, status="watching",
+                status_changed_at=self.now, status_source="local"))
+            baseline = await db.get(StreamBaseline, conn.id)
+            baseline.snapshot = {"progress": {"fixture": old}, "mappings": {"fixture": movie.tmdb_id},
+                "records": {"progress": [old], "watched": [], "library": []}}
+            await db.commit()
+            token = _current.set(state)
+            try:
+                await _playback(db, state, cycle, set())
+            finally:
+                _current.reset(token)
+            self.assertEqual(state.playback[movie.id].value[0], "completed")
+            entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id))).scalar_one()
+            self.assertEqual(entry.status, "completed")

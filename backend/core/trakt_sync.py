@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from core.sync_reconciliation import add_watch_event
 from datetime import datetime, timedelta, timezone
 from typing import Coroutine
 
@@ -376,7 +377,7 @@ async def _apply_trakt_import(
                             existing_times.setdefault(media.id, []).append(watched_at)
                             stats["skipped"] += 1
                         elif not _is_duplicate_play(existing_times, media.id, watched_at):
-                            db.add(WatchEvent(
+                            add_watch_event(db, WatchEvent(
                                 user_id=user_id,
                                 media_id=media.id,
                                 watched_at=watched_at or inferred_watch_datetime(),
@@ -494,7 +495,7 @@ async def _apply_trakt_import(
                                     completed=True,
                                     play_count=1,
                                 )
-                                db.add(event)
+                                add_watch_event(db, event)
                                 await db.flush()
                                 await record_rewatch_progress(db, user_id, media.id, event.id)
                                 existing_times.setdefault(media.id, []).append(watched_at or inferred_watch_datetime())

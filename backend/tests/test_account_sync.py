@@ -83,6 +83,13 @@ class AccountSyncRulesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parent.status, SyncStatus.running)
         self.assertTrue(parent.stats["cancel_requested"])
 
+    async def test_provider_cancellation_is_rejected_without_modifying_jobs(self):
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[result(), result(3)]), commit=AsyncMock())
+        with self.assertRaises(HTTPException) as raised:
+            await sync.cancel_sync_job(3, db, SimpleNamespace(id=7))
+        self.assertEqual(raised.exception.status_code, 409)
+        db.commit.assert_not_awaited()
+
 
     async def test_automatic_trigger_queues_account_cycle_and_keeps_creation_response_independent(self):
         db = SimpleNamespace(execute=AsyncMock(side_effect=[result(), result()]), commit=AsyncMock())
@@ -259,12 +266,12 @@ class AccountSyncDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async def queue(scheduled):
             async with self.factory() as db:
                 try:
-                    with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
-                        return await account_sync.queue_account_pull(db, self.user.id, scheduled=scheduled)
+                    return await account_sync.queue_account_pull(db, self.user.id, scheduled=scheduled)
                 except HTTPException as error:
                     await db.rollback()
                     return error.status_code
-        first, second = await asyncio.gather(queue(False), queue(True))
+        with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="key")):
+            first, second = await asyncio.gather(queue(False), queue(True))
         self.assertEqual(sum(isinstance(item, SyncJob) for item in (first, second)), 1)
         self.assertIn(409, (first, second))
 

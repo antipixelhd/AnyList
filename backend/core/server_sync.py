@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+from core.sync_reconciliation import add_watch_event
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -1320,7 +1321,7 @@ async def sync_items(
                                 play_count=max(1, watch_state["play_count"]),
                                 progress_percent=1.0 if watch_state["completed"] else 0.0,
                             )
-                            db.add(watch_event)
+                            add_watch_event(db, watch_event)
                             if watch_state["completed"]:
                                 await db.flush()
                                 await record_rewatch_progress(db, user_id, media_id_for_watch, watch_event.id)
@@ -1976,6 +1977,8 @@ async def _backfill_plex_watch_history(
                 unmatched += 1
                 continue
             watched_at = datetime.fromtimestamp(viewed_at, tz=timezone.utc).replace(tzinfo=None)
+            from core.sync_reconciliation import collecting, collect_watch, _source
+            collect_watch(media_id, watched_at)
 
             if watched_at in confirmed_watched_by_media.get(media_id, ()):
                 pass  # already recorded by a previous run of this same backfill
@@ -1983,9 +1986,13 @@ async def _backfill_plex_watch_history(
                 # Confirm the webhook's estimate with Plex's authoritative time,
                 # rather than inserting a second row for the same play.
                 match_id, match_watched_at = match
-                await db.execute(
-                    update(WatchEvent).where(WatchEvent.id == match_id).values(watched_at=watched_at, provisional=False)
-                )
+                state = collecting(user_id)
+                if state:
+                    state.watch_confirmations.append((_source.get(), media_id, match_id, match_watched_at, watched_at))
+                else:
+                    await db.execute(
+                        update(WatchEvent).where(WatchEvent.id == match_id).values(watched_at=watched_at, provisional=False)
+                    )
                 provisional_by_media[media_id].remove(match)
                 confirmed_watched_by_media[media_id].add(watched_at)
                 reconciled += 1
@@ -2015,7 +2022,7 @@ async def _backfill_plex_watch_history(
                     completed=True,
                     play_count=1,
                 )
-                db.add(watch_event)
+                add_watch_event(db, watch_event)
                 await db.flush()
                 await record_rewatch_progress(db, user_id, media_id, watch_event.id)
                 confirmed_watched_by_media[media_id].add(watched_at)
@@ -2668,7 +2675,7 @@ async def _apply_nuvio_watch_history(
             play_count=1,
             progress_percent=1.0,
         )
-        db.add(event)
+        add_watch_event(db, event)
         new_events.append(event)
         # Keep in sync - a duplicate row later in the same batch must still be
         # caught, or it'd create a second WatchEvent for it in one sync run.
@@ -3798,7 +3805,7 @@ async def _apply_arvio_watched_movie(
             watched_at=watched_at or inferred_watch_datetime(),
             date_inferred=watched_at is None,
         )
-        db.add(event)
+        add_watch_event(db, event)
         await db.commit()
         return True
     return False
@@ -3868,7 +3875,7 @@ async def _apply_arvio_watched_episode(
             watched_at=watched_at or inferred_watch_datetime(),
             date_inferred=watched_at is None,
         )
-        db.add(event)
+        add_watch_event(db, event)
         await db.commit()
         return True
     return False

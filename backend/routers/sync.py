@@ -645,6 +645,12 @@ async def cancel_sync_job(
         from core.account_sync import request_cycle_cancel
         await request_cycle_cancel(db, parent)
         return {"status": "ok", "job_id": job_id}
+    independent = (await db.execute(select(SyncJob.id).where(
+        SyncJob.id == job_id, SyncJob.user_id == current_user.id,
+        SyncJob.job_type.in_(["pull", "push"]),
+    ))).scalar_one_or_none()
+    if independent is not None:
+        raise HTTPException(status_code=409, detail="Cancel the account sync instead of an individual provider")
     result = await db.execute(
         update(SyncJob)
         .where(SyncJob.id == job_id, SyncJob.user_id == current_user.id)

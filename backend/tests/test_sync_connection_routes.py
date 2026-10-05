@@ -97,7 +97,7 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
                 db.execute.side_effect = None
                 with patch.object(sync, "_get_connection_or_404", AsyncMock(return_value=conn)), \
                      patch.object(getattr(sync, provider), "get_libraries", AsyncMock(return_value=[{"Id": "tv", "Name": "TV"}])):
-                    response = await sync.save_connection_libraries(7, {"library_ids": ["tv", "unknown"]}, db, SimpleNamespace(id=2))
+                    response = await sync.save_connection_libraries(7, {"library_ids": ["tv", "unknown"]}, db=db, current_user=SimpleNamespace(id=2))
                 self.assertEqual(response, {"saved": 2})
                 deletion = db.execute.call_args.args[0]
                 self.assertEqual(deletion.table.name, model.__tablename__)
@@ -116,7 +116,7 @@ class SyncConnectionRoutesTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(sync, "_get_connection_or_404", AsyncMock(return_value=conn)), \
                      patch.object(getattr(sync, provider), "get_libraries", AsyncMock(side_effect=RuntimeError("offline"))):
                     with self.assertRaises(HTTPException) as raised:
-                        await sync.save_connection_libraries(7, {"library_ids": []}, db, SimpleNamespace(id=2))
+                        await sync.save_connection_libraries(7, {"library_ids": []}, db=db, current_user=SimpleNamespace(id=2))
                 self.assertEqual((raised.exception.status_code, raised.exception.detail), (502, "Could not reach server: offline"))
                 db.execute.assert_not_awaited()
                 db.commit.assert_not_awaited()

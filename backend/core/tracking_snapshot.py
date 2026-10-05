@@ -605,6 +605,12 @@ async def observe_stream_snapshot(
             if media:
                 observations.setdefault(media.id, []).append(item)
         for observation_rows in observations.values():
+            root = lookup.get((mappings.get(str(observation_rows[0].get('content_id'))), observation_rows[0].get('content_type')))
+            if root:
+                observation_rows = [item for item in observation_rows
+                    if playback_allowed(conn.user_id, conn.id, root.id, item) is not False]
+            if not observation_rows:
+                continue
             # Resume is the current title decision. Historical episodes from
             # the same pull update history without each changing its clock.
             resume_rows = [item for item in changed_active if any(

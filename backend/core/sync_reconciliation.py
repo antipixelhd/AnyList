@@ -6,7 +6,7 @@ that cannot receive pushes therefore does not repeatedly propose an old value.
 from __future__ import annotations
 
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -22,6 +22,7 @@ class Observation:
     changed_at: datetime | None = None
     previous: Any = field(default_factory=lambda: _MISSING)
     observed_after: datetime | None = None
+    inferred: bool = False
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,11 @@ def resolve(local, local_at, observations, *, started_at=None, compatible=None):
     if started_at and local_at and local_at > started_at:
         return Decision(local, stale=True)
     changed = [o for o in observations if o.previous is _MISSING or o.value != o.previous]
+    # A snapshot delta has an inferred clock shared by every provider in this
+    # cycle. It orders successive cycles, never competing edits within one pull.
+    changed = [replace(o, changed_at=started_at, inferred=True)
+               if started_at and o.changed_at is None and o.previous is not _MISSING else o
+               for o in changed]
     if not changed:
         return Decision(local)
     # A known older edit is useful history, but cannot replace current state.
@@ -70,7 +76,7 @@ def resolve(local, local_at, observations, *, started_at=None, compatible=None):
             return Decision(merged, frozenset(o.source for o in candidates),
                             max((naive_utc(o.changed_at) for o in candidates if o.changed_at), default=None))
     # Every disagreement must have an orderable clock to select a winner.
-    if all(o.changed_at is not None for o in candidates):
+    if all(o.changed_at is not None and not o.inferred for o in candidates):
         latest = max(naive_utc(o.changed_at) for o in candidates)
         winners = [o for o in candidates if naive_utc(o.changed_at) == latest]
         if all(o.value == winners[0].value for o in winners):
@@ -94,8 +100,8 @@ class Reconciliation:
     library_observed: dict[int, datetime | None] = field(default_factory=dict)
     entries_before: dict[int, dict] = field(default_factory=dict)
     watch_before: set[int] = field(default_factory=set)
-    watch_event_ids: set[int] = field(default_factory=set)
-    imported_watches: list[Any] = field(default_factory=list)
+    staged_watches: list[Any] = field(default_factory=list)
+    watch_confirmations: list[tuple] = field(default_factory=list)
     date_corrections: list[tuple] = field(default_factory=list)
     watch_evidence: dict[int, dict[str, datetime | None]] = field(default_factory=dict)
     watch_previous: dict[str, dict[str, str | None]] = field(default_factory=dict)
@@ -106,27 +112,22 @@ class Reconciliation:
     source_approvals: dict[str, bool] = field(default_factory=dict)
     protected_fields: dict[int, set[str]] = field(default_factory=dict)
     connection_versions: dict[int, int] = field(default_factory=dict)
+    tracking_roots: dict[int, int] = field(default_factory=dict)
 
 
 _current: ContextVar[Reconciliation | None] = ContextVar("account_reconciliation", default=None)
 _source: ContextVar[str] = ContextVar("reconciliation_source", default="")
 
 
-# Importers retain their existing transactional deduplication. Capture only
-# rows created by a provider worker, so rejected proposals cannot erase a
-# concurrent manual watch from another request.
-from sqlalchemy import event
-from sqlalchemy.orm import Session
-
-
-@event.listens_for(Session, "before_flush")
-def _remember_imported_watches(session, flush_context, instances):
-    state = _current.get()
-    if not state or not state.collecting or not _source.get():
-        return
-    from models import WatchEvent
-    state.imported_watches.extend((_source.get(), row) for row in session.new
-        if isinstance(row, WatchEvent) and row.user_id == state.user_id)
+def add_watch_event(db, row):
+    """Keep imported viewing records invisible until the account decision commits."""
+    state = collecting(row.user_id)
+    if state and _source.get():
+        state.staged_watches.append((_source.get(), row))
+        if row.completed:
+            collect_watch(row.media_id, None if row.date_inferred else row.watched_at)
+    else:
+        db.add(row)
 
 
 def collecting(user_id):
@@ -185,7 +186,6 @@ async def initialize(db, state):
             TrackedEntry.user_id == state.user_id))).scalars()}
     state.watch_before = set((await db.execute(select(WatchEvent.media_id).where(
         WatchEvent.user_id == state.user_id, WatchEvent.completed.is_(True)))).scalars())
-    state.watch_event_ids = set((await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == state.user_id))).scalars())
     for baseline in (await db.execute(select(CloudBaseline).where(CloudBaseline.user_id == state.user_id))).scalars():
         state.watch_previous[baseline.provider] = (baseline.snapshot or {}).get("watch_observations", {})
         state.cloud_rating_baselines[baseline.provider] = ((baseline.snapshot or {}).get("rating_observations", {}), baseline.observed_at)
@@ -276,7 +276,7 @@ async def _retire_review(db, state, media_id, kind, season_number=None):
 async def _ratings(db, state, cycle):
     from sqlalchemy import select
     from models import Rating
-    from models.tracking import TrackedEntry, CloudBaseline
+    from models.tracking import TrackedEntry
     from core.cloud_rating_reconciliation import _entry_score, _set_entry_score
     from core.rating_projection import is_projected_echo
     ids = {key[0] for key in state.ratings}
@@ -367,11 +367,8 @@ async def _finalize(db, state, cycle):
         MediaServerConnection.user_id == state.user_id))).scalars()}
     def valid(source):
         return not source.startswith("connection:") or connections.get(int(source.split(":")[1])) == state.connection_versions.get(int(source.split(":")[1]))
-    from sqlalchemy import delete
-    from models import WatchEvent
-    invalid_ids = {row.id for source, row in state.imported_watches if not valid(source) and row.id is not None}
-    if invalid_ids:
-        await db.execute(delete(WatchEvent).where(WatchEvent.user_id == state.user_id, WatchEvent.id.in_(invalid_ids)))
+    state.staged_watches = [item for item in state.staged_watches if valid(item[0])]
+    state.watch_confirmations = [item for item in state.watch_confirmations if valid(item[0])]
     state.date_corrections = [item for item in state.date_corrections if valid(item[0])]
     state.ratings = {key: [o for o in values if valid(o.source)] for key, values in state.ratings.items()}
     state.raw_progress = {key: [o for o in values if valid(o.source)] for key, values in state.raw_progress.items()}
@@ -416,7 +413,7 @@ async def _finalize(db, state, cycle):
     await _library(db, state, cycle)
 
 
-def playback_allowed(user_id, connection_id, media_id):
+def playback_allowed(user_id, connection_id, media_id, row=None):
     state = _current.get()
     if not state or state.user_id != user_id or state.collecting:
         return None
@@ -426,17 +423,43 @@ def playback_allowed(user_id, connection_id, media_id):
         if watched and (watched.conflict or watched.stale):
             return False
         return None
-    return source_key("", connection_id) in decision.sources and not decision.conflict and not decision.stale
+    if source_key("", connection_id) not in decision.sources or decision.conflict or decision.stale:
+        return False
+    if row and row.get("duration") and 0 < float(row.get("position") or 0) / float(row["duration"]) < 0.9:
+        return decision.value == ("watching", row.get("season"), row.get("episode"), row.get("position"), row.get("duration"))
+    return True
+
+
+def reconcile_completions(observations, completions):
+    """A newer completion covers resume evidence for that movie/episode only."""
+    result = list(observations)
+    for completion in completions:
+        def covers(observation):
+            return completion.value[0] == "completed" or (
+                observation.value[0] == "watching" and all(value is not None for value in observation.value[1:3])
+                and observation.value[1:3] <= completion.value[1:3])
+        # Earlier episode history enriches the series without replacing a later resume.
+        if completion.value[0] != "completed" and any(
+                o.value[0] == "watching" and all(value is not None for value in o.value[1:3])
+                and o.value[1:3] > completion.value[1:3] for o in result):
+            continue
+        result = [o for o in result if not (covers(o) and (
+            o.changed_at and completion.changed_at and completion.changed_at > o.changed_at
+            or o.source == completion.source and (not o.changed_at or not completion.changed_at
+                                                  or completion.changed_at >= o.changed_at)))]
+        result.append(completion)
+    return result
 
 
 async def _playback(db, state, cycle, added):
     from sqlalchemy import select
     from models import Media, MediaServerConnection
     from models.tracking import StreamBaseline, TrackedEntry
-    from core.tracking_snapshot import _active, same_playback, provider_changed_at, observe_stream_snapshot
+    from core.tracking_snapshot import _active, same_playback, provider_changed_at, observe_stream_snapshot, completed_progress, completed_rows
     from models import PlaybackProgress, Show
     from core.status_provenance import status_changed_at
     candidates = {}
+    completions = {}
     records = {}
     tmdb_ids = {int(value) for snapshot in state.snapshots for value in snapshot["tmdb_ids"].values() if value is not None}
     for snapshot in state.snapshots:
@@ -453,6 +476,21 @@ async def _playback(db, state, cycle, added):
         active = _active(snapshot["progress"]) if snapshot["sync_playback"] else {}
         old = previous.get("progress", {})
         mappings = {**previous.get("mappings", {}), **snapshot["tmdb_ids"]}
+        completed = [*snapshot["watched"], *(completed_rows(snapshot["progress"]) if snapshot["sync_playback"] else [])]
+        previous_progress = {str(row.get("content_id")): row for row in previous.get("records", {}).get("progress", [])}
+        for row in completed_rows(snapshot["progress"]) if snapshot["sync_playback"] else []:
+            key = str(row.get("content_id"))
+            prior = previous_progress.get(key)
+            if prior and same_playback(prior, row) and provider_changed_at(prior) == provider_changed_at(row):
+                continue
+            media_id = lookup.get((mappings.get(key), row.get("content_type")))
+            if media_id is None:
+                continue
+            value = ("completed", None, None, None, None) if row.get("content_type") == "movie" else (
+                "watching", row.get("season"), row.get("episode"), None, None)
+            prior_value = ("watching", prior.get("season"), prior.get("episode"), prior.get("position"), prior.get("duration")) if prior else _MISSING
+            completions.setdefault(media_id, []).append(Observation(source_key(conn.type, conn.id), value,
+                provider_changed_at(row), prior_value, baseline.observed_at if baseline else None))
         for key, row in active.items():
             prior = old.get(key)
             if prior and same_playback(prior, row) and prior.get("last_watched") == row.get("last_watched"):
@@ -476,12 +514,16 @@ async def _playback(db, state, cycle, added):
                     if media_id is None:
                         continue
                     is_movie = (mappings.get(key), "movie") in lookup
+                    if is_movie and any(str(row.get("content_id")) == key for row in completed):
+                        continue
                     candidates.setdefault(media_id, []).append(Observation(source_key(conn.type, conn.id),
                         ("dropped" if is_movie else "paused", None, None, None, None), None,
                         ("watching", None, None, None, None), baseline.observed_at))
         if snapshot["complete"] and baseline and snapshot["sync_playback"]:
             for key in set(old) - set(active):
                 row = old[key]
+                if completed_progress(row, completed):
+                    continue
                 media_id = lookup.get((mappings.get(key), row.get("content_type")))
                 if media_id is not None:
                     value = ("dropped" if row.get("content_type") == "movie" else "paused", None, None, None, None)
@@ -522,10 +564,21 @@ async def _playback(db, state, cycle, added):
         if decision.value is not True or decision.conflict or decision.stale or not decision.sources:
             continue
         media = await db.get(Media, media_id)
-        if media and media.media_type.value == "movie":
+        if media and media.media_type.value in ("movie", "episode"):
+            root_id = await _tracking_root(db, media_id)
+            value = ("completed", None, None, None, None) if media.media_type.value == "movie" else (
+                "watching", media.season_number, media.episode_number, None, None)
             for source in decision.sources:
-                candidates.setdefault(media_id, []).append(Observation(source,
-                    ("completed", None, None, None, None), state.watch_evidence.get(media_id, {}).get(source)))
+                clock = state.watch_evidence.get(media_id, {}).get(source)
+                completions.setdefault(root_id, []).append(Observation(source, value,
+                    clock or decision.changed_at, inferred=clock is None and decision.changed_at is not None))
+    for media_id, values in completions.items():
+        # A series needs status reconciliation only when it has competing
+        # resume evidence; additive episode history handles the other cases.
+        if values[0].value[0] != "completed" and media_id not in candidates:
+            continue
+        candidates[media_id] = reconcile_completions(candidates.get(media_id, []),
+            sorted(values, key=lambda item: (item.changed_at or datetime.min, item.value[1:3], item.source)))
     entries = {e.media_id: e for e in (await db.execute(select(TrackedEntry).where(
         TrackedEntry.user_id == state.user_id, TrackedEntry.media_id.in_(set(candidates))))).scalars()}
     for media_id, observations in candidates.items():
@@ -583,9 +636,17 @@ async def _playback(db, state, cycle, added):
             action.state, action.payload = "cancelled", {}
     await db.commit()
     for media_id, decision in state.playback.items():
-        if not decision.sources or decision.conflict or decision.stale or decision.value[0] != "watching":
+        if not decision.sources or decision.conflict or decision.stale:
             continue
-        connection_id = min(int(source.split(":")[1]) for source in decision.sources)
+        if decision.value[0] == "completed" or decision.value[0] == "watching" and decision.value[3] is None:
+            await _clear_completed_playback(db, state, media_id, decision)
+            continue  # Completion has no resume position to persist.
+        if decision.value[0] != "watching":
+            continue
+        connection_ids = [int(source.split(":")[1]) for source in decision.sources if source.startswith("connection:")]
+        if not connection_ids:
+            continue
+        connection_id = min(connection_ids)
         record = records.get((media_id, connection_id))
         if record:
             await _apply_playback(db, state, media_id, record, decision.changed_at)
@@ -620,6 +681,9 @@ async def _history(db, state, cycle, added):
     ids -= {media_id for media_id, decision in state.playback.items() if decision.conflict or decision.stale}
     ids -= {media_id for media_id, decision in state.watch_decisions.items()
             if decision.conflict or decision.stale or decision.value is False}
+    ids = {media_id for media_id in ids if not (
+        (decision := state.playback.get(await _tracking_root(db, media_id)))
+        and (decision.conflict or decision.stale))}
     if not ids:
         return
     accepted = set()
@@ -713,7 +777,6 @@ async def collect_raw_progress(db, user_id, media_id, seconds, percent, clock):
 
 
 async def _raw_progress(db, state):
-    from sqlalchemy import select
     from models.tracking import StreamBaseline
     for media_id, observations in state.raw_progress.items():
         for observation in observations:
@@ -782,6 +845,24 @@ async def _apply_playback(db, state, media_id, record, changed_at):
     row.updated_at = changed_at or state.started_at
 
 
+async def _clear_completed_playback(db, state, media_id, decision):
+    from sqlalchemy import select, delete, or_, and_
+    from models import PlaybackProgress, Media, Show
+    media = await db.get(Media, media_id)
+    if media.media_type.value == "series":
+        season, episode = decision.value[1:3]
+        if season is None or episode is None:
+            return
+        shows = select(Show.id).where(or_(Show.tmdb_id == media.tmdb_id if media.tmdb_id else False,
+            Show.tvdb_id == media.tvdb_id if media.tvdb_id else False))
+        ids = select(Media.id).where(Media.show_id.in_(shows), Media.season_number > 0,
+            or_(Media.season_number < season, and_(Media.season_number == season, Media.episode_number <= episode)))
+    else:
+        ids = select(Media.id).where(Media.id == media_id)
+    await db.execute(delete(PlaybackProgress).where(PlaybackProgress.user_id == state.user_id,
+        PlaybackProgress.media_id.in_(ids), or_(PlaybackProgress.updated_at.is_(None), PlaybackProgress.updated_at <= state.started_at)))
+
+
 def replaying(user_id):
     state = _current.get()
     return state if state and state.user_id == user_id and not state.collecting else None
@@ -796,7 +877,7 @@ async def _watch_dates(db, state):
     """Merge reliable viewing dates independently of source completion order."""
     from models import WatchEvent
     from core.watch_dates import replace_inferred_watch_date
-    from core.watch_dedup import get_dedup_window_minutes, find_duplicate_watch_event
+    from core.watch_dedup import get_dedup_window_minutes, load_existing_watch_times, is_duplicate_watch_time
     grouped = {}
     for source, media_id, event_id, previous_date, normalized in state.date_corrections:
         decision = state.watch_decisions.get(media_id)
@@ -804,19 +885,36 @@ async def _watch_dates(db, state):
             continue
         grouped.setdefault((media_id, event_id, previous_date), set()).add(normalized)
     window = await get_dedup_window_minutes(db, state.user_id) if grouped else 0
+    times = await load_existing_watch_times(db, state.user_id) if grouped else {}
     for (media_id, event_id, previous_date), dates in grouped.items():
         event = await db.get(WatchEvent, event_id)
         if not event or event.watched_at != previous_date or not (event.date_inferred or event.date_shared):
             continue
         replace_inferred_watch_date(event, max(dates))
+        existing_times = times.setdefault(media_id, [])
+        previous_time = previous_date or event.created_at
+        if previous_time in existing_times:
+            existing_times.remove(previous_time)
+        existing_times.append(event.watched_at)
         await db.flush()
         for at in sorted(dates, reverse=True):
-            if not await find_duplicate_watch_event(db, state.user_id, media_id, at, window):
+            if not is_duplicate_watch_time(times, media_id, at, window):
                 db.add(WatchEvent(user_id=state.user_id, media_id=media_id, watched_at=at, completed=True))
+                times.setdefault(media_id, []).append(at)
                 await db.flush()
 
 
 async def _tracking_root(db, media_id):
+    state = _current.get()
+    if state and media_id in state.tracking_roots:
+        return state.tracking_roots[media_id]
+    root_id = await _lookup_tracking_root(db, media_id)
+    if state:
+        state.tracking_roots[media_id] = root_id
+    return root_id
+
+
+async def _lookup_tracking_root(db, media_id):
     from sqlalchemy import select, or_
     from models import Media, Show
     media = await db.get(Media, media_id)
@@ -848,7 +946,8 @@ async def _watches(db, state, cycle):
             prior_stamp = saved.get(str(media_id))
             prior_clock = naive_utc(datetime.fromisoformat(prior_stamp)) if prior_stamp else None
             if str(media_id) not in saved or prior_clock != clock:
-                candidates.setdefault(media_id, []).append(Observation(source, True, clock))
+                candidates.setdefault(media_id, []).append(Observation(source, True, clock,
+                    False if source in state.watch_previous and str(media_id) not in saved else _MISSING))
     for snapshot in state.snapshots:
         if not snapshot["sync_watched"]:
             continue
@@ -859,6 +958,7 @@ async def _watches(db, state, cycle):
         previous = (baseline.snapshot or {}) if baseline else {}
         old = previous.get("records", {}).get("watched", [])
         old_keys = {(watch_key(row), str(row.get("watched_at"))) for row in old}
+        old_watch_keys = {watch_key(row) for row in old}
         current = snapshot["watched"]
         current_keys = {watch_key(row) for row in current}
         mapping = {**previous.get("mappings", {}), **snapshot["tmdb_ids"]}
@@ -868,7 +968,8 @@ async def _watches(db, state, cycle):
             media_id = ids.get(key)
             if media_id is not None and (key, str(row.get("watched_at"))) not in old_keys:
                 candidates.setdefault(media_id, []).append(Observation(source_key(conn.type, conn.id), True,
-                    provider_changed_at(row), _MISSING, baseline.observed_at if baseline else None))
+                    provider_changed_at(row), False if baseline and key not in old_watch_keys else _MISSING,
+                    baseline.observed_at if baseline else None))
         if baseline and snapshot["complete"]:
             for row in old:
                 key = watch_key(row)
@@ -876,16 +977,15 @@ async def _watches(db, state, cycle):
                 if media_id is not None and key not in current_keys:
                     candidates.setdefault(media_id, []).append(Observation(source_key(conn.type, conn.id), False,
                         None, True, baseline.observed_at))
-    from models.tracking import TrackedEntry, CloudBaseline
+    from models.tracking import TrackedEntry
     from core.status_provenance import status_changed_at
-    imported_ids = {row.id for source, row in state.imported_watches if row.id is not None}
     for media_id, observations in candidates.items():
         observations.sort(key=lambda observation: observation.source)
         root_id = await _tracking_root(db, media_id)
         entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == state.user_id,
             TrackedEntry.media_id == root_id))).scalar_one_or_none()
         local = True if media_id in state.watch_before else None
-        clock = status_changed_at(entry) if entry and entry.status_source == "local" else None
+        clock = status_changed_at(entry) if entry else None
         decision = resolve(local, clock, observations, started_at=state.started_at)
         protected = state.protected_fields.get(root_id, set()) & {"status", "progress"}
         if protected:
@@ -895,11 +995,6 @@ async def _watches(db, state, cycle):
             # owner's newer current status or becoming a fresh outbound edit.
             decision = Decision(True)
         state.watch_decisions[media_id] = decision
-        if decision.conflict or decision.stale or not decision.sources and local is not True:
-            # Raw importers add history before reconciliation. Remove only their
-            # newly inserted rows when those proposals did not survive resolution.
-            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == state.user_id,
-                WatchEvent.media_id == media_id, WatchEvent.id.in_(imported_ids)))
         if decision.conflict:
             await _review(db, state, media_id, "watched state", decision, observations)
             continue
@@ -934,13 +1029,69 @@ async def _watches(db, state, cycle):
         for source, clock in sources.items():
             updates.setdefault(source, {})[str(media_id)] = clock.isoformat() if clock else None
     await _persist_observations(db, state, "watch_observations", updates)
+    await _apply_staged_watches(db, state)
     await db.commit()
+
+
+async def _apply_staged_watches(db, state):
+    from sqlalchemy import select, func
+    from models import WatchEvent, User
+    from core.watch_dedup import get_dedup_window_minutes, is_duplicate_watch_time
+    from core.rewatch import record_rewatch_progress
+    if not state.staged_watches and not state.watch_confirmations:
+        return
+    # The account row lock also blocks concurrent watch inserts through their
+    # user FK. Deduplicate the batch in memory without per-title advisory locks.
+    await db.execute(select(User.id).where(User.id == state.user_id).with_for_update())
+    for source, media_id, event_id, previous_date, confirmed_date in state.watch_confirmations:
+        decision = state.watch_decisions.get(media_id)
+        root_id = await _tracking_root(db, media_id)
+        event = await db.get(WatchEvent, event_id)
+        if (event and event.provisional and event.watched_at == previous_date
+                and decision and decision.value is True and not decision.conflict and not decision.stale
+                and not state.protected_fields.get(root_id, set()) & {"status", "progress"}):
+            event.watched_at, event.provisional = confirmed_date, False
+    window = await get_dedup_window_minutes(db, state.user_id) if state.staged_watches else 0
+    times, completed_ids = {}, set()
+    media_ids = sorted({event.media_id for _, event in state.staged_watches})
+    for offset in range(0, len(media_ids), 2000):
+        rows = (await db.execute(select(WatchEvent.media_id, func.coalesce(WatchEvent.watched_at, WatchEvent.created_at),
+            WatchEvent.completed).where(WatchEvent.user_id == state.user_id,
+                WatchEvent.media_id.in_(media_ids[offset:offset+2000])))).all()
+        for media_id, at, completed in rows:
+            times.setdefault(media_id, []).append(at)
+            if completed:
+                completed_ids.add(media_id)
+    accepted = []
+    # Reliable dates precede estimates, irrespective of provider completion order.
+    for source, event in sorted(state.staged_watches, key=lambda item: (
+            bool(item[1].date_inferred), item[1].media_id, item[1].watched_at or state.started_at, item[0])):
+        decision = state.watch_decisions.get(event.media_id)
+        root_id = await _tracking_root(db, event.media_id)
+        if state.protected_fields.get(root_id, set()) & {"status", "progress"}:
+            continue
+        if event.completed and (not decision or decision.conflict or decision.stale or decision.value is not True):
+            continue
+        if event.date_inferred and event.media_id in completed_ids:
+            continue  # An undated flag cannot establish a separate rewatch.
+        if is_duplicate_watch_time(times, event.media_id, event.watched_at, window):
+            continue
+        db.add(event)
+        if event.completed:
+            completed_ids.add(event.media_id)
+            accepted.append(event)
+        times.setdefault(event.media_id, []).append(event.watched_at or state.started_at)
+    await db.flush()
+    from models.rewatch import ShowRewatch
+    if accepted and (await db.execute(select(ShowRewatch.id).where(ShowRewatch.user_id == state.user_id).limit(1))).first():
+        for event in accepted:
+            await record_rewatch_progress(db, state.user_id, event.media_id, event.id)
 
 
 async def resolve_category_review(db, event, action):
     """Resolve a combined membership/position review using existing outboxes."""
     from sqlalchemy import select, delete
-    from models import WatchEvent, PlaybackProgress, Media, MediaServerConnection
+    from models import WatchEvent, PlaybackProgress, Media
     from core.watch_intents import queue_watch_intents
     payload = event.payload or {}
     category = payload.get("category")

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from core.sync_reconciliation import add_watch_event
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
@@ -225,7 +226,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                             collect_watch(media.id, _parse_watched_at(item.get("last_watched_at")))
                             if media.id not in existing_watched:
                                 watched_at = _parse_watched_at(item.get("last_watched_at"))
-                                db.add(WatchEvent(
+                                add_watch_event(db, WatchEvent(
                                     user_id=user_id,
                                     media_id=media.id,
                                     # A dateless play receives an explicitly
@@ -318,7 +319,7 @@ async def run_simkl_sync(user_id: int, job_id: int) -> None:
                                                 completed=True,
                                                 play_count=1,
                                             )
-                                            db.add(event)
+                                            add_watch_event(db, event)
                                             await db.flush()
                                             await record_rewatch_progress(db, user_id, media.id, event.id)
                                             existing_watched.add(media.id)

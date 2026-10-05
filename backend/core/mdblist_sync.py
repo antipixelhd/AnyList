@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from core.sync_reconciliation import add_watch_event
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -340,7 +341,7 @@ async def _import_watched(
                         completed=True,
                         play_count=max(_integer(entry.get("plays")) or 1, 1),
                     )
-                    db.add(event)
+                    add_watch_event(db, event)
                     await db.flush()
                     await record_rewatch_progress(db, user_id, media.id, event.id)
                     existing[media.id].append(event.watched_at)
