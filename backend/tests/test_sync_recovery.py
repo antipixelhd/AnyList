@@ -98,6 +98,189 @@ class SyncRecoveryDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await db.execute(select(Collection).where(Collection.user_id == self.user.id))).first())
             self.assertFalse((await db.get(SyncJob, self.job.id)).stats.get("delivery_pending"))
 
+    async def test_unwatched_retry_only_revisits_failed_destination_and_uses_its_own_item_id(self):
+        from core import watch_delivery
+        async with self.factory() as db:
+            conn = await db.get(MediaServerConnection, self.conn.id)
+            conn.type, conn.push_watched = "jellyfin", True
+            second = MediaServerConnection(user_id=self.user.id, type="jellyfin", name="Second",
+                url="http://second.invalid", token="fixture", push_watched=True)
+            db.add(second)
+            collection = Collection(user_id=self.user.id, media_id=self.media.id)
+            db.add(collection)
+            await db.flush()
+            db.add_all([CollectionFile(collection_id=collection.id, connection_id=conn.id,
+                                       source=CollectionSource.jellyfin, source_id="first-item"),
+                        CollectionFile(collection_id=collection.id, connection_id=second.id,
+                                       source=CollectionSource.jellyfin, source_id="second-item")])
+            cycle = PullCycleState(self.user.id, removed_watch_exclusions={self.media.id: set()})
+            await sync_delivery.persist_delivery(db, self.job.id, cycle)
+            job = await db.get(SyncJob, self.job.id)
+            job.status = SyncStatus.failed
+            finished_at = datetime(2026, 10, 4, 12)
+            job.updated_at = finished_at
+            await db.commit()
+        attempts = []
+        offline = True
+        async def push(url, token, server_user_id, item_id):
+            attempts.append((url, item_id))
+            return not (offline and url == second.url)
+        with patch("db.async_sessionmaker", return_value=self.factory), \
+             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()), \
+             patch.object(watch_delivery.jellyfin_client, "mark_unwatched", push), \
+             patch("core.outbound_sync.fan_out_changes", AsyncMock()), \
+             patch("core.watch_intents.dispatch_watch_intents", AsyncMock()), \
+             patch("core.streaming_library.dispatch_pending_library_deliveries", AsyncMock()), \
+             patch("core.stream_actions.dispatch_stream_actions", AsyncMock()), \
+             patch("core.cloud_actions.dispatch_cloud_actions", AsyncMock()):
+            await sync_delivery.retry_cycle_deliveries(self.factory)
+            async with self.factory() as db:
+                stats = (await db.get(SyncJob, self.job.id)).stats
+                self.assertTrue(stats["delivery_pending"])
+                self.assertEqual(set(stats["delivery_done"]), {f"connection:{self.conn.id}", "queues"})
+                self.assertEqual((await db.get(SyncJob, self.job.id)).updated_at, finished_at)
+            offline = False
+            await sync_delivery.retry_cycle_deliveries(self.factory)
+            await sync_delivery.retry_cycle_deliveries(self.factory)
+        self.assertEqual(attempts, [(self.conn.url, "first-item"), (second.url, "second-item"),
+                                    (second.url, "second-item")])
+        async with self.factory() as db:
+            self.assertNotIn("delivery_pending", (await db.get(SyncJob, self.job.id)).stats)
+            self.assertEqual((await db.get(SyncJob, self.job.id)).updated_at, finished_at)
+
+    async def test_legacy_delivery_payload_is_upgraded_and_replaced_identity_is_skipped(self):
+        from core.sync_delivery_targets import _destination
+        async with self.factory() as db:
+            conn = await db.get(MediaServerConnection, self.conn.id)
+            conn.push_watched = True
+            cycle = PullCycleState(self.user.id)
+            await sync_delivery.persist_delivery(db, self.job.id, cycle)
+            job = await db.get(SyncJob, self.job.id)
+            job.stats = {key: value for key, value in job.stats.items()
+                         if key not in {"delivery_targets", "delivery_done"}}
+            job.status = SyncStatus.failed
+            conn.identity_version += 1
+            await db.commit()
+        seen = []
+        with patch.object(scheduler, "_flush_pull_cycle", AsyncMock(side_effect=lambda state: seen.append(_destination.get()))):
+            await sync_delivery.retry_cycle_deliveries(self.factory)
+        self.assertEqual(seen, ["queues"])
+
+    async def interrupt(self, **stats):
+        async with self.factory() as db:
+            job = await db.get(SyncJob, self.job.id)
+            job.status = SyncStatus.failed
+            job.error_message = "Aborted due to server restart"
+            job.stats = {**job.stats, **stats}
+            for child_id in job.stats["child_job_ids"]:
+                (await db.get(SyncJob, child_id)).status = SyncStatus.failed
+            await db.commit()
+
+    async def test_restart_recovers_and_consumes_coalesced_connection_followup_once(self):
+        async with self.factory() as db:
+            db.add(MediaServerConnection(user_id=self.user.id, type="nuvio", name="New during sync",
+                                         url="http://invalid", token="fixture"))
+            await db.commit()
+            await account_sync.request_automatic_pull(db, self.user.id)
+            await account_sync.request_automatic_pull(db, self.user.id)
+        await self.interrupt()
+        runner = AsyncMock()
+        with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="fixture")), \
+             patch.object(account_sync, "run_account_pull", runner):
+            await account_sync.retry_automatic_pulls(self.factory)
+            await account_sync.retry_automatic_pulls(self.factory)
+        runner.assert_awaited_once()
+        async with self.factory() as db:
+            old = await db.get(SyncJob, self.job.id)
+            replacement = await db.get(SyncJob, old.stats["recovery_job_id"])
+            self.assertFalse(old.stats["followup_requested"])
+            self.assertTrue(replacement.stats["automatic"])
+            self.assertEqual(runner.await_args.args, (self.user.id, replacement.id))
+            self.assertEqual(len(replacement.stats["child_job_ids"]), 2)
+
+    async def test_retry_of_another_destination_does_not_reset_successful_streaming_queues(self):
+        from core.streaming_library import queue_provider_library_changes
+        from core.watch_intents import queue_watch_intents
+        from core.sync_delivery_targets import destination_scope
+        from models.streaming_library import StreamingLibraryDelivery
+        from models.watch_intent import WatchIntent
+        async with self.factory() as db:
+            first = await db.get(MediaServerConnection, self.conn.id)
+            first.push_watched = first.push_collection = True
+            second = MediaServerConnection(user_id=self.user.id, type="stremio", name="Second",
+                url="http://invalid", token="fixture", push_watched=True, push_collection=True)
+            source = MediaServerConnection(user_id=self.user.id, type="stremio", name="Pull-only source",
+                url="http://invalid", token="fixture")
+            db.add_all([second, source])
+            await db.commit()
+        observed_at = datetime.utcnow()
+        async def enqueue(db, destination):
+            with destination_scope(f"connection:{destination}"):
+                await queue_watch_intents(db, self.user.id, {self.media.id}, exclude_connection_ids={source.id})
+                await queue_provider_library_changes(db, self.user.id, {self.media.id},
+                    exclude_connection_ids={source.id}, source_observed_at_by_media={self.media.id: observed_at})
+        async with self.factory() as db:
+            await enqueue(db, first.id)
+            await db.commit()
+            watch = (await db.execute(select(WatchIntent))).scalar_one()
+            library = (await db.execute(select(StreamingLibraryDelivery).where(
+                StreamingLibraryDelivery.connection_id == first.id))).scalar_one()
+            watch.state = library.state = "applied"
+            watch.attempts = library.attempts = 1
+            await db.commit()
+        async with self.factory() as db:
+            await enqueue(db, second.id)
+            await db.commit()
+        async with self.factory() as db:
+            watches = {row.connection_id: row for row in (await db.execute(select(WatchIntent))).scalars()}
+            deliveries = {row.connection_id: row for row in (await db.execute(select(StreamingLibraryDelivery))).scalars()}
+            self.assertEqual((watches[first.id].state, watches[first.id].attempts), ("applied", 1))
+            self.assertEqual((deliveries[first.id].state, deliveries[first.id].attempts), ("applied", 1))
+            self.assertEqual(watches[second.id].state, "pending")
+            self.assertEqual(deliveries[second.id].state, "pending")
+            self.assertNotIn(source.id, watches)
+            self.assertEqual(deliveries[source.id].state, "observed")
+
+    async def test_recovery_request_is_retained_when_prerequisites_are_missing(self):
+        await self.interrupt(followup_requested=True)
+        with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value=None)), \
+             patch.object(account_sync, "run_account_pull", AsyncMock()) as runner:
+            await account_sync.retry_automatic_pulls(self.factory)
+        runner.assert_not_awaited()
+        async with self.factory() as db:
+            job = await db.get(SyncJob, self.job.id)
+            self.assertTrue(job.stats["followup_requested"])
+            self.assertNotIn("recovery_job_id", job.stats)
+            self.assertEqual(len((await db.execute(select(SyncJob).where(
+                SyncJob.user_id == self.user.id, SyncJob.job_type == "pull_cycle"))).scalars().all()), 1)
+
+    async def test_interrupted_automatic_admission_recovers_but_cancelled_request_does_not(self):
+        await self.interrupt(automatic=True, cancel_requested=True, followup_requested=True)
+        with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="fixture")), \
+             patch.object(account_sync, "run_account_pull", AsyncMock()) as runner:
+            await account_sync.retry_automatic_pulls(self.factory)
+            runner.assert_not_awaited()
+            async with self.factory() as db:
+                job = await db.get(SyncJob, self.job.id)
+                job.stats = {**job.stats, "cancel_requested": False, "followup_requested": False}
+                await db.commit()
+            await account_sync.retry_automatic_pulls(self.factory)
+            runner.assert_awaited_once()
+
+    async def test_failed_recovery_commit_does_not_consume_request_or_leave_active_job(self):
+        from sqlalchemy.ext.asyncio import AsyncSession
+        await self.interrupt(followup_requested=True)
+        with patch.object(account_sync.settings_store, "get_effective_tmdb_key", AsyncMock(return_value="fixture")), \
+             patch.object(AsyncSession, "commit", AsyncMock(side_effect=RuntimeError("commit failed"))):
+            with self.assertRaises(RuntimeError):
+                await account_sync.retry_automatic_pulls(self.factory)
+        async with self.factory() as db:
+            job = await db.get(SyncJob, self.job.id)
+            self.assertTrue(job.stats["followup_requested"])
+            self.assertNotIn("recovery_job_id", job.stats)
+            self.assertFalse((await db.execute(select(SyncJob).where(SyncJob.user_id == self.user.id,
+                SyncJob.status.in_(account_sync.ACTIVE)))).first())
+
     async def test_two_staged_sources_merge_membership_and_earliest_add_date(self):
         async with self.factory() as db:
             second = MediaServerConnection(user_id=self.user.id, type="stremio", name="Second",

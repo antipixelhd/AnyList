@@ -4,10 +4,12 @@ from dataclasses import fields
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from core.pull_cycle import PullCycleState, allow_cycle_delivery, is_active
 from models.base import CollectionSource
 from models.sync import SyncJob, SyncStatus
+from core.sync_delivery_targets import destination_scope
 
 _locks: dict[int, asyncio.Lock] = {}
 
@@ -47,9 +49,28 @@ def delivery_payload(state):
 
 
 async def persist_delivery(db, job_id, state):
+    targets = await delivery_targets(db, state)
     job = await db.get(SyncJob, job_id)
     job.stats = {**(job.stats or {}), "reconciled": True, "delivery_pending": True,
-                 "delivery": delivery_payload(state)}
+                 "delivery": delivery_payload(state), "delivery_targets": targets, "delivery_done": []}
+
+
+async def delivery_targets(db, state):
+    from models import MediaServerConnection, UserSettings
+    connections = (await db.execute(select(MediaServerConnection).where(
+        MediaServerConnection.user_id == state.user_id))).scalars().all()
+    targets = []
+    for conn in connections:
+        if conn.id in state.connection_versions and conn.identity_version != state.connection_versions[conn.id]:
+            continue
+        if conn.push_enabled:
+            targets.append(f"connection:{conn.id}")
+            state.connection_versions.setdefault(conn.id, conn.identity_version)
+    settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == state.user_id))).scalar_one_or_none()
+    for provider in ("trakt", "simkl", "mdblist", "bingebase"):
+        if any(getattr(settings, f"{provider}_push_{field}", False) for field in ("watched", "ratings", "collection")):
+            targets.append(provider)
+    return targets + ["queues"]
 
 
 async def deliver_cycle(user_id, job_id, factory, state=None):
@@ -62,12 +83,43 @@ async def deliver_cycle(user_id, job_id, factory, state=None):
                 return
             if state is None:
                 state = PullCycleState(**{key: _decode(value) for key, value in job.stats["delivery"].items()})
-        with allow_cycle_delivery(state):
-            await _flush_pull_cycle(state)
-        async with factory() as db:
-            job = (await db.execute(select(SyncJob).where(SyncJob.id == job_id).with_for_update())).scalar_one()
-            job.stats = {key: value for key, value in job.stats.items() if key not in {"delivery", "delivery_pending"}}
-            await db.commit()
+            if "delivery_targets" not in job.stats:
+                # Upgrade batches saved by the previous release without losing them.
+                targets = await delivery_targets(db, state)
+                job.stats = {**job.stats, "delivery_targets": targets, "delivery_done": [],
+                             "delivery": delivery_payload(state)}
+                flag_modified(job, "updated_at")  # Delivery bookkeeping must not postpone the next pull.
+                await db.commit()
+            targets = list(job.stats["delivery_targets"])
+            done = set(job.stats.get("delivery_done", []))
+        errors = []
+        for target in targets:
+            if target in done:
+                continue
+            try:
+                valid = True
+                if target.startswith("connection:"):
+                    from models import MediaServerConnection
+                    async with factory() as db:
+                        conn = await db.get(MediaServerConnection, int(target.split(":", 1)[1]))
+                        valid = bool(conn and conn.user_id == user_id
+                                     and conn.identity_version == state.connection_versions.get(conn.id))
+                if valid:
+                    with allow_cycle_delivery(state), destination_scope(target):
+                        await _flush_pull_cycle(state)
+                async with factory() as db:
+                    job = (await db.execute(select(SyncJob).where(SyncJob.id == job_id).with_for_update())).scalar_one()
+                    done = set(job.stats.get("delivery_done", [])) | {target}
+                    job.stats = {**job.stats, "delivery_done": sorted(done)}
+                    if done.issuperset(targets):
+                        job.stats = {key: value for key, value in job.stats.items()
+                                     if key not in {"delivery", "delivery_pending", "delivery_targets", "delivery_done"}}
+                    flag_modified(job, "updated_at")
+                    await db.commit()
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError("Accepted sync delivery is pending retry") from errors[0]
 
 
 async def retry_cycle_deliveries(factory):

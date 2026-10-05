@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import mdblist_sync, server_sync, settings_store, simkl_sync, trakt_sync
@@ -70,7 +70,8 @@ async def require_idle_account(db, user_id: int) -> None:
         raise HTTPException(409, "An account sync is already running")
 
 
-async def queue_account_pull(db, user_id: int, *, scheduled: bool = False) -> SyncJob | None:
+async def queue_account_pull(db, user_id: int, *, scheduled: bool = False,
+                             automatic: bool = False, commit: bool = True) -> SyncJob | None:
     await require_idle_account(db, user_id)
     settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
     if scheduled:
@@ -105,8 +106,9 @@ async def queue_account_pull(db, user_id: int, *, scheduled: bool = False) -> Sy
         db.add(child)
         await db.flush()
         children.append(child.id)
-    parent.stats = {"child_job_ids": children}
-    await db.commit()
+    parent.stats = {"child_job_ids": children, **({"automatic": True} if automatic else {})}
+    if commit:
+        await db.commit()
     return parent
 
 
@@ -223,6 +225,8 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
                             stats["provider_checkpoint"] = checkpoint
                         child.stats = stats
                 followup = bool((parent.stats or {}).get("followup_requested")) and not cancelled
+                if cancelled and (parent.stats or {}).get("followup_requested"):
+                    parent.stats = {**parent.stats, "followup_requested": False}
                 parent.status = SyncStatus.cancelled if cancelled else SyncStatus.failed if failed else SyncStatus.completed
                 parent.processed_items = len(children)
                 parent.errors = sum(status == SyncStatus.failed for status in statuses)
@@ -240,7 +244,7 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
                 await db.commit()
 
     if followup:
-        await pull_after_import(user_id)
+        await retry_automatic_pulls(factory)
 
 
 async def request_cycle_cancel(db, parent: SyncJob) -> None:
@@ -274,7 +278,7 @@ async def request_automatic_pull(db, user_id: int, background_tasks=None) -> int
         await db.commit()
         return None
     try:
-        job = await queue_account_pull(db, user_id)
+        job = await queue_account_pull(db, user_id, automatic=True)
     except HTTPException as exc:
         if exc.status_code not in (400, 409):
             raise
@@ -290,4 +294,40 @@ async def pull_after_import(user_id: int) -> None:
     async with factory() as db:
         job_id = await request_automatic_pull(db, user_id)
     if job_id is not None:
+        await run_account_pull(user_id, job_id)
+
+
+async def retry_automatic_pulls(factory=None) -> None:
+    """Consume persisted follow-ups and interrupted automatic admissions atomically."""
+    factory = factory or async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    needed = or_(
+        SyncJob.stats["followup_requested"].as_boolean().is_(True),
+        and_(SyncJob.stats["automatic"].as_boolean().is_(True),
+             SyncJob.error_message == "Aborted due to server restart",
+             SyncJob.stats["reconciled"].as_boolean().is_not(True)),
+    )
+    pending = select(SyncJob).where(SyncJob.job_type == "pull_cycle", SyncJob.status.in_(TERMINAL),
+                                   SyncJob.stats["cancel_requested"].as_boolean().is_not(True),
+                                   SyncJob.stats["recovery_job_id"].as_integer().is_(None), needed)
+    async with factory() as db:
+        users = list((await db.execute(select(SyncJob.user_id).where(
+            SyncJob.id.in_(pending.with_only_columns(SyncJob.id))).distinct())).scalars())
+    for user_id in users:
+        async with factory() as db:
+            try:
+                await require_idle_account(db, user_id)
+                requests = (await db.execute(pending.where(SyncJob.user_id == user_id).with_for_update())).scalars().all()
+                if not requests:
+                    await db.rollback()
+                    continue
+                job = await queue_account_pull(db, user_id, automatic=True, commit=False)
+                for request in requests:
+                    request.stats = {**request.stats, "followup_requested": False, "recovery_job_id": job.id}
+                await db.commit()  # Request consumption and the new job survive together.
+                job_id = job.id
+            except HTTPException as error:
+                await db.rollback()
+                if error.status_code in (400, 409):
+                    continue
+                raise
         await run_account_pull(user_id, job_id)

@@ -32,9 +32,18 @@ async def _flush_pull_cycle(state) -> None:
     from core.stream_actions import dispatch_stream_actions
     from db import async_sessionmaker
     from models import Collection, UserSettings
+    from core.sync_delivery_targets import connection_matches, dispatch_queues, queue_handoff
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as db:
+        if queue_handoff():
+            from core.watch_intents import dispatch_watch_intents
+            from core.streaming_library import dispatch_pending_library_deliveries
+            await dispatch_watch_intents(db, state.user_id)
+            await dispatch_pending_library_deliveries(db, state.user_id)
+            await dispatch_stream_actions(db, state.user_id)
+            await dispatch_cloud_actions(db, state.user_id)
+            return
         errors = []
         async def deliver(*args, **kwargs):
             try:
@@ -88,7 +97,8 @@ async def _flush_pull_cycle(state) -> None:
                     exclude_connection_ids=set(exclusions[0]),
                 )
             await db.commit()
-            await dispatch_watch_intents(db, state.user_id)
+            if dispatch_queues():
+                await dispatch_watch_intents(db, state.user_id)
         for exclusions, media_ids in watched_groups.items():
             await deliver(
                 db, state.user_id, None, media_ids, {}, settings,
@@ -117,12 +127,13 @@ async def _flush_pull_cycle(state) -> None:
                     await queue_watch_intents(db, state.user_id, media_ids,
                                               exclude_connection_ids=set(excluded))
                 await db.commit()
-                await dispatch_watch_intents(db, state.user_id)
+                if dispatch_queues():
+                    await dispatch_watch_intents(db, state.user_id)
                 for excluded, media_ids in removal_groups.items():
                     await watch_delivery.push_watch_state(
                         db, state.user_id, sorted(media_ids), watched=False,
                         exclude_connection_ids=set(excluded),
-                        skip_stream_watch_writes=True,
+                        skip_stream_watch_writes=True, require_success=True,
                     )
         if state.library_new_ids or state.library_removed_ids:
             await outbound_sync.fan_out_streaming_library(
@@ -156,13 +167,14 @@ async def _flush_pull_cycle(state) -> None:
             exclude_connection_ids=state.excluded_connection_ids,
             exclude_cloud_sources=state.excluded_cloud_sources,
         )
-        await dispatch_stream_actions(db, state.user_id)
-        await dispatch_cloud_actions(db, state.user_id)
+        if dispatch_queues():
+            await dispatch_stream_actions(db, state.user_id)
+            await dispatch_cloud_actions(db, state.user_id)
         from models import MediaServerConnection
         from core.server_sync import _push_watched_back_to_source
         for connection_id, items in state.push_back.items():
             conn = await db.get(MediaServerConnection, connection_id)
-            if not conn or conn.user_id != state.user_id or conn.identity_version != state.connection_versions.get(connection_id):
+            if not connection_matches(connection_id) or not conn or conn.user_id != state.user_id or conn.identity_version != state.connection_versions.get(connection_id):
                 continue
             try:
                 await _push_watched_back_to_source(db, state.user_id, conn, items, require_success=True)
@@ -369,6 +381,8 @@ async def _stream_action_retry_scheduler():
         try:
             await _dispatch_pending_stream_actions_once()
             await netflix_sessions.retry_committed_import_pulls()
+            from core.account_sync import retry_automatic_pulls
+            await retry_automatic_pulls()
         except Exception as error:
             print(f"Stream action retry scheduler error: {type(error).__name__}")
         await asyncio.sleep(60)

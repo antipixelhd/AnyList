@@ -63,6 +63,8 @@ async def queue_watch_intents(
         MediaServerConnection.type.in_(("nuvio", "stremio")),
         MediaServerConnection.push_watched.is_(True),
     ]
+    from core.sync_delivery_targets import connection_clause
+    filters.append(connection_clause(MediaServerConnection.id))
     excluded = set(exclude_connection_ids or ())
     if exclude_connection_id is not None:
         excluded.add(exclude_connection_id)

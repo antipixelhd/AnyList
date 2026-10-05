@@ -404,6 +404,8 @@ async def queue_provider_library_changes(
         MediaServerConnection.type.in_(("stremio", "nuvio")),
         MediaServerConnection.push_collection.is_(True),
     )
+    from core.sync_delivery_targets import connection_clause
+    target_query = target_query.where(connection_clause(MediaServerConnection.id))
     if legacy_source_ids and source_connection_ids_by_media is None:
         target_query = target_query.where(MediaServerConnection.id.not_in(legacy_source_ids))
     all_targets = (await db.execute(target_query.order_by(MediaServerConnection.id))).scalars().all()

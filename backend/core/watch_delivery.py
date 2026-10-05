@@ -38,6 +38,7 @@ async def push_watch_state(
     exclude_connection_id: int | None = None,
     exclude_connection_ids: set[int] | None = None,
     skip_stream_watch_writes: bool = False,
+    require_success: bool = False,
 ) -> None:
     """Push to approved destinations with watch delivery enabled.
 
@@ -47,10 +48,13 @@ async def push_watch_state(
     if not media_ids:
         return
 
+    from core.sync_delivery_targets import connection_clause, cloud_matches
+    failed = False
     conns_result = await db.execute(
         select(MediaServerConnection).where(
             MediaServerConnection.user_id == user_id,
             MediaServerConnection.push_watched == True,
+            connection_clause(MediaServerConnection.id),
         )
     )
     excluded = set(exclude_connection_ids or ())
@@ -76,9 +80,9 @@ async def push_watch_state(
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
     settings = settings_result.scalar_one_or_none()
     from core.cloud_reconciliation import cloud_push_is_approved
-    push_trakt = bool(settings and settings.trakt_push_watched and settings.trakt_access_token)
-    push_mdblist = bool(settings and settings.mdblist_push_watched and settings.mdblist_api_key)
-    push_simkl = bool(settings and settings.simkl_push_watched and settings.simkl_access_token)
+    push_trakt = bool(cloud_matches("trakt") and settings and settings.trakt_push_watched and settings.trakt_access_token)
+    push_mdblist = bool(cloud_matches("mdblist") and settings and settings.mdblist_push_watched and settings.mdblist_api_key)
+    push_simkl = bool(cloud_matches("simkl") and settings and settings.simkl_push_watched and settings.simkl_access_token)
     if push_trakt:
         push_trakt = await cloud_push_is_approved(db, user_id, 'trakt')
     if push_mdblist:
@@ -118,6 +122,9 @@ async def push_watch_state(
                 continue
             source_type = coll_file.source.value if hasattr(coll_file.source, "value") else str(coll_file.source)
             for conn in conn_by_type.get(source_type, []):
+                # Source IDs are meaningful only on the connection that supplied them.
+                if getattr(coll_file, "connection_id", None) != conn.id:
+                    continue
                 if coll_file.source == CollectionSource.plex:
                     label = f"plex connection {conn.id}"
                     if watched:
@@ -169,6 +176,7 @@ async def push_watch_state(
         try:
             trakt_token = await trakt_auth.ensure_valid_trakt_token(db, settings)
         except trakt_auth.TraktTokenError as exc:
+            failed = True
             logger.warning("Skipping Trakt history push for user %s: %s", user_id, exc)
 
     if trakt_token:
@@ -226,8 +234,12 @@ async def push_watch_state(
     if tasks:
         results = await asyncio.gather(*(coro for _, coro in tasks), return_exceptions=True)
         for (label, _), result in zip(tasks, results):
-            if isinstance(result, Exception):
+            if isinstance(result, Exception) or result is False:
+                failed = True
                 # A warning with a plain reason, not a full traceback dump -
                 # these are almost always an expired/revoked credential on
                 # the remote service, not a bug here.
                 logger.warning("Can't send history event to %s because %s", label, result)
+
+    if require_success and failed:
+        raise RuntimeError("Watch-state delivery is pending retry")

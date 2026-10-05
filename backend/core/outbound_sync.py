@@ -28,6 +28,7 @@ from models.show import Show
 from models.users import UserSettings
 from models.ratings import Rating, RatingChanges, RatingKey
 from models.plex_pending_push import PlexPendingPush
+from core.sync_delivery_targets import connection_clause, cloud_matches, dispatch_queues
 
 logger = logging.getLogger(__name__)
 TMDB_CONCURRENCY = 5
@@ -210,7 +211,8 @@ async def fan_out_streaming_library(
     # The queue is durable before any provider request starts. Failures remain
     # pending for the independent delivery retry worker.
     await db.commit()
-    await dispatch_pending_library_deliveries(db, user_id)
+    if dispatch_queues():
+        await dispatch_pending_library_deliveries(db, user_id)
 
 
 
@@ -261,6 +263,7 @@ async def fan_out_changes(
     if exclude_connection_id is not None:
         excluded_connection_ids.add(exclude_connection_id)
     excluded_cloud_sources = set(exclude_cloud_sources or ())
+    excluded_cloud_sources.update(source for source in CollectionSource if not cloud_matches(source))
     if exclude_cloud_source is not None:
         excluded_cloud_sources.add(exclude_cloud_source)
 
@@ -292,7 +295,7 @@ async def fan_out_changes(
         shows_by_id = {s.id: s for s in shows_list}
 
     # ── Media server fan-out ─────────────────────────────────────────────────
-    conns_filter = [MediaServerConnection.user_id == user_id]
+    conns_filter = [MediaServerConnection.user_id == user_id, connection_clause(MediaServerConnection.id)]
     if excluded_connection_ids:
         conns_filter.append(MediaServerConnection.id.not_in(excluded_connection_ids))
     other_conns_result = await db.execute(
@@ -552,6 +555,7 @@ async def fan_out_changes(
         try:
             trakt_access_token = await trakt_auth.ensure_valid_trakt_token_for_user(user_id)
         except Exception as exc:  # best-effort fan-out - don't fail the whole sync
+            delivery_failed = True
             logger.warning("Skipping Trakt fan-out for user %s: %s", user_id, exc)
             trakt_access_token = None
             push_trakt_watched = push_trakt_ratings = push_trakt_collection = False

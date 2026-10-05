@@ -96,7 +96,7 @@ class AccountSyncRulesTests(unittest.IsolatedAsyncioTestCase):
         tasks = BackgroundTasks()
         with patch.object(account_sync, "queue_account_pull", AsyncMock(return_value=SimpleNamespace(id=42))) as queue:
             self.assertEqual(await account_sync.request_automatic_pull(db, 7, tasks), 42)
-        queue.assert_awaited_once_with(db, 7)
+        queue.assert_awaited_once_with(db, 7, automatic=True)
         self.assertEqual(tasks.tasks[0].args, (7, 42))
 
     async def test_automatic_triggers_coalesce_into_one_followup_while_cycle_runs(self):
