@@ -420,14 +420,7 @@ class ProviderRegressionTests(unittest.IsolatedAsyncioTestCase):
                 if isinstance(outcome, Exception)
                 else AsyncMock(return_value=outcome)
             )
-            with (
-                patch.object(simkl.simkl_client, "start_pin_auth", provider),
-                patch.object(
-                    simkl.settings_store,
-                    "get_global_settings",
-                    AsyncMock(return_value=None),
-                ),
-            ):
+            with patch.object(simkl.simkl_client, "start_pin_auth", provider):
                 from fastapi import HTTPException
 
                 with self.assertRaises(HTTPException) as err:
@@ -435,6 +428,8 @@ class ProviderRegressionTests(unittest.IsolatedAsyncioTestCase):
                         db=db, current_user=SimpleNamespace(id=1)
                     )
             self.assertEqual(err.exception.status_code, 502)
+            provider.assert_awaited_once_with("id")
+            self.assertFalse(hasattr(settings, "simkl_device_code"))
             db.commit.assert_not_awaited()
 
     async def test_kodi_runtime_uses_file_length_then_metadata_and_preserves_existing_runtime(
