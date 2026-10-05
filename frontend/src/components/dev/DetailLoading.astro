@@ -1,0 +1,76 @@
+<script is:inline data-astro-rerun>
+  {
+    // Run before first paint: cached assets and server-rendered text skip skeletons.
+    const root = document.currentScript.closest('[data-detail-lab]');
+    const minimumSkeletonMs = 350;
+    const controller = new AbortController();
+    const timers = new Set();
+    const delay = ms => new Promise(resolve => {
+      const timer = setTimeout(() => {timers.delete(timer);resolve();}, ms);
+      timers.add(timer);
+    });
+    const regions = new Map();
+    const pending = (region, ready) => {
+      const tasks = regions.get(region) || [];
+      tasks.push(ready);
+      regions.set(region, tasks);
+    };
+    root.querySelectorAll('.lab-heading, .lab-module, .lab-tracking, .lab-facts, .lab-tabs').forEach(region => {
+      const fonts = new Set([region, ...region.querySelectorAll('h1,h2,h3,p,label,button,select,input,textarea,summary')].map(el => {
+        const style = getComputedStyle(el);
+        return `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      }));
+      const missing = [...fonts].filter(font => !document.fonts.check(font));
+      if (missing.length) pending(region, Promise.race([
+        Promise.all(missing.map(font => document.fonts.load(font).catch(() => {}))),
+        delay(1500),
+      ]));
+    });
+    root.querySelectorAll('.lab-hero-image, .lab-poster-button img, .lab-art-image img').forEach(img => {
+      if (img.complete && img.naturalWidth > 0) return;
+      const ready = new Promise(resolve => {
+        const finish = () => {
+          img.removeEventListener('load', finish);
+          img.removeEventListener('error', finish);
+          void img.decode().catch(() => {}).then(resolve);
+        };
+        if (img.complete) finish();
+        else {
+          img.addEventListener('load', finish, {once: true, signal: controller.signal});
+          img.addEventListener('error', finish, {once: true, signal: controller.signal});
+        }
+      });
+      pending(img.closest('.lab-hero, .lab-poster-button, .lab-art-image'), ready);
+    });
+    regions.forEach((tasks, region) => {
+      region.setAttribute('data-lab-pending', '');
+      region.setAttribute('aria-busy', 'true');
+      let settled = false;
+      const ready = Promise.all(tasks).then(() => {settled = true;});
+      void (async () => {
+        // Cached assets can settle while navigation attaches its styles. Give
+        // them two frames before deciding to display a skeleton at all.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (controller.signal.aborted) return;
+        if (!settled) {
+          region.removeAttribute('data-lab-pending');
+          region.setAttribute('data-lab-loading', '');
+          const started = performance.now();
+          await ready;
+          if (controller.signal.aborted) return;
+          await delay(Math.max(0, minimumSkeletonMs - (performance.now() - started)));
+        }
+        // Apply final font metrics before revealing the reserved content box.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (controller.signal.aborted || !root.isConnected) return;
+        region.removeAttribute('data-lab-loading');
+        region.removeAttribute('data-lab-pending');
+        region.setAttribute('aria-busy', 'false');
+      })();
+    });
+    document.addEventListener('astro:before-swap', () => {
+      controller.abort();
+      timers.forEach(clearTimeout);
+    }, {once: true, signal: controller.signal});
+  }
+</script>

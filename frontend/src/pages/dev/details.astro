@@ -5,32 +5,43 @@ import DetailHeading from '../../components/dev/DetailHeading.astro';
 import DetailTracking from '../../components/dev/DetailTracking.astro';
 import DetailSections from '../../components/dev/DetailSections.astro';
 import DetailDesignNotes from '../../components/dev/DetailDesignNotes.astro';
-import {samples, type SampleKey} from '../../components/dev/detail-fixtures';
+import DetailLoading from '../../components/dev/DetailLoading.astro';
+import {samples, gameReviewSamples, type SampleKey} from '../../components/dev/detail-fixtures';
 import '../../styles/dev-details.css';
-if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(Astro.url.hostname)) return new Response('Not found', {status:404});
-const design = Astro.url.searchParams.get('design') === 'panorama' ? 'panorama' : 'folio';
+import '../../styles/dev-marquee.css';
+import '../../styles/dev-marquee-25.css';
+import '../../styles/dev-marquee-27.css';
+const concepts = [{id: 'folio', name: 'Folio', number: '01'}, {id: 'marquee', name: 'Marquee', number: '02'}, {id: 'marquee-25', name: 'Marquee 2.5', label: 'Marquee', number: '02.5'}, {id: 'marquee-27', name: 'Marquee - Tom', number: '02.7'}, {id: 'panorama', name: 'Panorama', number: '03'}];
+const concept = concepts.find(option => option.id === Astro.url.searchParams.get('design')) ?? concepts[0];
+const design = concept.id;
+const cinematic = design !== 'folio';
 const requested = Astro.url.searchParams.get('media') || 'series';
 const kind: SampleKey = Object.hasOwn(samples, requested) ? requested as SampleKey : 'series';
-const item = samples[kind];
-const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}`;
+const requestedReviews = Astro.url.searchParams.get('reviews') || 'positive';
+const reviews = Object.hasOwn(gameReviewSamples, requestedReviews) ? requestedReviews : 'positive';
+const offer = Astro.url.searchParams.get('offer') === 'regular' ? 'regular' : 'sale';
+const item = kind === 'game' ? {...samples.game, gameReviews: gameReviewSamples[reviews], offer: {...samples.game.offer!, price: offer === 'regular' ? samples.game.offer!.regularPrice : samples.game.offer!.price}} : samples[kind];
+const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}${m === 'game' ? `&offer=${offer}&reviews=${reviews}` : ''}`;
 ---
-<Tracker title={`${item.title} · ${design === 'folio' ? 'Folio' : 'Panorama'}`}>
-  <div class:list={['detail-lab', `concept-${design}`]} data-detail-lab data-media-kind={kind}>
-    <div class="lab-workbench"><div class="lab-workbench-inner"><a href="/dev" class="lab-workbench-label"><span class="lab-status-dot"></span> Detail lab</a><nav aria-label="Design concept" class="lab-concept-switch"><a href={href('folio',kind)} aria-current={design === 'folio' ? 'page' : undefined}><span>01</span> Folio</a><a href={href('panorama',kind)} aria-current={design === 'panorama' ? 'page' : undefined}><span>02</span> Panorama</a></nav><nav aria-label="Sample media" class="lab-media-switch">{Object.entries(samples).map(([id,sample]) => <a href={href(design,id)} aria-current={kind === id ? 'page' : undefined}>{sample.kind === 'Movie' ? 'Movies' : sample.kind === 'Game' ? 'Games' : sample.kind === 'Book' ? 'Books' : 'Series'}</a>)}</nav><button class="lab-notes-trigger" type="button" data-lab-action="notes"><Icon name="sliders"/><span>Design notes</span></button></div></div>
+<Tracker title={`${item.title} · ${concept.name}`}>
+  <div class:list={['detail-lab', `concept-${design}`, {'concept-marquee': design === 'marquee-25' || design === 'marquee-27', 'concept-marquee-25': design === 'marquee-27'}]} data-detail-lab data-media-kind={kind}>
+    <div class="lab-workbench"><div class="lab-workbench-inner"><nav aria-label="Design concept" class="lab-concept-switch">{concepts.map(option => <a href={href(option.id,kind)} aria-current={design === option.id ? 'page' : undefined}><span>{option.number}</span> {option.label ?? option.name}</a>)}</nav><nav aria-label="Sample media" class="lab-media-switch">{Object.entries(samples).map(([id,sample]) => <a href={href(design,id)} aria-current={kind === id ? 'page' : undefined}>{sample.kind === 'Movie' ? 'Movies' : sample.kind === 'Game' ? 'Games' : sample.kind === 'Book' ? 'Books' : 'Series'}</a>)}</nav><button class="lab-notes-trigger" type="button" data-lab-action="notes" aria-label="Design notes"><Icon name="sliders"/><span>Design notes</span></button></div></div>
     <div class="lab-hero"><img class="lab-hero-image" src={item.backdrop} alt="" fetchpriority="high"/><div class="lab-hero-shade"></div>
-      {design === 'panorama' && <div class="lab-hero-content"><img class="lab-hero-poster" src={item.poster} alt={`${item.title} cover`}/><DetailHeading item={item}/><button class="lab-hero-art-button" type="button" data-lab-image={item.backdrop} data-lab-image-caption={kind === 'book' ? 'Dune: Part Two · Film adaptation artwork' : `${item.title} · Backdrop`} aria-label="Expand backdrop"><Icon name="grid"/></button></div>}
+      {cinematic && <div class="lab-hero-content"><button class="lab-hero-poster lab-poster-button" type="button" data-lab-image={item.poster} data-lab-image-caption={`${item.title} · Cover`} aria-label={`Expand ${item.title} cover`}><img class="lab-poster" src={item.poster} alt={`${item.title} cover`}/></button><DetailHeading item={item}/><button class="lab-hero-art-button" type="button" data-lab-image={item.backdrop} data-lab-image-caption={kind === 'book' ? 'Dune: Part Two · Film adaptation artwork' : `${item.title} · Backdrop`} aria-label="Expand backdrop"><Icon name="grid"/></button></div>}
       <span class="lab-art-credit">{kind === 'book' ? 'Dune: Part Two · Adaptation artwork' : kind === 'game' ? 'Artwork · Remedy Entertainment' : `Artwork · ${item.source}`}</span>
     </div>
     <div class="lab-layout">
-      {design === 'folio' && <aside class="lab-sidebar"><button class="lab-poster-button" type="button" data-lab-image={item.poster} data-lab-image-caption={`${item.title} · Cover`} aria-label={`Expand ${item.title} cover`}><img class="lab-poster" src={item.poster} alt={`${item.title} cover`} fetchpriority="high"/></button><DetailTracking item={item} kind={kind}/><section class="lab-facts"><h2>Information</h2><dl>{item.facts.map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section><div class="lab-source-links"><a href={item.sourceUrl} target="_blank" rel="noreferrer">{item.source}<Icon name="external"/></a><a href={item.officialUrl} target="_blank" rel="noreferrer">Official site<Icon name="external"/></a></div></aside>}
+      {design !== 'panorama' && <aside class="lab-sidebar">{design === 'folio' && <button class="lab-poster-button" type="button" data-lab-image={item.poster} data-lab-image-caption={`${item.title} · Cover`} aria-label={`Expand ${item.title} cover`}><img class="lab-poster" src={item.poster} alt={`${item.title} cover`} fetchpriority="high"/></button>}<DetailTracking item={item} kind={kind}/><section class="lab-facts"><h2>Information</h2><dl>{item.facts.map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section><div class="lab-source-links"><a href={item.sourceUrl} target="_blank" rel="noreferrer">{item.source}<Icon name="external"/></a><a href={item.officialUrl} target="_blank" rel="noreferrer">Official site<Icon name="external"/></a></div></aside>}
       <div class="lab-main">
-        {design === 'folio' ? <DetailHeading item={item}/> : <DetailTracking item={item} kind={kind}/>}
+        {design === 'folio' && <DetailHeading item={item}/>}
+        {design === 'panorama' && <DetailTracking item={item} kind={kind}/>}
         <DetailSections item={item} kind={kind} design={design}/>
       </div>
     </div>
-    <footer class="lab-footer"><p><strong>{design === 'folio' ? '01 / Folio' : '02 / Panorama'}</strong><span>Local design preview · Sample metadata</span></p><button class="lab-text-button" type="button" data-lab-action="notes">Sources & feature notes<Icon name="arrow-right"/></button></footer>
+    <DetailLoading/>
+    <footer class="lab-footer"><p><strong>{concept.number} / {concept.name}</strong><span>Design preview · Sample metadata</span></p><button class="lab-text-button" type="button" data-lab-action="notes">Sources & feature notes<Icon name="arrow-right"/></button></footer>
     <script id="lab-fixture" type="application/json" set:html={JSON.stringify(item).replaceAll('<','\u003c')}/>
-    <DetailDesignNotes/>
+    <DetailDesignNotes kind={kind} design={design} offer={offer} reviews={reviews}/>
     <dialog class="lab-dialog lab-lightbox" id="lab-lightbox" aria-labelledby="lab-lightbox-caption"><button type="button" data-lab-close-dialog aria-label="Close artwork"><Icon name="close"/></button><img id="lab-lightbox-image" alt=""/><p id="lab-lightbox-caption"></p></dialog>
     <div class="lab-toast" id="lab-feedback" role="status" aria-live="polite"><Icon name="check"/><span data-lab-feedback-text></span></div>
   </div>

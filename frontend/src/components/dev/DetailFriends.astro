@@ -1,0 +1,21 @@
+---
+import type {DetailSample} from './detail-fixtures';
+const {item, prominent = false} = Astro.props as {item: DetailSample; prominent?: boolean};
+const scoreRank = (score: string) => score === '—' ? -1 : Number(score);
+const friends = [
+  {name: 'Maya', initial: 'M', avatar: 'friend-one', status: 'Completed', score: '9.0'},
+  {name: 'Jamie', initial: 'J', avatar: 'friend-two', status: item.action === 'Planning' ? 'Completed' : item.action, score: '8.5'},
+  {name: 'Alex', initial: 'A', avatar: 'friend-three', status: 'Planning', score: '—'},
+  {name: 'Sam', initial: 'S', avatar: 'friend-two', status: 'Completed', score: '10.0'},
+  {name: 'Robin', initial: 'R', avatar: 'friend-three', status: item.action === 'Planning' ? 'Completed' : item.action, score: '7.5'},
+  {name: 'Noah', initial: 'N', avatar: 'friend-one', status: 'Planning', score: '—'},
+  {name: 'Taylor', initial: 'T', avatar: 'friend-two', status: 'Completed', score: '6.0'},
+  {name: 'Morgan', initial: 'M', avatar: 'friend-three', status: 'Completed', score: '8.0'},
+].sort((a,b) => Number(b.status === 'Completed') - Number(a.status === 'Completed') || scoreRank(b.score) - scoreRank(a.score));
+---
+<section class="lab-friends lab-module">
+  <div class="lab-section-title"><h2>People you follow</h2><span>{friends.length}</span></div>
+  <div class:list={{'lab-friends-grid': prominent}}>
+    {friends.map(friend => <div class="lab-friend"><span class:list={['lab-friend-avatar', friend.avatar]}>{friend.initial}</span><div><h3>{friend.name}</h3><p>{friend.status}</p></div><strong>{friend.score}</strong></div>)}
+  </div>
+</section>

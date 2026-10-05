@@ -235,7 +235,11 @@ function initializeDetails() {
   render();
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
     observer = new IntersectionObserver(entries => entries.forEach(entry => {if (entry.isIntersecting) {entry.target.classList.add('lab-in-view');observer?.unobserve(entry.target);}}),{threshold:.05});
-    root.querySelectorAll('.lab-module').forEach(el => observer!.observe(el));
+    root.querySelectorAll('.lab-module').forEach(el => {
+      const bounds = el.getBoundingClientRect();
+      if (bounds.top < innerHeight && bounds.bottom > 0) el.classList.add('lab-in-view');
+      else observer!.observe(el);
+    });
   }
   document.addEventListener('astro:before-swap',() => {listeners?.abort();observer?.disconnect();clearTimeout(toastTimer);},{once:true,signal});
 }

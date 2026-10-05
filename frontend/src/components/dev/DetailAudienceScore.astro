@@ -7,7 +7,15 @@ const counts = kind === 'series' ? [2,1,2,3,5,8,15,37,88,79] : [2,2,3,4,7,12,26,
 const total = counts.reduce((sum,n) => sum+n,0);
 ---
 <section class="lab-public-score lab-module" aria-label="Ratings">
-  {item.score ? <>
+  {kind === 'game' && item.gameReviews ? <>
+    <p class="lab-kicker">Steam reviews</p>
+    <div class="lab-steam-reviews">
+      {item.gameReviews.map((review,i) => <details class="lab-steam-review">
+        <summary aria-describedby={`lab-review-info-${i}`}><span class="lab-review-period">{i === 0 ? 'Recent reviews' : 'English reviews'}</span><span class:list={['lab-review-verdict', `sentiment-${review.sentiment}`]}>{review.label} <span class="lab-review-count">({review.count.toLocaleString('en-US')})</span></span></summary>
+        <p id={`lab-review-info-${i}`} class="lab-review-info">{review.percent}% of {review.count.toLocaleString('en-US')} {i === 0 ? 'user reviews in the last 30 days' : 'English-language user reviews'} are positive.</p>
+      </details>)}
+    </div>
+  </> : item.score ? <>
     <p class="lab-kicker">Audience score</p>
     <div class="lab-big-score"><Icon name="star"/><strong>{item.score}</strong><span>/ 10</span></div>
     <p>{item.votes} votes on TMDB</p>

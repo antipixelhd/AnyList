@@ -1,4 +1,4 @@
-/* Local detail studies. Palette and type come from the shared Tracker shell. */
+/* Detail studies. Palette and type come from the shared Tracker shell. */
 .detail-lab {
   --lab-surface: var(--panel);
   --lab-muted: color-mix(in srgb, var(--text) 86%, var(--muted));
@@ -8,6 +8,44 @@
   min-height: 100vh;
 }
 .detail-lab [hidden] { display: none !important; }
+/* Skeletons use the real elements' boxes, so every design reserves its own
+   final geometry without maintaining a second placeholder layout. */
+.detail-lab { --lab-skeleton: color-mix(in srgb, var(--border) 65%, var(--panel)); }
+.detail-lab :is(.lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs, .lab-art-image) { position: relative; }
+.detail-lab :is(.lab-hero, .lab-heading, .lab-poster-button, .lab-module, .lab-tracking, .lab-facts, .lab-tabs, .lab-art-image)::after {
+  content: ''; position: absolute; inset: 0; border-radius: var(--lab-radius);
+  pointer-events: none; opacity: 0; visibility: hidden;
+  transition: opacity .18s ease, visibility .18s; z-index: 2;
+}
+.detail-lab [data-lab-loading]::after { opacity: 1; visibility: visible; animation: lab-skeleton-pulse 1.6s ease-in-out infinite alternate; }
+.detail-lab :is(.lab-heading, .lab-module, .lab-tracking, .lab-facts, .lab-tabs):is([data-lab-pending], [data-lab-loading]) > * { visibility: hidden; }
+.detail-lab :is(.lab-poster-button, .lab-art-image):is([data-lab-pending], [data-lab-loading]) { visibility: hidden; }
+.detail-lab .lab-hero:is([data-lab-pending], [data-lab-loading]) > :is(.lab-hero-image, .lab-art-credit), .detail-lab .lab-hero:is([data-lab-pending], [data-lab-loading]) .lab-hero-art-button { visibility: hidden; }
+.detail-lab .lab-hero::after { background: linear-gradient(0deg, var(--bg), transparent), linear-gradient(110deg, var(--panel), var(--lab-skeleton), var(--panel)); z-index: 0; border-radius: 0; }
+.detail-lab :is(.lab-poster-button, .lab-art-image)::after { background: var(--lab-skeleton); }
+.detail-lab .lab-heading::after {
+  inset: 24px 0 28px; background:
+    linear-gradient(var(--lab-skeleton) 0 0) 0 0 / 38% 10px,
+    linear-gradient(var(--lab-skeleton) 0 0) 0 26% / 76% 34%,
+    linear-gradient(var(--lab-skeleton) 0 0) 0 76% / 55% 12px,
+    linear-gradient(var(--lab-skeleton) 0 0) 0 100% / 32% 22px;
+  background-repeat: no-repeat;
+}
+.detail-lab:is(.concept-marquee, .concept-panorama) .lab-heading::after { inset: 0; }
+.detail-lab :is(.lab-module, .lab-facts)::after {
+  background:
+    linear-gradient(var(--lab-skeleton) 0 0) 20px 22px / 35% 14px,
+    linear-gradient(var(--lab-skeleton) 0 0) 20px 57px / calc(100% - 40px) 10px,
+    linear-gradient(var(--lab-skeleton) 0 0) 20px 80px / calc(100% - 60px) 10px,
+    linear-gradient(var(--lab-skeleton) 0 0) 20px 103px / 50% 10px,
+    var(--panel); background-repeat: no-repeat;
+}
+.detail-lab .lab-tracking::after { background: repeating-linear-gradient(transparent 0 22px, var(--lab-skeleton) 22px 52px, transparent 52px 78px); }
+.detail-lab .lab-tabs::after { inset: 0 0 17px; background: repeating-linear-gradient(90deg, var(--lab-skeleton) 0 64px, transparent 64px 90px); }
+@keyframes lab-skeleton-pulse { from { opacity: .6; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .detail-lab [data-lab-loading]::after { animation: none; transition: none; } }
+.detail-lab .lab-hero:is([data-lab-pending], [data-lab-loading]) .lab-hero-image { animation-play-state: paused; }
+.detail-lab :is([data-lab-pending], [data-lab-loading]) { animation-name: none; }
 .detail-lab h1,.detail-lab h2,.detail-lab h3,.detail-lab p { margin: 0; }
 .detail-lab h1,.detail-lab h2,.detail-lab h3 { color: var(--bright); font-family: var(--font-navigation); }
 .detail-lab h2 { font-size: var(--type-panel-size); font-weight: 600; line-height: 1.4; }
@@ -20,8 +58,6 @@
 .detail-lab .ui-icon svg { width: 100%; height: 100%; }
 .lab-workbench { background: var(--bg); border-bottom: 1px solid var(--lab-line); }
 .lab-workbench-inner { width: min(1240px, calc(100% - 64px)); margin: auto; display: flex; align-items: center; gap: 28px; min-height: 62px; }
-.lab-workbench-label { display: flex; align-items: center; gap: 8px; font: 600 1.2rem var(--font-navigation); white-space: nowrap; }
-.lab-status-dot { width: 5px; height: 5px; background: var(--blue); border-radius: 50%; }
 .lab-concept-switch { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 6px; background: var(--panel); }
 .lab-concept-switch a { padding: 7px 13px; font-size: 1.2rem; border-radius: 4px; transition: background .2s, color .2s; white-space: nowrap; }
 .lab-concept-switch a span { color: var(--lab-muted); margin-right: 7px; font-size: 1rem; }
@@ -36,6 +72,11 @@
 .lab-hero { height: 265px; position: relative; overflow: hidden; background: var(--panel); }
 .lab-hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 43%; animation: lab-image-enter .8s ease-out both; }
 .lab-hero-shade { position: absolute; inset: 0; background: linear-gradient(0deg, var(--bg), transparent 75%), linear-gradient(90deg, rgb(11 22 34 / 20%), transparent 50%, rgb(11 22 34 / 20%)); }
+/* Match the default detail banner while retaining Folio's gradient overlay.
+   The lab toolbar stays above the backdrop's raised top edge. */
+.concept-folio .lab-workbench { position: relative; z-index: 1; }
+.concept-folio .lab-hero { height: 400px; margin-top: -58px; }
+.concept-folio .lab-hero-image { object-position: center; }
 .lab-art-credit { position: absolute; right: max(32px,calc((100% - 1240px) / 2)); bottom: 15px; font-size: 1rem; color: var(--bright); opacity: .8; text-shadow: 0 1px 5px var(--bg); }
 .lab-layout { width: min(1240px,calc(100% - 64px)); margin: auto; display: grid; grid-template-columns: 210px minmax(0,1fr); gap: 44px; position: relative; }
 .lab-sidebar { margin-top: -100px; position: relative; z-index: 1; padding-bottom: 48px; }
@@ -182,7 +223,7 @@
   .lab-layout { gap: 30px; grid-template-columns: 190px minmax(0,1fr); }.lab-overview-grid { grid-template-columns: minmax(0,1fr) 200px; gap: 24px; }.lab-related-grid { gap: 10px; }.lab-related-card { gap: 9px; padding-right: 8px; }.lab-related-card img { width: 48px; height: 74px; }.lab-related-card > .ui-icon { display: none; }.lab-workbench-inner { gap: 20px; }.lab-media-switch { gap: 20px; }.concept-panorama .lab-tracking { gap: 26px; grid-template-columns: 165px minmax(145px,1fr) 135px 100px; padding: 24px; }.concept-panorama .lab-rating-field { padding-left: 20px; }.concept-panorama .lab-overview-grid { gap: 28px; }.concept-panorama .lab-person img,.concept-panorama .lab-person-initials { height: 145px; }
 }
 @media (max-width:900px) {
-  .lab-layout { grid-template-columns: 170px minmax(0,1fr); gap: 25px; }.lab-overview-grid { grid-template-columns: minmax(0,1fr); grid-template-areas: 'story' 'next' 'people' 'score' 'friends' 'art' 'note' 'related'; }.lab-public-score { max-width: none; }.lab-related-grid { grid-template-columns: 1fr; }.lab-related-card img { width: 50px; height: 75px; }.lab-tracking label { font-size: 1.1rem; }.lab-progress-control { gap: 5px; }.lab-progress-control > span { font-size: 1rem; }.lab-progress-control input { width: 35px; }.lab-tabs { gap: 22px; }.lab-official { display: none; }.lab-workbench-label { display: none; }.lab-workbench-inner { gap: 20px; }.lab-heading .lab-kicker { gap: 7px; }.concept-panorama .lab-tracking { gap: 20px; grid-template-columns: 145px minmax(125px,1fr) 125px 40px; }.concept-panorama .lab-favorite [data-lab-favorite-label] { display: none; }.concept-panorama .lab-favorite { padding: 10px 0; }.concept-panorama .lab-friends { padding-left: 15px; }.concept-panorama .lab-person-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.concept-panorama .lab-person { display: flex; }.concept-panorama .lab-person img,.concept-panorama .lab-person-initials { height: 86px; width: 65px; border-radius: 5px; }.concept-panorama .lab-person > div { padding: 0; }.concept-panorama .lab-related-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }.concept-panorama .lab-related-card { display: block; padding: 0; }.concept-panorama .lab-related-card img { width: 100%; height: auto; aspect-ratio: 2/3; }.concept-panorama .lab-related-card > div { margin-top: 12px; }.lab-gallery img { height: 220px; }
+  .lab-layout { grid-template-columns: 170px minmax(0,1fr); gap: 25px; }.lab-overview-grid { grid-template-columns: minmax(0,1fr); grid-template-areas: 'story' 'next' 'people' 'score' 'friends' 'art' 'note' 'related'; }.lab-public-score { max-width: none; }.lab-related-grid { grid-template-columns: 1fr; }.lab-related-card img { width: 50px; height: 75px; }.lab-tracking label { font-size: 1.1rem; }.lab-progress-control { gap: 5px; }.lab-progress-control > span { font-size: 1rem; }.lab-progress-control input { width: 35px; }.lab-tabs { gap: 22px; }.lab-official { display: none; }.lab-workbench-inner { gap: 20px; }.lab-heading .lab-kicker { gap: 7px; }.concept-panorama .lab-tracking { gap: 20px; grid-template-columns: 145px minmax(125px,1fr) 125px 40px; }.concept-panorama .lab-favorite [data-lab-favorite-label] { display: none; }.concept-panorama .lab-favorite { padding: 10px 0; }.concept-panorama .lab-friends { padding-left: 15px; }.concept-panorama .lab-person-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.concept-panorama .lab-person { display: flex; }.concept-panorama .lab-person img,.concept-panorama .lab-person-initials { height: 86px; width: 65px; border-radius: 5px; }.concept-panorama .lab-person > div { padding: 0; }.concept-panorama .lab-related-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }.concept-panorama .lab-related-card { display: block; padding: 0; }.concept-panorama .lab-related-card img { width: 100%; height: auto; aspect-ratio: 2/3; }.concept-panorama .lab-related-card > div { margin-top: 12px; }.lab-gallery img { height: 220px; }
 }
 @media (max-width:650px) {
   .lab-workbench-inner { width: calc(100% - 32px); gap: 13px; flex-wrap: wrap; padding: 12px 0 10px; min-height: 94px; justify-content: space-between; }.lab-concept-switch { order: 0; }.lab-concept-switch a { padding: 7px 10px; font-size: 1.1rem; }.lab-notes-trigger { order: 1; }.detail-lab .lab-notes-trigger span { font-size: 1.1rem; }.lab-media-switch { order: 2; width: 100%; justify-content: space-between; padding: 0 6px; gap: 12px; }.lab-media-switch a { font-size: 1.2rem; padding: 8px 6px; }.lab-layout { width: calc(100% - 36px); display: block; }.lab-hero { height: 185px; }.lab-art-credit { right: 18px; bottom: 13px; font-size: .9rem; }.lab-sidebar { margin-top: -70px; display: grid; grid-template-columns: 108px minmax(0,1fr); gap: 22px; padding-bottom: 0; }.lab-poster-button { align-self: start; }.lab-tracking { padding-top: 74px; gap: 12px; grid-template-columns: 1fr auto; }.lab-status-field { grid-column: span 2; }.lab-tracking label { font-size: 1rem; margin-bottom: 5px; }.lab-progress-field { grid-column: span 2; }.lab-rating-field { align-self: center; }.detail-lab .lab-favorite { padding: 8px; align-self: end; font-size: 1.1rem; }.lab-favorite [data-lab-favorite-label] { display: none; }.lab-select-wrap select { padding: 9px 25px 9px 11px; font-size: 1.2rem; }.lab-select-wrap > .ui-icon { top: 12px; }.lab-sidebar .lab-facts,.lab-source-links { display: none; }.lab-heading { padding: 28px 0 24px; }.lab-heading h1 { font-size: 3.4rem; margin: 9px 0; }.lab-heading .lab-kicker { font-size: 1rem; }.lab-tagline { font-size: 1.3rem; }.lab-genres { margin-top: 12px; }.lab-genres span { font-size: 1rem; }.lab-section-navigation { margin-bottom: 25px; }.lab-tabs { width: 100%; justify-content: space-between; gap: 16px; }.detail-lab .lab-tabs button { font-size: 1.2rem; padding-bottom: 14px; }.lab-overview-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 25px 18px; grid-template-areas: 'story story' 'next next' 'people people' 'score score' 'friends friends' 'art art' 'note note' 'related related'; }.lab-story > p { font-size: 1.4rem; line-height: 1.85; }.lab-section-title { margin-bottom: 14px; }.lab-next-copy { padding: 22px; }.lab-next h2 { font-size: 2rem; }.lab-next { min-height: 180px; }.lab-person-grid { gap: 10px; }.lab-person { gap: 10px; }.lab-person img,.lab-person-initials { width: 50px; height: 72px; }.lab-person h3 { font-size: 1.1rem; }.lab-person p { font-size: 1rem; }.lab-public-score { padding: 19px; }.lab-big-score { margin-top: 10px; }.lab-friends .lab-section-title h2 { font-size: 1.6rem; }.lab-note { padding: 20px; }.lab-note .lab-section-title h2 { font-size: 1.6rem; }.lab-note textarea { min-height: 80px; }.lab-art-image img { aspect-ratio: 1.8; }.lab-related-card { gap: 15px; }.lab-related-card img { width: 56px; height: 83px; }.lab-related-card h3 { font-size: 1.4rem; }.lab-related-card p { font-size: 1.1rem; }.lab-full-people { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px 16px; }.lab-gallery { grid-template-columns: 1fr; }.lab-gallery img { height: 230px; }.lab-episode { gap: 10px; }.lab-episode-number { width: 16px; font-size: 1rem; }.lab-episode-image { width: 80px; height: 50px; }.lab-episode h3 { font-size: 1.2rem; }.lab-episode-copy p { font-size: 1rem; }.lab-episode-copy p span { margin: 0 5px; }.lab-episode-options { gap: 12px; }.lab-episode-options .lab-text-button { font-size: 1rem; }.lab-episode-summary { font-size: 1.1rem; }.lab-footer { width: calc(100% - 36px); padding: 22px 0 32px; align-items: start; flex-direction: column; gap: 16px; }.lab-footer > p { flex-wrap: wrap; gap: 10px; font-size: 1rem; }
@@ -194,6 +235,7 @@
 }
 @media (max-width:650px) {
   .concept-folio .lab-inline-facts { display: block; grid-area: facts; border-block: 1px solid var(--lab-line); padding-block: 20px; }
+  .concept-folio .lab-hero { height: 210px; margin-top: 0; }
   .concept-folio .lab-inline-facts h2 { margin-bottom: 18px; }
   .concept-folio .lab-overview-grid { grid-template-areas: 'story story' 'next next' 'people people' 'facts facts' 'score score' 'friends friends' 'art art' 'note note' 'related related'; }
   .concept-folio .lab-layout { display: grid; grid-template-columns: 108px minmax(0,1fr); gap: 24px 20px; }
@@ -315,4 +357,59 @@
   .lab-related-card img { width: 74px; }.lab-related-card h3 { font-size: 1.4rem; }
   .lab-season-head { padding: 20px 18px; gap: 12px; }.lab-season-identity { gap: 12px; }.lab-season-number { font-size: 2.7rem; }.lab-season-identity h3 { font-size: 1.5rem; }.lab-season-identity p { font-size: 1.1rem; }.lab-season-rate > span { font-size: .95rem; }
   .lab-season-toolbar { padding: 0 18px 16px; gap: 15px; flex-wrap: wrap; }.lab-season-toolbar > span { width: 100%; }.lab-season-expand { margin-left: auto; }.lab-season-card .lab-episode-list { padding: 0 14px; }.lab-season-card .lab-episode-image { width: 55px; height: 40px; }.lab-season-rating-rule { align-items: start; font-size: 1.1rem; }.lab-season-rating-rule label { line-height: 1.6; align-items: start; }.lab-season-rating-rule input { flex-shrink: 0; margin-top: 2px; }
+}
+
+/* The preview toolbar keeps identical geometry across all concepts. */
+@media (max-width:650px) {
+  .detail-lab .lab-notes-trigger > span:not(.ui-icon) { display: none; }
+}
+@media (max-width:360px) {
+  .detail-lab .lab-workbench-inner { gap: 8px; }
+  .detail-lab .lab-concept-switch a { padding-inline: 8px; font-size: 1rem; }
+  .detail-lab .lab-concept-switch a span { margin-right: 5px; }
+}
+/* Four options wrap together without changing between concepts. */
+@media (min-width:651px) and (max-width:900px) {
+  .lab-workbench-inner { flex-wrap: wrap; padding: 12px 0; gap: 12px 20px; }
+  .lab-concept-switch { order: 0; }
+  .detail-lab .lab-notes-trigger { order: 1; }
+  .lab-media-switch { order: 2; width: 100%; }
+}
+@media (max-width:650px) {
+  .lab-concept-switch { flex-wrap: wrap; width: calc(100% - 36px); }
+  .detail-lab .lab-notes-trigger { align-self: start; }
+}
+/* Header covers reuse Folio's hover and lightbox controls at their own sizes. */
+.lab-hero-content .lab-poster-button { width: 115px; flex-shrink: 0; border-radius: 6px; box-shadow: 0 12px 25px rgb(0 0 0 / 30%); }
+.lab-hero-poster .lab-poster { height: 100%; }
+.lab-game-offer { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; padding: 22px; border: 1px solid var(--lab-line); border-radius: var(--lab-radius); background: var(--panel); }
+.lab-offer-edition { flex: 1 1 180px; }
+.lab-offer-edition h2 { font-size: 1.7rem; }
+.lab-offer-edition p { margin-top: 6px; color: var(--lab-muted); font-size: 1.1rem; }
+.lab-offer-pricing { display: flex; align-items: center; gap: 12px; }
+.lab-offer-pricing > div { display: flex; flex-direction: column; gap: 3px; }
+.lab-offer-pricing strong { color: var(--bright); font-size: 2.4rem; font-variant-numeric: tabular-nums; }
+.lab-offer-pricing del { color: var(--lab-muted); font-size: 1.2rem; }
+.lab-offer-discount { padding: 8px 10px; border-radius: 4px; background: #bddb7b; color: #233215; font-size: 1.6rem; font-weight: 600; }
+.detail-lab .lab-game-offer .lab-primary-button { margin: 0; }
+.lab-steam-reviews { display: grid; gap: 20px; margin-top: 20px; }
+.lab-steam-review { position: relative; }
+.lab-steam-review summary { list-style: none; cursor: pointer; }
+.lab-steam-review summary::-webkit-details-marker { display: none; }
+.lab-steam-review summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 5px; border-radius: 2px; }
+.lab-review-period { display: block; font-size: 1.1rem; color: var(--lab-muted); margin-bottom: 6px; }
+.lab-review-verdict { font-size: 1.5rem; line-height: 1.6; }
+.sentiment-positive { color: #79c8ec; }.sentiment-mixed { color: #d9b986; }.sentiment-negative { color: #ed9869; }
+.lab-review-count { color: var(--lab-muted); font-size: 1.2rem; white-space: nowrap; }
+.detail-lab .lab-review-info { display: none; font-size: 1.2rem; line-height: 1.65; color: var(--text); }
+.lab-steam-review:not([open]):has(summary:hover,summary:focus-visible) .lab-review-info { display: block; position: absolute; bottom: calc(100% + 10px); left: 0; width: 100%; box-sizing: border-box; padding: 12px; background: var(--field); border: 1px solid var(--border); border-radius: 5px; box-shadow: 0 8px 25px rgb(0 0 0 / 25%); z-index: 3; pointer-events: none; }
+.detail-lab .lab-steam-review[open] .lab-review-info { display: block; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--lab-line); }
+.lab-game-scenarios { display: flex; flex-wrap: wrap; align-items: end; gap: 18px; margin-bottom: 30px; padding-bottom: 25px; border-bottom: 1px solid var(--border); }
+.lab-game-scenarios h3,.lab-game-scenarios p { width: 100%; }
+.lab-game-scenarios label { display: grid; gap: 8px; font-size: 1.2rem; }
+.lab-game-scenarios select { padding: 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--field); color: var(--bright); font: inherit; }
+.detail-lab .lab-game-scenarios .lab-primary-button { margin: 0; }
+@media (max-width:900px) { .lab-game-offer { order: 2; } }
+@media (max-width:650px) {
+  .lab-hero-content .lab-poster-button { width: 75px; }
 }

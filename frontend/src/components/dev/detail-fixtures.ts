@@ -3,10 +3,18 @@ export type Person = { name: string; role: string; image?: string; url: string }
 export type Episode = { title: string; minutes: number; image: string; date: string };
 export type Relation = { title: string; relation: 'Previous entry' | 'Next entry' | 'Source' | 'Adaptation' | 'Spin-off' | 'Shared universe' | 'Expansion'; detail: string; image: string; url: string };
 export type Suggestion = { title: string; detail: string; image: string; url: string };
+export type SteamReview = { label: string; percent: number; count: number; sentiment: 'positive' | 'mixed' | 'negative' };
+export const gameReviewSamples: Record<string, [SteamReview, SteamReview]> = {
+  positive: [{label: 'Overwhelmingly Positive', percent: 95, count: 21475, sentiment: 'positive'}, {label: 'Overwhelmingly Positive', percent: 96, count: 26743, sentiment: 'positive'}],
+  mixed: [{label: 'Very Positive', percent: 92, count: 89, sentiment: 'positive'}, {label: 'Mixed', percent: 55, count: 14215, sentiment: 'mixed'}],
+  negative: [{label: 'Mostly Negative', percent: 21, count: 37224, sentiment: 'negative'}, {label: 'Mixed', percent: 55, count: 464094, sentiment: 'mixed'}],
+};
 export interface DetailSample {
   title: string; kind: string; year: string; subtitle: string; creator: string;
   summary: string; more: string; genres: string[]; poster: string; backdrop: string;
   facts: [string, string][]; score?: string; votes?: string;
+  gameReviews?: [SteamReview, SteamReview];
+  offer?: {price: number; regularPrice: number; currency: string; store: string; region: string; url: string};
   progress: number; total: number; unit: string; action: string; increment: number;
   next: string; nextMeta: string; note: string; people: Person[];
   gallery: string[]; source: string; sourceUrl: string; officialUrl: string;
@@ -80,6 +88,8 @@ export const samples: Record<SampleKey, DetailSample> = {
     ],
   },
   game: {
+    gameReviews: gameReviewSamples.positive,
+    offer: {price: 7.99, regularPrice: 39.99, currency: 'EUR', store: 'Steam', region: 'Germany', url: 'https://store.steampowered.com/app/870780/Control_Ultimate_Edition/'},
     title: 'Control', kind: 'Game', year: '2019', subtitle: 'A world beyond explanation.', creator: 'Developed by Remedy Entertainment',
     summary: 'A secret government agency has been taken over by something it cannot explain. As Jesse Faden, you enter the shifting halls of the Oldest House, wield supernatural abilities, and search for the truth behind your past.',
     more: 'Explore a building that refuses to follow the rules, uncover strange objects, and piece together the stories left in its case files. The Ultimate Edition includes The Foundation and AWE expansions.',

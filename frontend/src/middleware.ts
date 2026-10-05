@@ -68,12 +68,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
 
-  // Development playgrounds are isolated from sessions and backend data. Never serve
-  // it in a production build or through a non-loopback development hostname.
+  // Fixture-only design previews are available on every host and stay isolated
+  // from sessions and backend data.
   if (pathname === '/dev' || pathname.startsWith('/dev/')) {
-    if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(context.url.hostname)) {
-      return new Response('Not found', { status: 404 });
-    }
     const response = await next();
     response.headers.set('Cache-Control', 'no-store');
     for (const [header, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(header, value);
