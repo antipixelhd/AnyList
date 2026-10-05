@@ -251,6 +251,7 @@ function initializeDetails() {
       });
     }
     root.removeAttribute('data-lab-loading');
+    root.setAttribute('aria-busy', 'false');
     root.dispatchEvent(new Event('lab:ready'));
   });
   signal.addEventListener('abort', () => clearTimeout(entranceTimer), {once: true});
