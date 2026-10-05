@@ -1,0 +1,53 @@
+/* Marquee pairs Panorama's opening with the default Folio content grid.
+   Keep every override scoped so the original studies retain their layouts. */
+.concept-marquee :is(.lab-hero-content, .lab-layout, .lab-footer) {
+  width: min(1320px, calc(100% - 64px));
+}
+.concept-marquee .lab-hero { height: 520px; }
+.concept-marquee .lab-hero-image { object-position: center 42%; }
+.concept-marquee .lab-hero-shade {
+  background: linear-gradient(0deg, var(--bg), rgb(11 22 34 / 15%) 80%),
+    linear-gradient(90deg, rgb(11 22 34 / 70%), transparent 85%);
+}
+.concept-marquee .lab-hero-content { padding-bottom: 48px; }
+.concept-marquee .lab-heading { padding: 0; min-width: 0; }
+.concept-marquee .lab-heading h1 { font-size: clamp(4.8rem, 6.2vw, 7.8rem); margin: 10px 0; }
+.concept-marquee .lab-tagline { font-size: 1.6rem; color: var(--bright); }
+.concept-marquee .lab-heading .lab-kicker { color: var(--text); }
+.concept-marquee .lab-genres span { background: rgb(21 31 46 / 75%); }
+.concept-marquee .lab-art-credit { right: max(32px, calc((100% - 1320px) / 2)); bottom: 17px; }
+.concept-marquee .lab-layout { gap: 56px; padding-top: 28px; }
+.concept-marquee .lab-sidebar { margin-top: 0; }
+.concept-marquee .lab-tracking { padding-top: 0; }
+.concept-marquee .lab-overview-grid { grid-template-areas: none; column-gap: 40px; }
+
+@media (max-width:1100px) {
+  .concept-marquee .lab-layout { gap: 32px; }
+  .concept-marquee .lab-overview-grid { column-gap: 28px; }
+}
+@media (max-width:900px) {
+  .concept-marquee .lab-overview-grid { display: flex; flex-direction: column; gap: 28px; }
+}
+@media (max-width:650px) {
+  .concept-marquee :is(.lab-hero-content, .lab-layout, .lab-footer) { width: calc(100% - 36px); }
+  .concept-marquee .lab-hero { height: 435px; }
+  .concept-marquee .lab-hero-content { padding-bottom: 48px; }
+  .concept-marquee .lab-heading h1 { font-size: clamp(3.5rem, 9vw, 5rem); overflow-wrap: anywhere; }
+  .concept-marquee .lab-tagline { font-size: 1.3rem; }
+  .concept-marquee .lab-heading .lab-kicker { font-size: 1rem; gap: 6px; }
+  .concept-marquee .lab-genres { gap: 5px; }
+  .concept-marquee .lab-genres span { padding: 4px 7px; font-size: .9rem; }
+  .concept-marquee .lab-art-credit { right: 18px; }
+  .concept-marquee .lab-layout { display: block; padding-top: 24px; }
+  .concept-marquee .lab-sidebar { display: block; }
+  .concept-marquee .lab-tracking { grid-template-columns: minmax(0,1fr) 95px 32px; gap: 15px; padding: 0 0 28px; }
+  .concept-marquee .lab-status-field { grid-column: 1; grid-row: 1; }
+  .concept-marquee .lab-rating-field { grid-column: 2; grid-row: 1; }
+  .concept-marquee .lab-rating-control { gap: 7px; min-height: 32px; padding: 0; }
+  .concept-marquee .lab-rating-control > span:not(.ui-icon) { display: none; }
+  .concept-marquee .lab-favorite { grid-column: 3; grid-row: 1; padding: 10px 7px; }
+  .concept-marquee .lab-library { grid-column: 1 / -1; grid-row: 2; padding: 11px; }
+  .concept-marquee .lab-progress-field { grid-column: 1 / -1; grid-row: 3; }
+  .concept-marquee .lab-inline-facts { display: block; border-block: 1px solid var(--lab-line); padding-block: 20px; }
+  .concept-marquee .lab-inline-facts h2 { margin-bottom: 18px; }
+}

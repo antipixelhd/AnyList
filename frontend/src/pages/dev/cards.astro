@@ -19,7 +19,6 @@ import '../../styles/profile-overview.css';
 import '../../styles/favorites-page.css';
 import '../../styles/social.css';
 
-if (!import.meta.env.DEV || !['localhost', '127.0.0.1', '[::1]'].includes(Astro.url.hostname)) return new Response('Not found', {status:404});
 // A synthetic viewer enables the real MediaCard action bar without loading a session.
 Astro.locals.user = {id:-1, username:'playground'} as typeof Astro.locals.user;
 Astro.locals.hasRpdbKey = false;
