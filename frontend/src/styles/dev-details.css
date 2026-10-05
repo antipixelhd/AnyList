@@ -8,6 +8,10 @@
   min-height: 100vh;
 }
 .detail-lab [hidden] { display: none !important; }
+/* Reserve the final layout while fonts and header artwork settle, then run
+   the existing entrance once rather than revealing partially initialized content. */
+.detail-lab[data-lab-loading] > :is(.lab-hero, .lab-layout) { visibility: hidden; }
+.detail-lab[data-lab-loading] :is(.lab-hero-image, .lab-heading, .lab-panel, .lab-in-view) { animation-play-state: paused; }
 .detail-lab h1,.detail-lab h2,.detail-lab h3,.detail-lab p { margin: 0; }
 .detail-lab h1,.detail-lab h2,.detail-lab h3 { color: var(--bright); font-family: var(--font-navigation); }
 .detail-lab h2 { font-size: var(--type-panel-size); font-weight: 600; line-height: 1.4; }
