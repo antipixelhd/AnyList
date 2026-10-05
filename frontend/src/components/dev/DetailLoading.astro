@@ -3,6 +3,7 @@
     // Run before first paint: cached assets and server-rendered text skip skeletons.
     const root = document.currentScript.closest('[data-detail-lab]');
     const minimumSkeletonMs = 350;
+    const maximumAssetWaitMs = 1500;
     const controller = new AbortController();
     const timers = new Set();
     const delay = ms => new Promise(resolve => {
@@ -23,13 +24,14 @@
       const missing = [...fonts].filter(font => !document.fonts.check(font));
       if (missing.length) pending(region, Promise.race([
         Promise.all(missing.map(font => document.fonts.load(font).catch(() => {}))),
-        delay(1500),
+        delay(maximumAssetWaitMs),
       ]));
     });
     root.querySelectorAll('.lab-hero-image, .lab-poster-button img, .lab-art-image img').forEach(img => {
       if (img.complete && img.naturalWidth > 0) return;
+      let finish;
       const ready = new Promise(resolve => {
-        const finish = () => {
+        finish = () => {
           img.removeEventListener('load', finish);
           img.removeEventListener('error', finish);
           void img.decode().catch(() => {}).then(resolve);
@@ -40,7 +42,14 @@
           img.addEventListener('error', finish, {once: true, signal: controller.signal});
         }
       });
-      pending(img.closest('.lab-hero, .lab-poster-button, .lab-art-image'), ready);
+      // Bound the request and decode wait so stalled assets cannot hide content.
+      pending(img.closest('.lab-hero, .lab-poster-button, .lab-art-image'), Promise.race([
+        ready,
+        delay(maximumAssetWaitMs),
+      ]).finally(() => {
+        img.removeEventListener('load', finish);
+        img.removeEventListener('error', finish);
+      }));
     });
     regions.forEach((tasks, region) => {
       region.setAttribute('data-lab-pending', '');
