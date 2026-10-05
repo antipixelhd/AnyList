@@ -1,4 +1,4 @@
-from core import settings_store, simkl_sync
+from core import simkl_sync
 """Simkl integration router.
 
 Endpoints:
@@ -24,7 +24,6 @@ from dependencies import get_current_user
 from models.base import CollectionSource
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
-from models.global_settings import GlobalSettings
 
 logger = logging.getLogger(__name__)
 
