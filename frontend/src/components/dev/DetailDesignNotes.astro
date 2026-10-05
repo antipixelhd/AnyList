@@ -1,5 +1,6 @@
 ---
 import Icon from '../Icon.astro';
+const {kind, design, offer, reviews} = Astro.props;
 const imdb = [
   ['1', 'Rating + vote count', 'One compact score beside TMDB. Show vote count so a small sample does not look definitive.', 'Public datasets'],
   ['2', 'Episode ratings', 'Add a small score in the episode view. Avoid a second chart on the overview.', 'Public datasets'],
@@ -14,6 +15,14 @@ const imdb = [
 <dialog class="lab-dialog lab-notes-dialog" id="lab-design-notes" aria-labelledby="lab-notes-title">
   <div class="lab-dialog-header"><div><p class="lab-kicker">Detail design lab</p><h2 id="lab-notes-title">The thinking behind the pages</h2></div><button type="button" data-lab-close-dialog aria-label="Close design notes"><Icon name="close"/></button></div>
   <div class="lab-notes-body">
+    {kind === 'game' && <form class="lab-game-scenarios" action="/dev/details" method="get">
+      <input type="hidden" name="media" value="game"/><input type="hidden" name="design" value={design}/>
+      <h3>Game preview states</h3>
+      <label>Price<select name="offer"><option value="sale" selected={offer === 'sale'}>On sale</option><option value="regular" selected={offer === 'regular'}>Regular price</option></select></label>
+      <label>Steam reviews<select name="reviews"><option value="positive" selected={reviews === 'positive'}>Positive</option><option value="mixed" selected={reviews === 'mixed'}>Mixed</option><option value="negative" selected={reviews === 'negative'}>Negative recent reviews</option></select></label>
+      <button type="submit" class="lab-primary-button">Apply preview</button>
+      <p>Prices and reviews are illustrative, not live Control data. Prices are for the PC Ultimate Edition in Germany (EUR). Hover, focus or open a review summary to see its positive percentage.</p>
+    </form>}
     <div class="lab-concept-notes"><article><span>01</span><h3>Folio</h3><p>A quiet catalogue: a poster and tracking rail, compact modules, and information you can find without hunting.</p></article><article><span>02</span><h3>Marquee</h3><p>A cinematic opening with Folio’s tracking rail and compact content modules, spaced across a wider canvas.</p></article><article><span>02.5</span><h3>Marquee 2.5</h3><p>The same Marquee layout with a larger cover and the title aligned to the content column.</p></article><article><span>03</span><h3>Panorama</h3><p>A story-first layout: expansive artwork, an in-line tracking dock, wider editorial blocks, and fewer boxes.</p></article></div>
     <h3>IMDb additions, in priority order</h3><p>My recommendation is to start with ratings and episode scores. The rest belongs behind an intentional action.</p>
     <div class="lab-notes-table-wrap"><table><thead><tr><th>Rank</th><th>Addition</th><th>Placement</th><th>Access</th></tr></thead><tbody>{imdb.map(([rank,field,placement,access]) => <tr><td>{rank}</td><th scope="row">{field}</th><td>{placement}</td><td>{access}</td></tr>)}</tbody></table></div>

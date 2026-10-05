@@ -5,7 +5,7 @@ import DetailHeading from '../../components/dev/DetailHeading.astro';
 import DetailTracking from '../../components/dev/DetailTracking.astro';
 import DetailSections from '../../components/dev/DetailSections.astro';
 import DetailDesignNotes from '../../components/dev/DetailDesignNotes.astro';
-import {samples, type SampleKey} from '../../components/dev/detail-fixtures';
+import {samples, gameReviewSamples, type SampleKey} from '../../components/dev/detail-fixtures';
 import '../../styles/dev-details.css';
 import '../../styles/dev-marquee.css';
 import '../../styles/dev-marquee-25.css';
@@ -15,8 +15,11 @@ const design = concept.id;
 const cinematic = design !== 'folio';
 const requested = Astro.url.searchParams.get('media') || 'series';
 const kind: SampleKey = Object.hasOwn(samples, requested) ? requested as SampleKey : 'series';
-const item = samples[kind];
-const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}`;
+const requestedReviews = Astro.url.searchParams.get('reviews') || 'positive';
+const reviews = Object.hasOwn(gameReviewSamples, requestedReviews) ? requestedReviews : 'positive';
+const offer = Astro.url.searchParams.get('offer') === 'regular' ? 'regular' : 'sale';
+const item = kind === 'game' ? {...samples.game, gameReviews: gameReviewSamples[reviews], offer: {...samples.game.offer!, price: offer === 'regular' ? samples.game.offer!.regularPrice : samples.game.offer!.price}} : samples[kind];
+const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}${m === 'game' ? `&offer=${offer}&reviews=${reviews}` : ''}`;
 ---
 <Tracker title={`${item.title} · ${concept.name}`}>
   <div class:list={['detail-lab', `concept-${design}`, {'concept-marquee': design === 'marquee-25'}]} data-detail-lab data-media-kind={kind} data-lab-loading>
@@ -44,7 +47,7 @@ const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}`;
     </div>
     <footer class="lab-footer"><p><strong>{concept.number} / {concept.name}</strong><span>Design preview · Sample metadata</span></p><button class="lab-text-button" type="button" data-lab-action="notes">Sources & feature notes<Icon name="arrow-right"/></button></footer>
     <script id="lab-fixture" type="application/json" set:html={JSON.stringify(item).replaceAll('<','\u003c')}/>
-    <DetailDesignNotes/>
+    <DetailDesignNotes kind={kind} design={design} offer={offer} reviews={reviews}/>
     <dialog class="lab-dialog lab-lightbox" id="lab-lightbox" aria-labelledby="lab-lightbox-caption"><button type="button" data-lab-close-dialog aria-label="Close artwork"><Icon name="close"/></button><img id="lab-lightbox-image" alt=""/><p id="lab-lightbox-caption"></p></dialog>
     <div class="lab-toast" id="lab-feedback" role="status" aria-live="polite"><Icon name="check"/><span data-lab-feedback-text></span></div>
   </div>

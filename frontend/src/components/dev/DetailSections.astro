@@ -1,6 +1,7 @@
 ---
 import Icon from '../Icon.astro';
 import DetailAudienceScore from './DetailAudienceScore.astro';
+import DetailGameOffer from './DetailGameOffer.astro';
 import DetailSeasons from './DetailSeasons.astro';
 import type {DetailSample, SampleKey} from './detail-fixtures';
 const {item, kind, design} = Astro.props as {item: DetailSample; kind: SampleKey; design: string};
@@ -23,6 +24,7 @@ const tabs = [{id:'overview', label:'Overview'}, ...(kind === 'series' ? [{id:'s
       {nextImage && <img src={nextImage} alt="" loading="lazy"/>}
       <div class="lab-next-copy"><p class="lab-kicker">{kind === 'movie' ? 'On your watchlist' : 'Pick up where you left off'}</p><h2 data-lab-next-title>{item.next}</h2><p data-lab-next-meta>{item.nextMeta}</p><button class="lab-primary-button" data-lab-action="increment" type="button"><Icon name="check"/><span>{kind === 'movie' ? 'Mark watched' : 'Mark episode watched'}</span></button></div>
     </section>}
+    {kind === 'game' && item.offer && <DetailGameOffer item={item}/>}
     <section class="lab-inline-facts lab-module"><h2>Details</h2><dl>{item.facts.slice(0,6).map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>
     <section class="lab-people-preview lab-module"><div class="lab-section-title"><h2>{peopleTitle}</h2><button class="lab-text-button" data-lab-open-tab="people" type="button">View all <Icon name="arrow-right"/></button></div><div class="lab-person-grid">{item.people.map(person => <a class:list={['lab-person', {'lab-person-no-photo': !person.image}]} href={person.url} target="_blank" rel="noreferrer">{person.image ? <img src={person.image} alt="" loading="lazy"/> : <span class="lab-person-initials" aria-hidden="true">{person.name.split(' ').map(n => n[0]).slice(0,2).join('')}</span>}<div><h3>{person.name}</h3><p>{person.role}</p></div></a>)}</div></section>
     {gallery.length > 0 && <section class="lab-art-preview lab-module"><div class="lab-section-title"><h2>In the frame</h2><button class="lab-text-button" data-lab-open-tab="artwork" type="button">Gallery <Icon name="arrow-right"/></button></div><button class="lab-art-image" type="button" data-lab-art-preview data-lab-image={gallery[0]} data-lab-image-caption={`${item.title} · Scene`} aria-label={`Expand ${item.title} scene`}><img src={gallery[0]} alt={`${item.title} scene`} loading="lazy"/><span><Icon name="grid"/> View artwork</span></button></section>}

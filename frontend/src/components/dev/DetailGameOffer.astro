@@ -1,0 +1,17 @@
+---
+import Icon from '../Icon.astro';
+import type {DetailSample} from './detail-fixtures';
+const {item} = Astro.props as {item: DetailSample};
+const offer = item.offer!;
+const money = (value: number) => new Intl.NumberFormat('en-IE', {style: 'currency', currency: offer.currency}).format(value);
+const sale = offer.price < offer.regularPrice;
+const discount = Math.round((1 - offer.price / offer.regularPrice) * 100);
+---
+<section class="lab-game-offer lab-module" aria-label="Game price">
+  <div class="lab-offer-edition"><h2>Ultimate Edition</h2><p>PC · {offer.store} · {offer.region}</p></div>
+  <div class="lab-offer-pricing">
+    {sale && <span class="lab-offer-discount">−{discount}%</span>}
+    <div>{sale && <del aria-label={`Regular price ${money(offer.regularPrice)}`}>{money(offer.regularPrice)}</del>}<strong>{money(offer.price)}</strong></div>
+  </div>
+  <a class="lab-primary-button" href={offer.url} target="_blank" rel="noreferrer">View on {offer.store}<Icon name="external"/></a>
+</section>
