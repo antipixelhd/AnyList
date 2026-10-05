@@ -1349,6 +1349,7 @@ async def poll_stremio_link(
         server_user_id=str(account["_id"]),
         provider_account_id=str(account["_id"]),
         server_username=str(account.get("email") or "Stremio"),
+        libraries_confirmed=True,
         sync_collection=body.sync_collection,
         sync_watched=body.sync_watched,
         sync_ratings=False,
