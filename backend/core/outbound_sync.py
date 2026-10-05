@@ -228,6 +228,7 @@ async def fan_out_changes(
     exclude_connection_ids: set[int] | None = None,
     exclude_cloud_sources: set[CollectionSource] | None = None,
     durable_watch_media_ids: set[int] | None = None,
+    require_success: bool = False,
 ) -> None:
     """Push an inbound sync delta to every enabled media server and cloud target.
 
@@ -239,6 +240,7 @@ async def fan_out_changes(
     removed_collected_ids = removed_collected_ids or set()
     durable_watch_media_ids = set(durable_watch_media_ids or ())
     directly_pushed_watch_ids = set(new_watched_ids) - durable_watch_media_ids
+    delivery_failed = False
     if not new_watched_ids and not new_ratings and not removed_ratings and not new_collected_ids and not removed_collected_ids:
         return
 
@@ -453,6 +455,7 @@ async def fan_out_changes(
                         skip_watch_media_ids=durable_watch_media_ids,
                     )
                 except Exception:
+                    delivery_failed = True
                     logger.exception(
                         "Stremio fan-out failed for connection %s",
                         conn.id,
@@ -968,11 +971,14 @@ async def fan_out_changes(
         for i in range(0, len(push_tasks), FAN_OUT_CHUNK_SIZE):
             chunk = push_tasks[i:i + FAN_OUT_CHUNK_SIZE]
             results = await asyncio.gather(*chunk, return_exceptions=True)
-            failed += sum(1 for r in results if isinstance(r, Exception))
+            failed += sum(1 for r in results if isinstance(r, Exception) or (require_success and r is False))
         if failed:
+            delivery_failed = True
             print(f"  {failed}/{len(push_tasks)} fan-out push tasks failed (non-fatal)")
     if any(conn.type in ("nuvio", "stremio") for conn in push_candidates):
         await db.commit()
+    if require_success and delivery_failed:
+        raise RuntimeError("Accepted sync delivery is pending retry")
 
 
 

@@ -35,6 +35,23 @@ async def _flush_pull_cycle(state) -> None:
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as db:
+        errors = []
+        async def deliver(*args, **kwargs):
+            try:
+                await outbound_sync.fan_out_changes(*args, **kwargs, require_success=True)
+            except Exception as error:
+                errors.append(error)
+        # A retry must never replay a rating over a newer canonical edit.
+        from models.ratings import Rating
+        keys = set(state.new_ratings) | state.removed_ratings
+        current_ratings = {}
+        if keys:
+            current_ratings = {(row.media_id, row.season_number): row.rating for row in
+                (await db.execute(select(Rating).where(Rating.user_id == state.user_id,
+                    Rating.media_id.in_({key[0] for key in keys}), Rating.episode_order.is_(None)))).scalars()}
+        state.new_ratings = {key: score for key, score in state.new_ratings.items()
+                             if current_ratings.get(key) == score}
+        state.removed_ratings -= current_ratings.keys()
         changed_collection_ids = state.new_collected_ids | state.removed_collected_ids
         if changed_collection_ids:
             present = set((await db.execute(select(Collection.media_id).where(
@@ -47,6 +64,8 @@ async def _flush_pull_cycle(state) -> None:
         settings = (await db.execute(select(UserSettings).where(
             UserSettings.user_id == state.user_id
         ))).scalar_one_or_none()
+        if state.library_new_ids or state.library_removed_ids:
+            state.library_api_key = await settings_store.get_effective_tmdb_key(db, settings)
         changed_watch_ids = state.new_watched_ids
         final_watched_ids = set()
         if changed_watch_ids:
@@ -71,7 +90,7 @@ async def _flush_pull_cycle(state) -> None:
             await db.commit()
             await dispatch_watch_intents(db, state.user_id)
         for exclusions, media_ids in watched_groups.items():
-            await outbound_sync.fan_out_changes(
+            await deliver(
                 db, state.user_id, None, media_ids, {}, settings,
                 exclude_connection_ids=set(exclusions[0]),
                 exclude_cloud_sources=set(exclusions[1]),
@@ -127,9 +146,9 @@ async def _flush_pull_cycle(state) -> None:
                 connections, clouds = state.excluded_connection_ids, state.excluded_cloud_sources
             groups.setdefault((frozenset(connections), frozenset(clouds)), {})[key] = score
         for (connections, clouds), ratings in groups.items():
-            await outbound_sync.fan_out_changes(db, state.user_id, None, set(), ratings, settings,
+            await deliver(db, state.user_id, None, set(), ratings, settings,
                 exclude_connection_ids=set(connections), exclude_cloud_sources=set(clouds))
-        await outbound_sync.fan_out_changes(
+        await deliver(
             db, state.user_id, None, set(), {}, settings,
             removed_ratings=state.removed_ratings,
             new_collected_ids=state.new_collected_ids,
@@ -139,6 +158,18 @@ async def _flush_pull_cycle(state) -> None:
         )
         await dispatch_stream_actions(db, state.user_id)
         await dispatch_cloud_actions(db, state.user_id)
+        from models import MediaServerConnection
+        from core.server_sync import _push_watched_back_to_source
+        for connection_id, items in state.push_back.items():
+            conn = await db.get(MediaServerConnection, connection_id)
+            if not conn or conn.user_id != state.user_id or conn.identity_version != state.connection_versions.get(connection_id):
+                continue
+            try:
+                await _push_watched_back_to_source(db, state.user_id, conn, items, require_success=True)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError("Accepted sync delivery is pending retry") from errors[0]
 
 
 async def _run_scheduled_pull_cycle(user_id: int, pulls: list[tuple[str, object]]) -> None:
@@ -291,6 +322,8 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
         expire_on_commit=False,
         class_=AsyncSession,
     )
+    from core.sync_delivery import retry_cycle_deliveries
+    await retry_cycle_deliveries(factory)
     async with factory() as db:
         pending_users = select(StreamAction.user_id).where(StreamAction.state == "pending").union(
             select(CloudAction.user_id).where(CloudAction.state == "pending"),
@@ -333,11 +366,12 @@ async def _dispatch_pending_stream_actions_once(session_factory=None):
 
 async def _stream_action_retry_scheduler():
     while True:
-        await asyncio.sleep(60)
         try:
             await _dispatch_pending_stream_actions_once()
+            await netflix_sessions.retry_committed_import_pulls()
         except Exception as error:
             print(f"Stream action retry scheduler error: {type(error).__name__}")
+        await asyncio.sleep(60)
 
 
 async def _rating_push_scheduler():

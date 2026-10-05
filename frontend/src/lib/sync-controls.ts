@@ -20,6 +20,13 @@ export function wireCancelButton(
     button.onclick = null;
     return;
   }
+  if (job.stats?.phase === 'reconciling') {
+    resetCancelButton(button);
+    button.classList.remove('hidden');
+    button.disabled = true;
+    button.textContent = 'Syncing…';
+    return;
+  }
   let state = cancellations.get(button);
   if (!state || state.jobId !== job.id) {
     state = { jobId: job.id, requested: !!job.stats?.cancel_requested };

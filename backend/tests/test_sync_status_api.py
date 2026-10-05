@@ -93,6 +93,15 @@ class SyncStatusApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([job["id"] for job in result], [job.id for job in reversed(history[-19:])] + [old.id])
         self.assertEqual(result[-1]["status"], "completed")
 
+    async def test_delivery_payload_is_private_and_polling_does_not_mutate_it(self):
+        job = self.job(self.owner, SyncStatus.running, datetime.utcnow(), job_type="pull_cycle",
+                       stats={"phase": "reconciling", "delivery_pending": True, "delivery": {"large": [1, 2]}})
+        await self.db.flush()
+        response = await self.status()
+        self.assertEqual(response[0]["stats"]["phase"], "reconciling")
+        self.assertNotIn("delivery", response[0]["stats"])
+        self.assertEqual(job.stats["delivery"], {"large": [1, 2]})
+
     async def test_guarded_start_preserves_cancellation_and_persists_worker_progress(self):
         now = datetime(2026, 9, 30, 12)
         cancelled = self.job(self.owner, SyncStatus.cancelled, now, error_message="Cancelled by user")

@@ -576,7 +576,10 @@ async def get_sync_status(
     )
     result = await db.execute(query)
     jobs = result.scalars().all()
-    return jobs
+    # Delivery batches can be large; polling only needs public progress stats.
+    return [{**{column.key: getattr(job, column.key) for column in SyncJob.__table__.columns},
+             "stats": {key: value for key, value in (job.stats or {}).items() if key != "delivery"}}
+            for job in jobs]
 
 
 @router.post("/heal")
@@ -607,17 +610,25 @@ async def abort_sync(
 ):
     """Cancel active sync jobs, preserving destructive clears already running."""
     from core.account_sync import request_cycle_cancel
+    user_id = current_user.id
     parents = (await db.execute(select(SyncJob).where(
-        SyncJob.user_id == current_user.id, SyncJob.job_type == "pull_cycle",
+        SyncJob.user_id == user_id, SyncJob.job_type == "pull_cycle",
         SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]),
     ))).scalars().all()
+    cycle_children = {child_id for parent in parents for child_id in (parent.stats or {}).get("child_job_ids", [])}
     for parent in parents:
-        await request_cycle_cancel(db, parent)
+        try:
+            await request_cycle_cancel(db, parent)
+        except HTTPException as error:
+            if error.status_code != 409:
+                raise
+            await db.rollback()  # The reconciliation window has already closed.
     await db.execute(
         update(SyncJob)
-        .where(SyncJob.user_id == current_user.id)
+        .where(SyncJob.user_id == user_id)
         .where(SyncJob.status.in_([SyncStatus.pending, SyncStatus.running]))
         .where(SyncJob.job_type != "pull_cycle")
+        .where(SyncJob.id.not_in(cycle_children))
         .where(~((SyncJob.job_type == "clear") & (SyncJob.status == SyncStatus.running)))
         .values(status=SyncStatus.cancelled, error_message="Cancelled by user", updated_at=func.now())
     )

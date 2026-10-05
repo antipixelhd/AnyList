@@ -113,3 +113,12 @@ test('an existing cancellation request survives a page reload', () => {
   assert.equal(control.disabled, true);
   assert.equal(control.textContent, 'Cancelling…');
 });
+
+test('reconciliation closes cancellation, including after a page reload', () => {
+  const control = button();
+  wireCancelButton(control, { id: 1, job_type: 'pull_cycle' }, 'token', () => {});
+  wireCancelButton(control, { id: 1, job_type: 'pull_cycle', stats: { phase: 'reconciling' } }, 'token', () => {});
+  assert.equal(control.disabled, true);
+  assert.equal(control.textContent, 'Syncing…');
+  assert.equal(control.onclick, null);
+});

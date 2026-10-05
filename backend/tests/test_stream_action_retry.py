@@ -29,6 +29,9 @@ class _Result:
     def scalars(self):
         return _Scalars(self.values)
 
+    def all(self):
+        return self.values
+
 
 class _Session:
     def __init__(self, user_ids=()):
@@ -43,7 +46,7 @@ class _Session:
 
 class _Factory:
     def __init__(self, user_ids):
-        self.sessions = [_Session(user_ids)] + [_Session() for _ in user_ids]
+        self.sessions = [_Session(), _Session(user_ids)] + [_Session() for _ in user_ids]
 
     def __call__(self):
         return self.sessions.pop(0)

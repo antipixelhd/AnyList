@@ -113,6 +113,9 @@ class Reconciliation:
     protected_fields: dict[int, set[str]] = field(default_factory=dict)
     connection_versions: dict[int, int] = field(default_factory=dict)
     tracking_roots: dict[int, int] = field(default_factory=dict)
+    collection_files: dict[tuple, tuple] = field(default_factory=dict)
+    collection_removals: list[tuple] = field(default_factory=list)
+    collection_deleted: set[int] = field(default_factory=set)
 
 
 _current: ContextVar[Reconciliation | None] = ContextVar("account_reconciliation", default=None)
@@ -339,15 +342,14 @@ class _ReconciliationSession:
         await self.session.flush()
 
 
-async def finalize(db, state, cycle):
+async def finalize(db, state, cycle, *, job_id=None):
     await _finalize(_ReconciliationSession(db), state, cycle)
+    cycle.push_back = state.deferred_push_back
+    cycle.connection_versions = state.connection_versions
+    if job_id is not None:
+        from core.sync_delivery import persist_delivery
+        await persist_delivery(db, job_id, cycle)
     await db.commit()
-    from models import MediaServerConnection
-    from core.server_sync import _push_watched_back_to_source
-    for connection_id, items in state.deferred_push_back.items():
-        conn = await db.get(MediaServerConnection, connection_id)
-        if conn and conn.user_id == state.user_id and conn.identity_version == state.connection_versions.get(conn.id):
-            await _push_watched_back_to_source(db, state.user_id, conn, items)
 
 
 async def _finalize(db, state, cycle):
@@ -376,6 +378,8 @@ async def _finalize(db, state, cycle):
                             for key, values in state.watch_evidence.items()}
     state.histories = [item for item in state.histories if valid(source_key(item["provider"], item["connection_id"]))]
     state.collecting = False
+    from core.sync_collection import apply_memberships
+    await apply_memberships(db, state)
     from core.media_server_reconciliation import record_media_server_import
     for connection_id, (stats, ratings) in state.server_imports.items():
         conn = await db.get(MediaServerConnection, connection_id)

@@ -949,15 +949,15 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
             session.status = "committed"
             session.phase = "complete"
             session.progress = {"current": len((session.payload or {}).get("items", [])), "total": len((session.payload or {}).get("items", [])), "message": "Import complete"}
-            session.result = {"summary": summary, "receipt": idempotency_key, "committed_at": _now().isoformat()}
+            session.result = {"summary": summary, "receipt": idempotency_key, "committed_at": _now().isoformat(),
+                              "pull_pending": True}
             session.payload = {}
             session.source_csv = None
             session.revision += 1
             session.error_message = None
             session.expires_at = _now() + timedelta(days=36500)
             await db.commit()
-        from core.account_sync import pull_after_import
-        await pull_after_import(user_id)
+        await _pull_committed_import(session_id, user_id)
     except ImportCancelled:
         async with maker() as db:
             session = (await db.execute(select(NetflixImportSession).where(
@@ -1042,3 +1042,56 @@ async def resume_incomplete_netflix_imports() -> int:
             asyncio.create_task(_commit_session(session_id, user_id, key))
             resumed += 1
     return resumed
+
+
+async def _pull_committed_import(session_id: str, user_id: int) -> None:
+    """Keep the committed import's handoff pending until an account pull runs."""
+    from core.account_sync import ACTIVE, queue_account_pull, run_account_pull
+    from models.sync import SyncJob, SyncStatus
+    from fastapi import HTTPException
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as db:
+        session = (await db.execute(select(NetflixImportSession).where(
+            NetflixImportSession.id == session_id, NetflixImportSession.user_id == user_id,
+        ))).scalar_one_or_none()
+        if not session or not (session.result or {}).get("pull_pending"):
+            return
+        previous_id = session.result.get("pull_job_id")
+        previous = await db.get(SyncJob, previous_id) if previous_id else None
+        if previous and previous.status in ACTIVE:
+            return
+        if previous and (previous.status == SyncStatus.completed or (previous.stats or {}).get("reconciled")):
+            session.result = {**session.result, "pull_pending": False}
+            await db.commit()
+            return
+        try:
+            job = await queue_account_pull(db, user_id)
+        except HTTPException as error:
+            await db.rollback()
+            if error.status_code in (400, 409):
+                return  # Retry after the active cycle or connection setup.
+            raise
+        session.result = {**session.result, "pull_job_id": job.id}
+        await db.commit()
+    await run_account_pull(user_id, job.id)
+    async with maker() as db:
+        session = await db.get(NetflixImportSession, session_id)
+        job = await db.get(SyncJob, job.id)
+        if session and job and (job.status == SyncStatus.completed or (job.stats or {}).get("reconciled")):
+            session.result = {**session.result, "pull_pending": False}
+            await db.commit()
+
+
+async def retry_committed_import_pulls() -> int:
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as db:
+        pending = (await db.execute(select(NetflixImportSession.id, NetflixImportSession.user_id).where(
+            NetflixImportSession.status == "committed",
+            NetflixImportSession.result["pull_pending"].as_boolean().is_(True),
+        ))).all()
+    for session_id, user_id in pending:
+        try:
+            await _pull_committed_import(session_id, user_id)
+        except Exception:
+            continue
+    return len(pending)

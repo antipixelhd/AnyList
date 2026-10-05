@@ -599,6 +599,11 @@ async def _remove_stale_collection_files(
         )
         return set()
 
+    from core.sync_reconciliation import collecting
+    state = collecting(user_id)
+    if state:
+        state.collection_removals.append((connection_id, source, set(), set(seen_source_ids)))
+        return {media_id for _, media_id in stale}
     removed_media_ids: set[int] = set()
     for collection_file, media_id in stale:
         collection_id = collection_file.collection_id
@@ -740,6 +745,10 @@ async def sync_items(
     full_resync: bool = False,
 ) -> list[dict]:  # returns warnings
     items = _expand_multi_episode_items(items, media_type, source)
+    from core.sync_reconciliation import collecting
+    collection_stage = collecting(user_id) if sync_collection and connection_id else None
+    if collection_stage:
+        sync_collection = False
     print(f"  Syncing {len(items)} {media_type.value}s from {source.value}...")
 
     # ── Phase 1: Pre-load existing data (replaces all N+1 queries) ────────────
@@ -991,23 +1000,26 @@ async def sync_items(
 
                 # Detect re-match: same Plex ratingKey but TMDB ID changed.
                 # Evict the stale CollectionFile so the item is re-processed below.
-                if file_entry and tmdb_id and sync_collection:
+                if file_entry and tmdb_id and (sync_collection or collection_stage):
                     _, _existing_media_id, _existing_media = file_entry
                     if _existing_media.tmdb_id is not None and _existing_media.tmdb_id != tmdb_id:
                         stale_file = file_entry[0]
                         stale_collection_id = stale_file.collection_id
-                        await db.delete(stale_file)
-                        await db.flush()
-                        remaining_q = await db.execute(
-                            select(func.count(CollectionFile.id)).where(
-                                CollectionFile.collection_id == stale_collection_id
+                        if collection_stage:
+                            collection_stage.collection_deleted.add(stale_file.id)
+                        else:
+                            await db.delete(stale_file)
+                            await db.flush()
+                            remaining_q = await db.execute(
+                                select(func.count(CollectionFile.id)).where(
+                                    CollectionFile.collection_id == stale_collection_id
+                                )
                             )
-                        )
-                        if remaining_q.scalar() == 0:
-                            stale_coll = await db.get(Collection, stale_collection_id)
-                            if stale_coll:
-                                await db.delete(stale_coll)
-                                existing_coll_by_media_id.pop(_existing_media_id, None)
+                            if remaining_q.scalar() == 0:
+                                stale_coll = await db.get(Collection, stale_collection_id)
+                                if stale_coll:
+                                    await db.delete(stale_coll)
+                                    existing_coll_by_media_id.pop(_existing_media_id, None)
                         existing_files.pop((source_id, episode_num), None)
                         files_by_media_source.pop((_existing_media_id, source), None)
                         file_entry = None
@@ -1361,6 +1373,15 @@ async def sync_items(
             # Savepoint committed, so queue the collection's add-date only now:
             # an item that rolled back must not leave a heal behind for work
             # that was undone.
+            if collection_stage and media_id_for_watch is not None:
+                collection_stage.collection_files[(connection_id, media_id_for_watch, source_id)] = (
+                    connection_id, media_id_for_watch, source_id, source, added_at, dict(quality))
+                if media_id_for_watch not in existing_coll_by_media_id and new_collected_ids is not None:
+                    new_collected_ids.add(media_id_for_watch)
+                if media_id_for_watch not in existing_coll_by_media_id:
+                    stat_key = "movies" if media_type == MediaType.movie else "series" if media_type == MediaType.series else "episodes"
+                    stats[stat_key] = stats.get(stat_key, 0) + 1
+                    existing_coll_by_media_id[media_id_for_watch] = -1  # Staged, allocated at reconciliation.
             if heal_collection_id is not None and added_at is not None:
                 queued = collection_heals.get(heal_collection_id)
                 if queued is None or added_at < queued:
@@ -1735,6 +1756,7 @@ async def _push_watched_back_to_source(
     user_id: int,
     conn: MediaServerConnection,
     push_back: dict[int, str],
+    *, require_success: bool = False,
 ) -> int:
     """Push Scrob's existing watched state to ``conn`` for items that just
     appeared in its library (#420): something marked watched in Scrob before it
@@ -1780,6 +1802,7 @@ async def _push_watched_back_to_source(
     all_media_ids = {media_id for media_ids in by_source_id.values() for media_id in media_ids}
     watched_at_by_media = await db_queries.latest_watched_at(db, user_id, list(all_media_ids))
     sem = asyncio.Semaphore(20)
+    failures = []
 
     async def _push_one(source_id: str, media_ids: set[int]) -> bool:
         async with sem:
@@ -1787,21 +1810,30 @@ async def _push_watched_back_to_source(
                 if not media_ids or not media_ids.issubset(watched_at_by_media):
                     return False
                 if conn.type == "plex":
-                    return await outbound_sync.push_plex_watched_and_record(conn, source_id, user_id, min(media_ids))
+                    ok = await outbound_sync.push_plex_watched_and_record(conn, source_id, user_id, min(media_ids))
+                    if ok is False:
+                        failures.append(source_id)
+                    return ok
                 # Registered before the call so the server's UserDataSaved echo
                 # can't beat it (#247/#251).
                 for media_id in media_ids:
                     watch_echo.mark_pushed_watched(user_id, media_id)
                 push = jellyfin.mark_watched if conn.type == "jellyfin" else emby.mark_watched
                 dates = [watched_at_by_media[media_id] for media_id in media_ids if watched_at_by_media[media_id] is not None]
-                return await push(
+                ok = await push(
                     conn.url, conn.token, conn.server_user_id, source_id,
                     played_at=max(dates) if dates else None,
                 )
+                if ok is False:
+                    failures.append(source_id)
+                return ok
             except Exception:
+                failures.append(source_id)
                 return False
 
     results = await asyncio.gather(*[_push_one(sid, mids) for sid, mids in by_source_id.items()])
+    if require_success and failures:
+        raise RuntimeError("Watched-state delivery is pending retry")
     return sum(1 for ok in results if ok)
 
 
@@ -3381,6 +3413,12 @@ async def _remove_stream_collection_sources(
     removed_media_ids: set[int] = set()
     expected = complete_snapshot_source_ids
     explicit = {f"{connection_id}:{content_id}" for content_id in removed_ids}
+    from core.sync_reconciliation import collecting
+    state = collecting(user_id)
+    if state:
+        state.collection_removals.append((connection_id, source, explicit, expected))
+        return {media_id for row, media_id in result.all()
+                if row.source_id in explicit or (expected is not None and row.source_id not in expected)}
     for collection_file, media_id in result.all():
         should_remove = collection_file.source_id in explicit
         if expected is not None and collection_file.source_id not in expected:

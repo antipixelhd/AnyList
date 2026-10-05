@@ -163,8 +163,8 @@ async def _run_provider(user_id: int, job_id: int) -> None:
 
 
 async def run_account_pull(user_id: int, job_id: int) -> None:
-    from core.pull_cycle import allow_cycle_delivery, coordinated_pull_cycle
-    from core.scheduler import _flush_pull_cycle
+    from core.pull_cycle import coordinated_pull_cycle
+    from core.sync_delivery import deliver_cycle
     from core.sync_jobs import mark_job_running_unless_cancelled
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -186,16 +186,18 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
             results = await asyncio.gather(*(_run_provider(user_id, child_id) for child_id in children), return_exceptions=True)
             failed = any(isinstance(result, BaseException) for result in results)
             async with factory() as db:
-                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(current_step="Reconciling and delivering changes"))
+                # Cancellation and closing its window serialize on this row.
+                parent = (await db.execute(select(SyncJob).where(SyncJob.id == job_id).with_for_update())).scalar_one()
+                cancelled = bool((parent.stats or {}).get("cancel_requested"))
+                if not cancelled:
+                    parent.stats = {**(parent.stats or {}), "phase": "reconciling"}
+                    parent.current_step = "Reconciling and delivering changes"
                 await db.commit()
-            async with factory() as db:
-                parent = await db.get(SyncJob, job_id)
-                if not (parent.stats or {}).get("cancel_requested"):
-                    await finalize(db, reconciliation, state)
+                if not cancelled:
+                    await finalize(db, reconciliation, state, job_id=job_id)
                     reconciled = True
             if reconciled:
-                with allow_cycle_delivery(state):
-                    await _flush_pull_cycle(state)
+                await deliver_cycle(user_id, job_id, factory, state)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -229,10 +231,11 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
                 if failed:
                     # A failed shared reconcile must be retried even if the
                     # provider fetch itself had already saved a checkpoint.
-                    for child_id in children:
-                        child = await db.get(SyncJob, child_id)
-                        if child and child.stats and "provider_checkpoint" in child.stats:
-                            child.stats = {key: value for key, value in child.stats.items() if key != "provider_checkpoint"}
+                    if not reconciled:
+                        for child_id in children:
+                            child = await db.get(SyncJob, child_id)
+                            if child and child.stats and "provider_checkpoint" in child.stats:
+                                child.stats = {key: value for key, value in child.stats.items() if key != "provider_checkpoint"}
                     parent.error_message = "Some providers or outbound delivery failed; see provider jobs"
                 await db.commit()
 
@@ -242,7 +245,11 @@ async def run_account_pull(user_id: int, job_id: int) -> None:
 
 async def request_cycle_cancel(db, parent: SyncJob) -> None:
     """Keep admission locked until cancelled children have actually stopped."""
+    parent = (await db.execute(select(SyncJob).where(SyncJob.id == parent.id).with_for_update()
+                              .execution_options(populate_existing=True))).scalar_one()
     stats = parent.stats or {}
+    if stats.get("phase") == "reconciling" or parent.status not in ACTIVE:
+        raise HTTPException(409, "Sync is already reconciling and cannot be cancelled")
     parent.stats = {**stats, "cancel_requested": True}
     await db.execute(update(SyncJob).where(SyncJob.id.in_(stats.get("child_job_ids", [])),
                                          SyncJob.status.in_(ACTIVE)).values(status=SyncStatus.cancelled))

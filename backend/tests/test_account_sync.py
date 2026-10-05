@@ -77,8 +77,8 @@ class AccountSyncRulesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tasks.tasks[0].args, (7, 42))
 
     async def test_cancel_keeps_parent_active_until_workers_stop(self):
-        parent = SimpleNamespace(status=SyncStatus.running, stats={"child_job_ids": [3, 4]})
-        db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+        parent = SimpleNamespace(id=2, status=SyncStatus.running, stats={"child_job_ids": [3, 4]})
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: parent)), commit=AsyncMock())
         await account_sync.request_cycle_cancel(db, parent)
         self.assertEqual(parent.status, SyncStatus.running)
         self.assertTrue(parent.stats["cancel_requested"])

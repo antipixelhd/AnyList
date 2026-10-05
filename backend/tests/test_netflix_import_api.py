@@ -692,13 +692,15 @@ class NetflixCommitSyncTests(unittest.IsolatedAsyncioTestCase):
             "source_episodes", "episodes", "partial_shows", "duplicates", "inferred_episodes", "skipped",
             "unmatched", "cutoff_exclusions", "partial_progress", "excluded_rows", "guessed_episodes",
             "discarded_episodes", "covered_episodes", "errors")}
-        async def sync(user_id):
+        async def sync(session_id, user_id):
+            self.assertEqual(session_id, "import")
             self.assertEqual(user_id, 7)
             db.commit.assert_awaited_once()
             self.assertEqual(session.status, "committed")
         with patch.object(netflix_sessions, "async_sessionmaker", return_value=lambda: db), \
              patch.object(netflix_sessions, "_apply_import", AsyncMock(return_value=stats)), \
-             patch("core.account_sync.pull_after_import", AsyncMock(side_effect=sync)) as pull:
+             patch.object(netflix_sessions, "_pull_committed_import", AsyncMock(side_effect=sync)) as pull:
             await netflix_sessions._commit_session("import", 7, "receipt")
             await netflix_sessions._commit_session("import", 7, "receipt")
-        pull.assert_awaited_once_with(7)
+        pull.assert_awaited_once_with("import", 7)
+        self.assertTrue(session.result["pull_pending"])
