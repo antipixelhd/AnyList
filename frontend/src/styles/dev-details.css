@@ -142,7 +142,10 @@
 .lab-related,.lab-similar { grid-column: 1 / -1; }
 .lab-inline-facts { display: none; }
 .lab-module { min-width: 0; }
-.lab-in-view { animation: lab-rise .45s ease both; }
+.lab-scroll-reveal { translate: 0 var(--lab-reveal-y, 0px); opacity: var(--lab-reveal-opacity, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .lab-scroll-reveal { translate: none; opacity: 1; }
+}
 .lab-section-title { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 16px; }
 .lab-section-title > span { font-size: 1.1rem; color: var(--lab-muted); }
 .lab-story > p { color: var(--text); font-size: 1.4rem; line-height: 1.9; max-width: 66ch; }

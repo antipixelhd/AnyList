@@ -1,4 +1,5 @@
 import type {DetailSample, SampleKey} from './detail-fixtures';
+import {initializeScrollMotion} from './detail-scroll-motion';
 
 type PreviewState = {progress: number; status: string; rating: string; seasonScores: (number | null)[]; useSeasonAverage: boolean; library: boolean; favorite: boolean; note: string; watched: string[]; spoilers: boolean; season: number};
 type QuickRate = (detail: {title: string; poster?: string; score: number | null; ratingMode: 'manual' | 'average'; onScore: (score: number | null) => void}) => void;
@@ -231,14 +232,7 @@ function initializeDetails() {
   });
   noteInput.value = state.note;
   render();
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    // Introduce initial content only; scrolling should never restart a fade
-    // from transparent after a module has already entered the viewport.
-    root.querySelectorAll('.lab-module').forEach(el => {
-      const bounds = el.getBoundingClientRect();
-      if (bounds.top < innerHeight && bounds.bottom > 0) el.classList.add('lab-in-view');
-    });
-  }
+  initializeScrollMotion(root, signal);
   document.addEventListener('astro:before-swap',() => {listeners?.abort();clearTimeout(toastTimer);},{once:true,signal});
 }
 
