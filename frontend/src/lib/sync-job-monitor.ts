@@ -9,6 +9,7 @@ interface JobWatch {
   jobId?: number;
   recentMs?: number;
   hideMs?: number;
+  persistent?: boolean;
 }
 
 interface WatchState {
@@ -44,7 +45,10 @@ export function createSyncJobMonitor(token: string) {
     for (const [key, state] of watches) {
       if (state.expiresAt !== undefined && state.expiresAt <= Date.now()) {
         state.options.render(null);
-        watches.delete(key);
+        if (state.options.persistent) {
+          state.expiresAt = undefined;
+          state.trackedId = undefined;
+        } else watches.delete(key);
       }
     }
   }
@@ -109,7 +113,7 @@ export function createSyncJobMonitor(token: string) {
         options.onDone?.();
       } else {
         options.render(null);
-        watches.delete(key);
+        if (!options.persistent) watches.delete(key);
       }
     }
   }

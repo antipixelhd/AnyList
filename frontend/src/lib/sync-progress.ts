@@ -1,5 +1,4 @@
 import type { SyncJob } from "./api";
-import { wireCancelButton } from "./sync-controls.ts";
 
 const colors = {
   simkl: "bg-blue-600",
@@ -37,7 +36,6 @@ export function createSyncProgressRenderer(
     const label = document.getElementById(`${prefix}-label`);
     const items = document.getElementById(`${prefix}-items`);
     const status = isImport ? document.getElementById(`${prefix}-status`) : null;
-    const cancel = isImport ? null : document.querySelector<HTMLButtonElement>(`#${prefix}-cancel`);
     const operation = isImport || (widget === "trakt" && job.job_type === "import")
       ? "Import" : widget === "bingebase" || job.job_type === "push" ? "Push" : "Pull";
     const color = widget === "simkl" && job.job_type === "push" ? "bg-amber-500" : colors[widget];
@@ -46,7 +44,6 @@ export function createSyncProgressRenderer(
     const cancelled = job.status === "cancelled";
     const completed = job.status === "completed";
     if (failed || cancelled || completed) {
-      cancel?.classList.add("hidden");
       if (bar) {
         bar.className = `${baseClass} ${completed ? color : "bg-red-500"}`;
         bar.style.width = "100%";
@@ -59,7 +56,6 @@ export function createSyncProgressRenderer(
       return;
     }
 
-    wireCancelButton(cancel, job, token, onError);
     const pct = job.total_items > 0 ? Math.min(100, Math.round(job.processed_items / job.total_items * 100)) : 0;
     const pending = job.status === "pending";
     const indeterminate = pending || pct === 0;

@@ -83,18 +83,15 @@ test('provider summaries preserve their distinct counts and labels', t => {
   }
 });
 
-test('provider cancellation stays requested across progress updates and hides at termination', async t => {
+test('provider progress never exposes an independent cancellation action', async t => {
   const ui = controls(t, 'trakt');
   let requests = 0;
   t.mock.method(globalThis, 'fetch', async () => { requests++; return new Response(null, { status: 204 }); });
   const render = createSyncProgressRenderer('trakt', 'token', () => {});
   render(job());
-  await ui.cancel.onclick();
   render(job({ processed_items: 6 }));
-  assert.equal(ui.cancel.disabled, true);
-  assert.equal(ui.cancel.textContent, 'Cancelling…');
-  await ui.cancel.onclick();
-  assert.equal(requests, 1);
+  assert.equal(ui.cancel.onclick, null);
+  assert.equal(requests, 0);
   render(job({ status: 'cancelled' }));
   assert.equal(ui.label.textContent, 'Pull cancelled');
   assert.equal(ui.items.textContent, '');

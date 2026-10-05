@@ -100,6 +100,7 @@
       trigger.setAttribute('aria-haspopup', 'listbox');
       trigger.setAttribute('aria-expanded', 'false');
       trigger.style.padding = computed.padding;
+      trigger.style.paddingRight = '36px';
       trigger.style.borderRadius = computed.borderRadius;
       trigger.style.fontFamily = computed.fontFamily;
       trigger.style.fontSize = computed.fontSize;
@@ -113,6 +114,7 @@
       const chevron = document.createElement('span');
       chevron.className = 'tracker-select-chevron';
       chevron.setAttribute('aria-hidden', 'true');
+      chevron.innerHTML = '<svg viewBox="0 0 448 512" fill="currentColor"><path d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 54.6 137.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z"/></svg>';
       trigger.append(value, chevron);
       const menu = document.createElement('div');
       menu.id = `tracker-select-menu-${nextId}`;
