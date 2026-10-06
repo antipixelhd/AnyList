@@ -10,6 +10,7 @@
 @media (max-width: 1040px) {
   .dev-topbar, body:has([data-dev-navigation]) .lab-workbench { display: none; }
   .dev-floating-navigation { display: block; }
+  .dev-floating-navigation :is(a,button) { -webkit-tap-highlight-color: transparent; }
   .dev-navigation-trigger, .dev-navigation-panel {
     position: fixed;
     inset: auto max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) auto;
@@ -19,7 +20,7 @@
     box-shadow: 0 8px 32px rgb(0 0 0 / 18%);
     color: #8599a8;
   }
-  .dev-navigation-trigger { z-index: 80; display: grid; place-items: center; width: 64px; height: 64px; color: var(--blue); transition: color .16s ease, background-color .16s ease, opacity .16s ease; }
+  .dev-navigation-trigger { z-index: 80; display: grid; place-items: center; width: 64px; height: 64px; color: var(--blue); transition: color .1s ease, opacity .1s ease; }
   .dev-menu-lines { display: grid; gap: 6px; width: 30px; }
   .dev-menu-lines > span { height: 4px; border-radius: 1px; background: currentColor; }
   .dev-floating-navigation:has(:popover-open) .dev-navigation-trigger { opacity: 0; pointer-events: none; }
@@ -32,24 +33,24 @@
     padding: 14px;
     font-family: var(--font-navigation);
     opacity: 0;
-    transform: translateY(6px) scale(.985);
+    transform: translateY(4px) scale(.99);
     transform-origin: bottom right;
-    transition: opacity .18s ease, transform .18s cubic-bezier(.2,.7,.2,1), display .18s allow-discrete, overlay .18s allow-discrete;
+    transition: opacity .12s ease-out, transform .12s cubic-bezier(.2,.7,.2,1), display .12s allow-discrete, overlay .12s allow-discrete;
   }
   .dev-navigation-panel:popover-open { opacity: 1; transform: translateY(0) scale(1); }
-  @starting-style { .dev-navigation-panel:popover-open { opacity: 0; transform: translateY(6px) scale(.985); } }
+  @starting-style { .dev-navigation-panel:popover-open { opacity: 0; transform: translateY(4px) scale(.99); } }
   .dev-navigation-panel::backdrop { background: transparent; }
   .dev-navigation-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 2px; }
-  .dev-navigation-grid > :is(a,button) { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 86px; min-width: 0; padding: 10px 3px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 1.25rem; transition: color .16s ease, background-color .16s ease; }
+  .dev-navigation-grid > :is(a,button) { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 86px; min-width: 0; padding: 10px 3px; border: 0; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 1.25rem; transition: color .1s ease; }
   .dev-navigation-grid .ui-icon { font-size: 28px; line-height: 1; }
   .dev-navigation-bottom { margin-top: 6px; }
-  .dev-navigation-panel :is(a,button):hover, .dev-navigation-trigger:hover { color: var(--blue); background-color: rgb(61 180 242 / 6%); }
+  .dev-navigation-panel :is(a,button):is(:hover,:active), .dev-navigation-trigger:hover { color: var(--blue); }
   .dev-floating-navigation :is(a,button):focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; color: var(--blue); }
   .dev-navigation-options { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgb(133 153 168 / 12%); }
   .dev-navigation-options h2 { margin: 0 8px 6px; color: var(--muted); font-size: 1.1rem; font-weight: 500; }
   .dev-navigation-options > div { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 3px; }
   .dev-navigation-options a { display: grid; place-items: center; min-height: 44px; padding: 7px 4px; border-radius: 4px; font-size: 1.2rem; text-align: center; }
-  .dev-navigation-panel a[aria-current] { color: var(--blue); background: rgb(61 180 242 / 8%); }
+  .dev-navigation-panel a[aria-current] { color: var(--blue); }
   .dev-navigation-media > div { grid-template-columns: repeat(4, minmax(0,1fr)); }
   .dev-navigation-lab { display: flex; gap: 4px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgb(133 153 168 / 12%); }
   .dev-navigation-lab > :is(a,button) { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 7px 10px; border: 0; border-radius: 4px; color: inherit; background: transparent; font: inherit; font-size: 1.1rem; }
