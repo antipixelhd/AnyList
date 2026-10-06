@@ -71,7 +71,6 @@ frontend/frontend.log
 *.sqlite3
 
 # --- Common AI files ---
-.agents/
 .codex/
 backend/data/avatars/
 backend/data/image_cache/
@@ -79,8 +78,6 @@ backend/data/*.pem
 backend/data/anylist_nuvio_sync_client_id*
 GEMINI.md
 CLAUDE.md
-AGENTS.md
-!/AGENTS.md
 copilot-instructions.md
 .claude/
 
