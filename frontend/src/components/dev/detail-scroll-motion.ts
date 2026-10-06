@@ -1,18 +1,16 @@
-// Introduce offscreen modules once, without making readers wait for content.
+// Replay the short entrance only after a module has fully left the viewport.
 export function initializeScrollMotion(root: HTMLElement, signal: AbortSignal) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   if (reduced.matches || signal.aborted) return;
   const mobile = matchMedia('(max-width: 650px), (pointer: coarse)');
   const pending = new Map<HTMLElement, Animation | null>();
   const entrances: Animation[] = [];
+  const modules = [...root.querySelectorAll<HTMLElement>('.lab-module')];
   let frame = 0;
-  let lastY = scrollY;
-  let lastScrollAt = performance.now();
-  let fastUntil = 0;
 
   const viewport = () => {
     const view = window.visualViewport;
-    return {bottom: view ? view.offsetTop + view.height : innerHeight, height: view?.height ?? innerHeight};
+    return {top: view?.offsetTop ?? 0, bottom: view ? view.offsetTop + view.height : innerHeight};
   };
   const complete = (element: HTMLElement) => {
     pending.get(element)?.cancel();
@@ -21,20 +19,20 @@ export function initializeScrollMotion(root: HTMLElement, signal: AbortSignal) {
   };
   const start = (element: HTMLElement) => {
     const animation = element.animate([
-      {opacity: mobile.matches ? 1 : 0, translate: `0 ${mobile.matches ? 2 : 6}px`},
+      {opacity: .2, translate: `0 ${mobile.matches ? 8 : 12}px`},
       {opacity: 1, translate: '0 0'},
-    ], {duration: mobile.matches ? 160 : 340, easing: 'cubic-bezier(.2,.65,.3,1)', fill: 'both'});
+    ], {duration: 260, easing: 'cubic-bezier(.25,.1,.25,1)', fill: 'both'});
     pending.set(element, animation);
     animation.addEventListener('finish', () => complete(element), {once: true});
   };
 
-  root.querySelectorAll<HTMLElement>('.lab-module').forEach(element => {
+  modules.forEach(element => {
     const bounds = element.getBoundingClientRect();
     if (element.getClientRects().length && bounds.top < viewport().bottom) {
       if (bounds.bottom > 0) entrances.push(element.animate([
         {opacity: 0, transform: 'translateY(7px)'},
         {opacity: 1, transform: 'translateY(0)'},
-      ], {duration: 450, easing: 'ease'}));
+      ], {duration: 260, easing: 'ease'}));
       return;
     }
     // Set the starting appearance BEFORE entry, rather than resetting an
@@ -45,39 +43,41 @@ export function initializeScrollMotion(root: HTMLElement, signal: AbortSignal) {
 
   const update = () => {
     frame = 0;
-    const {bottom, height} = viewport();
-    const lead = mobile.matches ? 0 : 16;
-    const readingBoundary = bottom - Math.min(mobile.matches ? 64 : 128, height * .18);
-    const fast = performance.now() < fastUntil;
+    const {top: viewportTop, bottom} = viewport();
     // Batch position reads before starting/cancelling animations. Use the
     // unshifted box, so the entrance itself cannot move its trigger point.
-    const positions = [...pending].map(([element, animation]) => {
+    const positions = modules.map(element => {
+      const animation = pending.get(element);
       const visible = !!element.getClientRects().length;
       const shift = parseFloat(getComputedStyle(element).translate.split(' ')[1]) || 0;
-      return {element, animation, visible, top: element.getBoundingClientRect().top - shift};
+      const bounds = element.getBoundingClientRect();
+      return {element, animation, visible, top: bounds.top - shift, bottom: bounds.bottom - shift};
     });
-    for (const {element, animation, visible, top} of positions) {
+    for (const {element, animation, visible, top, bottom: moduleBottom} of positions) {
       if (!visible) {
         if (animation) complete(element);
         continue;
       }
-      if (top > bottom + lead) continue;
-      // Jumping to an anchor, flinging, or reaching the reading area should
-      // expose content immediately, even if its fade has not finished yet.
-      if (fast || top <= readingBoundary) {complete(element);continue;}
+      // Rearm only offscreen, so a partly visible module never flashes or
+      // restarts. Keep focused controls readable even if scrolled out of view.
+      if (moduleBottom <= viewportTop || top >= bottom) {
+        if (element.matches(':focus-within')) {complete(element);continue;}
+        if (animation || !pending.has(element)) {
+          complete(element);
+          element.classList.add('lab-scroll-reveal');
+          pending.set(element, null);
+        }
+        continue;
+      }
+      if (!pending.has(element)) continue;
+      // Start just inside the viewport so the fade happens on screen. Let the
+      // short animation finish even during a wheel step or swipe.
+      if (top > bottom - 24 || moduleBottom < viewportTop + 24) continue;
       if (!animation && !element.matches('[data-lab-pending], [data-lab-loading]')) start(element);
     }
   };
   const schedule = () => {
-    if (!frame && pending.size) frame = requestAnimationFrame(update);
-  };
-  const onScroll = () => {
-    const now = performance.now();
-    const elapsed = Math.max(16, Math.min(200, now - lastScrollAt));
-    if (Math.abs(scrollY - lastY) / elapsed * 1000 > 2400) fastUntil = now + 160;
-    lastY = scrollY;
-    lastScrollAt = now;
-    schedule();
+    if (!frame && modules.length && !reduced.matches && !signal.aborted) frame = requestAnimationFrame(update);
   };
   const finish = () => {
     cancelAnimationFrame(frame);
@@ -86,7 +86,7 @@ export function initializeScrollMotion(root: HTMLElement, signal: AbortSignal) {
     entrances.forEach(animation => animation.cancel());
   };
   update();
-  window.addEventListener('scroll', onScroll, {passive: true, signal});
+  window.addEventListener('scroll', schedule, {passive: true, signal});
   window.addEventListener('resize', schedule, {signal});
   window.visualViewport?.addEventListener('resize', schedule, {signal});
   window.visualViewport?.addEventListener('scroll', schedule, {passive: true, signal});
