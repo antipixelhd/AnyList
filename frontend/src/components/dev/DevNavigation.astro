@@ -1,0 +1,92 @@
+---
+import Icon from '../Icon.astro';
+import BrandMark from '../BrandMark.astro';
+import '../../styles/dev-navigation.css';
+
+interface NavigationItem { label: string; href: string; active: boolean }
+interface Props { designItems?: NavigationItem[]; mediaItems?: NavigationItem[] }
+const {designItems = [], mediaItems = []} = Astro.props;
+// /dev bypasses sessions. These links mirror the app bar without loading account
+// data or exposing account mutations in the fixture playground.
+const primaryItems = [
+  {label: 'Home', href: '/home', icon: 'home'},
+  {label: 'Movie/Series List', mobileLabel: 'Lists', href: '/login', icon: 'list'},
+  {label: 'Browse', href: '/browse', icon: 'browse'},
+];
+const accountItems = [
+  {label: 'Search', href: '/search', icon: 'search'},
+  {label: 'Profile', href: '/login', icon: 'user'},
+  {label: 'Notifications', href: '/recent-events', icon: 'bell'},
+  {label: 'Settings', href: '/user-settings', icon: 'gear'},
+];
+const details = Astro.url.pathname === '/dev/details';
+---
+<header class="dev-topbar">
+  <div class="dev-topbar-inner">
+    <a href="/dev" aria-label="AnyList development home"><BrandMark size={34}/></a>
+    <nav aria-label="Main navigation">{primaryItems.map(item => <a href={item.href}>{item.label}</a>)}</nav>
+    <nav class="dev-account-nav" aria-label="Account navigation">
+      {accountItems.map(item => <a href={item.href} aria-label={item.label}><Icon name={item.icon}/></a>)}
+      <a href="/login">Sign in</a>
+    </nav>
+  </div>
+</header>
+<div class="dev-floating-navigation" data-dev-navigation>
+  <button class="dev-navigation-trigger" type="button" popovertarget="dev-navigation-panel" aria-controls="dev-navigation-panel" aria-expanded="false" aria-label="Open navigation">
+    <span class="dev-menu-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+  </button>
+  <div id="dev-navigation-panel" class="dev-navigation-panel" popover="auto" aria-label="Navigation">
+    <nav class="dev-navigation-grid" aria-label="Main navigation">
+      {primaryItems.map(item => <a href={item.href}><Icon name={item.icon}/><span>{'mobileLabel' in item ? item.mobileLabel : item.label}</span></a>)}
+      {accountItems.slice(0,3).map(item => <a href={item.href}><Icon name={item.icon}/><span>{item.label}</span></a>)}
+    </nav>
+    {designItems.length > 0 && <nav class="dev-navigation-options" aria-label="Design concept"><h2>Design</h2><div>{designItems.map(item => <a href={item.href} aria-current={item.active ? 'page' : undefined}>{item.label}</a>)}</div></nav>}
+    {mediaItems.length > 0 && <nav class="dev-navigation-options dev-navigation-media" aria-label="Sample media"><h2>Media</h2><div>{mediaItems.map(item => <a href={item.href} aria-current={item.active ? 'page' : undefined}>{item.label}</a>)}</div></nav>}
+    <nav class="dev-navigation-lab" aria-label="Development pages">
+      <a href="/dev/details" aria-current={details ? 'page' : undefined}>Details</a>
+      <a href="/dev/cards" aria-current={!details ? 'page' : undefined}>Cards</a>
+      {details && <button type="button" data-dev-navigation-notes><Icon name="sliders"/><span>Design notes</span></button>}
+    </nav>
+    <nav class="dev-navigation-grid dev-navigation-bottom" aria-label="Account and menu controls">
+      <a href="/user-settings"><Icon name="gear"/><span>Settings</span></a>
+      <a href="/login"><Icon name="user"/><span>Sign in</span></a>
+      <button type="button" popovertarget="dev-navigation-panel" popovertargetaction="hide" aria-label="Close navigation"><Icon name="close"/><span>Close</span></button>
+    </nav>
+  </div>
+</div>
+<script>
+  let listeners: AbortController | undefined;
+  function initializeNavigation() {
+    listeners?.abort();
+    const root = document.querySelector<HTMLElement>('[data-dev-navigation]');
+    const panel = root?.querySelector<HTMLElement>('[popover]');
+    const trigger = root?.querySelector<HTMLButtonElement>('.dev-navigation-trigger');
+    if (!root || !panel || !trigger) return;
+    listeners = new AbortController();
+    const {signal} = listeners;
+    const mobile = matchMedia('(max-width: 1040px)');
+    panel.addEventListener('toggle', () => {
+      const open = panel.matches(':popover-open');
+      trigger.setAttribute('aria-expanded', String(open));
+      trigger.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+      if (open && document.activeElement === trigger) panel.querySelector<HTMLAnchorElement>('a')?.focus({preventScroll: true});
+    }, {signal});
+    root.querySelector('[data-dev-navigation-notes]')?.addEventListener('click', () => {
+      panel.hidePopover();
+      document.querySelector<HTMLButtonElement>('.lab-workbench [data-lab-action="notes"]')?.click();
+    }, {signal});
+    panel.addEventListener('click', event => {
+      if ((event.target as Element).closest('a')) panel.hidePopover();
+    }, {signal});
+    mobile.addEventListener('change', () => {
+      if (!mobile.matches) {
+        const focused = root.contains(document.activeElement);
+        panel.hidePopover();
+        if (focused) document.querySelector<HTMLAnchorElement>('.dev-topbar a')?.focus({preventScroll: true});
+      }
+    }, {signal});
+    document.addEventListener('astro:before-swap', () => panel.hidePopover(), {signal});
+  }
+  initializeNavigation();
+  document.addEventListener('astro:page-load', initializeNavigation);
+</script>

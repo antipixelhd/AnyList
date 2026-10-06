@@ -1,5 +1,6 @@
 ---
 import Tracker from '../../layouts/Tracker.astro';
+import DevNavigation from '../../components/dev/DevNavigation.astro';
 import Icon from '../../components/Icon.astro';
 import DetailHeading from '../../components/dev/DetailHeading.astro';
 import DetailTracking from '../../components/dev/DetailTracking.astro';
@@ -24,6 +25,10 @@ const item = kind === 'game' ? {...samples.game, gameReviews: gameReviewSamples[
 const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}${m === 'game' ? `&offer=${offer}&reviews=${reviews}` : ''}`;
 ---
 <Tracker title={`${item.title} · ${concept.name}`}>
+  <DevNavigation slot="navigation"
+    designItems={concepts.map(option => ({label: option.name, href: href(option.id,kind), active: design === option.id}))}
+    mediaItems={Object.entries(samples).map(([id,sample]) => ({label: sample.kind === 'Movie' ? 'Movies' : sample.kind === 'Game' ? 'Games' : sample.kind === 'Book' ? 'Books' : 'Series', href: href(design,id), active: kind === id}))}
+  />
   <div class:list={['detail-lab', `concept-${design}`, {'concept-marquee': design === 'marquee-25' || design === 'marquee-27', 'concept-marquee-25': design === 'marquee-27'}]} data-detail-lab data-media-kind={kind}>
     <div class="lab-workbench"><div class="lab-workbench-inner"><nav aria-label="Design concept" class="lab-concept-switch">{concepts.map(option => <a href={href(option.id,kind)} aria-current={design === option.id ? 'page' : undefined}><span>{option.number}</span> {option.label ?? option.name}</a>)}</nav><nav aria-label="Sample media" class="lab-media-switch">{Object.entries(samples).map(([id,sample]) => <a href={href(design,id)} aria-current={kind === id ? 'page' : undefined}>{sample.kind === 'Movie' ? 'Movies' : sample.kind === 'Game' ? 'Games' : sample.kind === 'Book' ? 'Books' : 'Series'}</a>)}</nav><button class="lab-notes-trigger" type="button" data-lab-action="notes" aria-label="Design notes"><Icon name="sliders"/><span>Design notes</span></button></div></div>
     <div class="lab-hero"><img class="lab-hero-image" src={item.backdrop} alt="" fetchpriority="high"/><div class="lab-hero-shade"></div>
