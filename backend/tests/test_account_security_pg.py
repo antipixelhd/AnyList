@@ -14,6 +14,7 @@ from models.account_security import EmailChangeToken, OidcIdentity
 from models.email_activation import EmailActivation
 from models.password_reset import PasswordResetToken
 from models.profile import UserProfileData
+from models.tracking import TrackingPreferences
 from models.users import User
 from routers import admin, auth, oidc
 from test_oidc import ProviderClient
@@ -42,6 +43,7 @@ class AccountSecurityConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         for model in (
             User,
             UserProfileData,
+            TrackingPreferences,
             EmailChangeToken,
             OidcIdentity,
             EmailActivation,

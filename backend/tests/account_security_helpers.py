@@ -19,6 +19,7 @@ from models.account_security import EmailChangeToken, OidcIdentity
 from models.email_activation import EmailActivation
 from models.password_reset import PasswordResetToken
 from models.profile import UserProfileData
+from models.tracking import TrackingPreferences
 from models.users import User, TotpBackupCode
 from routers import admin, auth, oidc
 
@@ -30,6 +31,7 @@ class AccountSecurityCase(unittest.IsolatedAsyncioTestCase):
         for model in (
             User,
             UserProfileData,
+            TrackingPreferences,
             EmailActivation,
             PasswordResetToken,
             EmailChangeToken,

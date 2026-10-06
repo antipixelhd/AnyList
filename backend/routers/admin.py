@@ -2,6 +2,7 @@ from core import server_sync
 from core import security
 from core import arr_settings
 from core import settings_store
+from core.account_defaults import initialize_account_defaults
 import gzip
 import io
 import json
@@ -136,6 +137,8 @@ async def create_user(
     )
     db.add(user)
     try:
+        await db.flush()
+        initialize_account_defaults(db, user)
         await db.commit()
     except IntegrityError:
         await db.rollback()
