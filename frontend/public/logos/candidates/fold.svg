@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="302" height="287" viewBox="0 0 302 287" fill="none">
+  <defs>
+    <linearGradient id="cyan" x1="110" y1="12" x2="290" y2="275" gradientUnits="userSpaceOnUse"><stop stop-color="#38baf3"/><stop offset="1" stop-color="#2fb0ee"/></linearGradient>
+    <linearGradient id="fold" x1="132" y1="12" x2="95" y2="246" gradientUnits="userSpaceOnUse"><stop stop-color="#209cd4"/><stop offset=".6" stop-color="#2ab0ec"/><stop offset="1" stop-color="#30b4f0"/></linearGradient>
+  </defs>
+  <path fill="url(#cyan)" fill-rule="evenodd" d="M127 12H187C197 12 203 18 207 28L289 217Q291 222 287 220L200 179L214 209H97L84 239Q81 246 74 246H22C14 246 9 241 13 232L119 25Q123 15 127 12ZM158 85L122 159H191L158 85Z"/>
+  <path fill="url(#fold)" d="M119 25C124 14 130 12 136 24L158 85L122 159H191L200 179L214 209H97L84 239Q81 246 74 246H22C14 246 9 241 13 232L119 25Z"/>
+  <path fill="url(#cyan)" d="M212 211L287 246Q292 248 287 251L246 274Q241 277 238 270L212 211Z"/>
+</svg>

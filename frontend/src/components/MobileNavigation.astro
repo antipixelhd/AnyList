@@ -22,6 +22,7 @@ const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
   </button>
   <div id={panelId} class="mobile-navigation-panel" popover="auto" role="dialog" aria-label="Navigation">
     <div data-mobile-view="main">
+      <slot name="brand" />
       <nav class="mobile-navigation-grid" aria-label="Mobile main navigation">
         {items.map(item => <MobileItem item={item} quiet={quiet} attention={attention} notificationLabel={notificationLabel}/>)}
         {!extended && <button class="mobile-navigation-close" type="button" popovertarget={panelId} popovertargetaction="hide" aria-label="Close navigation"><Icon name="close"/><span>Close</span></button>}
