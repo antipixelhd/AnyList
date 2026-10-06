@@ -1,14 +1,13 @@
 import type {DetailSample, SampleKey} from './detail-fixtures';
+import {initializeScrollMotion} from './detail-scroll-motion';
 
 type PreviewState = {progress: number; status: string; rating: string; seasonScores: (number | null)[]; useSeasonAverage: boolean; library: boolean; favorite: boolean; note: string; watched: string[]; spoilers: boolean; season: number};
 type QuickRate = (detail: {title: string; poster?: string; score: number | null; ratingMode: 'manual' | 'average'; onScore: (score: number | null) => void}) => void;
 let listeners: AbortController | undefined;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
-let observer: IntersectionObserver | undefined;
 
 function initializeDetails() {
   listeners?.abort();
-  observer?.disconnect();
   clearTimeout(toastTimer);
   const root = document.querySelector<HTMLElement>('[data-detail-lab]');
   const fixture = document.querySelector('#lab-fixture');
@@ -233,15 +232,8 @@ function initializeDetails() {
   });
   noteInput.value = state.note;
   render();
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    observer = new IntersectionObserver(entries => entries.forEach(entry => {if (entry.isIntersecting) {entry.target.classList.add('lab-in-view');observer?.unobserve(entry.target);}}),{threshold:.05});
-    root.querySelectorAll('.lab-module').forEach(el => {
-      const bounds = el.getBoundingClientRect();
-      if (bounds.top < innerHeight && bounds.bottom > 0) el.classList.add('lab-in-view');
-      else observer!.observe(el);
-    });
-  }
-  document.addEventListener('astro:before-swap',() => {listeners?.abort();observer?.disconnect();clearTimeout(toastTimer);},{once:true,signal});
+  initializeScrollMotion(root, signal);
+  document.addEventListener('astro:before-swap',() => {listeners?.abort();clearTimeout(toastTimer);},{once:true,signal});
 }
 
 document.addEventListener('astro:page-load',initializeDetails);

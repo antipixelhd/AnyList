@@ -140,7 +140,11 @@
   white-space:normal
 }
 @media(max-width:650px) {
-  .quick-search-dialog {
-    display:none
+  .quick-search-dialog,.quick-search-dialog[data-combined=yes] {
+    inset:max(16px,env(safe-area-inset-top)) 0 auto;
+    width:calc(100vw - 28px);
+    height:auto;
+    max-height:calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom))
   }
+  .quick-search-results { max-height:calc(100dvh - 148px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 }

@@ -35,58 +35,17 @@
       userChevron?.style.removeProperty('transform');
     });
 
-    // ── Search inputs: land the caret at the end, not the start ────────────────
-    // Both boxes can already carry a value (the current query, prefilled on
-    // /search) when focused - by click, the "/" shortcut, or opening the
-    // mobile search bar - and a browser's default caret placement on focus is
-    // the start, not the end. setSelectionRange alone is unreliable here (a
-    // click's own native caret placement can win the race against it); a
-    // value reassignment always moves the caret to the end and, firing from
-    // this same focus handler, applies after that native placement.
-    document.querySelectorAll<HTMLInputElement>('#desktop-search-input, #mobile-search-input').forEach((input) => {
-      input.addEventListener('focus', () => {
-        const value = input.value;
-        input.value = '';
-        input.value = value;
-      });
+    // Keep the desktop search caret at the end of an existing query.
+    const desktopInput = document.getElementById('desktop-search-input') as HTMLInputElement | null;
+    desktopInput?.addEventListener('focus', () => {
+      const value = desktopInput.value;
+      desktopInput.value = '';
+      desktopInput.value = value;
     });
-
-    // ── Mobile search expand ───────────────────────────────────────────────────
-    const navDefault = document.getElementById('nav-default');
-    const navSearch = document.getElementById('nav-search');
-    const mobileSearchInput = document.getElementById('mobile-search-input') as HTMLInputElement | null;
-
-    document.getElementById('mobile-search-open')?.addEventListener('click', () => {
-      navDefault?.classList.add('hidden');
-      navSearch?.classList.remove('hidden');
-      navSearch?.classList.add('flex');
-      mobileSearchInput?.focus();
+    document.addEventListener('keydown', event => {
+      if (event.key !== '/' || ['INPUT','TEXTAREA'].includes((event.target as HTMLElement).tagName)) return;
+      event.preventDefault();
+      if (desktopInput?.checkVisibility()) desktopInput.focus();
+      else if (document.querySelector('[data-mobile-navigation]')) location.href = '/search';
     });
-
-    const closeSearch = () => {
-      navSearch?.classList.add('hidden');
-      navSearch?.classList.remove('flex');
-      navDefault?.classList.remove('hidden');
-    };
-
-    document.getElementById('mobile-search-close')?.addEventListener('click', closeSearch);
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !navSearch?.classList.contains('hidden')) {
-        closeSearch();
-        return;
-      }
-      if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
-        e.preventDefault();
-        const desktopInput = document.getElementById('desktop-search-input') as HTMLInputElement | null;
-        if (desktopInput && getComputedStyle(desktopInput).display !== 'none') {
-          desktopInput.focus();
-        } else if (navSearch) {
-          navDefault?.classList.add('hidden');
-          navSearch.classList.remove('hidden');
-          navSearch.classList.add('flex');
-          mobileSearchInput?.focus();
-        }
-      }
-    });
-  </script>
+</script>

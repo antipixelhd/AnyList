@@ -1,8 +1,8 @@
 ---
 import Icon from './Icon.astro';
-const { combineLists = true } = Astro.props;
+const { combineLists = true, hideTrigger = false } = Astro.props;
 ---
-<button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>
+{!hideTrigger && <button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>}
 <dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
   <h1 class="sr-only" id="quick-search-heading">Fast search</h1>
   <div class="quick-search-bar">
@@ -163,7 +163,6 @@ document.addEventListener('astro:page-load', () => {
     } finally { if (controller === current) { clearTimeout(progressTimer);progress?.classList.remove('visible');resultShell?.setAttribute('aria-busy','false'); } }
   }
   function open() {
-    if (matchMedia('(max-width:650px)').matches) return;
     clearTimeout(timer);
     clearTimeout(progressTimer);progress?.classList.remove('visible');
     controller?.abort();
@@ -202,6 +201,12 @@ document.addEventListener('astro:page-load', () => {
     }
   }, {signal: pageListeners.signal});
   dialog?.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); });
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    void closeDialog(dialog, 'cancel');
+  }, {signal: pageListeners.signal});
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); });
   input?.addEventListener('input', () => {
     clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
@@ -210,7 +215,6 @@ document.addEventListener('astro:page-load', () => {
     showState('');
     timer = window.setTimeout(search, 180);
   });
-  window.addEventListener('resize', () => { if (matchMedia('(max-width:650px)').matches && dialog?.open) void closeDialog(dialog); }, { signal: pageListeners.signal });
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
   }, { signal: pageListeners.signal });

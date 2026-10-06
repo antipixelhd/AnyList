@@ -1,0 +1,22 @@
+/* Loaded only by the /dev navigation experiment. */
+.dev-topbar { position: sticky; top: 0; z-index: 60; height: 72px; background: #142131; }
+.dev-topbar-inner { width: min(100%, 1420px); height: 100%; margin: auto; padding: 0 28px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 28px; }
+.dev-topbar-inner > a { width: max-content; }
+.dev-topbar nav { display: flex; align-items: center; gap: 30px; font: var(--type-nav-weight) var(--type-nav-size) var(--font-navigation); white-space: nowrap; }
+.dev-topbar .dev-account-nav { justify-self: end; gap: 20px; }
+.dev-account-nav .ui-icon { font-size: 17px; }
+
+@media (max-width:1040px) {
+  .dev-topbar, body:has([data-dev-navigation]) .lab-workbench { display:none; }
+  .dev-navigation-options { margin-top:12px; padding-top:12px; border-top:1px solid rgb(133 153 168 / 12%); }
+  .dev-navigation-options h2 { margin:0 8px 6px; color:var(--muted); font-size:1.1rem; font-weight:500; }
+  .dev-navigation-options > div { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; }
+  .dev-navigation-options a { display:grid; place-items:center; min-height:44px; padding:7px 4px; font-size:1.2rem; text-align:center; }
+  .dev-navigation-media > div { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .dev-navigation-lab { display:flex; gap:4px; align-items:center; margin-top:12px; padding-top:10px; border-top:1px solid rgb(133 153 168 / 12%); }
+  .dev-navigation-lab > :is(a,button) { display:flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:7px 10px; border:0; color:inherit; background:transparent; font:inherit; font-size:1.1rem; }
+  .dev-navigation-lab > button { margin-left:auto; }
+  .dev-navigation-lab .ui-icon { font-size:1.1rem; }
+  body:has([data-dev-navigation]) .lab { padding-bottom:104px; }
+  body:has([data-dev-navigation]) .lab-toast { bottom:96px; }
+}

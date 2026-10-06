@@ -35,9 +35,6 @@
   font-size:var(--type-nav-size);
   white-space:nowrap
 }
-.mobile-appbar-menu {
-  display:none
-}
 .topbar a.active {
   color:var(--blue)
 }
@@ -142,144 +139,11 @@
     gap:20px
   }
 }
-@media(max-width:650px) {
-  .topbar {
-    height:108px;
-    min-height:0;
-    padding:0
-  }
-  .appbar-inner {
-    padding:9px 16px 7px;
-    grid-template-columns:minmax(44px,1fr) auto;
-    grid-template-rows:42px 42px;
-    column-gap:10px;
-    row-gap:4px
-  }
-  .brand {
-    grid-column:1;
-    grid-row:1
-  }
-  .account-nav {
-    grid-column:2;
-    grid-row:1;
-    gap:9px
-  }
-  .topbar .appbar-nav {
-    display:none
-  }
-  .mobile-appbar-menu {
-    position:relative;
-    display:block;
-    grid-column:1/-1;
-    grid-row:2;
-    align-self:stretch
-  }
-  .mobile-appbar-menu summary {
-    height:42px;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    gap:9px;
-    list-style:none;
-    color:var(--bright);
-    font-size:var(--type-section-size);
-    font-weight:var(--type-profile-weight);
-    cursor:pointer
-  }
-  .mobile-appbar-menu summary::-webkit-details-marker {
-    display:none
-  }
-  .mobile-appbar-menu summary .ui-icon {
-    font-size:var(--type-meta-size);
-    color:var(--blue);
-    transition:transform .16s ease
-  }
-  .mobile-appbar-menu[open] summary .ui-icon {
-    transform:rotate(180deg)
-  }
-  .mobile-appbar-menu nav {
-    position:absolute;
-    left:0;
-    right:0;
-    top:calc(100% + 7px);
-    width:min(330px,calc(100vw - 32px));
-    margin-inline:auto;
-    display:grid!important;
-    gap:3px!important;
-    padding:9px;
-    background:#17283a;
-    border:1px solid var(--border);
-    border-radius:7px;
-    box-shadow:0 18px 45px #02070dbf
-  }
-  .mobile-appbar-menu nav a {
-    padding:11px 13px;
-    border-radius:5px;
-    font-family:var(--font-navigation);
-    font-size:var(--type-nav-size);
-    font-weight:var(--type-nav-weight)
-  }
-  .mobile-appbar-menu nav a:hover,.mobile-appbar-menu nav a:focus-visible,.mobile-appbar-menu nav a.active {
-    background:#20384d;
-    color:var(--blue)
-  }
-  .appbar-icon-link {
-    width:32px;
-    height:32px
-  }
-  .profile-action {
-    width:34px;
-    height:34px
-  }
-}
-@media(max-width:650px) {
-  .quick-search-trigger {
-    display:none
-  }
-}
-@media(max-width:650px) {
-  .topbar {
-    height:100px
-  }
-  .appbar-inner {
-    grid-template-rows:42px 34px
-  }
-  .mobile-appbar-menu summary {
-    height:34px;
-    gap:7px;
-    font-family:var(--font-navigation);
-    font-size:var(--type-nav-size);
-    font-weight:var(--type-nav-weight)
-  }
-  .mobile-appbar-menu nav {
-    width:min(246px,calc(100vw - 32px));
-    padding:5px;
-    gap:1px
-  }
-  .mobile-appbar-menu nav a {
-    display:flex;
-    align-items:center;
-    gap:10px;
-    min-height:40px;
-    padding:7px 10px;
-    font-size:var(--type-nav-size);
-    font-weight:var(--type-nav-weight)
-  }
-  .mobile-appbar-menu nav a .ui-icon {
-    display:inline-grid;
-    place-items:center;
-    width:16px;
-    color:#8eaac3;
-    font-size:var(--type-label-size)
-  }
-  .mobile-appbar-menu nav a.active .ui-icon {
-    color:var(--blue)
-  }
+@media(max-width:1040px) {
+  .tracker .topbar { display:none; }
 }
 @media(prefers-reduced-motion:reduce) {
-  .appbar-icon-link,.profile-action,.topbar,.mobile-appbar-menu summary .ui-icon {
-    transition:none
-  }
+  .appbar-icon-link,.profile-action,.topbar { transition:none; }
 }
 .sr-only {
   position:absolute;

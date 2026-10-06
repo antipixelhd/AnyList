@@ -11,6 +11,8 @@ import "../styles/global.css";
 import "../styles/checkbox.css";
 import "../styles/action-controls.css";
 import BrandMark from "../components/BrandMark.astro";
+import MobileNavigation from "../components/MobileNavigation.astro";
+import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
 import { api } from "../lib/api";
 import { themeVariables, viewerProfileTheme } from "../lib/profile-theme";
 
@@ -56,15 +58,47 @@ const activeMovies = pathname.startsWith('/movies') || pathname.startsWith('/col
 const activeShows  = pathname.startsWith('/shows') || pathname.startsWith('/collection/shows') || pathname.startsWith('/show') || pathname.startsWith('/trending/shows');
 const activeHistory = pathname.startsWith('/history') || pathname === '/next-up';
 const activeLists  = pathname.startsWith('/lists') || pathname.startsWith('/list/');
-const activeHome   = !activeMovies && !activeShows && !activeHistory && !activeLists;
 
 const navLink = (active: boolean) =>
   active
     ? 'text-zinc-100 font-semibold'
     : 'text-zinc-400 hover:text-zinc-100 transition-colors';
 
-const bottomNavItem = (active: boolean) =>
-  `flex flex-col items-center justify-center gap-1 flex-1 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors active:bg-zinc-800/70 active:scale-95 ${active ? 'text-blue-400' : 'text-zinc-500'}`;
+const mobileItems: MobileNavigationItem[] = [
+  {label:'Home', icon:'home', href:'/home'},
+  ...(user || showAnonNavLinks ? [
+    {label:'Library', icon:'film', group:'library', active:activeMovies || activeShows || activeHistory},
+    {label:'Lists', icon:'list', href:'/lists', active:activeLists},
+    {label:'Search', icon:'search', href:'/search'},
+  ] : []),
+  ...(user ? [
+    {label:'Profile', icon:'user', href:`/user/${encodeURIComponent(user.username)}`},
+    {label:'Settings', icon:'gear', href:'/user-settings'},
+    {label:'More', icon:'ellipsis', group:'more', badge:pendingRequestCount},
+    {label:'Sign out', icon:'sign-out', action:'logout' as const},
+  ] : [
+    {label:'Sign up', icon:'plus', href:'/register'},
+    {label:'Sign in', icon:'user', href:loginNextUrl},
+    {label:'More', icon:'ellipsis', group:'more'},
+  ]),
+];
+const mobileGroups: MobileNavigationGroup[] = [
+  {id:'library', label:'Library navigation', items:[
+    {label:'Movies', icon:'film', href:'/movies', active:activeMovies},
+    {label:'Shows', icon:'play', href:'/shows', active:activeShows},
+    ...(user ? [{label:'History', icon:'clock', href:'/history', active:activeHistory}] : []),
+  ]},
+  {id:'more', label:'More navigation', items:[
+    ...(user ? [
+      {label:'Discover', icon:'browse', href:'/discover'},
+      {label:'Calendar', icon:'calendar', href:'/calendar'},
+      {label:'Statistics', icon:'star', href:`/user/${encodeURIComponent(user.username)}/stats`},
+      ...(user.is_admin ? [{label:'Admin', icon:'sliders', href:'/admin'}, {label:'Requests', icon:'inbox', href:'/requests', badge:pendingRequestCount}] : []),
+    ] : []),
+    {label:'About', icon:'info', href:'/about'},
+    {label:'Theme', icon:'eye', action:'theme'},
+  ]},
+];
 ---
 <!doctype html>
 <html lang="en" class={blurExplicit ? "blur-explicit" : ""} style={siteColor ? themeVariables(siteColor) : undefined}>
@@ -182,7 +216,7 @@ const bottomNavItem = (active: boolean) =>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden" data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)}>
   {!hideNav && (
-    <nav class="px-4 md:px-6 py-3 md:py-4 text-sm relative z-30 bg-zinc-950 md:bg-transparent">
+    <nav class="legacy-navigation px-4 md:px-6 py-3 md:py-4 text-sm relative z-30 bg-zinc-950 md:bg-transparent" data-legacy-navigation>
       <!-- Default bar -->
       <div id="nav-default" class="flex items-center justify-between gap-3 safe-area-top">
         <!-- Left: logo + desktop links -->
@@ -219,13 +253,8 @@ const bottomNavItem = (active: boolean) =>
             </form>
           )}
         </div>
-        <!-- Right: mobile search icon + theme + user -->
+        <!-- Theme and account controls -->
         <div class="flex items-center gap-2">
-          {(user || showAnonNavLinks) && (
-            <button id="mobile-search-open" class="md:hidden p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors" aria-label="Search">
-              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            </button>
-          )}
           <!-- Theme toggle -->
           <button id="theme-toggle" class="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95" aria-label="Toggle Theme">
             <span id="sun-icon">
@@ -322,30 +351,7 @@ const bottomNavItem = (active: boolean) =>
         </div>
       </div>
 
-      {(user || showAnonNavLinks) && (
-        <div id="nav-search" class="hidden items-center gap-2 safe-area-top">
-          <button id="mobile-search-close" class="p-2 text-zinc-400 hover:text-zinc-100 transition-colors shrink-0" aria-label="Close search">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
-          <form action="/search" method="GET" class="flex-1 flex items-center gap-2">
-            <div class="relative flex-1">
-              <input
-                id="mobile-search-input"
-                type="text"
-                name="q"
-                value={navSearchValue}
-                placeholder="Search movies & shows..."
-                class="w-full bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-zinc-500"
-              />
-              <svg id="mobile-search-spinner" class="hidden absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-zinc-400 pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            </div>
-            <button type="submit" class="self-stretch px-4 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-full transition-colors shrink-0">Go</button>
-          </form>
-        </div>
-      )}
+
     </nav>
   )}
 
@@ -359,33 +365,7 @@ const bottomNavItem = (active: boolean) =>
     <slot />
   </main>
 
-  <!-- Mobile bottom nav -->
-  {!hideNav && (user || showAnonNavLinks) && (
-    <nav id="bottom-nav" class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-900 border-t border-zinc-800 flex items-stretch safe-area-bottom">
-      <a href="/" class={bottomNavItem(activeHome)}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        Home
-      </a>
-      <a href="/movies" class={bottomNavItem(activeMovies)}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
-        Movies
-      </a>
-      <a href="/shows" class={bottomNavItem(activeShows)}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-        Shows
-      </a>
-      <a href="/lists" class={bottomNavItem(activeLists)}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-        Lists
-      </a>
-      {user && (
-        <a href="/history" class={bottomNavItem(activeHistory)}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          History
-        </a>
-      )}
-    </nav>
-  )}
+  {!hideNav && <MobileNavigation items={mobileItems} groups={mobileGroups}/>}
 
   <!-- Rating popover (shared, reused across cards - centered modal, same convention as watch-history-modal/list-popover) -->
   <div id="rating-popover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -594,11 +574,6 @@ const bottomNavItem = (active: boolean) =>
   <MediaRequestRuntime />
   <InstallPromptRuntime />
 
-  <script>
-    document.getElementById('bottom-nav')?.addEventListener('touchstart', () => {
-      navigator.vibrate?.(10);
-    }, { passive: true });
-  </script>
 
   <script>
     if ('serviceWorker' in navigator) {
@@ -613,6 +588,7 @@ const bottomNavItem = (active: boolean) =>
   <InteractionRuntime />
 
   <style>
+    @media(max-width:1040px) { .legacy-navigation { display:none; } }
     .watch-history-scroll {
       scrollbar-width: none;
       -ms-overflow-style: none;

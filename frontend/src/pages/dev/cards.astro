@@ -1,5 +1,6 @@
 ---
 import NoticeCard from '../../components/NoticeCard.astro';
+import DevNavigation from '../../components/dev/DevNavigation.astro';
 import ActivityCard from '../../components/ActivityCard.astro';
 import FavoriteCard from '../../components/FavoriteCard.astro';
 import ProgressCard from '../../components/ProgressCard.astro';
@@ -51,6 +52,7 @@ const activities = [
 <html lang="en">
   <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Card playground · AnyList</title></head>
   <body class="tracker">
+    <DevNavigation />
     <main class="lab">
       <header class="lab-header">
         <div><span class="eyebrow">Local development · dummy data</span><h1>Card playground</h1><p>Real card components with simulated actions. Hover or focus cards to reveal controls.</p></div>

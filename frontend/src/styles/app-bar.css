@@ -103,10 +103,3 @@ html.appbar-nav-transition-cursor {
 @media (prefers-reduced-motion: reduce) {
   .tracker .topbar { transition: none; }
 }
-
-.tracker .mobile-appbar-menu summary,
-.tracker .mobile-appbar-menu nav {
-  font-family: var(--font-navigation);
-  font-size: var(--type-nav-size);
-  font-weight: var(--type-nav-weight);
-}
