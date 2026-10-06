@@ -1,0 +1,20 @@
+---
+import Icon from './Icon.astro';
+import type {MobileNavigationItem} from '../lib/mobile-navigation';
+interface Props { item: MobileNavigationItem; quiet?: number; attention?: number; notificationLabel?: string }
+const {item, quiet = 0, attention = 0, notificationLabel} = Astro.props;
+const attributes = {
+  'aria-current': item.active ? 'page' as const : undefined,
+  'aria-label': item.notifications ? notificationLabel : item.ariaLabel,
+  'aria-haspopup': item.action === 'search' ? 'dialog' as const : undefined,
+  'data-mobile-item': item.id,
+  'data-mobile-action': item.action,
+  'data-mobile-group-open': item.group,
+  'data-notification-link': item.notifications ? '' : undefined,
+  hidden: item.hidden,
+};
+---
+{item.action === 'logout' ? <form method="POST" action="/logout" class="mobile-navigation-signout"><button type="submit" {...attributes}><Icon name={item.icon}/><span>{item.label}</span></button></form> :
+  item.href ? <a href={item.href} {...attributes}>
+    <span class="mobile-navigation-icon"><Icon name={item.icon}/>{item.notifications && <><span class="mobile-navigation-badge" data-notification-quiet hidden={quiet === 0}>{quiet > 99 ? '99+' : quiet}</span><span class="mobile-navigation-badge mobile-navigation-attention" data-notification-attention hidden={attention === 0}>{attention > 99 ? '99+' : attention}</span></>}{!!item.badge && <span class="mobile-navigation-badge">{item.badge > 99 ? '99+' : item.badge}</span>}</span><span>{item.label}</span>
+  </a> : <button type="button" {...attributes}><span class="mobile-navigation-icon"><Icon name={item.icon}/>{!!item.badge && <span class="mobile-navigation-badge">{item.badge > 99 ? '99+' : item.badge}</span>}</span><span>{item.label}</span></button>}

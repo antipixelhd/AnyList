@@ -1,0 +1,90 @@
+---
+import Icon from './Icon.astro';
+import MobileItem from './MobileNavigationItem.astro';
+import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
+import '../styles/mobile-navigation.css';
+interface Props {
+  items: MobileNavigationItem[];
+  groups?: MobileNavigationGroup[];
+  extended?: boolean;
+  quiet?: number;
+  attention?: number;
+  notificationLabel?: string;
+}
+const {items, groups = [], extended = false, quiet = 0, attention = 0, notificationLabel} = Astro.props;
+if ((!extended && items.filter(item => !item.hidden).length > 8) || groups.some(group => group.items.length > 7)) throw new Error('Mobile navigation exceeds its 3×3 grid');
+const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
+---
+<div class:list={['mobile-floating-navigation', {'mobile-navigation-extended': extended}]} data-mobile-navigation data-dev-navigation={extended ? '' : undefined} data-motion-static>
+  <button class:list={['mobile-navigation-trigger', {'dev-navigation-trigger': extended}]} type="button" popovertarget={panelId} aria-controls={panelId} aria-expanded="false" aria-label="Open navigation">
+    <span class="mobile-menu-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+    <span class="mobile-navigation-indicator" data-mobile-notification-indicator data-needs-attention={String(attention > 0)} hidden={quiet + attention === 0} aria-hidden="true"></span>
+  </button>
+  <div id={panelId} class="mobile-navigation-panel" popover="auto" role="dialog" aria-label="Navigation">
+    <div data-mobile-view="main">
+      <nav class="mobile-navigation-grid" aria-label="Mobile main navigation">
+        {items.map(item => <MobileItem item={item} quiet={quiet} attention={attention} notificationLabel={notificationLabel}/>)}
+        {!extended && <button class="mobile-navigation-close" type="button" popovertarget={panelId} popovertargetaction="hide" aria-label="Close navigation"><Icon name="close"/><span>Close</span></button>}
+      </nav>
+      <slot />
+      {extended && <nav class="mobile-navigation-grid mobile-navigation-bottom" aria-label="Account and menu controls"><slot name="bottom"/><button class="mobile-navigation-close" type="button" popovertarget={panelId} popovertargetaction="hide" aria-label="Close navigation"><Icon name="close"/><span>Close</span></button></nav>}
+    </div>
+    {groups.map(group => <nav class="mobile-navigation-grid" aria-label={group.label} data-mobile-view={group.id} hidden>
+      {group.items.map(item => <MobileItem item={item}/>)}
+      <button type="button" data-mobile-back><Icon name="undo"/><span>Back</span></button>
+      <button class="mobile-navigation-close" type="button" popovertarget={panelId} popovertargetaction="hide" aria-label="Close navigation"><Icon name="close"/><span>Close</span></button>
+    </nav>)}
+  </div>
+</div>
+<script>
+  let listeners: AbortController | undefined;
+  function initializeNavigation() {
+    listeners?.abort();
+    const root = document.querySelector<HTMLElement>('[data-mobile-navigation]');
+    const panel = root?.querySelector<HTMLElement>('[popover]');
+    const trigger = root?.querySelector<HTMLButtonElement>('.mobile-navigation-trigger');
+    if (!root || !panel || !trigger) return;
+    listeners = new AbortController();
+    const {signal} = listeners;
+    const mobile = matchMedia('(max-width: 1040px)');
+    const view = (id: string, focus = true) => {
+      panel.querySelectorAll<HTMLElement>('[data-mobile-view]').forEach(element => {element.hidden = element.dataset.mobileView !== id;});
+      if (focus) panel.querySelector<HTMLElement>('[data-mobile-view]:not([hidden]) :is(a,button):not([hidden])')?.focus({preventScroll: true});
+    };
+    panel.addEventListener('toggle', () => {
+      const open = panel.matches(':popover-open');
+      trigger.setAttribute('aria-expanded', String(open));
+      trigger.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+      if (open && document.activeElement === trigger) view('main');
+      if (!open) view('main', false);
+    }, {signal});
+    panel.addEventListener('click', event => {
+      const control = (event.target as Element).closest<HTMLElement>('a,button');
+      if (!control) return;
+      if (control.dataset.mobileGroupOpen) {view(control.dataset.mobileGroupOpen); return;}
+      if (control.hasAttribute('data-mobile-back')) {view('main'); return;}
+      if (control.dataset.mobileAction) {
+        panel.hidePopover();
+        if (control.dataset.mobileAction === 'search') document.querySelector<HTMLButtonElement>('[data-quick-search-open]')?.click();
+        if (control.dataset.mobileAction === 'theme') document.querySelector<HTMLButtonElement>('#theme-toggle')?.click();
+        if (control.dataset.mobileAction === 'notes') document.querySelector<HTMLButtonElement>('.lab-workbench [data-lab-action="notes"]')?.click();
+      } else if (control.matches('a')) panel.hidePopover();
+    }, {signal});
+    mobile.addEventListener('change', () => {
+      if (!mobile.matches) {
+        const focused = root.contains(document.activeElement);
+        panel.hidePopover();
+        if (focused) document.querySelector<HTMLAnchorElement>('[data-appbar] .brand, .dev-topbar a, [data-legacy-navigation] a')?.focus({preventScroll: true});
+      }
+    }, {signal});
+    document.addEventListener('anylist:combine-lists-changed', event => {
+      const combined = (event as CustomEvent<{combineLists: boolean}>).detail.combineLists;
+      const link = root.querySelector<HTMLElement>('[data-mobile-item="combined-list"]');
+      const button = root.querySelector<HTMLElement>('[data-mobile-item="split-lists"]');
+      if (link && button) {link.hidden = !combined; button.hidden = combined; view('main', panel.matches(':popover-open'));}
+    }, {signal});
+    document.addEventListener('astro:before-swap', () => panel.hidePopover(), {signal});
+  }
+  initializeNavigation();
+  document.addEventListener('astro:page-load', initializeNavigation);
+</script>

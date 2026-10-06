@@ -3,6 +3,8 @@ import Icon from './Icon.astro';
 import QuickSearch from './QuickSearch.astro';
 import TrackingEditor from './TrackingEditor.astro';
 import BrandMark from './BrandMark.astro';
+import MobileNavigation from './MobileNavigation.astro';
+import {appMobileNavigation} from '../lib/mobile-navigation';
 import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
 import '../styles/app-bar.css';
@@ -51,8 +53,7 @@ const primaryItems = [
   {href: '/browse', label: 'Browse', icon: 'browse', active: active('/browse')},
 ];
 const settingsRoute = ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
-const mobileSection = primaryItems.find(item => item.active)?.label
-  || (pathname.startsWith('/user/') ? 'Profile' : pathname === '/recent-events' ? 'Notifications' : settingsRoute ? 'Settings' : 'Browse');
+const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists});
 ---
 <header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">
   <div class="appbar-inner">
@@ -62,15 +63,9 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} transition:persist="desktop-main-nav">
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
-    <details class="mobile-appbar-menu" data-mobile-appbar-menu>
-      <summary aria-label={`${mobileSection}. Open main navigation`}><span>{mobileSection}</span><Icon name="chevron-down" /></summary>
-      <nav aria-label="Mobile main navigation" data-mobile-main-nav data-profile-base={profile}>
-        {primaryItems.map(item => <a href={item.href} class:list={{active:item.active}} aria-current={item.active?'page':undefined}><Icon name={item.icon} />{item.label}</a>)}
-      </nav>
-    </details>
     <div class="account-nav">
       {user ? <>
-        <QuickSearch combineLists={combineLists} />
+        <button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search"/></button>
         <a class:list={{'profile-action': true, active: pathname.startsWith('/user/')}} href={profile} aria-label={`Open ${user.display_name || user.username}'s profile`} data-appbar-avatar>
           {avatarUrl
             ? <img src={avatarUrl} alt="" />
@@ -87,6 +82,8 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     </div>
   </div>
 </header>
+<MobileNavigation {...mobileNavigation} quiet={quietNotifications} attention={attentionNotifications} notificationLabel={notificationLabel}/>
+{user && <QuickSearch combineLists={combineLists} hideTrigger/>}
 {user && <TrackingEditor />}
 {user && <script>
   import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
@@ -95,9 +92,9 @@ const mobileSection = primaryItems.find(item => item.active)?.label
   document.addEventListener('astro:page-load', () => {
   notificationPageListeners?.abort();
   notificationPageListeners = new AbortController();
-  const link = document.querySelector<HTMLElement>('[data-notification-link]');
-  const quietBadge = document.querySelector<HTMLElement>('[data-notification-quiet]');
-  const attentionBadge = document.querySelector<HTMLElement>('[data-notification-attention]');
+  const links = document.querySelectorAll<HTMLElement>('[data-notification-link]');
+  const quietBadges = document.querySelectorAll<HTMLElement>('[data-notification-quiet]');
+  const attentionBadges = document.querySelectorAll<HTMLElement>('[data-notification-attention]');
   const renderBadge = (badge: HTMLElement | null, count: number) => {
     if (!badge) return;
     badge.hidden = count === 0;
@@ -107,15 +104,16 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     const attention = notifications.results.filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
     // The operational outbound queue is intentionally excluded from the app-bar badges.
     const quiet = Math.max(0, notifications.results.length - attention);
-    renderBadge(quietBadge, quiet);
-    renderBadge(attentionBadge, attention);
-    if (link) link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread');
+    quietBadges.forEach(badge => renderBadge(badge, quiet));
+    attentionBadges.forEach(badge => renderBadge(badge, attention));
+    links.forEach(link => link.setAttribute('aria-label', attention + quiet ? `Notifications: ${attention} need attention, ${quiet} other` : 'Notifications: none unread'));
+    const indicator = document.querySelector<HTMLElement>('[data-mobile-notification-indicator]');
+    if (indicator) {indicator.hidden = attention + quiet === 0; indicator.dataset.needsAttention = String(attention > 0);}
   };
   subscribeNotifications(renderNotificationBadges, {signal: notificationPageListeners.signal});
   });
 </script>}
 <script>
-  import { reveal, dismiss } from '../lib/ui-motion';
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
@@ -128,7 +126,7 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     let scheduled = false;
     let keyboardFocus = false;
     let wheelDown = false;
-    const mobile = () => matchMedia('(max-width:650px)').matches;
+    const mobile = () => matchMedia('(max-width:1040px)').matches;
     const topThreshold = () => mobile() ? 16 : 0;
     const syncTopFade = (y: number) => appbar.classList.toggle('appbar-at-top', !mobile() && y <= 0);
     const clearPointerState = () => {
@@ -266,30 +264,9 @@ const mobileSection = primaryItems.find(item => item.active)?.label
     }, { signal: appbarListeners.signal });
     window.addEventListener('resize', () => syncTopFade(Math.max(0, window.scrollY)), { passive: true, signal: appbarListeners.signal });
   }
-  const mobileMenu = document.querySelector<HTMLDetailsElement>('[data-mobile-appbar-menu]');
-  const mobileMenuSummary = mobileMenu?.querySelector<HTMLElement>('summary');
-  const mobileMenuNav = mobileMenu?.querySelector<HTMLElement>('nav');
-  if (mobileMenu && mobileMenuSummary && mobileMenuNav) {
-    const closeMobileMenu = () => {
-      if (!mobileMenu.open) return;
-      mobileMenuNav.inert = true;
-      void dismiss(mobileMenuNav).then(current => { if (current) mobileMenu.open = false; });
-    };
-    mobileMenuSummary.addEventListener('click', event => {
-      event.preventDefault();
-      if (mobileMenu.open && !mobileMenuNav.inert) closeMobileMenu();
-      else { mobileMenu.open = true; mobileMenuNav.inert = false; reveal(mobileMenuNav); }
-    }, { signal: appbarListeners.signal });
-    document.addEventListener('click', event => {
-      if (!mobileMenu.contains(event.target as Node)) closeMobileMenu();
-    }, { signal: appbarListeners.signal });
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && mobileMenu.open) { closeMobileMenu(); mobileMenuSummary.focus(); }
-    }, { signal: appbarListeners.signal });
-  }
   document.addEventListener('anylist:combine-lists-changed', rawEvent => {
     const combined = (rawEvent as CustomEvent<{combineLists: boolean}>).detail.combineLists;
-    for (const nav of document.querySelectorAll<HTMLElement>('[data-desktop-main-nav], [data-mobile-main-nav]')) {
+    for (const nav of document.querySelectorAll<HTMLElement>('[data-desktop-main-nav]')) {
       const base = nav.dataset.profileBase;
       if (!base) continue;
       const listIcon = nav.querySelector<HTMLElement>(`a[href="${base}/list"] .ui-icon, a[href="${base}/movies"] .ui-icon, a[href="${base}/series"] .ui-icon`)?.cloneNode(true);
@@ -303,7 +280,6 @@ const mobileSection = primaryItems.find(item => item.active)?.label
         link.append(label);
         if (location.pathname === link.pathname) {
           link.setAttribute('aria-current', 'page');
-          if (nav.matches('[data-mobile-main-nav]')) link.classList.add('active');
         }
         browse?.before(link);
       }
@@ -313,31 +289,6 @@ const mobileSection = primaryItems.find(item => item.active)?.label
       quickSearch.dataset.combined = combined ? 'yes' : 'no';
       quickSearch.querySelector('.quick-search-results')?.classList.toggle('combined', combined);
     }
-    const summary = mobileMenuSummary?.querySelector('span');
-    if (summary && /^(Movie\/Series|Movie|Series) List$/.test(summary.textContent || ''))
-      summary.textContent = combined ? 'Movie/Series List' : location.pathname.endsWith('/series') ? 'Series List' : 'Movie List';
-  }, { signal: appbarListeners.signal });
-  let openMobileMenuFromKeyboard = false;
-  mobileMenuSummary?.addEventListener('keydown', event => {
-    if (event.key === 'Enter' || event.key === ' ') openMobileMenuFromKeyboard = true;
-  });
-  mobileMenu?.addEventListener('toggle', () => {
-    if (mobileMenu.open && openMobileMenuFromKeyboard) {
-      requestAnimationFrame(() => mobileMenu.querySelector<HTMLAnchorElement>('nav a')?.focus());
-    }
-    openMobileMenuFromKeyboard = false;
-  });
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && mobileMenu?.open) {
-      mobileMenu.open = false;
-      mobileMenuSummary?.focus();
-    }
-  }, { signal: appbarListeners.signal });
-  document.addEventListener('pointerdown', event => {
-    if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
-  }, { signal: appbarListeners.signal });
-  document.addEventListener('focusin', event => {
-    if (mobileMenu?.open && !mobileMenu.contains(event.target as Node)) mobileMenu.open = false;
   }, { signal: appbarListeners.signal });
   });
 </script>
