@@ -5,6 +5,7 @@
 .dev-topbar nav { display: flex; align-items: center; gap: 30px; font: var(--type-nav-weight) var(--type-nav-size) var(--font-navigation); white-space: nowrap; }
 .dev-topbar .dev-account-nav { justify-self: end; gap: 20px; }
 .dev-account-nav .ui-icon { font-size: 17px; }
+.dev-mobile-brand { display: flex; width: max-content; margin: 4px auto 16px; }
 
 @media (max-width:1040px) {
   .dev-topbar, body:has([data-dev-navigation]) .lab-workbench { display:none; }

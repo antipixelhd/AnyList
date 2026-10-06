@@ -1,0 +1,9 @@
+---
+export type LogoCandidate = 'fold' | 'journal' | 'frame' | 'monogram';
+interface Props { candidate: LogoCandidate; size?: number }
+const {candidate, size = 34} = Astro.props;
+const dimensions = {fold: [302, 287], journal: [293, 242], frame: [320, 240], monogram: [368, 210]};
+const [width, height] = dimensions[candidate];
+---
+<img class="dev-brand-mark" src={`/logos/candidates/${candidate}.svg`} width={Math.round(size * width / height)} height={size} alt="" aria-hidden="true" data-logo-candidate={candidate}/>
+<style>.dev-brand-mark{display:block;flex:none;object-fit:contain}</style>

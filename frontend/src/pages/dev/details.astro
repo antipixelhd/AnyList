@@ -1,6 +1,7 @@
 ---
 import Tracker from '../../layouts/Tracker.astro';
 import DevNavigation from '../../components/dev/DevNavigation.astro';
+import type {LogoCandidate} from '../../components/dev/DevBrandMark.astro';
 import Icon from '../../components/Icon.astro';
 import DetailHeading from '../../components/dev/DetailHeading.astro';
 import DetailTracking from '../../components/dev/DetailTracking.astro';
@@ -15,6 +16,8 @@ import '../../styles/dev-marquee-27.css';
 const concepts = [{id: 'folio', name: 'Folio', number: '01'}, {id: 'marquee', name: 'Marquee', number: '02'}, {id: 'marquee-25', name: 'Marquee 2.5', label: 'Marquee', number: '02.5'}, {id: 'marquee-27', name: 'Marquee - Tom', number: '02.7'}, {id: 'panorama', name: 'Panorama', number: '03'}];
 const concept = concepts.find(option => option.id === Astro.url.searchParams.get('design')) ?? concepts[0];
 const design = concept.id;
+const logos: Record<string, LogoCandidate> = {folio: 'fold', marquee: 'journal', 'marquee-25': 'frame', 'marquee-27': 'frame', panorama: 'monogram'};
+const logo = logos[design];
 const cinematic = design !== 'folio';
 const requested = Astro.url.searchParams.get('media') || 'series';
 const kind: SampleKey = Object.hasOwn(samples, requested) ? requested as SampleKey : 'series';
@@ -24,8 +27,9 @@ const offer = Astro.url.searchParams.get('offer') === 'regular' ? 'regular' : 's
 const item = kind === 'game' ? {...samples.game, gameReviews: gameReviewSamples[reviews], offer: {...samples.game.offer!, price: offer === 'regular' ? samples.game.offer!.regularPrice : samples.game.offer!.price}} : samples[kind];
 const href = (d:string, m:string) => `/dev/details?design=${d}&media=${m}${m === 'game' ? `&offer=${offer}&reviews=${reviews}` : ''}`;
 ---
-<Tracker title={`${item.title} · ${concept.name}`}>
+<Tracker title={`${item.title} · ${concept.name}`} favicon={`/logos/candidates/${logo}.svg`}>
   <DevNavigation slot="navigation"
+    logo={logo}
     designItems={concepts.map(option => ({label: option.name, href: href(option.id,kind), active: design === option.id}))}
     mediaItems={Object.entries(samples).map(([id,sample]) => ({label: sample.kind === 'Movie' ? 'Movies' : sample.kind === 'Game' ? 'Games' : sample.kind === 'Book' ? 'Books' : 'Series', href: href(design,id), active: kind === id}))}
   />

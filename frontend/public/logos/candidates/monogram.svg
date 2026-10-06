@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="368" height="210" viewBox="0 0 368 210" fill="none">
+  <defs><linearGradient id="cyan" x1="12" y1="12" x2="356" y2="198" gradientUnits="userSpaceOnUse"><stop stop-color="#2ab0ee"/><stop offset="1" stop-color="#27abeb"/></linearGradient></defs>
+  <path fill="url(#cyan)" fill-rule="evenodd" d="M14 192L120 18C126 9 134 10 138 20L219 192Q222 198 216 198H173Q168 198 166 193L159 178H88L79 193Q76 198 71 198H17Q10 198 14 192ZM104 140Q101 144 106 144H147Q151 144 149 140L131 101Q128 95 125 101L104 140Z"/>
+  <path fill="url(#cyan)" d="M160 12H214Q218 12 220 17L280 149H351Q356 149 356 154V193Q356 198 351 198H243Q239 198 237 193L156 19Q152 12 160 12Z"/>
+</svg>

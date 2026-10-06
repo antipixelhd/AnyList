@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240" fill="none">
+  <defs><linearGradient id="cyan" x1="14" y1="14" x2="305" y2="227" gradientUnits="userSpaceOnUse"><stop stop-color="#32b5ef"/><stop offset="1" stop-color="#2caee9"/></linearGradient></defs>
+  <path fill="url(#cyan)" fill-rule="evenodd" d="M62 14H257C284 14 305 35 305 62V66Q305 71 300 71H255C237 71 237 98 255 98H300Q305 98 305 103V141Q305 146 300 146H255C237 146 237 173 255 173H300Q305 173 305 178V179C305 206 284 227 257 227H62C35 227 14 206 14 179V62C14 35 35 14 62 14ZM98 81V159C98 171 108 177 119 171L186 132C197 126 197 112 186 106L119 68C108 62 98 68 98 81Z"/>
+</svg>
