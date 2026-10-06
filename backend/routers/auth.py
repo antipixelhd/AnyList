@@ -1,5 +1,6 @@
 from core import security
 from core.account_bootstrap import lock_account_bootstrap
+from core.account_defaults import initialize_account_defaults
 from core import trakt_auth
 import secrets
 import pyotp
@@ -246,6 +247,8 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="User with this email or username already exists")
+
+    initialize_account_defaults(db, new_user)
 
     if app_settings.require_email_validation:
         token = secrets.token_urlsafe(32)

@@ -13,6 +13,8 @@ from core.config import settings
 from core.security import ALGORITHM
 from models.account_security import OidcIdentity
 from models.users import User
+from models.profile import UserProfileData
+from models.tracking import TrackingPreferences
 from routers import oidc
 
 
@@ -200,15 +202,25 @@ class OidcAccountTests(AccountSecurityCase):
         self.assertEqual(users[0].role.value, "admin")
         self.assertFalse(users[1].is_admin)
         self.assertEqual(users[1].role.value, "user")
+        for user in users:
+            profile = (await self.db.execute(select(UserProfileData).where(UserProfileData.user_id == user.id))).scalar_one()
+            self.assertEqual(profile.privacy_level.value, "public")
+            self.assertEqual((await self.db.get(TrackingPreferences, user.id)).default_sort, "score")
 
     async def test_repeated_callback_reuses_identity(self):
         user = await self.user()
+        self.db.add(TrackingPreferences(user_id=user.id, default_sort="updated"))
+        self.db.add(UserProfileData(user_id=user.id))
+        await self.db.commit()
         for _ in range(2):
             self.assertEqual((await self.exchange()).status_code, 200)
         self.assertEqual(
             len((await self.db.execute(select(OidcIdentity))).scalars().all()), 1
         )
         self.assertEqual((await self.db.execute(select(User))).scalars().all(), [user])
+        profile = (await self.db.execute(select(UserProfileData).where(UserProfileData.user_id == user.id))).scalar_one()
+        self.assertEqual(profile.privacy_level.value, "private")
+        self.assertEqual((await self.db.get(TrackingPreferences, user.id)).default_sort, "updated")
 
     async def test_reauth_matches_current_account_and_provides_short_lived_proof(self):
         user = await self.user(password=None)

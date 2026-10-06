@@ -1,4 +1,5 @@
 from core.account_bootstrap import lock_account_bootstrap
+from core.account_defaults import initialize_account_defaults
 import secrets
 import base64
 import hashlib
@@ -466,6 +467,7 @@ async def oidc_exchange(
         )
         db.add(user)
         await db.flush()
+        initialize_account_defaults(db, user)
     db.add(OidcIdentity(user_id=user.id, provider=provider, subject=subject))
     await db.commit()
     return {"access_token": create_session_token(user)}
