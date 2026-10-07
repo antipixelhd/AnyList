@@ -83,6 +83,20 @@
   outline-offset: 0;
 }
 .browse-search > div > .ui-icon { font-size: 13px; }
+/* Share the list dropdown surface across native and enhanced browse controls. */
+.tracker .browse-filters :is(
+  .browse-search > div,
+  select,
+  .tracker-select-trigger,
+  .browse-filter-menu > summary,
+  .browse-more > summary,
+  .browse-options,
+  .browse-secondary-filters,
+  .browse-tag-picker input[type="search"],
+  .browse-year-dates input
+) {
+  background: var(--dropdown-bg);
+}
 .browse-filters select,
 .browse-filter-menu summary {
   width: 100%;
