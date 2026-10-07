@@ -1,0 +1,24 @@
+---
+import Base from './Base.astro';
+import AuthHero from '../components/AuthHero.astro';
+import BrandMark from '../components/BrandMark.astro';
+import '../styles/auth.css';
+
+interface Props { title: string; showNav?: boolean }
+const { title, showNav = false } = Astro.props;
+---
+
+<Base title={title} hideNav={true} fullBleed={true}>
+  <div class="anylist-auth">
+    <header class="auth-topbar">
+      <a href="/login" class="auth-brand" aria-label="AnyList sign in"><BrandMark size={32}/><span>AnyList</span></a>
+      {showNav && <nav aria-label="Public navigation"><a href="/browse?type=movie">Movies</a><a href="/browse?type=series">Series</a><a href="/browse">Browse</a></nav>}
+    </header>
+    <div class="auth-main">
+      <div class="auth-layout">
+        <AuthHero showBrand={false}/>
+        <div class="auth-form-column"><slot /></div>
+      </div>
+    </div>
+  </div>
+</Base>
