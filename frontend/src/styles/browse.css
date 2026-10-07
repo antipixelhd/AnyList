@@ -39,7 +39,7 @@
 .browse-filters {
   position: relative;
   display: grid;
-  grid-template-columns: 1.35fr repeat(4, minmax(0, 1fr));
+  grid-template-columns: 1.5fr repeat(3, minmax(0, 1fr));
   gap: 20px;
   align-items: start;
   padding-right: 64px;
@@ -830,6 +830,4 @@
   .browse-secondary-filters { grid-template-columns: minmax(0, 1fr); }
 }
 
-.browse-media-filter .browse-types { height: 42px; padding: 3px; }
-.browse-media-filter .browse-types a { flex: 1; text-align: center; padding: 7px 4px; }
 .tracker .browse-page .browse-filters .browse-secondary-filters :is(select, .tracker-select-trigger) { background: var(--bg); }
