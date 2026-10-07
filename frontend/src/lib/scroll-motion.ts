@@ -4,7 +4,7 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean } = {},
+  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean } = {},
 ) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   if (reduced.matches || signal.aborted) return;
@@ -13,6 +13,7 @@ export function initializeScrollMotion(
   const entrances = new Set<Animation>();
   let modules: HTMLElement[] = [];
   const registered = new WeakSet<HTMLElement>();
+  const appeared = new WeakSet<HTMLElement>();
   let frame = 0;
   let initialRegistration = true;
   let previousScrollY = scrollY;
@@ -31,9 +32,10 @@ export function initializeScrollMotion(
     pending.delete(element);
   };
   const start = (element: HTMLElement) => {
+    appeared.add(element);
     const animation = element.animate(
       [
-        options.scaleEntrance ? { opacity: 0.2, scale: "0.96" } : { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
+        options.scaleEntrance ? { opacity: 0, scale: "0.7" } : { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
         options.scaleEntrance ? { opacity: 1, scale: "1" } : { opacity: 1, translate: "0 0" },
       ],
       { duration: options.scaleEntrance ? 160 : 260, easing: options.scaleEntrance ? "cubic-bezier(.2,.7,.2,1)" : "cubic-bezier(.25,.1,.25,1)", fill: "both" },
@@ -56,10 +58,11 @@ export function initializeScrollMotion(
       modules.push(element);
       const bounds = element.getBoundingClientRect();
       if (element.getClientRects().length && bounds.top < viewport().bottom) {
+        appeared.add(element);
         if (bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
           const entrance = element.animate(
             [
-              options.scaleEntrance ? { opacity: 0, scale: "0.96" } : { opacity: 0, transform: "translateY(7px)" },
+              options.scaleEntrance ? { opacity: 0, scale: "0.7" } : { opacity: 0, transform: "translateY(7px)" },
               options.scaleEntrance ? { opacity: 1, scale: "1" } : { opacity: 1, transform: "translateY(0)" },
             ],
             { duration: options.scaleEntrance ? 160 : 260, easing: options.scaleEntrance ? "cubic-bezier(.2,.7,.2,1)" : "ease" },
@@ -97,7 +100,10 @@ export function initializeScrollMotion(
         const visible = !!element.getClientRects().length;
         const shift =
           parseFloat(getComputedStyle(element).translate.split(" ")[1]) || 0;
-        const bounds = element.getBoundingClientRect();
+        // Measure the card's reserved box, not its temporarily scaled poster.
+        const bounds = options.scaleEntrance
+          ? (element.parentElement ?? element).getBoundingClientRect()
+          : element.getBoundingClientRect();
         return {
           element,
           animation,
@@ -120,12 +126,17 @@ export function initializeScrollMotion(
       // Browse entrances come from the lower edge only. Returning through the
       // top edge, or reversing direction mid-fade, keeps content fully painted.
       if (options.downwardOnly && (moduleBottom <= viewportTop || (scrollingUp && top < bottom))) {
+        appeared.add(element);
         complete(element);
         continue;
       }
       // Rearm only offscreen, so a partly visible module never flashes or
       // restarts. Keep focused controls readable even if scrolled out of view.
       if (moduleBottom <= viewportTop || top >= bottom) {
+        if (options.once && appeared.has(element)) {
+          complete(element);
+          continue;
+        }
         if (element.matches(":focus-within")) {
           complete(element);
           continue;

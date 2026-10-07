@@ -807,7 +807,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     signal,
     ".browse-cover",
     "browse-scroll-reveal",
-    { downwardOnly: true, scaleEntrance: true },
+    { downwardOnly: true, scaleEntrance: true, once: true },
   );
   const editorTitle = (item: Item) => editorStore.get({...item, entry:item.entry ?? null});
   const warmEditor = (event: Event) => {
