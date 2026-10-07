@@ -3,7 +3,7 @@
 import os
 import unittest
 from datetime import date, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("SECRET_KEY", "browse-tests-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -38,6 +38,16 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_vote_floor_has_an_inclusive_boundary_and_explicit_zero(self):
+        predicate = {k: v for k, v in FILTERS.items() if k != "sort"}
+        for votes, expected in [(249, False), (250, True), (251, True)]:
+            self.assertEqual(matches({"vote_count": votes}, media_type="movie", min_votes=250, **predicate), expected)
+        self.assertFalse(matches({}, media_type="movie", min_votes=250, **predicate))
+        self.assertTrue(matches({}, media_type="movie", min_votes=0, **predicate))
+        self.assertFalse(matches({"imdb_votes": 200, "vote_count": 10000}, media_type="movie", min_votes=250, **predicate))
+        params = remote_params("movie", page=1, **{**FILTERS, "sort": "newest", "min_votes": 250})
+        self.assertEqual(params["vote_count.gte"], 250)
+
     def test_season_boundaries_include_leap_days_and_year_rollover(self):
         for today, start, end in [
             (date(2024, 2, 29), "2024-01-01", "2024-03-31"),
@@ -117,6 +127,7 @@ class FilterTests(unittest.TestCase):
     def test_metadata_keeps_tags_and_regions_for_local_browsing(self):
         result = metadata_fields(
             {
+                "vote_count": 250,
                 "keywords": {"keywords": [{"id": 1, "name": "space"}]},
                 "watch/providers": {
                     "results": {"US": {"flatrate": [{"provider_id": 8}]}}
@@ -124,6 +135,7 @@ class FilterTests(unittest.TestCase):
             }
         )
         self.assertEqual(result["keywords"], [{"id": 1, "name": "space"}])
+        self.assertEqual(result["vote_count"], 250)
         self.assertEqual(
             result["watch_providers"]["US"]["flatrate"][0]["provider_id"], 8
         )
@@ -144,6 +156,25 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_vote_floor_is_applied_before_feed_pagination_and_survives_detail_fetch(self):
+        rows = [{"id": i, "imdb_id": f"tt{i}", "imdb_score": 8, "imdb_votes": 249 if i < 30 else 250} for i in range(60)]
+        async def detail(identifier, api_key):
+            return {"id": identifier, "vote_count": 1, "watch/providers": {"results": {"US": {"flatrate": [{"provider_id": 8}]}}}}
+        with patch("core.mdblist_discovery.ranked_rows", AsyncMock(return_value=(rows, False))), patch("core.tmdb.get_movie", AsyncMock(side_effect=detail)):
+            first, items = await remote_page("", "movie", "key", {**FILTERS, "provider": 8, "min_votes": 250}, 1, mdblist_key="mdb")
+            second, more = await remote_page("", "movie", "key", {**FILTERS, "provider": 8, "min_votes": 250}, 2, mdblist_key="mdb")
+        self.assertEqual([item["id"] for item in items], list(range(30, 54)))
+        self.assertEqual([item["id"] for item in more], list(range(54, 60)))
+        self.assertTrue(first["has_more"])
+        self.assertFalse(second["has_more"])
+
+    async def test_browse_search_excludes_low_vote_and_unknown_counts(self):
+        with patch("core.tmdb.search_movies", AsyncMock(return_value={"results": [
+            {"id": 1, "vote_count": 249}, {"id": 2, "vote_count": 250}, {"id": 3}], "total_pages": 2})):
+            data, items = await remote_page("title", "movie", "key", {**FILTERS, "min_votes": 250}, 1)
+        self.assertEqual([item["id"] for item in items], [2])
+        self.assertEqual(data["total_pages"], 2)
+
     async def test_filtered_feed_is_paged_after_matching_and_excluding_anime(self):
         rows = [
             {"id": i, "type": "movie", "imdb_id": f"tt{i}", "imdb_score": 8,
@@ -200,6 +231,58 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
         search.assert_awaited_once_with("series", page=2, api_key="key")
         self.assertEqual(data["total_pages"], 3)
         self.assertEqual(items, [])
+
+
+class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.db = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        self.db.execute.return_value = result
+        app = FastAPI()
+        app.include_router(router, prefix="/tracking")
+        async def session():
+            yield self.db
+        app.dependency_overrides[get_db] = session
+        app.dependency_overrides[get_optional_user] = lambda: None
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+        for target, value in [
+            ("routers.tracking.catalog_access", None),
+            ("routers.tracking.anime_is_visible", True),
+            ("core.settings_store.get_user_tmdb_key", "key"),
+            ("core.external_scores.effective_mdblist_key", None),
+            ("core.tracking_editor.attach_editor_context", None),
+        ]:
+            replacement = patch(target, AsyncMock(return_value=value))
+            replacement.start()
+            self.addCleanup(replacement.stop)
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_browse_and_sections_share_default_custom_zero_and_validation(self):
+        for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
+            with patch(target, AsyncMock(return_value={"results": []})) as browse:
+                for params, expected in [({}, 250), ({"min_votes": 500}, 500), ({"min_votes": 0}, 0)]:
+                    response = await self.client.get(f"/tracking/{endpoint}", params=params)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(browse.await_args.kwargs["min_votes"], expected)
+                for value in [-1, 1000001, "invalid"]:
+                    response = await self.client.get(f"/tracking/{endpoint}", params={"min_votes": value})
+                    self.assertEqual(response.status_code, 422)
+
+    async def test_quick_search_filters_remote_and_local_queries_on_backend_only(self):
+        with patch("core.tmdb.search_movies", AsyncMock(return_value={"results": [
+            {"id": 1, "title": "Low vote title", "vote_count": 249},
+            {"id": 2, "title": "Qualified title", "vote_count": 250},
+            {"id": 3, "title": "Unknown vote title"},
+        ]})):
+            response = await self.client.get("/tracking/catalog", params={"q": "title"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([row["tmdb_id"] for row in response.json()["results"]], [2])
+        query = self.db.execute.await_args_list[0].args[0]
+        self.assertIn(250, query.compile().params.values())
+        self.assertNotIn("votes", response.text)
 
 
 @unittest.skipUnless(
@@ -514,8 +597,8 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")),
             patch("core.tmdb.search_movies", AsyncMock(return_value={"results":[
-                {"id":400000,"title":"Known remote"},
-                {"id":999999,"title":"New remote"},
+                {"id":400000,"title":"Known remote","vote_count":250},
+                {"id":999999,"title":"New remote","vote_count":250},
             ]})),
         ):
             response = await self.client.get("/tracking/catalog", params={"q":"Remote"})

@@ -7,7 +7,7 @@ import {
 } from "../src/lib/browse-view.ts";
 
 test("browse starts with categories, while searches, filters and explicit sorts use full results", () => {
-  for (const query of ["", "type=series", "sort=all&region=DE"]) {
+  for (const query of ["", "type=series", "sort=all&region=DE", "min_votes=250", "min_votes=1000"]) {
     assert.equal(isCategoryView(new URLSearchParams(query)), true, query);
   }
   for (const query of [
@@ -23,6 +23,11 @@ test("browse starts with categories, while searches, filters and explicit sorts 
   ]) {
     assert.equal(isCategoryView(new URLSearchParams(query)), false, query);
   }
+});
+
+test('vote thresholds survive full-result requests and section links', () => {
+  assert.equal(browseRequestParams(new URLSearchParams('q=Arrival&min_votes=500')).get('min_votes'), '500');
+  assert.equal(new URL(sectionHref('movie', 'US', {sort: 'popular', min_votes: '0'}), 'https://anylist.test').searchParams.get('min_votes'), '0');
 });
 
 test("all-category selection can search using the paginated API without mutating the view", () => {

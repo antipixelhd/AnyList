@@ -7,6 +7,7 @@ from sqlalchemy import Float, and_, func, literal, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
+from core.catalog_search import DEFAULT_MIN_VOTES, stored_vote_count, title_vote_count
 from models import Media
 from models.base import MediaType
 
@@ -99,7 +100,8 @@ def section_specs(today=None):
 
 
 async def browse_sections(
-    db, viewer, *, media_type, region, show_anime, key, mdblist_key=None
+    db, viewer, *, media_type, region, show_anime, key, mdblist_key=None,
+    min_votes=DEFAULT_MIN_VOTES,
 ):
     specs = section_specs()
     filters = [
@@ -112,6 +114,7 @@ async def browse_sections(
                 status="",
                 provider=None,
                 region=region,
+                min_votes=min_votes,
             ),
             **values,
         }
@@ -156,7 +159,7 @@ async def browse_sections(
             **full_filters,
         )
         sections.append(
-            {"title": title, "filters": values, "results": page["results"][:6]}
+            {"title": title, "filters": {**values, "min_votes": str(min_votes)}, "results": page["results"][:6]}
         )
         if page.get("notice"):
             notices.append(page["notice"])
@@ -178,15 +181,18 @@ def metadata_fields(data):
     """Stored in existing JSONB so imports and refreshes retain discovery fields."""
     return {
         "popularity": data.get("popularity"),
+        "vote_count": data.get("vote_count"),
         "keywords": keywords(data),
         "watch_providers": (data.get("watch/providers") or {}).get("results", {}),
     }
 
 
 def remote_params(
-    media_type, *, page, genres, tags, start, end, status, provider, region, sort
+    media_type, *, page, genres, tags, start, end, status, provider, region, sort,
+    min_votes=0,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
+    params["vote_count.gte"] = min_votes
     if media_type == "series":
         params["sort_by"] = (
             params["sort_by"]
@@ -234,6 +240,7 @@ def local_query(
     sort,
     show_anime,
     mdblist_key=None,
+    min_votes=0,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
@@ -355,6 +362,8 @@ def local_query(
         popular=votes.desc().nulls_last(),
         trending=rank.asc().nulls_last(),
     )
+    if min_votes:
+        query = query.where(stored_vote_count(data, imdb_votes=votes) >= min_votes)
     if not term:
         if sort == "score":
             query = query.where(score > 0)
@@ -365,8 +374,10 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, tags, start, end, status, provider, region):
+def matches(item, *, media_type, genres, tags, start, end, status, provider, region, min_votes=0):
     if item.get("adult"):
+        return False
+    if title_vote_count(item) < min_votes:
         return False
     ids = set(item.get("genre_ids", [])) | {
         g["id"] for g in item.get("genres", []) if isinstance(g, dict) and g.get("id")
@@ -442,6 +453,7 @@ async def imdb_page(
     async def detail(row):
         async with semaphore:
             item = await get(row["id"], api_key=key)
+            item = {**item, "imdb_votes": row["imdb_votes"]}
             if not matches(
                 item, media_type=media_type, **predicate
             ) or not anime_visible(item, show_anime):

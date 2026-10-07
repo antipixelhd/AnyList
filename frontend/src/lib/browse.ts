@@ -5,6 +5,7 @@ import {
 } from "./browse-view";
 import { applyResponsiveArtwork } from "./responsive-artwork";
 import { createBrowseLoading } from "./browse-loading";
+import { initializeBrowseRanges } from "./browse-ranges";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { initializeScrollMotion } from "./scroll-motion";
 import { cancelUiMotion, showMenu, hideMenu } from "./ui-motion";
@@ -54,7 +55,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
-  const filterToggle = find<HTMLButtonElement>("[data-filter-toggle]");
+  const paintRanges = initializeBrowseRanges(form, signal);
   const skeleton = find<HTMLElement>("[data-browse-skeleton]");
   const region = find<HTMLElement>("[data-browse-region]");
   const loadingView = createBrowseLoading(region, skeleton);
@@ -105,6 +106,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       "status",
       "provider",
       "region",
+      "min_votes",
     ]) {
       const value = field(name).value.trim();
       if (value) values.set(name, value);
@@ -119,6 +121,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if (field("type").value === "series") values.set("type", "series");
     if (values.get("region") === "US") values.delete("region");
     if (values.get("sort") === "all") values.delete("sort");
+    if (values.get("min_votes") === "250") values.delete("min_votes");
     history.replaceState(
       history.state,
       "",
@@ -255,7 +258,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         heading = document.createElement("h2"),
         link = document.createElement("a"),
         cards = document.createElement("div");
-      heading.textContent = section.title;
+      const headingLink = document.createElement("a");
+      headingLink.textContent = section.title;
       link.textContent = "View all";
       link.dataset.viewAll = "";
       link.href = sectionHref(
@@ -263,6 +267,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         field("region").value,
         section.filters,
       );
+      headingLink.href = link.href;
+      headingLink.dataset.viewAll = "";
+      heading.append(headingLink);
       header.append(heading, link);
       cards.className = "browse-grid";
       render(section.results, cards, false);
@@ -277,6 +284,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
   };
   const paintChips = () => {
+    paintRanges();
     chips.replaceChildren();
     const add = (label: string, onRemove: () => void) => {
       const button = document.createElement("button");
@@ -309,17 +317,18 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         syncTags();
         renderTags();
       });
-    for (const name of ["start", "end", "status", "provider"])
-      if (field(name).value) {
+    for (const name of ["start", "end", "status", "provider", "min_votes"])
+      if (field(name).value && (name !== "min_votes" || field(name).value !== "250")) {
         const label =
           name === "start"
             ? `After ${field(name).value}`
             : name === "end"
               ? `Before ${field(name).value}`
+              : name === "min_votes" ? `${Number(field(name).value).toLocaleString()}+ votes`
               : (field(name) as HTMLSelectElement).selectedOptions[0]
                   ?.textContent || field(name).value;
         add(label, () => {
-          field(name).value = "";
+          field(name).value = name === "min_votes" ? "250" : "";
           field(name).dispatchEvent(new Event("input", { bubbles: true }));
         });
       }
@@ -351,13 +360,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       .join(",");
     find("[id=browse-genres-value]").textContent = field("genres").value
       ? `${field("genres").value.split(",").length} selected`
-      : "All genres";
+      : "Any";
   };
   const syncTags = () => {
     field("tags").value = [...tags.keys()].join(",");
     find("[id=browse-tags-value]").textContent = tags.size
       ? `${tags.size} selected`
-      : "Any tag";
+      : "Any";
   };
   let availableTags: Facet[] = [];
   const renderTags = () => {
@@ -456,7 +465,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }, 120);
     try {
       const path = categoryView
-        ? `browse/sections?${new URLSearchParams({ media_type: field("type").value, region: field("region").value })}`
+        ? `browse/sections?${new URLSearchParams({ media_type: field("type").value, region: field("region").value, min_votes: field("min_votes").value })}`
         : `browse?${browseRequestParams(values)}`;
       const response: Payload | SectionsPayload = await json(path, {
         signal: current.signal,
@@ -542,6 +551,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       field(name).dispatchEvent(new Event("input", { bubbles: true })),
     );
     sort.value = "all";
+    field("min_votes").value = "250";
     tags.clear();
     syncGenres();
     syncTags();
@@ -620,21 +630,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         syncGenres();
       } else if (
-        !["status", "provider", "region", "start", "end"].includes(target.name)
+        !["status", "provider", "region", "start", "end", "min_votes"].includes(target.name)
       )
         return;
       if (target.name === "region") void loadFacets();
       changed();
-    },
-    { signal },
-  );
-  filterToggle.addEventListener(
-    "click",
-    () => {
-      const open = filterToggle.getAttribute("aria-expanded") !== "true";
-      filterToggle.setAttribute("aria-expanded", String(open));
-      root.classList.toggle("filters-open", open);
-      if (!open) closeMenus();
     },
     { signal },
   );
@@ -665,6 +665,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       ])
         field(name).value = values.get(name) || "";
       sort.value = values.get("sort") || "popular";
+      field("min_votes").value = values.get("min_votes") || "250";
       tags.clear();
       syncGenresAfterType();
       syncTags();
@@ -884,7 +885,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     signal,
     ".browse-card",
     "browse-scroll-reveal",
-    { animateInitial: false },
+    { animateInitial: false, downwardOnly: true },
   );
   const editorTitle = (item: Item) => editorStore.get({...item, entry:item.entry ?? null});
   const warmEditor = (event: Event) => {

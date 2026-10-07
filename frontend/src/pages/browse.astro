@@ -4,6 +4,7 @@ import BrowseCard from "../components/BrowseCard.astro";
 import Icon from "../components/Icon.astro";
 import { tracker } from "../lib/tracker";
 import "../styles/browse.css";
+import { releaseYearBounds } from "../lib/browse-ranges";
 import {
   isCategoryView,
   browseRequestParams,
@@ -23,7 +24,7 @@ let payload: any = { results: [], has_more: false, page: 1, source: "" },
 const responses = await Promise.allSettled([
   tracker(
     categories
-      ? `browse/sections?${new URLSearchParams({ media_type: type, region: params.get("region") || "US" })}`
+      ? `browse/sections?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", min_votes: params.get("min_votes") || "250" })}`
       : `browse?${browseRequestParams(params)}`,
     Astro.locals.token,
   ),
@@ -71,6 +72,11 @@ const regions = [
 const region = params.get("region") || "US";
 if (!regions.some(([id]) => id === region)) regions.push([region, region]);
 const signedIn = !!Astro.locals.user;
+const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 1900);
+const lastYear = Math.max(new Date().getFullYear() + 3, Number(params.get("start")?.slice(0, 4)) || 0, Number(params.get("end")?.slice(0, 4)) || 0);
+const years = releaseYearBounds(params.get("start") || "", params.get("end") || "", firstYear, lastYear);
+const minVotes = Math.max(0, Math.min(1000000, Number(params.get("min_votes") ?? 250) || 0));
+const voteLimit = Math.max(10000, minVotes);
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
   .map((genre: any) => genre.name);
@@ -81,6 +87,7 @@ const statusLabel = statusOptions.find(([id]) => id === params.get("status"))?.[
 if (statusLabel) initialChips.push(statusLabel);
 const providerLabel = facets.providers.find((provider: any) => String(provider.id) === params.get("provider"))?.name;
 if (providerLabel) initialChips.push(providerLabel);
+if (minVotes !== 250) initialChips.push(`${minVotes.toLocaleString()}+ votes`);
 if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”`);
 ---
 
@@ -120,7 +127,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
     </header>
     <form
       id="browse-filters"
-      class="browse-filters"
+      class="browse-filters" data-motion-static
       role="search"
       data-browse-form
     >
@@ -140,16 +147,6 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
             />
           </div>
         </label>
-        <button
-          type="button"
-          class="browse-filter-toggle"
-          data-filter-toggle
-          aria-label="Filters and sorting"
-          aria-expanded="false"
-          aria-controls="browse-controls"
-        >
-          <Icon name="sliders" />
-        </button>
       </div>
       <div class="browse-controls" id="browse-controls">
         <div class="browse-filter">
@@ -159,7 +156,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
               <span id="browse-genres-value">
                 {selectedGenres.filter(Boolean).length
                   ? `${selectedGenres.filter(Boolean).length} selected`
-                  : "All genres"}
+                  : "Any"}
               </span>
               <Icon name="chevron-down" />
             </summary>
@@ -190,7 +187,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
               <span id="browse-tags-value">
                 {params.get("tags")
                   ? `${params.get("tags")!.split(",").length} selected`
-                  : "Any tag"}
+                  : "Any"}
               </span>
               <Icon name="chevron-down" />
             </summary>
@@ -213,7 +210,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         <label class="browse-filter">
           <span>Airing status</span>
           <select name="status">
-            <option value="">Any status</option>
+            <option value="">Any</option>
             {statusOptions.map(([id, label]) => (
               <option value={id} selected={params.get("status") === id}>
                 {label}
@@ -221,53 +218,8 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
             ))}
           </select>
         </label>
-        <label class="browse-filter">
-          <span>Streaming on</span>
-          <select name="provider">
-            <option value="">Any service</option>
-            {facets.providers.map((provider: any) => (
-              <option
-                value={provider.id}
-                selected={params.get("provider") === String(provider.id)}
-              >
-                {provider.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || region !== "US")}>
-          <summary>
-            <Icon name="sliders" />
-            <span>More filters</span>
-            <Icon name="chevron-down" />
-          </summary>
-          <div class="browse-secondary-filters">
-            <label>
-              <span>Released after</span>
-              <input
-                type="date"
-                name="start"
-                value={params.get("start") || ""}
-              />
-            </label>
-            <label>
-              <span>Released before</span>
-              <input type="date" name="end" value={params.get("end") || ""} />
-            </label>
-            <label>
-              <span>Streaming region</span>
-              <select name="region">
-                {regions.map(([id, label]) => (
-                  <option value={id} selected={region === id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </details>
         <label class="browse-sort">
-          <span class="sr-only">Sort titles</span>
+          <span>Sort</span>
           <select name="sort" form="browse-filters" data-browse-sort>
             {[
               ["all", "All categories"],
@@ -287,6 +239,54 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
             ))}
           </select>
         </label>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minVotes !== 250 || region !== "US")}>
+          <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
+            <Icon name="sliders" />
+          </summary>
+          <div class="browse-secondary-filters" id="browse-secondary-filters">
+            <label class="browse-filter browse-streaming">
+              <span>Streaming on</span>
+              <select name="provider">
+                <option value="">Any service</option>
+                {facets.providers.map((provider: any) => (
+                  <option
+                    value={provider.id}
+                    selected={params.get("provider") === String(provider.id)}
+                  >
+                    {provider.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class="browse-filter">
+              <span>Streaming region</span>
+              <select name="region">
+                {regions.map(([id, label]) => (
+                  <option value={id} selected={region === id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div class="browse-range" data-year-range style={`--range-start:${(years.lower - firstYear) / (lastYear - firstYear) * 100}%;--range-end:${(years.upper - firstYear) / (lastYear - firstYear) * 100}%`}>
+              <div class="browse-range-heading"><span id="browse-year-label">Year range</span><output>{params.get("start") || params.get("end") ? `${years.lower} – ${years.upper}` : "Any year"}</output></div>
+              <div class="browse-range-track">
+                <input type="range" min={firstYear} max={lastYear} value={years.lower} data-range-lower aria-label="Earliest release year" />
+                <input type="range" min={firstYear} max={lastYear} value={years.upper} data-range-upper aria-label="Latest release year" />
+              </div>
+              <div class="browse-year-dates">
+                <label><span>Released after</span><input type="date" name="start" value={params.get("start") || ""} /></label>
+                <label><span>Released before</span><input type="date" name="end" value={params.get("end") || ""} /></label>
+              </div>
+            </div>
+            <div class="browse-range" data-vote-range style={`--range-start:0%;--range-end:${minVotes / voteLimit * 100}%`}>
+              <div class="browse-range-heading"><label for="browse-min-votes">Minimum votes</label><output for="browse-min-votes">{minVotes.toLocaleString()}</output></div>
+              <div class="browse-range-track">
+                <input id="browse-min-votes" type="range" name="min_votes" min="0" max={voteLimit} step="1" value={minVotes} />
+              </div>
+            </div>
+          </div>
+        </details>
         <button class="button-secondary browse-submit" type="submit">
           Apply filters
         </button>
@@ -319,7 +319,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         {sections.map((section: any) => (
           <section class="browse-category" aria-label={section.title}>
             <header>
-              <h2>{section.title}</h2>
+              <h2><a href={sectionHref(type, region, section.filters)} data-view-all>{section.title}</a></h2>
               <a
                 href={sectionHref(type, region, section.filters)}
                 data-view-all

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -51,7 +51,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial});
+  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
@@ -246,5 +246,30 @@ test('removed filter results cancel their pending motion', t => {
   p.remove();
   assert(p.animations[0].cancelled);
   p.scroll(0);p.scroll(424);
+  assert.equal(p.animations.length, 1);
+});
+
+test('Browse paints upward entries immediately and replays only on downward entry', t => {
+  const p = preview(t, {downwardOnly: true, animateInitial: false});
+  p.scroll(424);
+  assert.equal(p.animations.length, 1);
+  p.animations[0].dispatchEvent(new Event('finish'));
+  p.scroll(1400);
+  assert.equal(p.classes.size, 0);
+  p.scroll(1300);
+  assert.equal(p.animations.length, 1);
+  assert.equal(p.classes.size, 0);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+});
+
+test('Browse cancels an active entrance when the user reverses scroll direction', t => {
+  const p = preview(t, {downwardOnly: true});
+  p.scroll(480);
+  p.scroll(450);
+  assert(p.animations[0].cancelled);
+  assert.equal(p.classes.size, 0);
+  p.ready();
   assert.equal(p.animations.length, 1);
 });

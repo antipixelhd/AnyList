@@ -1,7 +1,29 @@
-"""Conservative remote typo recovery shared by catalogue search and browse."""
+"""Shared catalogue vote thresholds and conservative remote typo recovery."""
 
 import re
 from difflib import SequenceMatcher
+
+from sqlalchemy import Float, func
+
+DEFAULT_MIN_VOTES = 250
+
+
+def title_vote_count(item: dict) -> int:
+    """Prefer IMDb votes when available, otherwise use the TMDB count."""
+    votes = item.get("imdb_votes")
+    if votes is None:
+        votes = (item.get("imdb") or {}).get("votes")
+    if votes is None:
+        votes = item.get("vote_count")
+    return int(votes or 0)
+
+
+def stored_vote_count(data, *, imdb_votes=None):
+    return func.coalesce(
+        data["imdb"]["votes"].astext.cast(Float) if imdb_votes is None else imdb_votes,
+        data["vote_count"].astext.cast(Float),
+        0,
+    )
 
 
 def fuzzy_remote_terms(term: str) -> list[str]:

@@ -119,6 +119,7 @@
       const menu = document.createElement('div');
       menu.id = `tracker-select-menu-${nextId}`;
       menu.className = 'tracker-select-options tracker-dropdown-menu';
+      if (select.closest('[data-browse-form]')) menu.classList.add('browse-select-options');
       menu.setAttribute('role', 'listbox');
       menu.dataset.motionStatic = '';
       menu.hidden = true;

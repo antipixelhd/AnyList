@@ -4,7 +4,7 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean } = {},
+  options: { animateInitial?: boolean; downwardOnly?: boolean } = {},
 ) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   if (reduced.matches || signal.aborted) return;
@@ -15,6 +15,8 @@ export function initializeScrollMotion(
   const registered = new WeakSet<HTMLElement>();
   let frame = 0;
   let initialRegistration = true;
+  let previousScrollY = scrollY;
+  let scrollingUp = false;
 
   const viewport = () => {
     const view = window.visualViewport;
@@ -83,6 +85,8 @@ export function initializeScrollMotion(
 
   const update = () => {
     frame = 0;
+    if (scrollY !== previousScrollY) scrollingUp = scrollY < previousScrollY;
+    previousScrollY = scrollY;
     const { top: viewportTop, bottom } = viewport();
     // Batch position reads before starting/cancelling animations. Use the
     // unshifted box, so the entrance itself cannot move its trigger point.
@@ -111,6 +115,12 @@ export function initializeScrollMotion(
     } of positions) {
       if (!visible) {
         if (animation) complete(element);
+        continue;
+      }
+      // Browse entrances come from the lower edge only. Returning through the
+      // top edge, or reversing direction mid-fade, keeps content fully painted.
+      if (options.downwardOnly && (moduleBottom <= viewportTop || (scrollingUp && top < bottom))) {
+        complete(element);
         continue;
       }
       // Rearm only offscreen, so a partly visible module never flashes or
