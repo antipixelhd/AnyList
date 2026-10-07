@@ -8,7 +8,7 @@ import { createBrowseLoading } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { initializeScrollMotion } from "./scroll-motion";
-import { cancelUiMotion, showMenu, hideMenu } from "./ui-motion";
+import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
 
 type Item = {
   id: number | null;
@@ -56,6 +56,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
   const paintRanges = initializeBrowseRanges(form, signal);
+  const advancedFilters = find<HTMLDetailsElement>(".browse-more");
+  const advancedPanel = find<HTMLElement>(".browse-secondary-filters");
   const skeleton = find<HTMLElement>("[data-browse-skeleton]");
   const region = find<HTMLElement>("[data-browse-region]");
   const loadingView = createBrowseLoading(region, skeleton);
@@ -430,6 +432,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if (panel.hidden) menu.open = false;
     if (restoreFocus) menu.querySelector<HTMLElement>("summary")?.focus();
   }
+  async function closeAdvancedFilters(restoreFocus = false) {
+    if (!advancedFilters.open || advancedPanel.inert) return;
+    advancedPanel.inert = true;
+    if (await dismiss(advancedPanel)) {
+      advancedFilters.open = false;
+      advancedPanel.inert = false;
+      if (restoreFocus) advancedFilters.querySelector<HTMLElement>("summary")?.focus();
+    }
+  }
   async function load(append = false) {
     if (
       signal.aborted ||
@@ -794,9 +805,16 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     (event) => {
       if (!(event.target as Element).closest("[data-filter-menu]"))
         closeMenus();
+      if (!advancedFilters.contains(event.target as Node) &&
+          !(event.target as Element).closest(".browse-select-options"))
+        void closeAdvancedFilters();
     },
     { signal },
   );
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !(event.target as Element).closest('[role="listbox"]'))
+      void closeAdvancedFilters(true);
+  }, { signal });
   form.addEventListener(
     "keydown",
     (event) => {
