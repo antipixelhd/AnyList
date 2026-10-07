@@ -8,7 +8,7 @@ import '../../styles/profile-color-settings.css';
 interface Props { category: 'profile' | 'media' | 'lists' | 'notifications' }
 const { category } = Astro.props;
 const { token } = Astro.locals;
-const settings = Astro.locals.settings ?? await api.auth.getSettings(token!);
+const settings = Astro.locals.settings;
 const [profileData, me, trackingPrefs] = await Promise.all([
   api.profile.get(token!).catch(() => null),
   api.auth.me(token!),
@@ -367,7 +367,7 @@ const COUNTRIES = [
       </section>
 
 
-      <RatingPosterSettings settings={settings} />
+      {settings ? <RatingPosterSettings settings={settings} /> : <p role="alert">Rating poster settings are temporarily unavailable. Refresh to try again.</p>}
     </div>}
   </div>
 
