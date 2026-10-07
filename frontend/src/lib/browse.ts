@@ -5,8 +5,9 @@ import {
 } from "./browse-view";
 import { applyResponsiveArtwork } from "./responsive-artwork";
 import { createBrowseLoading } from "./browse-loading";
+import { editorStore, type EditorTitle } from "./editor-store";
 import { initializeScrollMotion } from "./scroll-motion";
-import { cancelUiMotion, reveal, showMenu, hideMenu } from "./ui-motion";
+import { cancelUiMotion, showMenu, hideMenu } from "./ui-motion";
 
 type Item = {
   id: number | null;
@@ -18,6 +19,9 @@ type Item = {
   list_status?: string;
   score?: number | null;
   rating_mode?: string;
+  backdrop?: string;
+  entry?: Record<string, any> | null;
+  editor_library?: EditorTitle['editor_library'];
 };
 type Payload = {
   results: Item[];
@@ -133,6 +137,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     return body;
   };
   const paintState = (card: HTMLElement, item: Item) => {
+    card.querySelectorAll<HTMLElement>('[data-editor-icon]').forEach(icon => {
+      icon.hidden = icon.dataset.editorIcon === 'edit' ? !item.list_status : !!item.list_status;
+    });
+    const watch = card.querySelector<HTMLButtonElement>('[data-browse-action=watch]');
+    if (watch) watch.hidden = item.list_status === 'watching';
     card.dataset.state = item.list_status || "";
     const rating = card.querySelector<HTMLElement>("[data-user-score]")!;
     rating.hidden = !(item.score != null && item.score > 0);
@@ -171,6 +180,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     const item = initialItems.get(card.dataset.key!);
     if (!item) return;
     items.set(card, item);
+    if ('entry' in item) editorStore.seed(item as EditorTitle);
     if (grid.contains(card)) seen.add(key(item));
     paintState(card, item);
   });
@@ -226,11 +236,12 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
               ? "Open list editor for"
               : button.dataset.browseAction === "plan"
                 ? "Plan to watch"
-                : "Rate and complete";
+                : button.dataset.browseAction === "watch" ? "Set to Watching" : "Rate and complete";
           button.setAttribute("aria-label", `${label} ${item.title}`);
         });
       paintState(card, item);
       items.set(card, item);
+      if ('entry' in item) editorStore.seed(item as EditorTitle);
       fragment.append(card);
     }
     destination.append(fragment);
@@ -875,7 +886,26 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     "browse-scroll-reveal",
     { animateInitial: false },
   );
-  // Imports only happen on an explicit poster action; browsing never writes media.
+  const editorTitle = (item: Item) => editorStore.get({...item, entry:item.entry ?? null});
+  const warmEditor = (event: Event) => {
+    const card = (event.target as Element).closest<HTMLElement>('[data-browse-card]');
+    const item = card && items.get(card);
+    if (!item || !card?.querySelector('[data-browse-action]')) return;
+    const image = card.querySelector<HTMLImageElement>('[data-poster]');
+    editorStore.warmArtwork(editorTitle(item), image?.currentSrc || image?.src);
+  };
+  region.addEventListener('pointerover', warmEditor, {signal});
+  region.addEventListener('focusin', warmEditor, {signal});
+  document.addEventListener('anylist:editor-state', event => {
+    const title = (event as CustomEvent<EditorTitle>).detail;
+    for (const item of items.values()) {
+      if (!(title.id && item.id === title.id) && !(title.tmdb_id && item.tmdb_id === title.tmdb_id && item.type === title.type)) continue;
+      syncItem({...item, id:title.id, entry:title.entry, list_status:title.entry?.status,
+        score:title.entry?.score, rating_mode:title.entry?.rating_mode});
+      break;
+    }
+  }, {signal});
+  // Read snapshots immediately. Import and save only after an explicit write.
   region.addEventListener(
     "click",
     async (event) => {
@@ -886,88 +916,43 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (!button || !card) return;
       const item = items.get(card);
       if (!item || button.disabled) return;
-      const buttons = [...card.querySelectorAll<HTMLButtonElement>("button")];
-      buttons.forEach((b) => (b.disabled = true));
+      const title = editorTitle(item);
       try {
-        if (!item.id) {
-          const imported = await json(`catalog/${item.type}/${item.tmdb_id}`, {
-            method: "POST",
-          });
-          item.id = imported.id;
-          syncItem(item);
-          card
-            .querySelectorAll<HTMLAnchorElement>("a")
-            .forEach((a) => (a.href = `/title/${item.id}`));
-        }
-        if (signal.aborted) return;
         if (button.dataset.browseAction === "edit")
           document.dispatchEvent(
             new CustomEvent("anylist:open-editor", {
-              detail: { mediaId: item.id, opener: button },
+              detail: { mediaId: item.id, opener: button, title },
             }),
           );
-        else if (button.dataset.browseAction === "plan") {
-          const saved = await json(`entry/${item.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "planning" }),
-          });
-          item.list_status = saved.status;
-          item.score = saved.score;
-          syncItem(item);
-          notice.textContent = `${item.title} added to Plan to Watch.`;
-          reveal(card.querySelector<HTMLElement>("[data-list-state]")!);
+        else if (button.dataset.browseAction === "plan" || button.dataset.browseAction === "watch") {
+          const saved = await editorStore.write(title, {status:button.dataset.browseAction === 'watch' ? 'watching' : 'planning'});
+          if (signal.aborted) return;
+          document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:saved}));
         } else {
           // The existing picker handles season-average override confirmation.
-          const title = await json(`title/${item.id}`);
           const entry = title.entry;
           (window as any).anyListQuickRate?.({
             title: item.title,
             poster: item.poster,
+            posterSrc: card.querySelector<HTMLImageElement>('[data-poster]')?.currentSrc,
             help: "Choose a score to complete this title and add it to your list.",
             score: entry?.score,
             ratingMode: entry?.rating_mode || "manual",
             onScore: async (score: number | null) => {
-              const saved = await json(`entry/${item.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+              const saved = await editorStore.write(title, {
                   manual_score: score ?? 0,
                   ...(score != null
                     ? { status: "completed", rating_mode: "manual" }
                     : {}),
-                }),
               });
-              item.list_status = saved.status;
-              item.score = saved.score;
-              item.rating_mode = saved.rating_mode;
-              syncItem(item);
-              notice.textContent =
-                score != null
-                  ? `${item.title} rated and completed.`
-                  : `Rating removed for ${item.title}.`;
+              if (signal.aborted) return;
+              document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:saved}));
             },
           });
         }
       } catch (cause) {
         notice.textContent = (cause as Error).message;
-      } finally {
-        buttons.forEach((b) => (b.disabled = false));
       }
-    },
-    { signal },
-  );
-  document.addEventListener(
-    "anylist:entry-saved",
-    (event) => {
-      const saved = (event as CustomEvent).detail;
-      for (const [card, item] of items)
-        if (item.id === saved.id) {
-          item.list_status = saved.status;
-          item.score = saved.score;
-          item.rating_mode = saved.rating_mode;
-          paintState(card, item);
-        }
     },
     { signal },
   );

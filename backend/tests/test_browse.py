@@ -19,7 +19,7 @@ from core.browse import (
     section_specs,
 )
 from db import get_db
-from dependencies import get_optional_user
+from dependencies import get_current_user, get_optional_user
 from models import Media, User
 from models.base import MediaType
 from models.tracking import TrackedEntry
@@ -278,6 +278,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
         app.dependency_overrides[get_db] = session
         app.dependency_overrides[get_optional_user] = lambda: self.viewer
+        app.dependency_overrides[get_current_user] = lambda: self.viewer
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         )
@@ -471,6 +472,84 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             {"id": 99999, "name": "space adventure"}, response.json()["results"]
         )
+
+    async def test_editor_snapshots_include_complete_viewer_fields_without_provider_calls(self):
+        from sqlalchemy import select
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id,
+            TrackedEntry.media_id == self.movies[0].id,
+        ))).scalar_one()
+        entry.notes = "Viewer notes"
+        entry.favorite = True
+        entry.manual_score = 8.5
+        entry.start_date = date(2021, 2, 3)
+        entry.rewatch_count = 2
+        self.movies[0].backdrop_path = "/background.jpg"
+        await self.db.commit()
+        with patch("core.external_scores.refresh_external_scores", AsyncMock()) as refresh:
+            response = await self.client.get(f"/tracking/editor/{self.movies[0].id}")
+        self.assertEqual(response.status_code, 200, response.text)
+        refresh.assert_not_awaited()
+        row = response.json()
+        self.assertEqual(row["entry"]["notes"], "Viewer notes")
+        self.assertEqual(row["entry"]["manual_score"], 8.5)
+        self.assertTrue(row["entry"]["favorite"])
+        self.assertEqual(row["entry"]["start_date"], "2021-02-03")
+        self.assertEqual(row["entry"]["rewatch_count"], 2)
+        self.assertEqual(row["backdrop"], "/background.jpg")
+        self.assertFalse(row["editor_library"]["available"])
+        self.viewer = self.other
+        response = await self.client.get(f"/tracking/editor/{self.movies[0].id}")
+        self.assertIsNone(response.json()["entry"])
+        self.assertNotIn("Viewer notes", response.text)
+
+    async def test_browse_and_search_seed_private_editor_snapshots_for_known_and_new_titles(self):
+        response = await self.client.get("/tracking/browse", params={"sort": "oldest"})
+        rows = response.json()["results"]
+        own = next(row for row in rows if row["id"] == self.movies[0].id)
+        other = next(row for row in rows if row["id"] == self.movies[1].id)
+        self.assertEqual(own["entry"]["status"], "watching")
+        self.assertIn("notes", own["entry"])
+        self.assertIsNone(other["entry"])
+        with (
+            patch("core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")),
+            patch("core.tmdb.search_movies", AsyncMock(return_value={"results":[
+                {"id":400000,"title":"Known remote"},
+                {"id":999999,"title":"New remote"},
+            ]})),
+        ):
+            response = await self.client.get("/tracking/catalog", params={"q":"Remote"})
+        rows = response.json()["results"]
+        known = next(row for row in rows if row["tmdb_id"] == 400000)
+        new = next(row for row in rows if row["tmdb_id"] == 999999)
+        self.assertEqual(known["id"], self.movies[0].id)
+        self.assertEqual(known["entry"]["status"], "watching")
+        self.assertIsNone(new["id"])
+        self.assertIsNone(new["entry"])
+        self.viewer = None
+        response = await self.client.get("/tracking/browse")
+        self.assertTrue(all("entry" not in row for row in response.json()["results"]))
+
+    async def test_editor_library_snapshot_respects_private_intents_and_avoids_credentials(self):
+        from models import MediaServerConnection
+        from models.streaming_library import StreamingLibraryIntent
+        self.db.add_all([
+            MediaServerConnection(user_id=self.owner.id, type="stremio", name="Stream",
+                                  url="https://example.test", token="private-token"),
+            StreamingLibraryIntent(user_id=self.owner.id, media_id=self.movies[0].id, desired=True),
+            StreamingLibraryIntent(user_id=self.other.id, media_id=self.movies[1].id, desired=True),
+        ])
+        await self.db.commit()
+        response = await self.client.get("/tracking/browse", params={"sort":"oldest"})
+        rows = response.json()["results"]
+        own = next(row for row in rows if row["id"] == self.movies[0].id)
+        other = next(row for row in rows if row["id"] == self.movies[1].id)
+        self.assertEqual(own["editor_library"], {"available":True, "desired":True})
+        self.assertEqual(other["editor_library"], {"available":True, "desired":False})
+        self.assertNotIn("private-token", response.text)
+        self.viewer = self.other
+        response = await self.client.get(f"/tracking/editor/{self.movies[1].id}")
+        self.assertEqual(response.json()["editor_library"], {"available":False, "desired":False})
 
     async def test_remote_cards_resolve_local_ids_and_viewer_state(self):
         with (

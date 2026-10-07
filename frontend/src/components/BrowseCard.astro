@@ -83,11 +83,12 @@ const href = item.id
           data-browse-action="edit"
           class="browse-add"
           aria-label={`Open list editor for ${item.title}`}
-          data-tooltip="Open list editor"
         >
-          <Icon name="plus" />
+          <span data-editor-icon="add" hidden={!!state}><Icon name="plus" /></span>
+          <span data-editor-icon="edit" hidden={!state}><Icon name="edit" /></span>
         </button>
         <div class="browse-extra-actions">
+          <button type="button" data-browse-action="watch" hidden={state === 'watching'} aria-label={`Set ${item.title} to Watching`} data-tooltip="Set to Watching"><Icon name="play" /></button>
           <button
             type="button"
             data-browse-action="plan"

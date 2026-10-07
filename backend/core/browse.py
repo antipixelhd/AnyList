@@ -7,10 +7,8 @@ from sqlalchemy import Float, and_, func, literal, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
-from core.tracking_rules import effective_score
 from models import Media
 from models.base import MediaType
-from models.tracking import TrackedEntry
 
 GENRES = {
     28: "Action",
@@ -661,32 +659,10 @@ async def browse_page(
         mapping = {m.tmdb_id: m.id for m in known}
         for row in results:
             row["id"] = row.get("id") or mapping.get(row["tmdb_id"])
-    # Only the authenticated viewer's state is returned, in a single query per page.
-    entries = {}
-    ids = [r["id"] for r in results if r.get("id")]
-    if viewer and ids:
-        entries = {
-            e.media_id: e
-            for e in (
-                await db.execute(
-                    select(TrackedEntry).where(
-                        TrackedEntry.user_id == viewer.id,
-                        TrackedEntry.media_id.in_(ids),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        }
     for row in results:
-        entry = entries.get(row["id"])
-        row["list_status"] = entry.status if entry else None
-        row["score"] = (
-            effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
-            if entry
-            else None
-        )
-        row["rating_mode"] = entry.rating_mode if entry else "manual"
+        row.update(list_status=None, score=None, rating_mode="manual")
+    from core.tracking_editor import attach_editor_context
+    await attach_editor_context(db, viewer, results, media_rows=known if remote is not None else rows)
     return {
         "results": results,
         "page": page,

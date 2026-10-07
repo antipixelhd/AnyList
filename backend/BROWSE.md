@@ -42,3 +42,23 @@ not every title known to IMDb.
 No schema migration is required. Relevant checks:
 `python -m unittest tests.test_mdblist_discovery tests.test_browse tests.test_mdblist`
 from `backend/`; API tests require a disposable `TRACKING_TEST_DATABASE_URL`.
+
+Editor actions use complete viewer-owned snapshots attached to Browse, search,
+and the owner's list responses. Entry fields and streaming-library intent are
+queried in batches from the database; preparing an editor never calls metadata
+providers. Title pages seed the same client store from their existing data.
+The authenticated `/tracking/editor/{id}` endpoint is a lightweight fallback
+for an uncached entry. Public lists never seed another viewer's editor state.
+
+`frontend/src/lib/editor-store.ts` keeps this data in viewer-scoped memory.
+Status, rating, editor saves, and library changes paint optimistically and use
+one ordered queue per title. Failed writes roll back only their own intent;
+newer clicks remain visible. Imports are deduplicated and happen on writes,
+so opening and cancelling an unimported title's editor leaves the catalogue
+untouched. Account changes discard snapshots and fence queued requests.
+
+Editor artwork reuses the displayed poster's exact URL. Pointer/focus intent
+warms a known backdrop; each opening chooses a decoded backdrop or the cached
+poster before showing the dialog and keeps it for that opening. No background
+refresh changes active form fields or swaps its images. Saving errors restore
+the draft for retry. Client regression checks: `npm test` from `frontend/`.

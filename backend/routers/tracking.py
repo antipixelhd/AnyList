@@ -5,7 +5,7 @@ from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
 from datetime import date, datetime, timedelta, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -973,6 +973,9 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                 latest = max(watched_episodes, key=lambda r: (r.season_number or 0, r.episode_number or 0), default=None)
                 result['season_position'] = f'S{latest.season_number}E{latest.episode_number}' if latest else None
                 result['new_seasons'] = len({r.season_number for r in unwatched}) if result['status'] == 'completed' else 0
+    if owner:
+        from core.tracking_editor import attach_editor_context
+        await attach_editor_context(db, viewer, entries, media_rows=[media for _, media in rows])
     prefs=await db.get(TrackingPreferences,user.id)
     return {
         "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
@@ -1190,6 +1193,8 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 notice = 'Metadata search is temporarily unavailable. Showing local matches.'
         else:
             notice = 'Add a TMDB key in Settings, or ask your administrator, to search beyond the local catalogue.'
+    from core.tracking_editor import attach_editor_context
+    await attach_editor_context(db, viewer, results)
     return {"results": results, "notice": notice}
 
 
@@ -1214,6 +1219,20 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: i
             await db.rollback()
             raise HTTPException(502, 'Unable to load title metadata; try again later')
     return {'id':media.id}
+
+
+@router.get("/editor/{media_id}")
+async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_db)],
+                         viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    media = await db.get(Media, media_id)
+    if not media or media.media_type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(404, "Title not found")
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, "Title not found")
+    from core.tracking_editor import attach_editor_context
+    rows = [tracking_projection.media_data(media)]
+    await attach_editor_context(db, viewer, rows, media_rows=[media])
+    return rows[0]
 
 
 @router.get("/title/{media_id}")

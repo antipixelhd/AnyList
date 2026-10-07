@@ -33,7 +33,7 @@ document.addEventListener('astro:page-load', () => {
     delete (window as any).anyListQuickRate;
     return;
   }
-  type QuickRateDetail = { id?: number; title: string; poster?: string; score?: number | null; ratingMode?: 'manual' | 'average'; help?: string; onScore?: (score: number | null) => void | Promise<void> };
+  type QuickRateDetail = { id?: number; title: string; poster?: string; posterSrc?: string; score?: number | null; ratingMode?: 'manual' | 'average'; help?: string; onScore?: (score: number | null) => void | Promise<void> };
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
   const value = document.querySelector<HTMLOutputElement>('#quick-rating-value')!;
@@ -161,7 +161,7 @@ document.addEventListener('astro:page-load', () => {
         const modeLabel = control.querySelector<HTMLElement>('[data-rating-mode-label]');
         if (modeLabel) modeLabel.textContent = savedScore == null ? 'Unrated' : ratingMode === 'average' ? 'Rated-season average' : 'Manual rating';
       });
-      document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: { id: active.id, score: savedScore } }));
+      document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: {...saved, id:active.id, score:savedScore} }));
       setTimeout(() => { void closeDialog(dialog); }, 140);
     } catch (cause) {
       error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
@@ -176,9 +176,10 @@ document.addEventListener('astro:page-load', () => {
     savedScore = detail.score || null;
     pendingScore = null;
     title.textContent = detail.title;
-    if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'direct'});
+    if (detail.posterSrc) { poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.src = detail.posterSrc; }
+    else if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'direct'});
     else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
-    poster.hidden = !detail.poster;
+    poster.hidden = !detail.poster && !detail.posterSrc;
     remove.hidden = savedScore == null || detail.ratingMode === 'average';
     help.textContent = detail.help ?? (detail.onScore ? 'Your rating will be saved when you import.' : 'Choose a half point. Your rating saves immediately.');
     confirmation.hidden = true;
