@@ -78,19 +78,13 @@ PAGE_SIZE = 24
 
 def section_specs(today=None):
     today = today or date.today()
-    month = (today.month - 1) // 3 * 3 + 1
-    start = date(today.year, month, 1)
-    next_season = (
-        date(today.year + 1, 1, 1) if month == 10 else date(today.year, month + 3, 1)
-    )
     return [
         ("Trending now", {"sort": "trending"}),
         (
-            "Popular this season",
+            "Newest",
             {
-                "sort": "trending",
-                "start": start.isoformat(),
-                "end": (next_season - timedelta(days=1)).isoformat(),
+                "sort": "newest",
+                "end": today.isoformat(),
             },
         ),
         ("All-time popular", {"sort": "popular"}),

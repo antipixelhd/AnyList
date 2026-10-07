@@ -41,7 +41,7 @@ class FilterTests(unittest.TestCase):
     def test_browse_sections_include_only_the_four_discovery_categories(self):
         self.assertEqual(
             [title for title, _ in section_specs()],
-            ["Trending now", "Popular this season", "All-time popular", "Highest rated"],
+            ["Trending now", "Newest", "All-time popular", "Highest rated"],
         )
 
     def test_vote_floor_has_an_inclusive_boundary_and_explicit_zero(self):
@@ -54,13 +54,14 @@ class FilterTests(unittest.TestCase):
         params = remote_params("movie", page=1, **{**FILTERS, "sort": "newest", "min_votes": 250})
         self.assertEqual(params["vote_count.gte"], 250)
 
-    def test_season_boundaries_include_leap_days_and_year_rollover(self):
-        for today, start, end in [
-            (date(2024, 2, 29), "2024-01-01", "2024-03-31"),
-            (date(2026, 12, 31), "2026-10-01", "2026-12-31"),
-        ]:
+    def test_newest_sorts_released_titles_without_a_season_boundary(self):
+        for today in [date(2024, 2, 29), date(2026, 12, 31)]:
             values = section_specs(today)[1][1]
-            self.assertEqual((values["start"], values["end"]), (start, end))
+            self.assertEqual(values, {"sort": "newest", "end": today.isoformat()})
+            for media_type, sort_field in [("movie", "primary_release_date"), ("series", "first_air_date")]:
+                params = remote_params(media_type, page=1, **{**FILTERS, **values})
+                self.assertEqual(params["sort_by"], f"{sort_field}.desc")
+                self.assertEqual(params[f"{sort_field}.lte"], today.isoformat())
 
     def test_filters_use_and_for_multiple_genres_and_tags(self):
         params = remote_params(
