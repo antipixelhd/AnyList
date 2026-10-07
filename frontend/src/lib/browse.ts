@@ -611,49 +611,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { signal },
   );
-  sections.addEventListener(
-    "click",
-    (event) => {
-      const link = (event.target as Element).closest<HTMLAnchorElement>(
-        "[data-view-all]",
-      );
-      if (
-        !link ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        event.altKey
-      )
-        return;
-      event.preventDefault();
-      const values = new URL(link.href).searchParams;
-      for (const name of [
-        "q",
-        "genres",
-        "tags",
-        "start",
-        "end",
-        "status",
-        "provider",
-      ])
-        field(name).value = values.get(name) || "";
-      sort.value = values.get("sort") || "popular";
-      field("min_votes").value = values.get("min_votes") || "250";
-      tags.clear();
-      syncGenresAfterType();
-      syncTags();
-      for (const name of ["sort", "status", "provider"])
-        field(name).dispatchEvent(new Event("input", { bubbles: true }));
-      changed();
-      window.scrollTo({
-        top: root.offsetTop,
-        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "instant"
-          : "smooth",
-      });
-    },
-    { signal },
-  );
   let touchPoster = false;
   region.addEventListener(
     "pointerdown",
