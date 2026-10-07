@@ -4,24 +4,40 @@ import BrowseCard from "../components/BrowseCard.astro";
 import Icon from "../components/Icon.astro";
 import { tracker } from "../lib/tracker";
 import "../styles/browse.css";
+import {
+  isCategoryView,
+  browseRequestParams,
+  sectionHref,
+} from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
 const type = params.get("type") === "series" ? "series" : "movie";
 params.delete("type");
 params.set("media_type", type);
 params.delete("page");
 params.delete("source");
+const categories = isCategoryView(params);
+let sections: any[] = [];
 let payload: any = { results: [], has_more: false, page: 1, source: "" },
   facets: any = { genres: [], providers: [] },
   error = "";
 const responses = await Promise.allSettled([
-  tracker(`browse?${params}`, Astro.locals.token),
+  tracker(
+    categories
+      ? `browse/sections?${new URLSearchParams({ media_type: type, region: params.get("region") || "US" })}`
+      : `browse?${browseRequestParams(params)}`,
+    Astro.locals.token,
+  ),
   tracker(
     `browse/facets?${new URLSearchParams({ media_type: type, region: params.get("region") || "US" })}`,
     Astro.locals.token,
   ),
 ]);
-if (responses[0].status === "fulfilled") payload = responses[0].value;
-else error = "Unable to load titles. Check your filters and try again.";
+if (responses[0].status === "fulfilled") {
+  if (categories) {
+    sections = responses[0].value.sections;
+    payload.notice = responses[0].value.notice;
+  } else payload = responses[0].value;
+} else error = "Unable to load titles. Check your filters and try again.";
 if (responses[1].status === "fulfilled") facets = responses[1].value;
 const selectedGenres = (params.get("genres") || "").split(",");
 const statusOptions =
@@ -85,151 +101,175 @@ const signedIn = !!Astro.locals.user;
       data-browse-form
     >
       <input type="hidden" name="type" value={type} />
-      <label class="browse-search">
-        <span>Search</span>
-        <div>
-          <Icon name="search" />
-          <input
-            type="search"
-            name="q"
-            value={params.get("q") || ""}
-            placeholder="Search titles…"
-            autocomplete="off"
-            aria-label="Search titles"
-          />
-        </div>
-      </label>
-      <div class="browse-filter">
-        <span id="browse-genres-label">Genres</span>
-        <details class="browse-filter-menu" data-filter-menu>
-          <summary aria-labelledby="browse-genres-label browse-genres-value">
-            <span id="browse-genres-value">
-              {selectedGenres.filter(Boolean).length
-                ? `${selectedGenres.filter(Boolean).length} selected`
-                : "All genres"}
-            </span>
-            <Icon name="chevron-down" />
-          </summary>
-          <div class="browse-options" data-genre-options>
-            {facets.genres.map((genre: any) => (
-              <label>
-                <input
-                  type="checkbox"
-                  name="genre"
-                  value={genre.id}
-                  checked={selectedGenres.includes(String(genre.id))}
-                />
-                <span>{genre.name}</span>
-              </label>
-            ))}
-          </div>
-        </details>
-        <input type="hidden" name="genres" value={params.get("genres") || ""} />
-      </div>
-      <div class="browse-filter">
-        <span id="browse-tags-label">Tags</span>
-        <details class="browse-filter-menu" data-filter-menu>
-          <summary aria-labelledby="browse-tags-label browse-tags-value">
-            <span id="browse-tags-value">
-              {params.get("tags")
-                ? `${params.get("tags")!.split(",").length} selected`
-                : "Any tag"}
-            </span>
-            <Icon name="chevron-down" />
-          </summary>
-          <div class="browse-options browse-tag-picker">
+      <div class="browse-search-row">
+        <label class="browse-search">
+          <span>Search</span>
+          <div>
+            <Icon name="search" />
             <input
               type="search"
-              data-tag-search
-              placeholder="Find tags…"
-              aria-label="Find tags"
+              name="q"
+              value={params.get("q") || ""}
+              placeholder="Search titles…"
               autocomplete="off"
+              aria-label="Search titles"
             />
-            <div data-tag-results>
-              <p>Type to find tags</p>
+          </div>
+        </label>
+        <button
+          type="button"
+          class="browse-filter-toggle"
+          data-filter-toggle
+          aria-label="Filters and sorting"
+          aria-expanded="false"
+          aria-controls="browse-controls"
+        >
+          <Icon name="sliders" />
+        </button>
+      </div>
+      <div class="browse-controls" id="browse-controls">
+        <div class="browse-filter">
+          <span id="browse-genres-label">Genres</span>
+          <details class="browse-filter-menu" data-filter-menu>
+            <summary aria-labelledby="browse-genres-label browse-genres-value">
+              <span id="browse-genres-value">
+                {selectedGenres.filter(Boolean).length
+                  ? `${selectedGenres.filter(Boolean).length} selected`
+                  : "All genres"}
+              </span>
+              <Icon name="chevron-down" />
+            </summary>
+            <div class="browse-options" data-genre-options>
+              {facets.genres.map((genre: any) => (
+                <label>
+                  <input
+                    type="checkbox"
+                    name="genre"
+                    value={genre.id}
+                    checked={selectedGenres.includes(String(genre.id))}
+                  />
+                  <span>{genre.name}</span>
+                </label>
+              ))}
             </div>
-            <p role="status" data-tag-status></p>
+          </details>
+          <input
+            type="hidden"
+            name="genres"
+            value={params.get("genres") || ""}
+          />
+        </div>
+        <div class="browse-filter">
+          <span id="browse-tags-label">Tags</span>
+          <details class="browse-filter-menu" data-filter-menu>
+            <summary aria-labelledby="browse-tags-label browse-tags-value">
+              <span id="browse-tags-value">
+                {params.get("tags")
+                  ? `${params.get("tags")!.split(",").length} selected`
+                  : "Any tag"}
+              </span>
+              <Icon name="chevron-down" />
+            </summary>
+            <div class="browse-options browse-tag-picker">
+              <input
+                type="search"
+                data-tag-search
+                placeholder="Find tags…"
+                aria-label="Find tags"
+                autocomplete="off"
+              />
+              <div data-tag-results>
+                <p>Type to find tags</p>
+              </div>
+              <p role="status" data-tag-status></p>
+            </div>
+          </details>
+          <input type="hidden" name="tags" value={params.get("tags") || ""} />
+        </div>
+        <label class="browse-filter">
+          <span>Airing status</span>
+          <select name="status">
+            <option value="">Any status</option>
+            {statusOptions.map(([id, label]) => (
+              <option value={id} selected={params.get("status") === id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="browse-filter">
+          <span>Streaming on</span>
+          <select name="provider">
+            <option value="">Any service</option>
+            {facets.providers.map((provider: any) => (
+              <option
+                value={provider.id}
+                selected={params.get("provider") === String(provider.id)}
+              >
+                {provider.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <details class="browse-more" data-motion-details>
+          <summary>
+            <Icon name="sliders" />
+            <span>More filters</span>
+            <Icon name="chevron-down" />
+          </summary>
+          <div class="browse-secondary-filters">
+            <label>
+              <span>Released after</span>
+              <input
+                type="date"
+                name="start"
+                value={params.get("start") || ""}
+              />
+            </label>
+            <label>
+              <span>Released before</span>
+              <input type="date" name="end" value={params.get("end") || ""} />
+            </label>
+            <label>
+              <span>Streaming region</span>
+              <select name="region">
+                {regions.map(([id, label]) => (
+                  <option value={id} selected={region === id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </details>
-        <input type="hidden" name="tags" value={params.get("tags") || ""} />
+        <label class="browse-sort">
+          <span class="sr-only">Sort titles</span>
+          <select name="sort" form="browse-filters" data-browse-sort>
+            {[
+              ["all", "All categories"],
+              ["trending", "Trending"],
+              ["popular", "Popularity"],
+              ["score", "Highest rated"],
+              ["newest", "Newest"],
+              ["oldest", "Oldest"],
+              ["title", "Title"],
+            ].map(([id, label]) => (
+              <option
+                value={id}
+                selected={(params.get("sort") || "all") === id}
+              >
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button class="button-secondary browse-submit" type="submit">
+          Apply filters
+        </button>
       </div>
-      <label class="browse-filter">
-        <span>Airing status</span>
-        <select name="status">
-          <option value="">Any status</option>
-          {statusOptions.map(([id, label]) => (
-            <option value={id} selected={params.get("status") === id}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label class="browse-filter">
-        <span>Streaming on</span>
-        <select name="provider">
-          <option value="">Any service</option>
-          {facets.providers.map((provider: any) => (
-            <option
-              value={provider.id}
-              selected={params.get("provider") === String(provider.id)}
-            >
-              {provider.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <details class="browse-more" data-motion-details>
-        <summary>
-          <Icon name="sliders" />
-          <span>More filters</span>
-          <Icon name="chevron-down" />
-        </summary>
-        <div class="browse-secondary-filters">
-          <label>
-            <span>Released after</span>
-            <input type="date" name="start" value={params.get("start") || ""} />
-          </label>
-          <label>
-            <span>Released before</span>
-            <input type="date" name="end" value={params.get("end") || ""} />
-          </label>
-          <label>
-            <span>Streaming region</span>
-            <select name="region">
-              {regions.map(([id, label]) => (
-                <option value={id} selected={region === id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </details>
-      <button class="button-secondary browse-submit" type="submit">
-        Apply filters
-      </button>
     </form>
     <div class="browse-results-toolbar">
       <div class="browse-active-filters" data-active-filters></div>
-      <label class="browse-sort">
-        <span class="sr-only">Sort titles</span>
-        <select name="sort" form="browse-filters" data-browse-sort>
-          {[
-            ["popular", "Popularity"],
-            ["score", "Highest rated"],
-            ["newest", "Newest"],
-            ["oldest", "Oldest"],
-            ["title", "Title"],
-          ].map(([id, label]) => (
-            <option
-              value={id}
-              selected={(params.get("sort") || "popular") === id}
-            >
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
     </div>
     <p
       class="browse-notice"
@@ -246,7 +286,30 @@ const signedIn = !!Astro.locals.user;
       </button>
     </div>
     <section aria-label="Browse results" data-browse-region aria-busy="false">
-      <div class="browse-grid" data-browse-results>
+      <div class="browse-sections" data-browse-sections hidden={!categories}>
+        {sections.map((section: any) => (
+          <section class="browse-category" aria-label={section.title}>
+            <header>
+              <h2>{section.title}</h2>
+              <a
+                href={sectionHref(type, region, section.filters)}
+                data-view-all
+              >
+                View all
+              </a>
+            </header>
+            <div class="browse-grid">
+              {section.results.map((item: any) => (
+                <BrowseCard item={item} signedIn={signedIn} />
+              ))}
+            </div>
+            {!section.results.length && (
+              <p class="browse-category-empty">No titles found.</p>
+            )}
+          </section>
+        ))}
+      </div>
+      <div class="browse-grid" data-browse-results hidden={categories}>
         {payload.results.map((item: any) => (
           <BrowseCard item={item} signedIn={signedIn} />
         ))}
@@ -268,14 +331,14 @@ const signedIn = !!Astro.locals.user;
       <div
         class="empty-state"
         data-browse-empty
-        hidden={payload.results.length > 0 || !!error}
+        hidden={categories || payload.results.length > 0 || !!error}
       >
         <h2>No matching titles</h2>
         <button type="button" class="button-secondary" data-browse-clear>
           Clear filters
         </button>
       </div>
-      <div class="browse-load" data-browse-sentinel>
+      <div class="browse-load" data-browse-sentinel hidden={categories}>
         <button
           type="button"
           class="button-quiet"
@@ -301,7 +364,10 @@ const signedIn = !!Astro.locals.user;
     <script
       id="browse-data"
       type="application/json"
-      set:html={JSON.stringify({ payload, facets }).replaceAll("<", "\\u003c")}
+      set:html={JSON.stringify({ payload, facets, sections }).replaceAll(
+        "<",
+        "\\u003c",
+      )}
     />
   </div>
 </Tracker>

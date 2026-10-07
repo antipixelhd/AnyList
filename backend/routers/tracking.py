@@ -1095,12 +1095,24 @@ def browse_ids(value: str) -> list[int]:
     return list(dict.fromkeys(map(int, parts)))
 
 
+@router.get('/browse/sections')
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+    from core.browse import browse_sections as sections
+    await catalog_access(db, viewer)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    try:
+        return await sections(db, viewer, media_type=media_type, region=region,
+                              show_anime=await anime_is_visible(db), key=key)
+    except Exception:
+        raise HTTPException(502, 'Unable to load titles. Try again.')
+
+
 @router.get('/browse')
 async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
                  page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200), tags: str = Query('', max_length=200),
                  start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'finished', 'cancelled', 'upcoming', 'released'] = '',
                  provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
-                 sort: Literal['popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
+                 sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     await catalog_access(db, viewer)

@@ -11,7 +11,13 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 import httpx
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from core.browse import matches, metadata_fields, remote_page, remote_params
+from core.browse import (
+    matches,
+    metadata_fields,
+    remote_page,
+    remote_params,
+    section_specs,
+)
 from db import get_db
 from dependencies import get_optional_user
 from models import Media, User
@@ -32,6 +38,14 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_season_boundaries_include_leap_days_and_year_rollover(self):
+        for today, start, end in [
+            (date(2024, 2, 29), "2024-01-01", "2024-03-31"),
+            (date(2026, 12, 31), "2026-10-01", "2026-12-31"),
+        ]:
+            values = section_specs(today)[1][1]
+            self.assertEqual((values["start"], values["end"]), (start, end))
+
     def test_filters_use_and_for_multiple_genres_and_tags(self):
         params = remote_params(
             "series",
@@ -128,6 +142,27 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_trending_uses_weekly_feed_and_applies_genre_filters(self):
+        with patch(
+            "core.tmdb._get",
+            AsyncMock(
+                return_value={
+                    "results": [
+                        {"id": 1, "genre_ids": [18]},
+                        {"id": 2, "genre_ids": [35]},
+                    ],
+                    "total_pages": 5,
+                }
+            ),
+        ) as get:
+            data, items = await remote_page(
+                "", "movie", "key", {**FILTERS, "sort": "trending", "genres": [18]}, 2
+            )
+        self.assertTrue(get.call_args.args[0].endswith("/trending/movie/week"))
+        self.assertEqual(get.call_args.kwargs["params"], {"page": 2})
+        self.assertEqual(data["total_pages"], 5)
+        self.assertEqual([item["id"] for item in items], [1])
+
     async def test_filtered_search_uses_requested_page_and_keeps_empty_intermediate_pages(
         self,
     ):
@@ -244,6 +279,42 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         await self.transaction.rollback()
         await self.connection.close()
         await self.engine.dispose()
+
+    async def test_category_previews_match_view_all_and_keep_viewer_state_private(self):
+        self.movies[2].release_date = date.today().isoformat()
+        self.movies[3].release_date = (date.today() + timedelta(days=365)).isoformat()
+        await self.db.flush()
+        response = await self.client.get("/tracking/browse/sections")
+        self.assertEqual(response.status_code, 200, response.text)
+        sections = response.json()["sections"]
+        self.assertEqual(len(sections), 5)
+        self.assertEqual(sections[0]["filters"], {"sort": "trending"})
+        for section in sections:
+            full = (
+                await self.client.get("/tracking/browse", params=section["filters"])
+            ).json()
+            self.assertEqual(
+                [row["id"] for row in section["results"]],
+                [row["id"] for row in full["results"][:6]],
+            )
+            for row in section["results"]:
+                if row["id"] == self.movies[0].id:
+                    self.assertEqual(row["list_status"], "watching")
+                if row["id"] == self.movies[1].id:
+                    self.assertIsNone(row["list_status"])
+        self.assertEqual(
+            [row["id"] for row in sections[1]["results"]], [self.movies[2].id]
+        )
+        self.assertIn(self.movies[3].id, [row["id"] for row in sections[-1]["results"]])
+        self.viewer = None
+        anonymous = (await self.client.get("/tracking/browse/sections")).json()
+        self.assertTrue(
+            all(
+                row["list_status"] is None
+                for section in anonymous["sections"]
+                for row in section["results"]
+            )
+        )
 
     async def test_local_pagination_has_no_duplicates_and_ends(self):
         pages = [

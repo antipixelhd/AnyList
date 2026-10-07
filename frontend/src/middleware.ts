@@ -11,7 +11,7 @@ const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oid
 const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/confirm-email-change/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/device/code", "/api/proxy/auth/device/token", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
-const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|browse(?:\/facets|\/tags)?|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
+const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|browse(?:\/facets|\/tags|\/sections)?|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
 // Old numeric Stats bookmarks redirect to the username-based profile Stats
 // route after the same public-profile permission check as /profile/{id}.
 const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;

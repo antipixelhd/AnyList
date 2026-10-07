@@ -68,6 +68,7 @@ STATUSES = {
 }
 TV_STATUS = {"airing": "0", "finished": "3", "cancelled": "4", "upcoming": "1|2|5"}
 SORTS = {
+    "trending": "popularity.desc",
     "popular": "popularity.desc",
     "score": "vote_average.desc",
     "newest": "primary_release_date.desc",
@@ -75,6 +76,77 @@ SORTS = {
     "title": "title.asc",
 }
 PAGE_SIZE = 24
+
+
+def section_specs(today=None):
+    today = today or date.today()
+    month = (today.month - 1) // 3 * 3 + 1
+    start = date(today.year, month, 1)
+    next_season = (
+        date(today.year + 1, 1, 1) if month == 10 else date(today.year, month + 3, 1)
+    )
+    return [
+        ("Trending now", {"sort": "trending"}),
+        (
+            "Popular this season",
+            {
+                "sort": "popular",
+                "start": start.isoformat(),
+                "end": (next_season - timedelta(days=1)).isoformat(),
+            },
+        ),
+        ("All-time popular", {"sort": "popular"}),
+        ("Highest rated", {"sort": "score"}),
+        ("Upcoming", {"sort": "oldest", "status": "upcoming"}),
+    ]
+
+
+async def browse_sections(db, viewer, *, media_type, region, show_anime, key):
+    specs = section_specs()
+    filters = [
+        {
+            **dict(
+                genres=[],
+                tags=[],
+                start=None,
+                end=None,
+                status="",
+                provider=None,
+                region=region,
+            ),
+            **values,
+        }
+        for _, values in specs
+    ]
+    # Fetch remote feeds concurrently, but use the shared database session sequentially.
+    prefetched = (
+        await asyncio.gather(
+            *(remote_page("", media_type, key, values, 1) for values in filters),
+            return_exceptions=True,
+        )
+        if key
+        else [None] * len(specs)
+    )
+    sections, notices = [], []
+    for (title, values), full_filters, remote in zip(specs, filters, prefetched):
+        page = await browse_page(
+            db,
+            viewer,
+            term="",
+            media_type=media_type,
+            page=1,
+            source="",
+            show_anime=show_anime,
+            key=key,
+            prefetched=remote,
+            **full_filters,
+        )
+        sections.append(
+            {"title": title, "filters": values, "results": page["results"][:6]}
+        )
+        if page.get("notice"):
+            notices.append(page["notice"])
+    return {"sections": sections, "notice": next(iter(notices), None)}
 
 
 def keywords(data):
@@ -224,6 +296,7 @@ def local_query(
         )
         query = query.order_by(similarity.desc())
     ordering = {
+        "trending": func.coalesce(data["popularity"].astext.cast(Float), 0).desc(),
         "popular": func.coalesce(data["popularity"].astext.cast(Float), 0).desc(),
         "score": Media.tmdb_rating.desc().nulls_last(),
         "newest": Media.release_date.desc().nulls_last(),
@@ -272,7 +345,7 @@ async def remote_page(term, media_type, key, filters, page):
     from core.catalog_search import fuzzy_remote_terms, is_close_title_match
 
     kind = "movie" if media_type == "movie" else "tv"
-    if not term:
+    if not term and filters["sort"] != "trending":
         data = await tmdb._get(
             f"{tmdb.TMDB_BASE}/discover/{kind}",
             headers=tmdb.get_headers(key),
@@ -280,9 +353,17 @@ async def remote_page(term, media_type, key, filters, page):
         )
         return data, data.get("results", [])
     search = tmdb.search_movies if media_type == "movie" else tmdb.search_shows
-    data = await search(term, page=page, api_key=key)
+    data = (
+        await search(term, page=page, api_key=key)
+        if term
+        else await tmdb._get(
+            f"{tmdb.TMDB_BASE}/trending/{kind}/week",
+            headers=tmdb.get_headers(key),
+            params={"page": page},
+        )
+    )
     items = data.get("results", [])
-    if not items and page == 1:
+    if term and not items and page == 1:
         alternatives = await asyncio.gather(
             *(search(candidate, api_key=key) for candidate in fuzzy_remote_terms(term)),
             return_exceptions=True,
@@ -313,7 +394,17 @@ async def remote_page(term, media_type, key, filters, page):
 
 
 async def browse_page(
-    db, viewer, *, term, media_type, page, source, show_anime, key, **filters
+    db,
+    viewer,
+    *,
+    term,
+    media_type,
+    page,
+    source,
+    show_anime,
+    key,
+    prefetched=None,
+    **filters,
 ):
     query = local_query(media_type, term=term, show_anime=show_anime, **filters)
     notice = None
@@ -322,7 +413,11 @@ async def browse_page(
         raise ValueError("The metadata key is no longer available")
     if source != "local" and key:
         try:
-            remote, items = await remote_page(term, media_type, key, filters, page)
+            if isinstance(prefetched, BaseException):
+                raise prefetched
+            remote, items = prefetched or await remote_page(
+                term, media_type, key, filters, page
+            )
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
             if source == "remote" or page > 1:
