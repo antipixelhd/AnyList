@@ -11,6 +11,9 @@ import { api } from "../lib/api";
 import type { DeviceGrant } from "../lib/api";
 import { connectionIconHtml } from "../lib/connectionIcons";
 
+const requestedSection = Astro.url.searchParams.get('section');
+const section = ['imports', 'apps', 'developer'].includes(requestedSection ?? '') ? requestedSection : 'connections';
+const title = section === 'imports' ? 'Import data' : section === 'apps' ? 'Connected apps' : section === 'developer' ? 'Developer' : 'Connections';
 const { token } = Astro.locals;
 const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGrants, pullSchedule] = await Promise.all([
   api.auth.getSettings(token!),
@@ -36,12 +39,13 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 ];
 ---
 
-<TrackerSettings title="Connections">
+<TrackerSettings title={title}>
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div data-connections-page class="max-w-4xl mx-auto min-w-0 w-full">
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
-    <div class="space-y-12 grid-cols-1 min-w-0 w-full">
+    <div class="settings-stack">
+      <div class="settings-stack" hidden={section !== "connections"}>
       {!me.is_admin && <MetadataConnections settings={settings} />}
       <section class="space-y-3">
         <h2 class="section-headline border-b border-zinc-800 pb-2">Synchronization</h2>
@@ -793,8 +797,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         </form>
       </section>
 
+      </div>
+
       <!-- Connected Apps -->
-      <section>
+      <section hidden={section !== "apps"}>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Connected Apps</h2>
         <div class="space-y-4 max-w-xl">
           <p class="text-sm text-zinc-400">
@@ -828,10 +834,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         </div>
       </section>
 
-      <DataImportSettings hasTmdbKey={hasTmdbKey} />
+      <div class="settings-stack" hidden={section !== "imports"}><DataImportSettings hasTmdbKey={hasTmdbKey} /></div>
 
       <!-- API Key -->
-      <section>
+      <section hidden={section !== "developer"}>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">API Key</h2>
         <div class="space-y-4 max-w-xl">
           <p class="text-sm text-zinc-400">Use this key to authenticate requests to the AnyList API. Keep it secret — if it leaks, regenerate it immediately.</p>
