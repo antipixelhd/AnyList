@@ -71,7 +71,9 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(params["sort_by"], "first_air_date.desc")
 
     def test_upcoming_movies_start_after_today(self):
-        params = remote_params("movie", page=1, **{**FILTERS, "status": "upcoming"})
+        params = remote_params(
+            "movie", page=1, **{**FILTERS, "status": "upcoming", "sort": "oldest"}
+        )
         self.assertEqual(
             params["primary_release_date.gte"],
             (date.today() + timedelta(days=1)).isoformat(),
@@ -142,26 +144,40 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_trending_uses_weekly_feed_and_applies_genre_filters(self):
-        with patch(
-            "core.tmdb._get",
-            AsyncMock(
-                return_value={
-                    "results": [
-                        {"id": 1, "genre_ids": [18]},
-                        {"id": 2, "genre_ids": [35]},
-                    ],
-                    "total_pages": 5,
-                }
-            ),
-        ) as get:
+    async def test_imdb_chart_order_survives_metadata_resolution_and_filtering(self):
+        rows = [
+            {"imdb_id": "tt2", "rating": 7.1, "votes": 100},
+            {"imdb_id": "tt1", "rating": 9.1, "votes": 200},
+        ]
+
+        async def resolve(imdb_id, source, api_key):
+            return {
+                "movie_results": [
+                    {
+                        "id": int(imdb_id[2:]),
+                        "genre_ids": [18] if imdb_id == "tt2" else [35],
+                        "popularity": 999 if imdb_id == "tt1" else 1,
+                    }
+                ]
+            }
+
+        with (
+            patch(
+                "core.imdb_charts.ranked_rows", AsyncMock(return_value=(rows, False))
+            ) as chart,
+            patch("core.tmdb.find_by_external_id", AsyncMock(side_effect=resolve)),
+        ):
             data, items = await remote_page(
-                "", "movie", "key", {**FILTERS, "sort": "trending", "genres": [18]}, 2
+                "", "movie", "key", {**FILTERS, "sort": "trending"}, 1
             )
-        self.assertTrue(get.call_args.args[0].endswith("/trending/movie/week"))
-        self.assertEqual(get.call_args.kwargs["params"], {"page": 2})
-        self.assertEqual(data["total_pages"], 5)
-        self.assertEqual([item["id"] for item in items], [1])
+            self.assertEqual([item["id"] for item in items], [2, 1])
+            _, filtered = await remote_page(
+                "", "movie", "key", {**FILTERS, "sort": "trending", "genres": [18]}, 1
+            )
+        chart.assert_awaited_with("movie", "trending")
+        self.assertEqual(data["total_pages"], 1)
+        self.assertEqual([item["id"] for item in filtered], [2])
+        self.assertEqual(items[0]["imdb_score"], 7.1)
 
     async def test_filtered_search_uses_requested_page_and_keeps_empty_intermediate_pages(
         self,
@@ -215,9 +231,13 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 title=f"Browse Film {i:02}",
                 media_type=MediaType.movie,
                 release_date="2021-02-03",
+                imdb_id=f"tt{400000 + i}",
+                imdb_rating=6 + i / 100,
+                tmdb_rating=9 - i / 100,
                 tmdb_data={
                     "genres": ["Drama", "Comedy"],
-                    "popularity": 100 - i,
+                    "popularity": i,
+                    "imdb": {"votes": 1000 - i, "popularity_rank": i + 1},
                     "keywords": [{"id": 99999, "name": "space adventure"}],
                     "watch_providers": {
                         "US": {
@@ -263,6 +283,8 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             "core.settings_store.get_user_tmdb_key", AsyncMock(return_value=None)
         )
         self.key_patch.start()
+        self.chart_patch = patch("core.imdb_charts.cached_rows", return_value=[])
+        self.chart_patch.start()
         self.access_patch = patch("routers.tracking.catalog_access", AsyncMock())
         self.access_patch.start()
         self.anime_patch = patch(
@@ -272,6 +294,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.key_patch.stop()
+        self.chart_patch.stop()
         self.access_patch.stop()
         self.anime_patch.stop()
         await self.client.aclose()
@@ -315,6 +338,53 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 for row in section["results"]
             )
         )
+
+    async def test_highest_rated_uses_imdb_not_tmdb_and_excludes_missing_scores(self):
+        self.movies[-1].imdb_rating = None
+        await self.db.flush()
+        response = await self.client.get("/tracking/browse", params={"sort": "score"})
+        rows = response.json()["results"]
+        self.assertEqual(rows[0]["id"], self.movies[-2].id)
+        self.assertNotIn(self.movies[-1].id, [row["id"] for row in rows])
+        self.assertNotEqual(rows[0]["id"], self.movies[0].id)
+
+    async def test_popularity_and_trending_ignore_tmdb_order(self):
+        for sort in ("popular", "trending"):
+            rows = (
+                await self.client.get("/tracking/browse", params={"sort": sort})
+            ).json()["results"]
+            self.assertEqual(rows[0]["id"], self.movies[0].id)
+            self.assertEqual(rows[1]["id"], self.movies[1].id)
+
+    async def test_cached_chart_supplies_missing_local_imdb_rating_and_rank(self):
+        self.movies[0].imdb_rating = None
+        self.movies[1].imdb_rating = None
+        await self.db.flush()
+        rows = [
+            {
+                "imdb_id": self.movies[1].imdb_id,
+                "rating": 9.9,
+                "votes": 10000,
+                "rank": 1,
+            },
+            {
+                "imdb_id": self.movies[0].imdb_id,
+                "rating": None,
+                "votes": 100,
+                "rank": 2,
+            },
+        ]
+        with patch("core.imdb_charts.cached_rows", return_value=rows):
+            for sort in ("score", "trending", "popular"):
+                result = (
+                    await self.client.get("/tracking/browse", params={"sort": sort})
+                ).json()
+                self.assertEqual(result["results"][0]["id"], self.movies[1].id)
+        with patch("core.imdb_charts.cached_rows", return_value=[rows[1]]):
+            response = await self.client.get(
+                "/tracking/browse", params={"sort": "score"}
+            )
+            self.assertEqual(response.status_code, 200, response.text)
 
     async def test_local_pagination_has_no_duplicates_and_ends(self):
         pages = [
@@ -377,10 +447,11 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 "core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")
             ),
             patch(
-                "core.tmdb._get",
+                "core.browse.remote_page",
                 AsyncMock(
-                    return_value={
-                        "results": [
+                    return_value=(
+                        {"total_pages": 2},
+                        [
                             {
                                 "id": 400000,
                                 "title": "Remote name",
@@ -388,8 +459,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                                 "release_date": "2021-02-03",
                             }
                         ],
-                        "total_pages": 2,
-                    }
+                    )
                 ),
             ),
         ):
@@ -405,7 +475,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")
             ),
-            patch("core.tmdb._get", AsyncMock(side_effect=OSError("offline"))),
+            patch("core.browse.remote_page", AsyncMock(side_effect=OSError("offline"))),
         ):
             first = await self.client.get("/tracking/browse")
             second = await self.client.get(
