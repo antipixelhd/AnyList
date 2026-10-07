@@ -6,6 +6,7 @@ import {
 import { applyResponsiveArtwork } from "./responsive-artwork";
 import { createBrowseLoading } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
+import { createBrowsePaginationDemand } from "./browse-pagination";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { initializeScrollMotion } from "./scroll-motion";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
@@ -96,6 +97,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let loading = false,
     suspended = false;
   let generation = 0;
+  const paginationDemand = createBrowsePaginationDemand(scrollY);
   const key = (item: Item) => `${item.type}:${item.tmdb_id || item.id}`;
   const params = () => {
     const values = new URLSearchParams();
@@ -458,6 +460,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     request = current;
     const epoch = ++generation;
     loading = true;
+    paginationDemand.reset(scrollY);
     suspended = false;
     error.hidden = true;
     const values = params();
@@ -498,11 +501,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
-      // Filtered search can have empty intermediate pages. Continue through them.
-      observer.unobserve(sentinel);
-      requestAnimationFrame(() => {
-        if (!signal.aborted) observer.observe(sentinel);
-      });
     } catch (cause) {
       if (current.signal.aborted || request !== current || signal.aborted)
         return;
@@ -522,6 +520,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       window.clearTimeout(loadingTimer);
       if (request === current && epoch === generation && !signal.aborted) {
         loading = false;
+        paginationDemand.reset(scrollY);
         loadingView.finish();
         grid.hidden = displayedCategories;
         sections.hidden = !displayedCategories;
@@ -536,6 +535,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     generation++;
     loading = false;
     suspended = true;
+    paginationDemand.reset(scrollY);
     updateUrl();
     paintChips();
     // Invalidate at the input event, before the debounce, so an older response cannot repaint.
@@ -891,13 +891,29 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     { signal },
   );
   const sentinel = find<HTMLElement>("[data-browse-sentinel]");
+  let sentinelNearEnd = false;
+  let paginationFrame = 0;
+  const canAutoLoad = () => !signal.aborted && !displayedCategories &&
+    !loading && !suspended && payload.has_more;
+  const autoLoadMore = () => {
+    if (sentinelNearEnd && canAutoLoad() && paginationDemand.consume())
+      void load(true);
+  };
   const observer = new IntersectionObserver(
     (entries) => {
-      if (entries.some((e) => e.isIntersecting)) void load(true);
+      sentinelNearEnd = entries.some((e) => e.isIntersecting);
+      autoLoadMore();
     },
     { rootMargin: "500px 0px" },
   );
   observer.observe(sentinel);
+  window.addEventListener("scroll", () => {
+    paginationDemand.advance(scrollY, canAutoLoad());
+    if (!paginationFrame) paginationFrame = requestAnimationFrame(() => {
+      paginationFrame = 0;
+      autoLoadMore();
+    });
+  }, { passive: true, signal });
   initializeScrollMotion(
     region,
     signal,
@@ -994,6 +1010,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       facetRequest?.abort();
       tagRequest?.abort();
       observer.disconnect();
+      cancelAnimationFrame(paginationFrame);
       window.clearTimeout(timer);
       window.clearTimeout(tagTimer);
     },
