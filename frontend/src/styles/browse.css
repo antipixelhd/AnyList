@@ -60,8 +60,8 @@
   gap: 10px;
   height: 42px;
   padding-left: 13px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--panel);
+  border: 1px solid transparent;
   border-radius: 6px;
   color: var(--muted);
 }
@@ -69,13 +69,19 @@
   width: 100%;
   min-width: 0;
   padding: 10px 10px 10px 0;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  color: var(--text);
   font-size: 13px;
 }
 .browse-search input::placeholder { color: var(--muted); }
-.browse-search > div:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
+.browse-search > div:focus-within {
+  border-color: var(--blue);
+  outline: 2px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  outline-offset: 0;
+}
 .browse-search > div > .ui-icon { font-size: 13px; }
 .browse-filters select,
 .browse-filter-menu summary {
@@ -85,23 +91,23 @@
   min-height: 42px;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--panel);
   color: var(--text);
   font-size: 13px;
   font-weight: 500;
 }
 .browse-filter-menu { position: relative; }
 .tracker .browse-select-options {
-  background: var(--bg);
+  background: var(--dropdown-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px;
   box-shadow: 0 12px 30px #02071150;
 }
 .tracker .browse-select-options button { font-size: 13px; font-weight: 500; border-radius: 4px; }
-.tracker .browse-select-options button:is(:hover, :focus-visible) { background: var(--panel); }
+.tracker .browse-select-options button:is(:hover, :focus-visible) { background: var(--dropdown-hover); }
 .browse-filter-menu summary {
   display: flex;
   align-items: center;
@@ -126,7 +132,7 @@
   max-height: 340px;
   overflow: auto;
   padding: 8px;
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 12px 30px #02071150;
@@ -139,10 +145,10 @@
   border-radius: 4px;
   cursor: pointer;
 }
-.browse-options label:is(:hover, :focus-within) { background: var(--panel); }
+.browse-options label:is(:hover, :focus-within) { background: var(--dropdown-hover); }
 .browse-options label > span { margin: 0; font-size: 13px; font-weight: 500; }
 .browse-options input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); }
-.browse-tag-picker input[type="search"] { width: 100%; min-height: 40px; background: var(--bg); }
+.browse-tag-picker input[type="search"] { width: 100%; min-height: 40px; background: var(--panel); }
 .browse-options p { margin: 4px 0; padding: 6px; color: var(--muted); font-size: 13px; }
 .browse-more {
   position: absolute;
@@ -161,7 +167,7 @@
   list-style: none;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--panel);
   color: var(--muted);
   cursor: pointer;
   transition: background .16s, color .16s;
@@ -189,7 +195,7 @@
 .browse-range-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .browse-range-heading output { color: var(--muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .browse-year-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.browse-year-dates input { width: 100%; min-width: 0; background: var(--bg); }
+.browse-year-dates input { width: 100%; min-width: 0; background: var(--panel); }
 html[data-browse-scripted] .browse-year-dates { display: none; }
 html:not([data-browse-scripted]) [data-year-range] .browse-range-track { display: none; }
 .browse-range-track { position: relative; height: 30px; margin: 0 8px; }
