@@ -38,6 +38,12 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_browse_sections_include_only_the_four_discovery_categories(self):
+        self.assertEqual(
+            [title for title, _ in section_specs()],
+            ["Trending now", "Popular this season", "All-time popular", "Highest rated"],
+        )
+
     def test_vote_floor_has_an_inclusive_boundary_and_explicit_zero(self):
         predicate = {k: v for k, v in FILTERS.items() if k != "sort"}
         for votes, expected in [(249, False), (250, True), (251, True)]:
@@ -399,8 +405,8 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/tracking/browse/sections")
         self.assertEqual(response.status_code, 200, response.text)
         sections = response.json()["sections"]
-        self.assertEqual(len(sections), 5)
-        self.assertEqual(sections[0]["filters"], {"sort": "trending"})
+        self.assertEqual(len(sections), 4)
+        self.assertEqual(sections[0]["filters"], {"sort": "trending", "min_votes": "250"})
         for section in sections:
             full = (
                 await self.client.get("/tracking/browse", params=section["filters"])

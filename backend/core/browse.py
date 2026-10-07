@@ -95,7 +95,6 @@ def section_specs(today=None):
         ),
         ("All-time popular", {"sort": "popular"}),
         ("Highest rated", {"sort": "score"}),
-        ("Upcoming", {"sort": "oldest", "status": "upcoming"}),
     ]
 
 
