@@ -3,9 +3,10 @@
 import asyncio
 from datetime import date, timedelta
 
-from sqlalchemy import Float, and_, case, func, or_, select, text
+from sqlalchemy import Float, and_, func, literal, or_, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 
-from core import imdb_charts, tmdb, tracking_projection
+from core import mdblist_discovery, tmdb, tracking_projection
 from core.tracking_rules import effective_score
 from models import Media
 from models.base import MediaType
@@ -99,7 +100,9 @@ def section_specs(today=None):
     ]
 
 
-async def browse_sections(db, viewer, *, media_type, region, show_anime, key):
+async def browse_sections(
+    db, viewer, *, media_type, region, show_anime, key, mdblist_key=None
+):
     specs = section_specs()
     filters = [
         {
@@ -121,14 +124,22 @@ async def browse_sections(db, viewer, *, media_type, region, show_anime, key):
 
     async def prefetch(values):
         async with semaphore:
-            return await remote_page("", media_type, key, values, 1)
+            return await remote_page(
+                "",
+                media_type,
+                key,
+                values,
+                1,
+                mdblist_key=mdblist_key,
+                show_anime=show_anime,
+            )
 
     prefetched = (
         await asyncio.gather(
             *(prefetch(values) for values in filters),
             return_exceptions=True,
         )
-        if key
+        if key or mdblist_key
         else [None] * len(specs)
     )
     sections, notices = [], []
@@ -142,6 +153,7 @@ async def browse_sections(db, viewer, *, media_type, region, show_anime, key):
             source="",
             show_anime=show_anime,
             key=key,
+            mdblist_key=mdblist_key,
             prefetched=remote,
             **full_filters,
         )
@@ -223,6 +235,7 @@ def local_query(
     region,
     sort,
     show_anime,
+    mdblist_key=None,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
@@ -304,24 +317,41 @@ def local_query(
         "title": Media.title.asc(),
     }
     imdb_id = func.coalesce(Media.imdb_id, data["external_ids"]["imdb_id"].astext)
-    cached = imdb_charts.cached_rows(media_type, sort) if sort in IMDB_SORTS else []
+    cached = (
+        mdblist_discovery.cached_rows(media_type, sort, mdblist_key)
+        if sort in IMDB_SORTS
+        else []
+    )
     votes = data["imdb"]["votes"].astext.cast(Float)
     rank = data["imdb"]["popularity_rank"].astext.cast(Float)
     score = Media.imdb_rating
     if cached:
-        votes = case(
-            {row["imdb_id"]: row["votes"] for row in cached}, value=imdb_id, else_=votes
+        # One JSON parameter per mapping keeps broad feeds below PostgreSQL's
+        # bind-parameter limit, even for catalogues containing 10,000 titles.
+        def cached_value(mapping, fallback):
+            return func.coalesce(
+                literal(mapping, type_=JSONB)[imdb_id].astext.cast(Float), fallback
+            )
+
+        votes = cached_value(
+            {row["imdb_id"]: row["votes"] for row in cached if row.get("imdb_id")},
+            votes,
         )
-        rank = case(
-            {row["imdb_id"]: index for index, row in enumerate(cached, 1)},
-            value=imdb_id,
-            else_=rank,
+        rank = cached_value(
+            {
+                row["imdb_id"]: index
+                for index, row in enumerate(cached, 1)
+                if row.get("imdb_id")
+            },
+            rank,
         )
         ratings = {
-            row["imdb_id"]: row["rating"] for row in cached if row["rating"] is not None
+            row["imdb_id"]: row["rating"]
+            for row in cached
+            if row.get("imdb_id") and row["rating"] is not None
         }
         if ratings:
-            score = case(ratings, value=imdb_id, else_=score)
+            score = cached_value(ratings, score)
     ordering.update(
         score=score.desc().nulls_last(),
         popular=votes.desc().nulls_last(),
@@ -371,50 +401,101 @@ def matches(item, *, media_type, genres, tags, start, end, status, provider, reg
     return True
 
 
-async def imdb_page(media_type, key, filters, page):
-    rows, stale = await imdb_charts.ranked_rows(media_type, filters["sort"])
-    selected = rows[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
-    semaphore = asyncio.Semaphore(6)
-    needs_details = filters["tags"] or filters["status"] or filters["provider"]
-    get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
-    result_key = "movie_results" if media_type == "movie" else "tv_results"
-    predicate = {k: v for k, v in filters.items() if k != "sort"}
+def anime_visible(item, show_anime):
+    if show_anime:
+        return True
+    from types import SimpleNamespace
 
-    async def resolve(row):
+    return not tracking_projection.is_anime(
+        SimpleNamespace(
+            tmdb_data={
+                **item,
+                "genres": [
+                    {"name": GENRES.get(i, "")} for i in item.get("genre_ids", [])
+                ]
+                or item.get("genres", []),
+            }
+        )
+    )
+
+
+async def imdb_page(
+    media_type, key, filters, page, *, mdblist_key=None, show_anime=True
+):
+    rows, stale = await mdblist_discovery.ranked_rows(
+        media_type, filters["sort"], mdblist_key
+    )
+    semaphore = asyncio.Semaphore(6)
+    needs_details = filters["tags"] or filters["provider"]
+    get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
+    predicate = {k: v for k, v in filters.items() if k != "sort"}
+    if needs_details and not key:
+        raise ValueError("A TMDB key is needed for tags and streaming filters")
+
+    # Apply cached date/genre/status/adult/anime filters across the full feed first.
+    basic = {**predicate, "tags": [], "provider": None}
+    candidates = [
+        row
+        for row in rows
+        if matches(row, media_type=media_type, **basic)
+        and anime_visible(row, show_anime)
+    ]
+
+    async def detail(row):
         async with semaphore:
-            resolved = await tmdb.find_by_external_id(
-                row["imdb_id"], "imdb_id", api_key=key
-            )
-            candidates = resolved.get(result_key, [])
-            if not candidates:
-                return None
-            item = candidates[0]
-            if needs_details:
-                item = await get(item["id"], api_key=key)
-            if not matches(item, media_type=media_type, **predicate):
+            item = await get(row["id"], api_key=key)
+            if not matches(
+                item, media_type=media_type, **predicate
+            ) or not anime_visible(item, show_anime):
                 return None
             return {
                 **item,
                 "imdb_id": row["imdb_id"],
-                "imdb_score": row["rating"],
-                "imdb_votes": row["votes"],
+                "imdb_score": row["imdb_score"],
+                "imdb_votes": row["imdb_votes"],
             }
 
-    # gather preserves IMDb's ordering, including when metadata arrives out of order.
-    items = await asyncio.gather(*(resolve(row) for row in selected))
+    if needs_details:
+        # Scan in rank order until this page plus one matching title is found.
+        # No empty intermediate pages, and no per-title MDBList requests.
+        items = []
+        target = page * PAGE_SIZE + 1
+        for start in range(0, len(candidates), PAGE_SIZE):
+            batch = await asyncio.gather(
+                *(detail(row) for row in candidates[start : start + PAGE_SIZE])
+            )
+            items.extend(item for item in batch if item is not None)
+            if len(items) >= target:
+                break
+        has_more = len(items) > page * PAGE_SIZE
+        selected = items[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
+    else:
+        has_more = len(candidates) > page * PAGE_SIZE
+        selected = candidates[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
     return {
-        "total_pages": (len(rows) + PAGE_SIZE - 1) // PAGE_SIZE,
-        "notice": "Showing cached IMDb rankings." if stale else None,
-    }, [item for item in items if item is not None]
+        "has_more": has_more,
+        "notice": "Showing cached MDBList rankings." if stale else None,
+    }, selected
 
 
-async def remote_page(term, media_type, key, filters, page):
+async def remote_page(
+    term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True
+):
     # Imports reuse the same detail cache; at most six concurrent filtered-search lookups.
     from core.catalog_search import fuzzy_remote_terms, is_close_title_match
 
     kind = "movie" if media_type == "movie" else "tv"
     if not term and filters["sort"] in IMDB_SORTS:
-        return await imdb_page(media_type, key, filters, page)
+        return await imdb_page(
+            media_type,
+            key,
+            filters,
+            page,
+            mdblist_key=mdblist_key,
+            show_anime=show_anime,
+        )
+    if not key:
+        raise ValueError("A TMDB key is needed for title search and discovery")
     if not term:
         data = await tmdb._get(
             f"{tmdb.TMDB_BASE}/discover/{kind}",
@@ -465,37 +546,56 @@ async def browse_page(
     source,
     show_anime,
     key,
+    mdblist_key=None,
     prefetched=None,
     **filters,
 ):
-    query = local_query(media_type, term=term, show_anime=show_anime, **filters)
+    query = local_query(
+        media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
+    )
     notice = None
     remote = None
-    if source == "remote" and not key:
+    imdb_sort = not term and filters["sort"] in IMDB_SORTS
+    available = bool(mdblist_key) if imdb_sort else bool(key)
+    if source == "remote" and not available:
         raise ValueError("The metadata key is no longer available")
-    if source != "local" and key:
+    if source != "local" and available:
         try:
             if isinstance(prefetched, BaseException):
                 raise prefetched
             remote, items = prefetched or await remote_page(
-                term, media_type, key, filters, page
+                term,
+                media_type,
+                key,
+                filters,
+                page,
+                mdblist_key=mdblist_key,
+                show_anime=show_anime,
             )
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
             if source == "remote" or page > 1:
                 raise
             notice = (
-                "IMDb charts are unavailable. Showing titles with cached IMDb data."
-                if not term and filters["sort"] in IMDB_SORTS
+                "MDBList discovery is unavailable. Showing titles with cached IMDb data."
+                if imdb_sort
                 else "Discovery is unavailable. Showing the local catalogue."
             )
-    elif not key:
+    elif not available:
         notice = (
-            "Showing the local catalogue. Add a TMDB key in Settings to discover more."
+            "Showing the local catalogue. Add an MDBList key in Settings to discover more."
+            if imdb_sort
+            else "Showing the local catalogue. Add a TMDB key in Settings to discover more."
         )
     if remote is None:
-        # A chart may have been cached even when its metadata lookup failed.
-        query = local_query(media_type, term=term, show_anime=show_anime, **filters)
+        # A feed may have been cached even when a metadata lookup failed.
+        query = local_query(
+            media_type,
+            term=term,
+            show_anime=show_anime,
+            mdblist_key=mdblist_key,
+            **filters,
+        )
         rows = (
             (
                 await db.execute(
@@ -511,7 +611,7 @@ async def browse_page(
     else:
         notice = remote.get("notice")
         source = "remote"
-        has_more = page < min(remote.get("total_pages", 1), 500)
+        has_more = remote.get("has_more", page < min(remote.get("total_pages", 1), 500))
         # Local fuzzy matches precede the remote results and are excluded on every page.
         local = (await db.execute(query.limit(80))).scalars().all() if term else []
         local_ids = {m.tmdb_id for m in local if m.tmdb_id}
@@ -523,25 +623,7 @@ async def browse_page(
             if (
                 item.get("adult")
                 or item["id"] in seen
-                or (
-                    not show_anime
-                    and tracking_projection.is_anime(
-                        type(
-                            "Candidate",
-                            (),
-                            {
-                                "tmdb_data": {
-                                    **item,
-                                    "genres": [
-                                        {"name": GENRES.get(i, "")}
-                                        for i in item.get("genre_ids", [])
-                                    ]
-                                    or item.get("genres", []),
-                                }
-                            },
-                        )()
-                    )
-                )
+                or not anime_visible(item, show_anime)
             ):
                 continue
             seen.add(item["id"])

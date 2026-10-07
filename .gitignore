@@ -74,6 +74,7 @@ frontend/frontend.log
 .codex/
 backend/data/avatars/
 backend/data/image_cache/
+backend/data/mdblist-discovery/
 backend/data/*.pem
 backend/data/anylist_nuvio_sync_client_id*
 GEMINI.md

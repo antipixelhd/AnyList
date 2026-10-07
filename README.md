@@ -8,7 +8,7 @@ A self-hosted movie and TV tracker for personal lists and shared discoveries.
 
 - Track movies and whole TV series as Planning, Watching, Paused, Dropped, or Completed. Record episode progress, watch history, dates, notes, and rewatches.
 - Rate titles from 0.5 to 10 in half-point steps. Rate seasons individually and choose a calculated show average or a separate show score.
-- Browse and search a shared catalog with title, season, and episode details. Metadata comes from TMDB and TheTVDB; MDBList can provide IMDb and Rotten Tomatoes scores.
+- Browse and search a shared catalog with title, season, and episode details. Browse uses cached MDBList feeds for IMDb trending, vote counts, and ratings; title metadata comes from TMDB and TheTVDB. MDBList also provides Rotten Tomatoes scores.
 - Keep Favorites and a streaming Library alongside tracked lists. Library membership is separate from watch status and can mirror across Stremio and Nuvio connections.
 - Keep Nuvio TV's Next Up aligned with your Watching list while preserving watched episodes for paused and dropped shows.
 - Share public or private profiles with lists, favorites, statistics, and activity. Follow people to compare lists and see their activity.

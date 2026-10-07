@@ -1098,11 +1098,15 @@ def browse_ids(value: str) -> list[int]:
 @router.get('/browse/sections')
 async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_sections as sections
+    from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    mdblist_key = await effective_mdblist_key(db, None) or (
+        await effective_mdblist_key(db, viewer.id) if viewer else None
+    )
     try:
         return await sections(db, viewer, media_type=media_type, region=region,
-                              show_anime=await anime_is_visible(db), key=key)
+                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
@@ -1115,6 +1119,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
+    from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
     genre_ids, tag_ids = browse_ids(genres), browse_ids(tags)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
@@ -1123,9 +1128,12 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     if (media_type == 'movie' and status not in ('', 'released', 'upcoming')) or (media_type == 'series' and status == 'released'):
         raise HTTPException(422, 'Choose a status for this media type')
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    mdblist_key = await effective_mdblist_key(db, None) or (
+        await effective_mdblist_key(db, viewer.id) if viewer else None
+    )
     try:
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
-            show_anime=await anime_is_visible(db), key=key, genres=genre_ids, tags=tag_ids,
+            show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids, tags=tag_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
             status=status, provider=provider, region=region, sort=sort)
     except Exception:

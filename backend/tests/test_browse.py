@@ -144,40 +144,42 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_imdb_chart_order_survives_metadata_resolution_and_filtering(self):
+    async def test_filtered_feed_is_paged_after_matching_and_excluding_anime(self):
         rows = [
-            {"imdb_id": "tt2", "rating": 7.1, "votes": 100},
-            {"imdb_id": "tt1", "rating": 9.1, "votes": 200},
+            {"id": i, "type": "movie", "imdb_id": f"tt{i}", "imdb_score": 8,
+             "imdb_votes": 100000, "genre_ids": [18] if i >= 30 else [35],
+             "release_date": "2026-01-01", "original_language": "en"}
+            for i in range(80)
         ]
+        rows[30].update(genre_ids=[18, 16], original_language="ja")
+        rows[31]["adult"] = True
+        with patch("core.mdblist_discovery.ranked_rows", AsyncMock(return_value=(rows, False))) as feed:
+            pages = [await remote_page("", "movie", None,
+                     {**FILTERS, "genres": [18]}, page, mdblist_key="mdb", show_anime=False)
+                     for page in (1, 2)]
+        feed.assert_awaited_with("movie", "popular", "mdb")
+        self.assertEqual([i["id"] for i in pages[0][1]], list(range(32, 56)))
+        self.assertEqual([i["id"] for i in pages[1][1]], list(range(56, 80)))
+        self.assertTrue(pages[0][0]["has_more"])
+        self.assertFalse(pages[1][0]["has_more"])
 
-        async def resolve(imdb_id, source, api_key):
-            return {
-                "movie_results": [
-                    {
-                        "id": int(imdb_id[2:]),
-                        "genre_ids": [18] if imdb_id == "tt2" else [35],
-                        "popularity": 999 if imdb_id == "tt1" else 1,
-                    }
-                ]
-            }
-
-        with (
-            patch(
-                "core.imdb_charts.ranked_rows", AsyncMock(return_value=(rows, False))
-            ) as chart,
-            patch("core.tmdb.find_by_external_id", AsyncMock(side_effect=resolve)),
+    async def test_streaming_filter_scans_past_unmatched_first_page(self):
+        rows = [{"id": i, "type": "movie", "imdb_id": f"tt{i}", "imdb_score": 8,
+                 "imdb_votes": 100000, "genre_ids": []} for i in range(1, 60)]
+        async def detail(identifier, api_key):
+            return {"id": identifier, "watch/providers": {"results": {"US": {
+                "flatrate": [{"provider_id": 8 if identifier > 24 else 9}]}}}}
+        with patch("core.mdblist_discovery.ranked_rows", AsyncMock(return_value=(rows, False))), patch(
+            "core.tmdb.get_movie", AsyncMock(side_effect=detail)
         ):
-            data, items = await remote_page(
-                "", "movie", "key", {**FILTERS, "sort": "trending"}, 1
-            )
-            self.assertEqual([item["id"] for item in items], [2, 1])
-            _, filtered = await remote_page(
-                "", "movie", "key", {**FILTERS, "sort": "trending", "genres": [18]}, 1
-            )
-        chart.assert_awaited_with("movie", "trending")
-        self.assertEqual(data["total_pages"], 1)
-        self.assertEqual([item["id"] for item in filtered], [2])
-        self.assertEqual(items[0]["imdb_score"], 7.1)
+            first, items = await remote_page("", "movie", "tmdb", {**FILTERS, "provider": 8},
+                                             1, mdblist_key="mdb")
+            second, more = await remote_page("", "movie", "tmdb", {**FILTERS, "provider": 8},
+                                             2, mdblist_key="mdb")
+        self.assertEqual([i["id"] for i in items], list(range(25, 49)))
+        self.assertEqual([i["id"] for i in more], list(range(49, 60)))
+        self.assertTrue(first["has_more"])
+        self.assertFalse(second["has_more"])
 
     async def test_filtered_search_uses_requested_page_and_keeps_empty_intermediate_pages(
         self,
@@ -283,8 +285,10 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             "core.settings_store.get_user_tmdb_key", AsyncMock(return_value=None)
         )
         self.key_patch.start()
-        self.chart_patch = patch("core.imdb_charts.cached_rows", return_value=[])
+        self.chart_patch = patch("core.mdblist_discovery.cached_rows", return_value=[])
         self.chart_patch.start()
+        self.mdblist_patch = patch("core.external_scores.effective_mdblist_key", AsyncMock(return_value=None))
+        self.mdblist_patch.start()
         self.access_patch = patch("routers.tracking.catalog_access", AsyncMock())
         self.access_patch.start()
         self.anime_patch = patch(
@@ -295,6 +299,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.key_patch.stop()
         self.chart_patch.stop()
+        self.mdblist_patch.stop()
         self.access_patch.stop()
         self.anime_patch.stop()
         await self.client.aclose()
@@ -374,13 +379,13 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 "rank": 2,
             },
         ]
-        with patch("core.imdb_charts.cached_rows", return_value=rows):
+        with patch("core.mdblist_discovery.cached_rows", return_value=rows):
             for sort in ("score", "trending", "popular"):
                 result = (
                     await self.client.get("/tracking/browse", params={"sort": sort})
                 ).json()
                 self.assertEqual(result["results"][0]["id"], self.movies[1].id)
-        with patch("core.imdb_charts.cached_rows", return_value=[rows[1]]):
+        with patch("core.mdblist_discovery.cached_rows", return_value=[rows[1]]):
             response = await self.client.get(
                 "/tracking/browse", params={"sort": "score"}
             )
@@ -400,6 +405,32 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len({r["id"] for p in pages for r in p["results"]}), 55)
         self.assertEqual(pages[0]["results"][0]["list_status"], "watching")
         self.assertIsNone(pages[0]["results"][1]["list_status"])
+
+    async def test_broad_cached_feed_stays_below_database_parameter_limit(self):
+        rows = [{"imdb_id": f"tt{i}", "rating": 8, "votes": i, "rank": i}
+                for i in range(1, 10001)]
+        rows.append({"imdb_id": self.movies[0].imdb_id, "rating": 10,
+                     "votes": 1000000, "rank": 1})
+        with patch("core.mdblist_discovery.cached_rows", return_value=rows):
+            response = await self.client.get("/tracking/browse", params={"sort": "score"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["results"][0]["id"], self.movies[0].id)
+
+    async def test_mdblist_browse_works_without_tmdb_and_retains_private_viewer_state(self):
+        item = {"id": self.movies[0].tmdb_id, "type": "movie", "title": "MDBList title",
+                "imdb_id": self.movies[0].imdb_id, "imdb_score": 9.3, "imdb_votes": 100000,
+                "genre_ids": [18], "release_date": "2021-02-03"}
+        with patch("core.external_scores.effective_mdblist_key", AsyncMock(return_value="mdb")), patch(
+            "core.mdblist_discovery.ranked_rows", AsyncMock(return_value=([item], False))
+        ), patch("core.tmdb.find_by_external_id", AsyncMock()) as resolve:
+            response = await self.client.get("/tracking/browse", params={"sort": "score"})
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["source"], "remote")
+        self.assertFalse(result["has_more"])
+        self.assertEqual(result["results"][0]["imdb_score"], 9.3)
+        self.assertEqual(result["results"][0]["list_status"], "watching")
+        resolve.assert_not_awaited()
 
     async def test_combined_local_filters_and_regional_streaming(self):
         filters = {
@@ -443,6 +474,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_remote_cards_resolve_local_ids_and_viewer_state(self):
         with (
+            patch("core.external_scores.effective_mdblist_key", AsyncMock(return_value="mdb")),
             patch(
                 "core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")
             ),
@@ -472,6 +504,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_remote_failure_does_not_change_sources_mid_scroll(self):
         with (
+            patch("core.external_scores.effective_mdblist_key", AsyncMock(return_value="mdb")),
             patch(
                 "core.settings_store.get_user_tmdb_key", AsyncMock(return_value="key")
             ),
