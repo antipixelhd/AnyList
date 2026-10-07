@@ -106,7 +106,9 @@
       trigger.style.fontSize = computed.fontSize;
       trigger.style.fontWeight = computed.fontWeight;
       trigger.style.lineHeight = computed.lineHeight;
-      trigger.style.backgroundColor = computed.backgroundColor;
+      // Browse surfaces vary between the primary row and advanced panel.
+      // Keep their theme in CSS instead of freezing a computed color at mount.
+      if (!select.closest('[data-browse-form]')) trigger.style.backgroundColor = computed.backgroundColor;
       trigger.style.border = computed.border;
       trigger.style.color = computed.color;
       const value = document.createElement('span');

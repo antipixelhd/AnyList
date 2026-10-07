@@ -49,6 +49,7 @@ const statusLabels: Record<string, string> = {
 
 export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.enhanced = "";
+  root.dataset.browseScripted = "";
   const find = <T extends HTMLElement>(selector: string) =>
     root.querySelector<T>(selector)!;
   const form = find<HTMLFormElement>("[data-browse-form]");
@@ -74,9 +75,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   const chips = find<HTMLElement>("[data-active-filters]");
   const template = find<HTMLTemplateElement>("[data-browse-template]");
-  const tagSearch = find<HTMLInputElement>("[data-tag-search]");
-  const tagResults = find<HTMLElement>("[data-tag-results]");
-  const tagStatus = find<HTMLElement>("[data-tag-status]");
   const initial = JSON.parse(
     find<HTMLElement>("#browse-data").textContent || "{}",
   );
@@ -92,9 +90,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       .map((id) => [Number(id), `Tag ${id}`]),
   );
   let request: AbortController | undefined,
-    facetRequest: AbortController | undefined,
-    tagRequest: AbortController | undefined;
-  let timer: number | undefined, tagTimer: number | undefined;
+    facetRequest: AbortController | undefined;
+  let timer: number | undefined;
   let loading = false,
     suspended = false;
   let generation = 0;
@@ -320,7 +317,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       add(name, () => {
         tags.delete(id);
         syncTags();
-        renderTags();
       });
     for (const name of ["start", "end", "status", "provider", "min_votes"])
       if (field(name).value && (name !== "min_votes" || field(name).value !== "250")) {
@@ -369,47 +365,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   };
   const syncTags = () => {
     field("tags").value = [...tags.keys()].join(",");
-    find("[id=browse-tags-value]").textContent = tags.size
-      ? `${tags.size} selected`
-      : "Any";
-  };
-  let availableTags: Facet[] = [];
-  const renderTags = () => {
-    tagResults.replaceChildren();
-    const options = new Map<number, string>([
-      ...tags,
-      ...availableTags.map((tag) => [tag.id, tag.name] as [number, string]),
-    ]);
-    for (const [id, name] of options) {
-      const label = document.createElement("label"),
-        input = document.createElement("input"),
-        text = document.createElement("span");
-      input.type = "checkbox";
-      input.checked = tags.has(id);
-      input.value = String(id);
-      text.textContent = name;
-      input.addEventListener("change", () => {
-        if (input.checked && tags.size >= 12) {
-          input.checked = false;
-          tagStatus.textContent = "Choose up to 12 tags.";
-          return;
-        }
-        if (input.checked) tags.set(id, name);
-        else tags.delete(id);
-        syncTags();
-        changed();
-      });
-      label.append(input, text);
-      tagResults.append(label);
-    }
-    if (!options.size) {
-      const p = document.createElement("p");
-      p.textContent =
-        tagSearch.value.trim().length >= 2
-          ? "No matching tags"
-          : "Type to find tags";
-      tagResults.append(p);
-    }
+
   };
   const updateFooter = () => {
     find("[data-browse-sentinel]").hidden = displayedCategories;
@@ -568,7 +524,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     tags.clear();
     syncGenres();
     syncTags();
-    renderTags();
     changed();
   }
   async function loadFacets() {
@@ -687,7 +642,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       tags.clear();
       syncGenresAfterType();
       syncTags();
-      renderTags();
       for (const name of ["sort", "status", "provider"])
         field(name).dispatchEvent(new Event("input", { bubbles: true }));
       changed();
@@ -836,46 +790,12 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { signal },
   );
-  tagSearch.addEventListener(
-    "input",
-    () => {
-      window.clearTimeout(tagTimer);
-      tagRequest?.abort();
-      tagStatus.textContent = "";
-      tagTimer = window.setTimeout(async () => {
-        const term = tagSearch.value.trim();
-        if (term.length < 2) {
-          availableTags = [];
-          renderTags();
-          return;
-        }
-        const current = new AbortController();
-        tagRequest = current;
-        tagStatus.textContent = "Loading tags…";
-        try {
-          const result = await json(
-            `browse/tags?q=${encodeURIComponent(term)}`,
-            { signal: current.signal },
-          );
-          if (current !== tagRequest || signal.aborted) return;
-          availableTags = result.results;
-          renderTags();
-          tagStatus.textContent = "";
-        } catch (cause) {
-          if (!current.signal.aborted && !signal.aborted)
-            tagStatus.textContent = (cause as Error).message;
-        }
-      }, 200);
-    },
-    { signal },
-  );
   if (tags.size)
     void json(`browse/tags?ids=${[...tags.keys()].join(",")}`, { signal })
       .then((result) => {
         for (const tag of result.results)
           if (tags.has(tag.id)) tags.set(tag.id, tag.name);
         paintChips();
-        renderTags();
       })
       .catch(() => {});
   root
@@ -999,7 +919,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     { signal },
   );
   paintChips();
-  renderTags();
   updateFooter();
   if (error.hidden === false) suspended = true;
   if (
@@ -1015,11 +934,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       region.setAttribute("aria-busy", "false");
       request?.abort();
       facetRequest?.abort();
-      tagRequest?.abort();
       observer.disconnect();
       cancelAnimationFrame(paginationFrame);
       window.clearTimeout(timer);
-      window.clearTimeout(tagTimer);
     },
     { once: true },
   );

@@ -108,22 +108,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
   <div class="page-width browse-page" data-browse-page>
     <header class="browse-header">
       <h1>Browse</h1>
-      <nav aria-label="Media type" class="browse-types">
-        <a
-          href="/browse"
-          data-browse-type="movie"
-          aria-current={type === "movie" ? "page" : undefined}
-        >
-          Movies
-        </a>
-        <a
-          href="/browse?type=series"
-          data-browse-type="series"
-          aria-current={type === "series" ? "page" : undefined}
-        >
-          Series
-        </a>
-      </nav>
+
     </header>
     <form
       id="browse-filters"
@@ -183,33 +168,26 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
             value={params.get("genres") || ""}
           />
         </div>
-        <div class="browse-filter">
-          <span id="browse-tags-label">Tags</span>
-          <details class="browse-filter-menu" data-filter-menu>
-            <summary aria-labelledby="browse-tags-label browse-tags-value">
-              <span id="browse-tags-value">
-                {params.get("tags")
-                  ? `${params.get("tags")!.split(",").length} selected`
-                  : "Any"}
-              </span>
-              <Icon name="chevron-down" />
-            </summary>
-            <div class="browse-options browse-tag-picker">
-              <input
-                type="search"
-                data-tag-search
-                placeholder="Find tags…"
-                aria-label="Find tags"
-                autocomplete="off"
-              />
-              <div data-tag-results>
-                <p>Type to find tags</p>
-              </div>
-              <p role="status" data-tag-status></p>
-            </div>
-          </details>
-          <input type="hidden" name="tags" value={params.get("tags") || ""} />
+        <div class="browse-media-filter">
+          <span>Media type</span>
+      <nav aria-label="Media type" class="browse-types">
+        <a
+          href="/browse"
+          data-browse-type="movie"
+          aria-current={type === "movie" ? "page" : undefined}
+        >
+          Movies
+        </a>
+        <a
+          href="/browse?type=series"
+          data-browse-type="series"
+          aria-current={type === "series" ? "page" : undefined}
+        >
+          Series
+        </a>
+      </nav>
         </div>
+        <input type="hidden" name="tags" value={params.get("tags") || ""} />
         <label class="browse-filter">
           <span>Airing status</span>
           <select name="status">
