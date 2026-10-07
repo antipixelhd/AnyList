@@ -60,6 +60,11 @@ if (Astro.request.method === "POST") {
 
   if (step === "login") {
     try {
+      // Keep OAuth2 naming inside the API request; the browser identifies email.
+      if (data.has("email")) {
+        data.set("username", data.get("email")!.toString());
+        data.delete("email");
+      }
       const result = await api.auth.login(data);
       if (result.requires_2fa && result.temp_token) {
         showTotpStep = true;
@@ -159,9 +164,12 @@ if (token && Astro.locals.user) {
               <label for="email" class="block text-sm font-medium text-zinc-400 mb-1">Email</label>
               <input
                 type="email"
-                name="username"
+                name="email"
                 id="email"
                 autocomplete="username"
+                inputmode="email"
+                autocapitalize="none"
+                spellcheck="false"
                 required
                 class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
               />
