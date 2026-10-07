@@ -6,9 +6,9 @@ const {item, kind} = Astro.props as {item: DetailSample; kind: SampleKey};
 <section class="lab-tracking" id="lab-tracking" aria-label="Your tracking">
   <div class="lab-status-field">
     <label for="lab-status">Your list</label>
-    <div class="lab-select-wrap"><select id="lab-status" data-native-select>
+    <div class="lab-select-wrap"><select id="lab-status">
       {[item.action, 'Planning', 'Completed', 'Paused', 'Dropped'].filter((v,i,a) => a.indexOf(v) === i).map(status => <option value={status}>{status}</option>)}
-    </select><Icon name="chevron-down" /></div>
+    </select></div>
   </div>
   <div class="lab-progress-field">
     <label for="lab-progress">{kind === 'game' ? 'Play time' : 'Progress'}</label>
