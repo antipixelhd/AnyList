@@ -44,8 +44,8 @@
   align-items: start;
   padding-right: 64px;
 }
-.browse-filters label > span,
-.browse-filter > span,
+.browse-filters label > span:first-child,
+.browse-filter > span:first-child,
 .browse-media-filter > span,
 .browse-range-heading {
   display: block;
