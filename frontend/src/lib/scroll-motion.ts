@@ -4,6 +4,7 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
+  options: { animateInitial?: boolean } = {},
 ) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   if (reduced.matches || signal.aborted) return;
@@ -13,6 +14,7 @@ export function initializeScrollMotion(
   let modules: HTMLElement[] = [];
   const registered = new WeakSet<HTMLElement>();
   let frame = 0;
+  let initialRegistration = true;
 
   const viewport = () => {
     const view = window.visualViewport;
@@ -52,7 +54,7 @@ export function initializeScrollMotion(
       modules.push(element);
       const bounds = element.getBoundingClientRect();
       if (element.getClientRects().length && bounds.top < viewport().bottom) {
-        if (bounds.bottom > 0) {
+        if (bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
           const entrance = element.animate(
             [
               { opacity: 0, transform: "translateY(7px)" },
@@ -77,6 +79,7 @@ export function initializeScrollMotion(
   };
 
   register();
+  initialRegistration = false;
 
   const update = () => {
     frame = 0;

@@ -30,7 +30,7 @@ const href = item.id
   data-key={`${item.type}:${item.tmdb_id || item.id}`}
   data-state={state || undefined}
 >
-  <div class="browse-cover">
+  <div class="browse-cover" data-poster-loading={image ? "" : undefined}>
     <a
       class="browse-poster-link"
       href={template ? "#" : href}

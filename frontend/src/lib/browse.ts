@@ -4,6 +4,7 @@ import {
   sectionHref,
 } from "./browse-view";
 import { applyResponsiveArtwork } from "./responsive-artwork";
+import { createBrowseLoading } from "./browse-loading";
 import { initializeScrollMotion } from "./scroll-motion";
 import { cancelUiMotion, reveal, showMenu, hideMenu } from "./ui-motion";
 
@@ -52,6 +53,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const filterToggle = find<HTMLButtonElement>("[data-filter-toggle]");
   const skeleton = find<HTMLElement>("[data-browse-skeleton]");
   const region = find<HTMLElement>("[data-browse-region]");
+  const loadingView = createBrowseLoading(region, skeleton);
   const empty = find<HTMLElement>("[data-browse-empty]");
   const notice = find<HTMLElement>("[data-browse-notice]");
   const error = find<HTMLElement>("[data-browse-error]");
@@ -164,6 +166,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     ].map((item: Item) => [key(item), item]),
   );
   region.querySelectorAll<HTMLElement>("[data-browse-card]").forEach((card) => {
+    const poster = card.querySelector<HTMLImageElement>("[data-poster]");
+    if (poster?.complete) card.querySelector(".browse-cover")?.removeAttribute("data-poster-loading");
     const item = initialItems.get(card.dataset.key!);
     if (!item) return;
     items.set(card, item);
@@ -200,6 +204,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         .querySelector(".browse-poster-link")!
         .setAttribute("aria-label", item.title);
       const img = card.querySelector<HTMLImageElement>("[data-poster]")!;
+      card.querySelector(".browse-cover")?.toggleAttribute("data-poster-loading", !!item.poster);
       img.hidden = !item.poster;
       if (item.poster)
         applyResponsiveArtwork(img, item.poster, {
@@ -412,7 +417,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         (displayedCategories || loading || !payload.has_more || suspended))
     )
       return;
-    if (!form.reportValidity()) return;
+    if (!form.reportValidity()) {
+      loadingView.finish();
+      region.setAttribute("aria-busy", "false");
+      return;
+    }
     request?.abort();
     const current = new AbortController();
     request = current;
@@ -424,24 +433,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     const categoryView = isCategoryView(values);
     values.set("page", String(append ? payload.page + 1 : 1));
     if (append) values.set("source", payload.source);
-    if (!append) {
-      grid.style.opacity = ".45";
-      sections.style.opacity = ".45";
-    }
     empty.hidden = true;
     region.setAttribute("aria-busy", "true");
     updateFooter();
     updateUrl();
     paintChips();
     const loadingTimer = window.setTimeout(() => {
-      if (request === current) {
-        skeleton.hidden = false;
-        if (!append) {
-          cancelUiMotion(region);
-          grid.hidden = true;
-          sections.hidden = true;
-          skeleton.style.marginTop = "0";
-        }
+      if (request === current && epoch === generation && !current.signal.aborted && !signal.aborted) {
+        loadingView.show(append);
       }
     }, 120);
     try {
@@ -490,14 +489,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
     } finally {
       window.clearTimeout(loadingTimer);
-      if (request === current) {
+      if (request === current && epoch === generation && !signal.aborted) {
         loading = false;
-        skeleton.hidden = true;
-        skeleton.style.marginTop = "";
+        loadingView.finish();
         grid.hidden = displayedCategories;
         sections.hidden = !displayedCategories;
-        grid.style.opacity = "";
-        sections.style.opacity = "";
         region.setAttribute("aria-busy", "false");
         updateFooter();
       }
@@ -877,6 +873,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     signal,
     ".browse-card",
     "browse-scroll-reveal",
+    { animateInitial: false },
   );
   // Imports only happen on an explicit poster action; browsing never writes media.
   region.addEventListener(
@@ -987,6 +984,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   signal.addEventListener(
     "abort",
     () => {
+      loadingView.finish();
+      region.setAttribute("aria-busy", "false");
       request?.abort();
       facetRequest?.abort();
       tagRequest?.abort();

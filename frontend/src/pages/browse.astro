@@ -71,9 +71,33 @@ const regions = [
 const region = params.get("region") || "US";
 if (!regions.some(([id]) => id === region)) regions.push([region, region]);
 const signedIn = !!Astro.locals.user;
+const initialChips: string[] = facets.genres
+  .filter((genre: any) => selectedGenres.includes(String(genre.id)))
+  .map((genre: any) => genre.name);
+initialChips.push(...(params.get("tags") || "").split(",").filter(Boolean).map((id) => `Tag ${Number(id)}`));
+if (params.get("start")) initialChips.push(`After ${params.get("start")}`);
+if (params.get("end")) initialChips.push(`Before ${params.get("end")}`);
+const statusLabel = statusOptions.find(([id]) => id === params.get("status"))?.[1];
+if (statusLabel) initialChips.push(statusLabel);
+const providerLabel = facets.providers.find((provider: any) => String(provider.id) === params.get("provider"))?.name;
+if (providerLabel) initialChips.push(providerLabel);
+if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”`);
 ---
 
 <Tracker title="Browse">
+  <script is:inline>
+    // Establish the enhanced layout before its first paint; no-JS keeps the form.
+    if (!document.documentElement.hasAttribute("data-browse-scripted")) {
+      const finishPoster = (event) => {
+        if (event.target instanceof HTMLImageElement && event.target.hasAttribute("data-poster")) {
+          event.target.closest(".browse-cover")?.removeAttribute("data-poster-loading");
+        }
+      };
+      document.addEventListener("load", finishPoster, true);
+      document.addEventListener("error", finishPoster, true);
+    }
+    document.documentElement.dataset.browseScripted = "";
+  </script>
   <div class="page-width browse-page" data-browse-page>
     <header class="browse-header">
       <h1>Browse</h1>
@@ -211,7 +235,7 @@ const signedIn = !!Astro.locals.user;
             ))}
           </select>
         </label>
-        <details class="browse-more" data-motion-details>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || region !== "US")}>
           <summary>
             <Icon name="sliders" />
             <span>More filters</span>
@@ -269,7 +293,12 @@ const signedIn = !!Astro.locals.user;
       </div>
     </form>
     <div class="browse-results-toolbar">
-      <div class="browse-active-filters" data-active-filters></div>
+      <div class="browse-active-filters" data-active-filters>
+        {initialChips.map((label) => (
+          <button type="button" aria-label={`Remove ${label} filter`}>{label}<Icon name="close" /></button>
+        ))}
+        {!!initialChips.length && <button type="button" data-reset>Clear all</button>}
+      </div>
     </div>
     <p
       class="browse-notice"

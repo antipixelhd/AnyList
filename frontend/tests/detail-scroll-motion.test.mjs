@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -51,7 +51,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal);
+  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
@@ -65,6 +65,17 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     changeInput() {input.matches = !input.matches;input.dispatchEvent(new Event('change'));},
   };
 }
+
+test('Browse keeps initially visible cards painted but still animates new cards and scroll entries', t => {
+  const p = preview(t, {initialY: 600, animateInitial: false});
+  assert.equal(p.animations.length, 0);
+  assert.equal(p.classes.size, 0);
+  p.append();
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 3);
+});
 
 test('desktop fades on entry without replaying while still visible', t => {
   const p = preview(t);
