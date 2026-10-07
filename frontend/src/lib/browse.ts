@@ -9,7 +9,6 @@ type Item = {
   title: string;
   poster?: string;
   year?: string;
-  tmdb_score?: number;
   list_status?: string;
   score?: number | null;
   rating_mode?: string;
@@ -119,6 +118,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   };
   const paintState = (card: HTMLElement, item: Item) => {
     card.dataset.state = item.list_status || "";
+    const rating = card.querySelector<HTMLElement>("[data-user-score]")!;
+    rating.hidden = !(item.score != null && item.score > 0);
+    const score = Number(item.score || 0).toFixed(1);
+    rating.setAttribute("aria-label", `Your rating: ${score} out of 10`);
+    rating.querySelector("[data-score]")!.textContent = score;
     const state = card.querySelector<HTMLElement>("[data-list-state]")!;
     state.hidden = !item.list_status;
     state.title = statusLabels[item.list_status || ""] || "";
@@ -173,11 +177,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       placeholder.hidden = !!item.poster;
       placeholder.textContent = item.title.slice(0, 1);
       card.querySelector("[data-year]")!.textContent = item.year || "";
-      card.querySelector<HTMLElement>("[data-community-score]")!.hidden =
-        !item.tmdb_score;
-      card.querySelector("[data-score]")!.textContent = Number(
-        item.tmdb_score || 0,
-      ).toFixed(1);
       card
         .querySelectorAll<HTMLButtonElement>("[data-browse-action]")
         .forEach((button) => {
@@ -723,6 +722,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
             body: JSON.stringify({ status: "planning" }),
           });
           item.list_status = saved.status;
+          item.score = saved.score;
           paintState(card, item);
           notice.textContent = `${item.title} added to Plan to Watch.`;
           reveal(card.querySelector<HTMLElement>("[data-list-state]")!);

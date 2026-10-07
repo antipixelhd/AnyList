@@ -375,14 +375,15 @@
   font-size: 12px;
   margin-top: 5px;
 }
-.browse-card-meta [data-community-score] {
+.browse-card-meta [data-user-score] {
+  color: #f7b731;
   display: flex;
   align-items: center;
   gap: 5px;
 }
 .browse-card-meta .ui-icon {
   font-size: 10px;
-  color: var(--blue);
+  color: inherit;
 }
 .browse-load {
   min-height: 80px;

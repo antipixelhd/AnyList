@@ -113,9 +113,13 @@ const href = item.id
   </a>
   <div class="browse-card-meta">
     <span data-year>{item.year}</span>
-    <span data-community-score hidden={!item.tmdb_score}>
+    <span
+      data-user-score
+      hidden={!(item.score > 0)}
+      aria-label={`Your rating: ${Number(item.score || 0).toFixed(1)} out of 10`}
+    >
       <Icon name="star" />
-      <span data-score>{Number(item.tmdb_score || 0).toFixed(1)}</span>
+      <span data-score>{Number(item.score || 0).toFixed(1)}</span>
     </span>
   </div>
 </article>
