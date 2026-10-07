@@ -145,6 +145,9 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
               autocomplete="off"
               aria-label="Search titles"
             />
+            <button type="button" class="browse-search-clear" data-browse-search-clear aria-label="Clear search" hidden={!params.get("q")}>
+              <Icon name="close" />
+            </button>
           </div>
         </label>
       </div>

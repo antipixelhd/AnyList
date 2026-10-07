@@ -52,6 +52,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const find = <T extends HTMLElement>(selector: string) =>
     root.querySelector<T>(selector)!;
   const form = find<HTMLFormElement>("[data-browse-form]");
+  const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
   const field = (name: string) =>
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
   const grid = find<HTMLElement>("[data-browse-results]");
@@ -530,6 +531,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
   }
   function changed() {
+    searchClear.hidden = !field("q").value;
     window.clearTimeout(timer);
     request?.abort();
     generation++;
@@ -629,6 +631,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { signal },
   );
+  searchClear.addEventListener("click", () => {
+    field("q").value = "";
+    field("q").focus();
+    field("q").dispatchEvent(new Event("input", { bubbles: true }));
+  }, { signal });
   form.addEventListener(
     "change",
     (event) => {

@@ -50,8 +50,9 @@
   display: block;
   margin-bottom: 9px;
   color: var(--text);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.5;
   letter-spacing: .015em;
 }
 .browse-search > div {
@@ -77,6 +78,23 @@
   font-size: 13px;
 }
 .browse-search input::placeholder { color: var(--muted); }
+.browse-search input::-webkit-search-cancel-button { appearance: none; }
+.tracker .browse-search-clear {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  transition: color .16s;
+}
+.browse-search-clear[hidden] { display: none; }
+.tracker .browse-search-clear:hover { color: var(--text); }
+.browse-search-clear:focus-visible { outline: 2px solid var(--blue); outline-offset: -4px; }
 .browse-search > div:focus-within {
   border-color: var(--blue);
   outline: 2px solid color-mix(in srgb, var(--blue) 20%, transparent);
@@ -167,7 +185,7 @@
 .browse-more {
   position: absolute;
   z-index: 40;
-  top: 29px;
+  top: calc(2.25rem + 9px);
   right: 0;
   width: 42px;
   height: 42px;
