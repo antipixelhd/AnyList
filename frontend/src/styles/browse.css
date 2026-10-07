@@ -306,16 +306,13 @@ html[data-browse-scripted] .browse-cover[data-poster-loading] img {
 .browse-actions {
   flex-direction: column-reverse;
   position: absolute;
+  z-index: 2;
   right: 9px;
   bottom: 9px;
   display: flex;
   align-items: center;
   gap: 0;
-  background: #0b1622ed;
-  border-radius: 999px;
-  box-shadow: 0 2px 12px #0005;
   pointer-events: none;
-  overflow: hidden;
   opacity: 0;
   translate: 0 4px;
   transition:
@@ -331,20 +328,55 @@ html[data-browse-scripted] .browse-cover[data-poster-loading] img {
   translate: 0 0;
 }
 .browse-actions button {
+  position: relative;
   width: 34px;
   height: 34px;
   display: grid;
   place-items: center;
   border: 0;
-  background: transparent;
+  border-radius: 50%;
+  background: #0b1622ed;
+  box-shadow: 0 2px 12px #0005;
   color: #ecf6ff;
   padding: 0;
   cursor: pointer;
+  transition:
+    scale 0.18s cubic-bezier(0.2, 0.7, 0.2, 1),
+    background-color 0.18s,
+    color 0.18s;
 }
 .browse-actions button:hover,
 .browse-actions button:focus-visible {
   background: var(--blue);
   color: #08131d;
+  scale: 1.1;
+  z-index: 1;
+}
+.browse-actions button::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  translate: 4px -50%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #0b1622f5;
+  box-shadow: 0 2px 12px #0005;
+  color: #ecf6ff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s, translate 0.18s, visibility 0.18s;
+}
+.browse-actions button:hover::after,
+.browse-actions button:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  translate: 0 -50%;
 }
 .browse-actions button:disabled {
   opacity: 0.5;
@@ -356,18 +388,21 @@ html[data-browse-scripted] .browse-cover[data-poster-loading] img {
 .browse-extra-actions {
   display: flex;
   flex-direction: column-reverse;
+  gap: 5px;
   max-height: 0;
   opacity: 0;
   visibility: hidden;
   transition:
     max-height 0.2s cubic-bezier(0.2, 0.7, 0.2, 1),
+    margin-bottom 0.2s cubic-bezier(0.2, 0.7, 0.2, 1),
     opacity 0.18s,
     visibility 0.18s;
 }
 .browse-actions:hover .browse-extra-actions,
 .browse-actions:focus-within .browse-extra-actions,
 .browse-card.is-touch-active .browse-extra-actions {
-  max-height: 68px;
+  max-height: 73px;
+  margin-bottom: 5px;
   opacity: 1;
   visibility: visible;
 }
@@ -558,6 +593,12 @@ html[data-browse-scripted] .browse-cover[data-poster-loading] img {
   .browse-card-meta {
     font-size: 11px;
     gap: 4px;
+  }
+}
+@media (max-width: 650px) {
+  .browse-grid > .browse-card:nth-child(3n + 1) .browse-actions button::after {
+    right: auto;
+    left: calc(100% + 8px);
   }
 }
 @media (hover: none) {

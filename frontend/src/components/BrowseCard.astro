@@ -83,7 +83,7 @@ const href = item.id
           data-browse-action="edit"
           class="browse-add"
           aria-label={`Open list editor for ${item.title}`}
-          title="Open list editor"
+          data-tooltip="Open list editor"
         >
           <Icon name="plus" />
         </button>
@@ -93,7 +93,7 @@ const href = item.id
             data-browse-action="plan"
             hidden={!!state}
             aria-label={`Plan to watch ${item.title}`}
-            title="Plan to Watch"
+            data-tooltip="Plan to Watch"
           >
             <Icon name="clock" />
           </button>
@@ -102,7 +102,7 @@ const href = item.id
             data-browse-action="rate"
             hidden={item.score > 0}
             aria-label={`Rate and complete ${item.title}`}
-            title="Rate & complete"
+            data-tooltip="Rate & complete"
           >
             <Icon name="star" />
           </button>
