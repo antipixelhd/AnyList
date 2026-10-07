@@ -284,8 +284,6 @@
 .browse-range-track input[data-range-upper]::-webkit-slider-thumb { background: color-mix(in srgb, var(--blue) 70%, var(--bg)); }
 .browse-range-track input[data-range-upper]::-moz-range-thumb { background: color-mix(in srgb, var(--blue) 70%, var(--bg)); }
 .browse-range-track input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
-.browse-submit { justify-self: start; order: 2; }
-.browse-page[data-browse-scripted] .browse-page .browse-submit { display: none; }
 .browse-page[data-browse-scripted] .browse-cover[data-poster-loading] img {
   opacity: 0;
 }
