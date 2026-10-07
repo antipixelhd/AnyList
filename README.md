@@ -17,71 +17,44 @@ A self-hosted movie and TV tracker for personal lists and shared discoveries.
 
 ## Development
 
-For Codex Cloud, see the [environment setup, startup, tests, and private provider
-defaults](ops/cloud/README.md). Metadata defaults can live outside the database so
-preview resets retain them.
+### Requirements
 
-Private VPS source previews use GitHub as their control plane: **normal development
-does not require VPS SSH**. See [preview setup and operations](ops/preview/README.md)
-for beta, parallel development branches, GitHub controls, and the Stage 2 runbook.
+- Python 3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- Node.js 22.12 or newer, with npm
+- Windows PowerShell and Docker Desktop running with Linux containers
 
-Backend dependencies live in `backend/pyproject.toml` and `backend/uv.lock`;
-frontend dependencies live in `frontend/package.json` and `frontend/package-lock.json`.
-CI uses Python 3.13 and Node 22; the frontend requires Node 22.12 or newer.
+The local launcher runs PostgreSQL 16 in Docker and the backend and frontend
+from source, with automatic reload.
 
-For Windows development, install Python, Node, uv, and Docker Desktop. Run this
-from the repository root in PowerShell:
+### Getting started
 
-```powershell
-$env:UV_PROJECT_ENVIRONMENT = Join-Path $PWD '.venv'
-uv sync --project backend --frozen --group dev
-npm --prefix frontend ci
-.\Run Local.ps1
-```
+1. Clone the repository and install dependencies from its root in PowerShell:
 
-The launcher expects the root `.venv`; uv's [project environment setting](https://docs.astral.sh/uv/concepts/projects/config/#project-environment-path)
-keeps installation aligned with it. The launcher starts the database, applies
-migrations, and serves the frontend on 7340 and backend on 7341. Local preview
-login details, when available, are in `.venv/LOCAL-LOGIN.txt`. Stop the web
-servers with `.\Run Local.ps1 -Stop`; saved database data is retained.
-On an empty database, create the first account at `/register`; it becomes an
-administrator.
+   ```powershell
+   git clone https://github.com/antipixelhd/AnyList.git
+   cd AnyList
+   $env:UV_PROJECT_ENVIRONMENT = Join-Path $PWD '.venv'
+   uv sync --project backend --python 3.13 --frozen --group dev
+   npm --prefix frontend ci
+   ```
 
-Optional local preview tools run with the root virtual environment:
+2. Start the app:
 
-| Script | Purpose |
-| --- | --- |
-| `scripts/seed_local_preview.py` | Create the synthetic `preview` account and example lists in the local database |
-| `scripts/prepare_local_login.py` | Prepare login details for existing preview accounts; also run by the launcher |
-| `scripts/verify_local_preview.py` | Check available preview logins and read-only APIs; write `.venv/<username>-browser.json` for browser QA |
+   ```powershell
+   .\Run Local.ps1
+   ```
 
-After seeding, run login preparation before verification. Browser state contains
-session credentials and stays in the ignored `.venv` directory.
+Open [localhost:7340](http://localhost:7340). The launcher configures the local
+database, applies migrations, and starts the API on port 7341. No `.env` file is
+needed. Create your first account at `/register`; it becomes an administrator.
+Sign in with your email address.
 
-Run checks from the indicated directory. Keep `UV_PROJECT_ENVIRONMENT` set to
-the absolute root `.venv` path when using uv commands.
+To search titles and load metadata, add a TMDB **API Read Access Token** in
+Settings. A TheTVDB key is optional for additional TV metadata. Neither is
+needed to start the app.
 
-| Directory | Command |
-| --- | --- |
-| `backend/` | `uv run --no-sync python -m unittest discover -s tests -q` |
-| `backend/` | `uvx ruff==0.16.8 check .` |
-| `frontend/` | `npm test` |
-| `frontend/` | `npm run check` |
-| `frontend/` | `npm run build` |
+Stop the web servers with `.\Run Local.ps1 -Stop`. Database data is retained.
+Logs are in `.venv/backend.error.log` and `.venv/frontend.error.log`.
 
-Backend integration tests require a disposable PostgreSQL database. Set
-`SECRET_KEY`, `DATABASE_URL`, and `TRACKING_TEST_DATABASE_URL`, then initialize
-that database with `uv run --no-sync alembic upgrade head`. Database-dependent
-tests skip when their fixture URL is absent. [CI](.github/workflows/ci.yml)
-shows the complete isolated test setup.
-
-Start with [backend behavior and module locations](docs/agents/BACKEND.md),
-[frontend structure and commands](frontend/README.md), or
-[frontend styling conventions](docs/agents/FRONTEND-STYLES.md) for the affected area.
-
-Password login uses the account email address (case-insensitive). Usernames are
-editable public handles; account data and sessions remain tied to the numeric
-user ID. OAuth password clients still send the email in the `username` form
-field. Migration `mt032` normalizes emails and enforces uniqueness; it stops and
-reports conflicting user IDs if existing addresses differ only by case or
-surrounding spaces. Resolve those accounts before retrying the migration.
+For Linux Codex Cloud setup and checks, see [ops/cloud/README.md](ops/cloud/README.md).
+For frontend commands, see [frontend/README.md](frontend/README.md).
