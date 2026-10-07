@@ -32,7 +32,7 @@ function play(element: HTMLElement, entering: boolean, distance: number) {
     transform: expanding ? (entering ? ['translateY(-4px)', 'translateY(0)'] : ['translateY(0)', 'translateY(-4px)']) : entering
       ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
       : ['translateY(0) scale(1)', `translateY(${Math.max(2, distance / 2)}px) scale(.995)`],
-  }, { duration: expanding ? (entering ? .26 : .18) : (entering ? .18 : .12), ease: entering ? [0.2, 0.7, 0.2, 1] : 'easeIn' });
+  }, { duration: expanding ? (entering ? .16 : .1) : (entering ? .18 : .12), ease: entering ? [0.2, 0.7, 0.2, 1] : 'easeIn' });
   running.set(element, control);
   void control.finished.then(() => {
     if (running.get(element) === control) stop(element);
