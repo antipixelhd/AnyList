@@ -4,7 +4,7 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; downwardOnly?: boolean } = {},
+  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean } = {},
 ) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   if (reduced.matches || signal.aborted) return;
@@ -33,10 +33,10 @@ export function initializeScrollMotion(
   const start = (element: HTMLElement) => {
     const animation = element.animate(
       [
-        { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
-        { opacity: 1, translate: "0 0" },
+        options.scaleEntrance ? { opacity: 0.2, scale: "0.96" } : { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
+        options.scaleEntrance ? { opacity: 1, scale: "1" } : { opacity: 1, translate: "0 0" },
       ],
-      { duration: 260, easing: "cubic-bezier(.25,.1,.25,1)", fill: "both" },
+      { duration: options.scaleEntrance ? 160 : 260, easing: options.scaleEntrance ? "cubic-bezier(.2,.7,.2,1)" : "cubic-bezier(.25,.1,.25,1)", fill: "both" },
     );
     pending.set(element, animation);
     animation.addEventListener("finish", () => complete(element), {
@@ -59,10 +59,10 @@ export function initializeScrollMotion(
         if (bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
           const entrance = element.animate(
             [
-              { opacity: 0, transform: "translateY(7px)" },
-              { opacity: 1, transform: "translateY(0)" },
+              options.scaleEntrance ? { opacity: 0, scale: "0.96" } : { opacity: 0, transform: "translateY(7px)" },
+              options.scaleEntrance ? { opacity: 1, scale: "1" } : { opacity: 1, transform: "translateY(0)" },
             ],
-            { duration: 260, easing: "ease" },
+            { duration: options.scaleEntrance ? 160 : 260, easing: options.scaleEntrance ? "cubic-bezier(.2,.7,.2,1)" : "ease" },
           );
           entrances.add(entrance);
           entrance.addEventListener(

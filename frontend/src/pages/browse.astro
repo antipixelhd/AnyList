@@ -92,20 +92,11 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
 ---
 
 <Tracker title="Browse">
-  <script is:inline>
-    // Establish the enhanced layout before its first paint; no-JS keeps the form.
-    if (!document.documentElement.hasAttribute("data-browse-scripted")) {
-      const finishPoster = (event) => {
-        if (event.target instanceof HTMLImageElement && event.target.hasAttribute("data-poster")) {
-          event.target.closest(".browse-cover")?.removeAttribute("data-poster-loading");
-        }
-      };
-      document.addEventListener("load", finishPoster, true);
-      document.addEventListener("error", finishPoster, true);
-    }
-    document.documentElement.dataset.browseScripted = "";
-  </script>
+
   <div class="page-width browse-page" data-browse-page>
+    <script is:inline data-astro-rerun>
+      document.currentScript.parentElement.dataset.browseScripted = "";
+    </script>
     <header class="browse-header">
       <h1>Browse</h1>
       <nav aria-label="Media type" class="browse-types">

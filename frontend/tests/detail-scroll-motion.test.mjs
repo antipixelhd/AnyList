@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false, scaleEntrance = false} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -51,7 +51,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly});
+  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly, scaleEntrance});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
@@ -272,4 +272,17 @@ test('Browse cancels an active entrance when the user reverses scroll direction'
   assert.equal(p.classes.size, 0);
   p.ready();
   assert.equal(p.animations.length, 1);
+});
+
+test('browse posters expand in place quickly without text or position transforms', t => {
+  const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true});
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.96'}, {opacity: 1, scale: '1'}]);
+  assert.equal(p.animations[0].options.duration, 160);
+  p.scroll(1400);
+  p.scroll(1300);
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(424);
+  assert.deepEqual(p.animations[1].keyframes, [{opacity: .2, scale: '0.96'}, {opacity: 1, scale: '1'}]);
+  assert.equal(p.animations[1].options.duration, 160);
 });

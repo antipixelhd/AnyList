@@ -493,9 +493,15 @@
   margin-top: 11px;
 }
 .browse-card-title h2 {
+  font-family: var(--font-body);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.45;
+  min-height: 2.9em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   margin: 0;
   color: var(--text);
 }
@@ -568,7 +574,7 @@
   color: #f08892;
 }
 .browse-scroll-reveal {
-  translate: 0 12px;
+  scale: .96;
   opacity: 0.2;
 }
 .browse-page [hidden] {
@@ -638,7 +644,7 @@
     right: 0;
   }
   .browse-scroll-reveal {
-    translate: 0 8px;
+    scale: .96;
   }
   .browse-actions {
     right: 6px;
@@ -696,6 +702,7 @@
   }
   .browse-scroll-reveal {
     translate: none;
+    scale: 1;
     opacity: 1;
   }
 }
@@ -719,21 +726,8 @@
   }
 }
 
-/* Preserve card boxes and category headers while replacing their ink. */
-[data-browse-region][data-browse-loading="replace"] .browse-cover,
-[data-browse-region][data-browse-loading="replace"] .browse-card-title,
-[data-browse-region][data-browse-loading="replace"] .browse-card-meta {
-  position: relative;
-}
-[data-browse-region][data-browse-loading="replace"] .browse-cover > *,
-[data-browse-region][data-browse-loading="replace"] .browse-card-title > *,
-[data-browse-region][data-browse-loading="replace"] .browse-card-meta > * {
-  visibility: hidden;
-}
-.browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after,
-[data-browse-region][data-browse-loading="replace"] .browse-cover::after,
-[data-browse-region][data-browse-loading="replace"] .browse-card-title::after,
-[data-browse-region][data-browse-loading="replace"] .browse-card-meta::after {
+/* Skeletons belong only to missing artwork, never existing card text. */
+ .browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -742,14 +736,6 @@
   background-size: 220% 100%;
   animation: browse-shimmer 1.5s ease-in-out infinite;
   pointer-events: none;
-}
-[data-browse-region][data-browse-loading="replace"] .browse-card-title::after {
-  width: 80%;
-  height: 14px;
-}
-[data-browse-region][data-browse-loading="replace"] .browse-card-meta::after {
-  width: 30%;
-  height: 10px;
 }
 [data-browse-region][data-browse-loading="empty"] .browse-skeletons {
   margin-top: 0;

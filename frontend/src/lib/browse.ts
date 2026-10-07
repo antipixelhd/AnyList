@@ -4,7 +4,7 @@ import {
   sectionHref,
 } from "./browse-view";
 import { applyResponsiveArtwork } from "./responsive-artwork";
-import { createBrowseLoading } from "./browse-loading";
+import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { editorStore, type EditorTitle } from "./editor-store";
@@ -181,7 +181,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   region.querySelectorAll<HTMLElement>("[data-browse-card]").forEach((card) => {
     const poster = card.querySelector<HTMLImageElement>("[data-poster]");
-    if (poster?.complete) card.querySelector(".browse-cover")?.removeAttribute("data-poster-loading");
+    if (poster) prepareBrowsePoster(poster, signal);
     const item = initialItems.get(card.dataset.key!);
     if (!item) return;
     items.set(card, item);
@@ -219,7 +219,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         .querySelector(".browse-poster-link")!
         .setAttribute("aria-label", item.title);
       const img = card.querySelector<HTMLImageElement>("[data-poster]")!;
-      card.querySelector(".browse-cover")?.toggleAttribute("data-poster-loading", !!item.poster);
       img.hidden = !item.poster;
       if (item.poster)
         applyResponsiveArtwork(img, item.poster, {
@@ -227,6 +226,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
           route: "direct",
         });
+      prepareBrowsePoster(img, signal);
       const placeholder = card.querySelector<HTMLElement>(
         ".browse-placeholder",
       )!;
@@ -441,6 +441,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       const response: Payload | SectionsPayload = await json(path, {
         signal: current.signal,
       });
+      window.clearTimeout(loadingTimer);
+      await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (!append) {
         cancelUiMotion(region);
@@ -459,6 +461,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       notice.textContent = response.notice || "";
     } catch (cause) {
+      window.clearTimeout(loadingTimer);
+      await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)
         return;
       suspended = true;
@@ -801,9 +805,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   initializeScrollMotion(
     region,
     signal,
-    ".browse-card",
+    ".browse-cover",
     "browse-scroll-reveal",
-    { animateInitial: false, downwardOnly: true },
+    { downwardOnly: true, scaleEntrance: true },
   );
   const editorTitle = (item: Item) => editorStore.get({...item, entry:item.entry ?? null});
   const warmEditor = (event: Event) => {
