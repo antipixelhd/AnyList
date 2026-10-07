@@ -1,4 +1,5 @@
 import inspect
+from core.browse import metadata_fields as browse_metadata
 import logging
 
 from sqlalchemy import select
@@ -236,6 +237,7 @@ async def enrich_media(
             media.tmdb_data = {
                 "runtime": data.get("runtime"),
                 "genres": [g["name"] for g in data.get("genres", [])],
+                **browse_metadata(data),
                 "original_language": data.get("original_language"),
                 "production_companies": [
                     {
@@ -280,6 +282,7 @@ async def enrich_media(
             }
             media.tmdb_data = {
                 "genres": [g["name"] for g in data.get("genres", [])],
+                **browse_metadata(data),
                 "original_language": data.get("original_language"),
                 "networks": [
                     {

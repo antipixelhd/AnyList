@@ -9,7 +9,9 @@ let sequence = 0;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function stop(element: HTMLElement) {
-  running.get(element)?.stop();
+  const control = running.get(element);
+  if (element.getClientRects().length) control?.stop();
+  else control?.cancel();
   running.delete(element);
   element.style.removeProperty('opacity');
   element.style.removeProperty('transform');
@@ -146,6 +148,8 @@ export async function hideOverlay(overlay: HTMLElement) {
   overlay.inert = false;
 }
 
-export function cancelUiMotion() {
-  for (const element of running.keys()) stop(element);
+export function cancelUiMotion(root?: HTMLElement) {
+  for (const element of running.keys()) {
+    if (!root || root.contains(element)) stop(element);
+  }
 }

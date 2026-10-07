@@ -1,11 +1,10 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
+from core.catalog_search import fuzzy_remote_terms, is_close_title_match
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
-import re
 from datetime import date, datetime, timedelta, timezone
-from difflib import SequenceMatcher
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -24,42 +23,6 @@ from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob,
 from models.sync import SyncJob, SyncStatus
 
 router = APIRouter()
-
-
-def fuzzy_remote_terms(term: str) -> list[str]:
-    """Return a small, conservative set of useful typo corrections for TMDB.
-
-    PostgreSQL's trigram search handles titles already in AnyList, but a title
-    not imported yet has to be found by TMDB. TMDB treats a misspelling as a
-    literal query, so recover the common cases without a wide edit-distance
-    search against the remote API.
-    """
-    candidates: list[str] = []
-
-    def add(value: str) -> None:
-        value = value.strip()
-        if value and value.casefold() != term.casefold() and value not in candidates:
-            candidates.append(value)
-
-    # Correct one repeated run at a time: “Thee Odyssey” should produce
-    # “The Odyssey”, not also strip the legitimate double-s in “Odyssey”.
-    for match in re.finditer(r"(.)\1+", term, flags=re.IGNORECASE):
-        add(f"{term[:match.start()]}{match.group(1)}{term[match.end():]}")
-    # These reciprocal substitutions cover ordinary keyboard/vowel slips such
-    # as Mutany -> Mutiny. Generated results are checked against the original
-    # spelling before they reach the user.
-    substitutions = (("a", "i"), ("i", "a"), ("e", "a"), ("a", "e"),
-                     ("o", "u"), ("u", "o"), ("e", "i"), ("i", "e"))
-    for wrong, right in substitutions:
-        for match in re.finditer(wrong, term, flags=re.IGNORECASE):
-            add(f"{term[:match.start()]}{right}{term[match.end():]}")
-    return candidates[:8]
-
-
-def is_close_title_match(query: str, title: str) -> bool:
-    """Avoid showing unrelated results from a generated fallback query."""
-    compact = lambda value: re.sub(r"[^\w]", "", value.casefold())
-    return SequenceMatcher(None, compact(query), compact(title)).ratio() >= 0.6
 
 
 @router.delete('/entry/{media_id}')
@@ -1079,6 +1042,82 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
                       "distribution":[{"score":score,"count":count} for score,count in distribution.items()]},
             "genres":[{"genre":genre,"count":count} for genre,count in sorted(genres.items(),key=lambda item:(-item[1],item[0]))],
             "activity":[{"month":month,**counts} for month,counts in sorted(activity.items())]}
+
+
+@router.get('/browse/facets')
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+    from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
+    from core import tmdb
+    await catalog_access(db, viewer)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    providers = []
+    notice = None
+    if key:
+        try:
+            data = await tmdb._get(f"{tmdb.TMDB_BASE}/watch/providers/{'movie' if media_type == 'movie' else 'tv'}", headers=tmdb.get_headers(key), params={'watch_region': region})
+            providers = [{'id': p['provider_id'], 'name': p['provider_name']} for p in data.get('results', [])]
+        except Exception:
+            notice = 'Streaming services are temporarily unavailable.'
+    else:
+        notice = 'A TMDB key is needed to load streaming services.'
+    if not providers:
+        providers = await local_providers(db, region)
+    allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
+    return {'genres': [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])], 'providers': providers, 'notice': notice}
+
+
+@router.get('/browse/tags')
+async def browse_tags(q: str = Query('', max_length=100), ids: str = Query('', max_length=200), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+    from core import tmdb
+    await catalog_access(db, viewer)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    selected = browse_ids(ids)
+    if key:
+        try:
+            if selected:
+                values = await asyncio.gather(*(tmdb._get(f'{tmdb.TMDB_BASE}/keyword/{i}', headers=tmdb.get_headers(key)) for i in selected))
+                return {'results': values}
+            if len(q.strip()) >= 2:
+                data = await tmdb._get(f'{tmdb.TMDB_BASE}/search/keyword', headers=tmdb.get_headers(key), params={'query': q.strip(), 'page': 1})
+                return {'results': data.get('results', [])[:20]}
+        except Exception:
+            raise HTTPException(502, 'Unable to load tags. Try again.')
+    from core.browse import local_tags
+    return {'results': await local_tags(db, q.strip(), selected) if selected or len(q.strip()) >= 2 else []}
+
+
+def browse_ids(value: str) -> list[int]:
+    if not value:
+        return []
+    parts = value.split(',')
+    if len(parts) > 12 or any(not p.isdecimal() or not 0 < int(p) < 2147483647 for p in parts):
+        raise HTTPException(422, 'Choose up to 12 valid filters')
+    return list(dict.fromkeys(map(int, parts)))
+
+
+@router.get('/browse')
+async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
+                 page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200), tags: str = Query('', max_length=200),
+                 start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'finished', 'cancelled', 'upcoming', 'released'] = '',
+                 provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
+                 sort: Literal['popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
+                 db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+    from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
+    await catalog_access(db, viewer)
+    genre_ids, tag_ids = browse_ids(genres), browse_ids(tags)
+    allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
+    if not set(genre_ids).issubset(allowed) or (start and end and start > end):
+        raise HTTPException(422, 'Check genres and release dates')
+    if (media_type == 'movie' and status not in ('', 'released', 'upcoming')) or (media_type == 'series' and status == 'released'):
+        raise HTTPException(422, 'Choose a status for this media type')
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    try:
+        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
+            show_anime=await anime_is_visible(db), key=key, genres=genre_ids, tags=tag_ids,
+            start=start.isoformat() if start else None, end=end.isoformat() if end else None,
+            status=status, provider=provider, region=region, sort=sort)
+    except Exception:
+        raise HTTPException(502, 'Unable to load more titles. Try again.')
 
 
 @router.get("/catalog")

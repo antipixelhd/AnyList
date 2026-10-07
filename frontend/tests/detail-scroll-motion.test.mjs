@@ -10,6 +10,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
   motion.matches = reduced;
   input.matches = mobile;
   const element = {
+    isConnected: true,
     classList: {add: name => classes.add(name), remove: name => classes.delete(name)},
     getClientRects: () => hidden ? [] : [{}],
     getBoundingClientRect: () => ({top: 1200 - y + (classes.size ? mobile ? 8 : 12 : 0), bottom: 1360 - y + (classes.size ? mobile ? 8 : 12 : 0)}),
@@ -22,7 +23,8 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     },
   };
   const root = new EventTarget();
-  root.querySelectorAll = () => [element];
+  const elements = [element];
+  root.querySelectorAll = () => elements;
   const observers = [];
   class Observer {
     constructor(callback) {this.callback = callback;observers.push(this);}
@@ -53,6 +55,8 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
+    append() {const added={...element};elements.push(added);observers[0].callback();flush();},
+    remove() {element.isConnected=false;elements.splice(0,1);observers[0].callback();flush();},
     scroll(to, elapsed = 100) {y = to;now += elapsed;viewport.dispatchEvent(new Event('scroll'));flush();},
     ready() {loading = false;observers[0].callback();flush();},
     hide() {hidden = true;observers[0].callback();flush();},
@@ -214,5 +218,22 @@ test('navigation cancels motion and disconnects observers', t => {
   assert(p.animations[0].cancelled);
   assert(p.observers.every(observer => observer.disconnected));
   p.scroll(400);
+  assert.equal(p.animations.length, 1);
+});
+
+
+test('new infinite-scroll cards are registered for viewport entry', t => {
+  const p = preview(t);
+  p.append();
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+});
+
+test('removed filter results cancel their pending motion', t => {
+  const p = preview(t);
+  p.scroll(424);
+  p.remove();
+  assert(p.animations[0].cancelled);
+  p.scroll(0);p.scroll(424);
   assert.equal(p.animations.length, 1);
 });
