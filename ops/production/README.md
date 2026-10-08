@@ -5,6 +5,14 @@
 Only the current public main commit is accepted. Old queued runs skip deployment.
 The deploy job calls `preview-remote.yml`, preserving the reusable workflow identity
 allowed by the existing Tailscale federation policy.
+The VPS publishes success and failure notifications to
+`https://ntfy.sh/anylist-deployment-1111`; failures state whether automatic rollback
+restored the previous image or needs operator action. No production secrets or
+private hostnames are included. Notification delivery retries three times; an ntfy
+outage is logged without turning a healthy deployment into a failed deployment.
+GitHub sends a failure notification if image publication fails or it cannot confirm
+the VPS controller started. Once the controller's start marker reaches GitHub,
+the VPS sends the final outcome notification instead.
 The controller pulls only `ghcr.io/antipixelhd/anylist:sha-<commit-sha>`, verifies
 its embedded version, and pins its digest in `/opt/anylist/compose.override.yaml`.
 

@@ -159,3 +159,14 @@ jobs:
             printf '\n```\n'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$result"
+      - name: Notify if production controller could not be started
+        if: failure() && inputs.operation == 'production-deploy'
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          # Once the detached controller starts, the VPS owns the final notification.
+          if grep -q '^ANYLIST_DEPLOYMENT_CONTROLLER_STARTED$' preview-result.log 2>/dev/null; then exit 0; fi
+          curl --fail --silent --show-error --max-time 10 --retry 2 \
+            -H 'Title: AnyList deployment failed' -H 'Tags: warning' -H 'Priority: high' \
+            --data-binary "GitHub could not confirm that production deployment ${SHA:0:12} started. Check the Actions run and VPS logs." \
+            https://ntfy.sh/anylist-deployment-1111 >/dev/null

@@ -50,7 +50,7 @@ class DeploymentTests(unittest.TestCase):
             if image == DIGEST:
                 raise RuntimeError('unhealthy')
         production.start.side_effect = start
-        with self.assertRaisesRegex(RuntimeError, 'unhealthy'):
+        with self.assertRaisesRegex(production.DeploymentError, 'restored and healthy'):
             production.deploy(SHA)
         restore = next(i for i, e in enumerate(self.events) if 'pg_restore' in ' '.join(e))
         self.assertLess(restore, self.events.index(['start', OLD]))
@@ -62,7 +62,7 @@ class DeploymentTests(unittest.TestCase):
             if 'pg_dump' in ' '.join(args):
                 raise RuntimeError('backup failed')
         production.run.side_effect = run
-        with self.assertRaisesRegex(RuntimeError, 'backup failed'):
+        with self.assertRaisesRegex(production.DeploymentError, 'restored and healthy'):
             production.deploy(SHA)
         self.assertIn(['start', OLD], self.events)
         self.assertFalse(any('pg_restore' in ' '.join(e) for e in self.events))
@@ -114,6 +114,25 @@ class HealthTests(unittest.TestCase):
             execute.return_value.returncode = 0
             production.healthy('candidate')
             self.assertEqual(execute.call_count, 2)
+
+
+class NotificationTests(unittest.TestCase):
+    def test_success_and_failure_publish_to_requested_topic(self):
+        for success in (True, False):
+            with self.subTest(success=success), patch.object(production.urllib.request, 'urlopen') as publish:
+                production.notify(success, 'Deployment outcome')
+                request = publish.call_args.args[0]
+                self.assertEqual(request.full_url, 'https://ntfy.sh/anylist-deployment-1111')
+                self.assertEqual(request.data, b'Deployment outcome')
+                self.assertEqual(request.get_header('Title'),
+                                 'AnyList deployed' if success else 'AnyList deployment failed')
+                self.assertEqual(request.get_header('Priority'), 'default' if success else 'high')
+
+    def test_notification_outage_retries_without_failing_healthy_deployment(self):
+        with patch.object(production.urllib.request, 'urlopen', side_effect=OSError('offline')) as publish, \
+             patch.object(production.time, 'sleep'), patch.object(production.sys, 'stderr'):
+            production.notify(True, 'Healthy')
+            self.assertEqual(publish.call_count, 3)
 
 
 if __name__ == '__main__':

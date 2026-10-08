@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
 ROOT = Path('/opt/anylist')
 STATE = Path('/var/lib/anylist-production')
@@ -15,6 +17,28 @@ IMAGE = 'ghcr.io/antipixelhd/anylist'
 COMPOSE = ['docker', 'compose', '--project-directory', str(ROOT), '--env-file',
            str(ROOT / '.env.production'), '-f', str(ROOT / 'compose.yaml'),
            '-f', str(ROOT / 'compose.override.yaml')]
+
+
+class DeploymentError(RuntimeError):
+    """Safe deployment outcome suitable for a public notification topic."""
+
+
+def notify(success, message):
+    request = urllib.request.Request('https://ntfy.sh/anylist-deployment-1111',
+                                     data=message.encode(), method='POST', headers={
+                                         'Title': 'AnyList deployed' if success else 'AnyList deployment failed',
+                                         'Tags': 'white_check_mark' if success else 'warning',
+                                         'Priority': 'default' if success else 'high',
+                                     })
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                response.read()
+            return
+        except (urllib.error.URLError, TimeoutError, OSError):
+            if attempt < 2:
+                time.sleep(attempt + 1)
+    print('WARNING: ntfy notification failed after three attempts', file=sys.stderr, flush=True)
 
 
 def run(args, **kwargs):
@@ -116,7 +140,7 @@ def deploy(sha):
     head = output(['git', 'ls-remote', 'https://github.com/antipixelhd/AnyList.git', 'refs/heads/main']).split()[0]
     if head != sha:
         print('Superseded main commit; skipping deployment', flush=True)
-        return
+        return False
     candidate = IMAGE + ':sha-' + sha
     run(['docker', 'pull', candidate])
     info = json.loads(output(['docker', 'image', 'inspect', candidate]))[0]
@@ -128,9 +152,9 @@ def deploy(sha):
         healthy('anylist-app-1')
         select(digest)
         print('Requested image is already healthy', flush=True)
-        return
+        return True
     run(['docker', 'image', 'tag', old, 'anylist-rollback:previous'])
-    transaction = {'previous': old, 'restore_database': False}
+    transaction = {'previous': old, 'restore_database': False, 'sha': sha}
     atomic(pending, json.dumps(transaction))
     try:
         # Stop writes before the snapshot so rollback does not lose pre-deploy writes.
@@ -144,13 +168,19 @@ def deploy(sha):
         transaction['restore_database'] = True
         atomic(pending, json.dumps(transaction))
         start(digest)
-    except Exception:
-        recover(transaction)
-        raise
+    except Exception as failure:
+        try:
+            recover(transaction)
+        except Exception as rollback_failure:
+            raise DeploymentError('Deployment ' + sha[:12] +
+                                  ' failed and rollback failed. Operator action is required.') from rollback_failure
+        raise DeploymentError('Deployment ' + sha[:12] +
+                              ' failed. Previous image and database are restored and healthy.') from failure
     cleanup()
     # Never prune shared VPS images or force removal of an image used elsewhere.
     discard(old)
     print('AnyList deployed and healthy; previous image discarded if unused', flush=True)
+    return True
 
 
 def main():
@@ -158,17 +188,25 @@ def main():
     STATE.mkdir(mode=0o700, exist_ok=True)
     with (STATE / 'deploy.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        print('ANYLIST_DEPLOYMENT_CONTROLLER_STARTED', flush=True)
         if not (ROOT / 'compose.override.yaml').exists():
             select(IMAGE + ':latest')
         if sys.argv[1:] == ['--recover']:
             pending = STATE / 'transaction.json'
             if pending.exists():
                 recover(json.loads(pending.read_text()))
+                notify(False, 'Interrupted deployment rolled back. Previous image and database are healthy.')
         elif len(sys.argv) == 2:
-            deploy(sys.argv[1])
+            if deploy(sys.argv[1]):
+                notify(True, 'Production AnyList ' + sys.argv[1][:12] + ' deployed and healthy.')
         else:
             raise ValueError('Expected one commit SHA')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as error:
+        notify(False, str(error) if isinstance(error, DeploymentError) else
+               'Production AnyList deployment failed. Check VPS deployment logs for details.')
+        raise

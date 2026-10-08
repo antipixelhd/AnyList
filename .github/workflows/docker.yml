@@ -61,3 +61,19 @@ jobs:
       operation: production-deploy
       sha: ${{ github.sha }}
     secrets: inherit
+
+  notify-build-failure:
+    name: Notify failed image build
+    needs: build
+    if: always() && needs.build.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Notify ntfy
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 --retry 2 \
+            -H 'Title: AnyList deployment failed' -H 'Tags: warning' -H 'Priority: high' \
+            --data-binary "Production AnyList image build ${SHA:0:12} failed. The VPS deployment was not started." \
+            https://ntfy.sh/anylist-deployment-1111 >/dev/null
