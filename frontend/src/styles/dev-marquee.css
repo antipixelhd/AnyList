@@ -1,7 +1,7 @@
 /* Marquee pairs Panorama's opening with the default Folio content grid.
    Keep every override scoped so the original studies retain their layouts. */
 .concept-marquee :is(.lab-hero-content, .lab-layout, .lab-footer) {
-  width: min(1320px, calc(100% - 64px));
+  width: min(var(--content-max-width), calc(100% - 64px));
 }
 .concept-marquee .lab-hero { height: 520px; }
 .concept-marquee .lab-hero-image { object-position: center 42%; }
@@ -15,7 +15,7 @@
 .concept-marquee .lab-tagline { font-size: 1.6rem; color: var(--bright); }
 .concept-marquee .lab-heading .lab-kicker { color: var(--text); }
 .concept-marquee .lab-genres span { background: rgb(21 31 46 / 75%); }
-.concept-marquee .lab-art-credit { right: max(32px, calc((100% - 1320px) / 2)); bottom: 17px; }
+.concept-marquee .lab-art-credit { right: max(32px, calc((100% - var(--content-max-width)) / 2)); bottom: 17px; }
 .concept-marquee .lab-layout { gap: 56px; padding-top: 28px; }
 .concept-marquee .lab-sidebar { margin-top: 0; }
 .concept-marquee .lab-tracking { padding-top: 0; }

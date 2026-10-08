@@ -44,8 +44,14 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, 'ops/preview')
           from controller import load_slots, validate
-          validate(load_slots(Path('ops/preview/slots.json')), os.environ['SLOT'],
-                   os.environ['OPERATION'], os.environ['SHA'], os.environ['FORCED'])
+          if os.environ['OPERATION'] == 'production-deploy':
+              if (os.environ['SLOT'] != 'main' or os.environ['GITHUB_REF'] != 'refs/heads/main'
+                      or not re.fullmatch(r'[0-9a-f]{40}', os.environ['SHA'])
+                      or os.environ['FORCED'] != 'false'):
+                  raise SystemExit('Production deployment requires a main commit')
+          else:
+              validate(load_slots(Path('ops/preview/slots.json')), os.environ['SLOT'],
+                       os.environ['OPERATION'], os.environ['SHA'], os.environ['FORCED'])
           if not re.fullmatch(r'[a-z0-9][a-z0-9.-]*\.ts\.net', os.environ['PREVIEW_VPS_HOST']):
               raise SystemExit('Set PREVIEW_VPS_HOST to the private Tailscale FQDN')
           for name in ['CLIENT_ID', 'AUDIENCE']:
@@ -129,7 +135,7 @@ jobs:
               raise SystemExit('Forwarding denial was not verified')
           PY
           echo 'Restricted commands, accounts, interactive login, protected SFTP reads and forwarding verified.'
-      - name: Run installed preview entrypoint
+      - name: Run installed deployment entrypoint
         env:
           HOST: ${{ secrets.PREVIEW_VPS_HOST }}
           SLOT: ${{ inputs.preview }}
@@ -140,15 +146,27 @@ jobs:
           set -euo pipefail
           args=(preview "$OPERATION" "$SLOT")
           if [[ "$OPERATION" == deploy ]]; then args+=("$SHA" "$FORCED"); fi
+          if [[ "$OPERATION" == production-deploy ]]; then args=(anylist deploy "$SHA"); fi
           if [[ "$OPERATION" == provision ]]; then
             tailscale ssh "anylist-preview-ci@$HOST" preview sync-config beta
           fi
           result=0
           tailscale ssh "anylist-preview-ci@$HOST" "${args[@]}" | tee preview-result.log || result=$?
           {
-            printf '### Preview %s — %s\n\n' "$SLOT" "$OPERATION"
+            printf '### Deployment %s — %s\n\n' "$SLOT" "$OPERATION"
             printf '```text\n'
             tail -n 80 preview-result.log
             printf '\n```\n'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$result"
+      - name: Notify if production controller could not be started
+        if: failure() && inputs.operation == 'production-deploy'
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          # Once the detached controller starts, the VPS owns the final notification.
+          if grep -q '^ANYLIST_DEPLOYMENT_CONTROLLER_STARTED$' preview-result.log 2>/dev/null; then exit 0; fi
+          curl --fail --silent --show-error --max-time 10 --retry 2 \
+            -H 'Title: AnyList deployment failed' -H 'Tags: warning' -H 'Priority: high' \
+            --data-binary "GitHub could not confirm that production deployment ${SHA:0:12} started. Check the Actions run and VPS logs." \
+            https://ntfy.sh/anylist-deployment-1111 >/dev/null

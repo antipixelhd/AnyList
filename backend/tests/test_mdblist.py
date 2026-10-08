@@ -22,6 +22,21 @@ _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
 class MDBListClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cache_warming_retries_before_returning_list_data(self) -> None:
+        responses = [httpx.Response(202, headers={"Retry-After": "5"}),
+                     httpx.Response(200, json={"movies": [], "pagination": {}})]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return responses.pop(0)
+
+        with patch.object(mdblist.httpx, "AsyncClient", side_effect=lambda **kwargs:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kwargs)), patch(
+            "core.mdblist.asyncio.sleep", AsyncMock()
+        ) as sleep:
+            result = await mdblist._request("GET", "/lists/official/moviemeter/items", "key")
+        self.assertEqual(result, {"movies": [], "pagination": {}})
+        sleep.assert_awaited_once_with(5)
+
     async def test_catalog_rating_uses_documented_tmdb_batch_request(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/rating/movie/tomatoes")

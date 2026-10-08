@@ -75,10 +75,10 @@
   border-top: 1px solid #2a3a4a;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 650px) {
   .profile-color-settings { container-type: inline-size; }
 
-  .profile-color-settings .profile-color-swatches {
+  .settings-app .profile-color-settings .profile-color-swatches {
     display: grid;
     grid-template-columns: repeat(8, minmax(0, 40px));
     gap: 8px;
@@ -96,7 +96,7 @@
   .profile-color-custom span { font-size: 20px; }
 
   @container (max-width: 375px) {
-    .profile-color-settings .profile-color-swatches {
+    .settings-app .profile-color-settings .profile-color-swatches {
       grid-template-columns: repeat(4, minmax(0, 40px));
     }
   }

@@ -103,12 +103,23 @@ class AdminCreateUserTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         from models.users import User
+        from models.profile import UserProfileData
+        from models.tracking import TrackingPreferences
+        from sqlalchemy import MetaData
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy.types import JSON
 
         self.engine = create_async_engine(
             "sqlite+aiosqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
         )
+        metadata = MetaData()
+        for model in (User, UserProfileData, TrackingPreferences):
+            table = model.__table__.to_metadata(metadata)
+            for column in table.columns:
+                if isinstance(column.type, JSONB):
+                    column.type = JSON()
         async with self.engine.begin() as conn:
-            await conn.run_sync(User.__table__.create)
+            await conn.run_sync(metadata.create_all)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         self.User = User
 
@@ -145,6 +156,12 @@ class AdminCreateUserTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(u.password_hash, "redpill")
         from core.security import verify_password
         self.assertTrue(verify_password("redpill", u.password_hash))
+        from models.profile import UserProfileData
+        from models.tracking import TrackingPreferences
+        async with self.Session() as session:
+            profile = (await session.execute(select(UserProfileData).where(UserProfileData.user_id == u.id))).scalar_one()
+            self.assertEqual(profile.privacy_level.value, "public")
+            self.assertEqual((await session.get(TrackingPreferences, u.id)).default_sort, "score")
 
     async def test_is_admin_flag_sets_both_is_admin_and_the_admin_role(self):
         res = await self.client.post("/admin/users", json={

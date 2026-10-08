@@ -21,6 +21,7 @@ from core.security import ALGORITHM, get_password_hash
 from db import get_db
 from models.users import User
 from models.profile import UserProfileData
+from models.tracking import TrackingPreferences
 from models.password_reset import PasswordResetToken
 from models.email_activation import EmailActivation
 from routers import auth, profile
@@ -30,7 +31,7 @@ class EmailLoginTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         metadata = MetaData()
-        for model in (User, UserProfileData, PasswordResetToken, EmailActivation):
+        for model in (User, UserProfileData, TrackingPreferences, PasswordResetToken, EmailActivation):
             table = model.__table__.to_metadata(metadata)
             for column in table.columns:
                 if isinstance(column.type, JSONB):
@@ -111,6 +112,10 @@ class EmailLoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["email"], "new@example.com")
         self.assertFalse(response.json()["is_admin"])
+        user_id = response.json()["id"]
+        user_profile = (await self.db.execute(select(UserProfileData).where(UserProfileData.user_id == user_id))).scalar_one()
+        self.assertEqual(user_profile.privacy_level.value, "public")
+        self.assertEqual((await self.db.get(TrackingPreferences, user_id)).default_sort, "score")
         self.assertEqual((await self.login(response.json()["email"])).status_code, 200)
 
     async def test_signup_rejects_case_variant_and_closed_or_capped_registration(self):

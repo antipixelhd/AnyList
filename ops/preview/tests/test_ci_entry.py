@@ -19,6 +19,15 @@ SHA = "a" * 40
 
 
 class LoginShellTests(unittest.TestCase):
+    def test_production_only_accepts_fixed_deploy_and_commit(self):
+        self.assertEqual(entry.parse_command(['-c', f'anylist deploy {SHA}'], SLOTS),
+                         ['production-deploy', SHA])
+        for command in ['anylist deploy latest', 'anylist stop app',
+                        f'anylist deploy {SHA}; id', f'anylist deploy {SHA} --privileged',
+                        f'anylist deploy {SHA}\nid', 'anylist deploy ' + 'a' * 64]:
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                entry.parse_command(['-c', command], SLOTS)
+
     def test_tailscale_remote_commands_are_validated_as_arguments(self):
         self.assertEqual(entry.parse_command(["-c", "preview restart beta"], SLOTS),
                          ["restart", "beta"])

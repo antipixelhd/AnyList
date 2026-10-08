@@ -1,0 +1,132 @@
+---
+import Icon from "./Icon.astro";
+import { responsiveArtwork } from "../lib/responsive-artwork";
+const {
+  item = { title: "", type: "movie" },
+  signedIn = false,
+  template = false,
+} = Astro.props;
+const image = responsiveArtwork(item.poster, {
+  size: "w342",
+  sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
+  route: "direct",
+});
+const state = item.list_status;
+const labels: Record<string, string> = {
+  watching: "Watching",
+  completed: "Completed",
+  planning: "Plan to Watch",
+  paused: "Paused",
+  dropped: "Dropped",
+};
+const href = item.id
+  ? `/title/${item.id}`
+  : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
+---
+
+<article
+  class="browse-card"
+  data-browse-card
+  data-key={`${item.type}:${item.tmdb_id || item.id}`}
+  data-state={state || undefined}
+>
+  <div class="browse-card-body">
+  <div class="browse-cover">
+    <a
+      class="browse-poster-link"
+      href={template ? "#" : href}
+      aria-label={item.title}
+    >
+      <img
+        data-poster
+        src={image?.src}
+        srcset={image?.srcset}
+        sizes={image?.sizes}
+        alt=""
+        loading="lazy"
+        hidden={!image}
+      />
+      <span class="browse-placeholder" aria-hidden="true" hidden={!!image}>
+        {item.title.slice(0, 1)}
+      </span>
+    </a>
+    <span
+      class="browse-list-state"
+      data-list-state
+      title={labels[state] || ""}
+      aria-label={labels[state]}
+      hidden={!state}
+    >
+      {["watching", "completed", "planning", "paused", "dropped"].map(
+        (value) => (
+          <span data-state-icon={value} hidden={state !== value}>
+            <Icon
+              name={
+                value === "watching"
+                  ? "play"
+                  : value === "completed"
+                    ? "check"
+                    : value === "planning"
+                      ? "clock"
+                      : value === "paused"
+                        ? "ellipsis"
+                        : "close"
+              }
+            />
+          </span>
+        ),
+      )}
+    </span>
+    {signedIn && (
+      <div class="browse-actions" data-motion-static>
+        <button
+          type="button"
+          data-browse-action="edit"
+          class="browse-add"
+          aria-label={`Open list editor for ${item.title}`}
+        >
+          <span data-editor-icon="add" hidden={!!state}><Icon name="plus" /></span>
+          <span data-editor-icon="edit" hidden={!state}><Icon name="edit" /></span>
+        </button>
+        <div class="browse-extra-actions">
+          <button type="button" data-browse-action="watch" hidden={state === 'watching'} aria-label={`Set ${item.title} to Watching`} data-tooltip="Set to Watching"><Icon name="play" /></button>
+          <button
+            type="button"
+            data-browse-action="plan"
+            hidden={!!state}
+            aria-label={`Plan to watch ${item.title}`}
+            data-tooltip="Plan to Watch"
+          >
+            <Icon name="clock" />
+          </button>
+          <button
+            type="button"
+            data-browse-action="rate"
+            hidden={item.score > 0}
+            aria-label={`Rate and complete ${item.title}`}
+            data-tooltip="Rate & complete"
+          >
+            <Icon name="star" />
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+  <div class="browse-card-caption">
+  <a class="browse-card-title" href={template ? "#" : href}>
+    <h2>{item.title}</h2>
+  </a>
+  <div class="browse-card-meta">
+    <span data-year>{item.year}</span>
+    <span
+      data-user-score
+      hidden={!(item.score > 0)}
+      aria-label={`Your rating: ${Number(item.score || 0).toFixed(1)} out of 10`}
+    >
+      <Icon name="star" />
+      <span data-score>{Number(item.score || 0).toFixed(1)}</span>
+    </span>
+  </div>
+  </div>
+  </div>
+</article>

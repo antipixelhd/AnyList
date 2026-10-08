@@ -18,20 +18,13 @@ import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
 import '../styles/settings-mobile-header.css';
 import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
+import { settingsGroups, isSettingsLinkActive } from '../lib/settings-navigation';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
 const viewerTheme = await viewerProfileTheme(Astro.locals.token);
 const activeColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined;
 const pathname = Astro.url.pathname;
-const settingsLinks = [
-  { href: '/user-settings', label: 'Profile', description: 'Identity and privacy', icon: 'user' },
-  { href: '/settings', label: 'Account', description: 'Preferences and security', icon: 'gear' },
-  { href: '/connections', label: 'Connections', description: 'Sync providers and imports', icon: 'plug' },
-];
-if (user?.is_admin) {
-  settingsLinks.push({ href: '/admin', label: 'Administration', description: 'Instance access and defaults', icon: 'sliders' });
-}
 ---
 <!doctype html>
 <html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}>
@@ -49,38 +42,25 @@ if (user?.is_admin) {
     <a class="skip-link" href="#settings-content">Skip to settings</a>
     <AppBar />
 
-    <details class="settings-mobile-menu">
-      <summary><span>Settings</span><Icon name="ellipsis" /></summary>
-      <nav aria-label="Settings sections">
-        {settingsLinks.map((item) => (
-          <a href={item.href} aria-current={pathname === item.href ? 'page' : undefined}>
-            <Icon name={item.icon} fixedWidth /><span>{item.label}</span>
-          </a>
-        ))}
-      </nav>
-    </details>
-
-    <div class="settings-heading">
-      <div>
-        <span class="eyebrow">Your account</span>
-        <h1>{title}</h1>
-        <p>Manage how AnyList looks, behaves, and connects to your services.</p>
-      </div>
-    </div>
-
     <div class="settings-shell">
-      <nav class="settings-nav" aria-label="Settings sections">
-        {settingsLinks.map((item) => {
-          const active = pathname === item.href;
-          return (
-            <a href={item.href} class:list={{ active }} aria-current={active ? 'page' : undefined}>
-              <Icon name={item.icon} fixedWidth />
-              <span class="settings-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
-            </a>
-          );
-        })}
+      <header class="settings-heading">
+        <h1>Settings</h1>
+        <button type="button" class="settings-menu-toggle" aria-label="Show settings categories" aria-expanded="false" aria-controls="settings-categories"><Icon name="ellipsis" /></button>
+      </header>
+      <nav id="settings-categories" class="settings-nav" aria-label="Settings categories">
+        {settingsGroups.map(group => <div class="settings-nav-group">
+          <p class="settings-nav-heading">{group.label}</p>
+          {group.links.map(item => {
+            const active = isSettingsLinkActive(item.href, Astro.url);
+            return <a href={item.href} class:list={{ active }} aria-current={active ? 'page' : undefined}>{item.label}</a>;
+          })}
+        </div>)}
+        {user?.is_admin && <div class="settings-nav-group"><p class="settings-nav-heading">Instance</p><a href="/admin" class:list={{ active: pathname === '/admin' }} aria-current={pathname === '/admin' ? 'page' : undefined}>Administration</a></div>}
       </nav>
-      <main id="settings-content" class="settings-content"><slot /></main>
+      <main id="settings-content" class="settings-content" aria-labelledby="settings-category-title">
+        <h2 id="settings-category-title" class="settings-category-title">{title}</h2>
+        <slot />
+      </main>
     </div>
     {user && <QuickRating />}
     {user && <AttentionPrompt />}
@@ -90,16 +70,31 @@ if (user?.is_admin) {
     <MotionRuntime />
     <StyledSelectRuntime />
     <ProfileThemeRuntime />
+    <noscript><style>.settings-nav { display: grid; } .settings-menu-toggle { display: none; }</style></noscript>
   </body>
 </html>
+
 <script>
-  let settingsMenuListeners: AbortController | undefined;
-  document.addEventListener('astro:page-load', () => {
-    settingsMenuListeners?.abort();
-    settingsMenuListeners = new AbortController();
-    const menu = document.querySelector<HTMLDetailsElement>('.settings-mobile-menu');
-    menu?.querySelector('summary')?.addEventListener('click', event => {
-      if (!menu.open && window.scrollY > 0) event.preventDefault();
-    }, {signal: settingsMenuListeners.signal});
+  function closeCategories(focus = false) {
+    const button = document.querySelector<HTMLButtonElement>('.settings-menu-toggle');
+    document.querySelector('.settings-shell')?.removeAttribute('data-menu-open');
+    button?.setAttribute('aria-expanded', 'false');
+    button?.setAttribute('aria-label', 'Show settings categories');
+    if (focus) button?.focus();
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest<HTMLButtonElement>('.settings-menu-toggle');
+    if (!button) return;
+    const open = button.getAttribute('aria-expanded') !== 'true';
+    if (open && window.scrollY > 0) return;
+    document.querySelector('.settings-shell')?.toggleAttribute('data-menu-open', open);
+    button.setAttribute('aria-expanded', String(open));
+    button.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} settings categories`);
   });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.querySelector('.settings-shell[data-menu-open]')) closeCategories(true);
+  });
+  document.addEventListener('astro:page-load', () => closeCategories());
 </script>

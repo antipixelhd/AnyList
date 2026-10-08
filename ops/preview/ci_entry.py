@@ -5,6 +5,7 @@ Tailscale invokes the user's shell with -c and the raw remote command. Never
 evaluate that string in a real shell, or trust SSH_ORIGINAL_COMMAND/environment.
 """
 import os
+import re
 import shlex
 import sys
 
@@ -21,6 +22,8 @@ def parse_command(shell_args, slots):
     if len(command) > 4096:
         raise ValueError("Command too long")
     args = shlex.split(command)
+    if len(args) == 3 and args[:2] == ["anylist", "deploy"] and re.fullmatch(r"[0-9a-f]{40}", args[2]):
+        return ["production-deploy", args[2]]
     if len(args) not in (3, 5) or args[0] != "preview":
         raise ValueError("Only preview operation branch [sha forced] is permitted")
     operation, branch = args[1:3]

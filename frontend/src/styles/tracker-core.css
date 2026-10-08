@@ -1,3 +1,5 @@
+@import "./layout-width.css";
+
 html {
   scrollbar-gutter:stable
 }
@@ -95,9 +97,9 @@ button:disabled {
   height:230px
 }
 .profile-identity {
-  max-width:1320px;
+  max-width:var(--page-max-width);
   margin:auto;
-  padding:62px 28px 0;
+  padding:62px var(--page-gutter) 0;
   display:flex;
   align-items:end;
   gap:26px
@@ -148,10 +150,10 @@ button:disabled {
 .list-shell {
   display:grid;
   grid-template-columns:220px minmax(0,1fr);
-  gap:46px;
-  max-width:1380px;
+  gap:var(--content-column-gap);
+  max-width:var(--page-max-width);
   margin:40px auto;
-  padding:0 28px;
+  padding:0 var(--page-gutter);
   min-height:450px
 }
 .filters {
@@ -291,13 +293,15 @@ button:disabled {
   font-size:var(--type-control-size)
 }
 .row-menu {
+  display:grid;
+  place-items:center;
   border:0;
   border-radius:4px;
   background:#25445d;
   color:var(--bright);
   padding:5px 10px;
   opacity:0;
-  transition:opacity .12s
+  transition:none
 }
 .entry-row:hover .row-menu,.entry-row:focus-within .row-menu {
   opacity:1
@@ -346,8 +350,8 @@ button:disabled {
   background:#291f2d
 }
 .page-footer {
-  max-width:1320px;
-  padding:25px 28px;
+  max-width:var(--page-max-width);
+  padding:25px var(--page-gutter);
   margin:45px auto 0;
   border-top:1px solid var(--border);
   font-size:var(--type-meta-size);
@@ -463,9 +467,9 @@ button:disabled {
   color:var(--muted)
 }
 .page-width {
-  max-width:1320px;
+  max-width:var(--page-max-width);
   margin:40px auto;
-  padding:0 28px
+  padding:0 var(--page-gutter)
 }
 .page-width h1 {
   color:var(--bright);
@@ -551,13 +555,13 @@ button:disabled {
   background:linear-gradient(rgba(6, 13, 34, 0) 40%, rgba(6, 13, 34, 0.6))
 }
 .detail-layout {
-  max-width:1320px;
+  max-width:var(--page-max-width);
   margin:-125px auto 0;
-  padding:0 28px;
+  padding:0 var(--page-gutter);
   position:relative;
   display:grid;
   grid-template-columns:200px minmax(0,1fr);
-  gap:40px
+  gap:var(--content-column-gap)
 }
 .detail-poster {
   width:100%;
@@ -617,9 +621,6 @@ button:disabled {
   display:flex;
   justify-content:space-between;
   margin:8px 0
-}
-.mobile-filter-toggle {
-  display:none
 }
 [hidden] {
   display:none!important
@@ -705,20 +706,6 @@ button:disabled {
     display:block;
     margin:24px auto;
     padding:0 16px
-  }
-  .mobile-filter-toggle {
-    display:block;
-    margin-bottom:15px
-  }
-  .filters {
-    display:none;
-    margin-bottom:25px
-  }
-  .filters.open {
-    display:flex
-  }
-  .status-filters {
-    grid-template-columns:repeat(2,1fr)
   }
   .entry-head,.entry-row {
     grid-template-columns:minmax(0,1fr) 35px 48px 32px;

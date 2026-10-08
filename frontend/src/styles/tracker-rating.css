@@ -177,19 +177,22 @@
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-height:34px;
+  width:44px;
+  height:44px;
+  min-width:44px;
+  min-height:44px;
+  box-sizing:border-box;
   border:0;
   background:transparent;
   color:inherit;
   font:inherit;
   cursor:pointer;
   border-radius:8px;
-  padding:4px 8px;
-  transition:color .15s ease,background .15s ease
+  padding:0;
+  transition:color .15s ease
 }
 .entry-score-button:hover,.entry-score-button:focus-visible {
-  color:#f7b731;
-  background:#f7b73115
+  color:#f7b731
 }
 .personal-score-button {
   display:grid;

@@ -20,9 +20,9 @@ body.tracker .page-footer {
 
 .page-footer-inner {
   width: 100%;
-  max-width: 1340px;
+  max-width: var(--page-max-width);
   margin: 0 auto;
-  padding: 38px 24px 48px;
+  padding: 38px var(--page-gutter) 48px;
 }
 
 @media (max-width: 650px) {

@@ -1,0 +1,10 @@
+---
+const { valueLabel, ...attributes } = Astro.props;
+---
+<span class="tracker-select tracker-select-full" data-select-shell>
+  <select {...attributes} class="tracker-select-native"><slot /></select>
+  <button type="button" class="tracker-select-trigger tracker-dropdown-trigger" aria-haspopup="listbox" aria-expanded="false" tabindex="-1" aria-hidden="true">
+    <span class="tracker-select-value">{valueLabel}</span>
+    <span class="tracker-select-chevron" aria-hidden="true"><svg viewBox="0 0 448 512" fill="currentColor"><path d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 54.6 137.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z"/></svg></span>
+  </button>
+</span>

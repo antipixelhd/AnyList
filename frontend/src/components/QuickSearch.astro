@@ -23,6 +23,7 @@ const { combineLists = true, hideTrigger = false } = Astro.props;
 <template data-search-add-icon><Icon name="plus" /></template>
 
 <script>
+import { editorStore, type EditorTitle } from '../lib/editor-store';
   import { showDialog, closeDialog, reveal } from '../lib/ui-motion';
 import { responsiveArtwork } from '../lib/responsive-artwork';
 
@@ -41,6 +42,7 @@ document.addEventListener('astro:page-load', () => {
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
   const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
   const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
+  const editorTitles = new WeakMap<HTMLButtonElement, EditorTitle>();
   // Discard restoration requests from older builds; saved edits now end search.
   try { sessionStorage.removeItem('anylist.quick-search.restore'); } catch { /* Storage may be unavailable. */ }
   let controller: AbortController | null = null;
@@ -101,6 +103,7 @@ document.addEventListener('astro:page-load', () => {
     add.dataset.mediaType = item.type;
     add.setAttribute('aria-label', `Open list editor for ${item.title}`);
     add.title = `Open list editor for ${item.title}`;
+    editorTitles.set(add, editorStore.seed(item as unknown as EditorTitle));
     if (addIcon) add.append(addIcon.content.cloneNode(true));
     row.append(link, add);
     return row;
@@ -175,31 +178,24 @@ document.addEventListener('astro:page-load', () => {
   }
   openButton?.addEventListener('click', open);
   closeButton?.addEventListener('click', () => { if (dialog) void closeDialog(dialog); });
-  resultShell?.addEventListener('click', async event => {
+  resultShell?.addEventListener('click', event => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-search-add]');
     if (!button || button.disabled) return;
-    button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    try {
-      let mediaId = Number(button.dataset.mediaId);
-      if (!mediaId) {
-        const response = await fetch(`/api/proxy/tracking/catalog/${button.dataset.mediaType}/${button.dataset.tmdbId}`, {method:'POST'});
-        if (!response.ok) {
-          const details = await response.json().catch(() => null);
-          throw new Error(typeof details?.detail === 'string' ? details.detail : 'Could not load this title. Try again.');
-        }
-        mediaId = Number((await response.json()).id);
-      }
-      if (!Number.isSafeInteger(mediaId) || mediaId <= 0) throw new Error('Could not load this title. Try again.');
-      if (!dialog?.open) return;
-      document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId, opener:input || openButton}}));
-    } catch (cause) {
-      showState(cause instanceof Error ? cause.message : 'Could not load this title. Try again.');
-    } finally {
-      button.disabled = false;
-      button.removeAttribute('aria-busy');
-    }
+    const title = editorTitles.get(button);
+    if (!title || !dialog?.open) return;
+    const image = button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
+    editorStore.warmArtwork(title, image?.currentSrc || image?.src);
+    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener:input || openButton}}));
   }, {signal: pageListeners.signal});
+  const prepareEditor = (event: Event) => {
+    const button = (event.target as Element).closest<HTMLButtonElement>('[data-search-add]');
+    const title = button && editorTitles.get(button);
+    if (!button || !title) return;
+    const image = button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
+    editorStore.warmArtwork(title, image?.currentSrc || image?.src);
+  };
+  resultShell?.addEventListener('pointerover', prepareEditor, {signal:pageListeners.signal});
+  resultShell?.addEventListener('focusin', prepareEditor, {signal:pageListeners.signal});
   dialog?.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); });
   dialog.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;

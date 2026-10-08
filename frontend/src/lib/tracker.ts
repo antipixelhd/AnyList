@@ -26,6 +26,9 @@ export function artwork(path: string | null, size = 'w342') {
 
 export const scoreLabel = (value: number | null) => value == null || value === 0 ? '—' : Number(value.toFixed(1)).toString();
 
+export const compactListProgress = (entry: {type?: string; progress: number; released_episodes?: number | null}) =>
+  `Progress ${entry.progress}/${entry.type === 'movie' ? 1 : entry.released_episodes ?? '?'}`;
+
 function firstRating(details: any) {
   // Earlier activity payloads did not distinguish a first rating from an edit.
   return details.rating_first === true || (details.rating_first == null && details.previous_score == null);

@@ -285,11 +285,7 @@ export interface UserPreferences {
   apply_site_wide: boolean;
   bio: string | null;
   country: string | null;
-  movie_genres: string[];
-  show_genres: string[];
-  disliked_genres: string[];
   streaming_services: string[];
-  content_language: string | null;
   metadata_language: string | null;
   privacy_level: PrivacyLevel;
   avatar_url: string | null;
@@ -641,8 +637,6 @@ export interface PublicProfile {
   display_name: string;
   bio: string | null;
   country: string | null;
-  movie_genres: string[];
-  show_genres: string[];
   created_at: string;
   total_watched: number;
   total_collected: number;

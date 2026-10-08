@@ -1,0 +1,86 @@
+---
+interface Props { username: string }
+const { username } = Astro.props;
+---
+<section class="settings-card">
+  <h2 class="section-headline"><label for="account-name">Username</label></h2>
+          <div class="space-y-2">
+            <div class="flex items-center gap-3">
+              <input type="text" id="account-name" name="username" value={username} maxlength={100} autocomplete="username" aria-describedby="account-name-help account-name-status" class="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+              <button id="save-account-name" type="button" class="button-primary px-4 py-3 text-sm shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Save</button>
+            </div>
+            <p id="account-name-help" class="text-xs text-zinc-500">Your unique name for your profile link. Use letters, numbers, underscores, hyphens or dots.</p>
+            <p id="account-name-status" class="setting-save-state" data-save-state="account-name" role="status" aria-live="polite"></p>
+          </div>
+</section>
+<script>
+  function setup() {
+    const section = document.getElementById('account-name')?.closest('section');
+    if (!section || section.dataset.initialized) return;
+    section.dataset.initialized = 'true';
+    const token = document.getElementById('app-data')?.dataset.token ?? '';
+    function setStatus(_group: string, message: string, state = 'saved') {
+      const target = document.getElementById('account-name-status');
+      if (target) { target.textContent = message; target.dataset.state = state; }
+    }
+    const accountName = document.getElementById('account-name') as HTMLInputElement | null;
+    const saveAccountName = document.getElementById('save-account-name') as HTMLButtonElement | null;
+    if (accountName && saveAccountName) {
+      let savedName = accountName.value;
+      let nameSaving = false;
+      const updateName = () => { saveAccountName.disabled = nameSaving || accountName.value.trim() === savedName; };
+      accountName.addEventListener('input', () => {
+        accountName.removeAttribute('aria-invalid');
+        setStatus('account-name', '');
+        updateName();
+      });
+      const saveName = async () => {
+        if (nameSaving || accountName.value.trim() === savedName) return;
+        const requested = accountName.value.trim();
+        if (!/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(requested) || requested.length > 100) {
+          accountName.setAttribute('aria-invalid', 'true');
+          setStatus('account-name', 'Use 1–100 letters, numbers, underscores, hyphens or dots; start with a letter, number, underscore or hyphen.', 'error');
+          return;
+        }
+        nameSaving = true;
+        accountName.disabled = true;
+        updateName();
+        setStatus('account-name', 'Checking availability…', 'saving');
+        try {
+          const response = await fetch('/api/proxy/profile/me/account-name', {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: requested }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save account name.');
+          const previousHref = `/user/${encodeURIComponent(savedName)}`;
+          savedName = data.username;
+          accountName.value = savedName;
+          document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(link => {
+            if (link.pathname === previousHref || link.pathname.startsWith(`${previousHref}/`)) {
+              link.pathname = `/user/${encodeURIComponent(savedName)}${link.pathname.slice(previousHref.length)}`;
+            }
+          });
+          const appbarAvatar = document.querySelector<HTMLElement>('[data-appbar-avatar]');
+          appbarAvatar?.setAttribute('aria-label', `Open ${savedName}'s profile`);
+          const fallback = appbarAvatar?.querySelector('span');
+          if (fallback) fallback.textContent = savedName[0].toUpperCase();
+          setStatus('account-name', 'Saved');
+        } catch (error) {
+          accountName.setAttribute('aria-invalid', 'true');
+          setStatus('account-name', error instanceof Error ? error.message : 'Could not save account name.', 'error');
+        } finally {
+          nameSaving = false;
+          accountName.disabled = false;
+          updateName();
+        }
+      };
+      saveAccountName.addEventListener('click', saveName);
+      accountName.addEventListener('keydown', event => {
+        if (event.key === 'Enter') { event.preventDefault(); void saveName(); }
+      });
+    }
+  }
+  document.addEventListener('astro:page-load', setup);
+</script>

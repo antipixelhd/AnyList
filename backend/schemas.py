@@ -446,11 +446,7 @@ class UserProfileUpdate(BaseModel):
 
     bio: Optional[str] = Field(default=None, max_length=5000)
     country: Optional[str] = None
-    movie_genres: Optional[list[str]] = None
-    show_genres: Optional[list[str]] = None
-    disliked_genres: Optional[list[str]] = None
     streaming_services: Optional[list[str]] = None
-    content_language: Optional[str] = None
     metadata_language: Optional[str] = None
     privacy_level: Optional[PrivacyLevel] = None
     profile_color: str = Field(default="#3db4f2", min_length=7, max_length=7)
@@ -467,18 +463,14 @@ class UserProfileResponse(BaseModel):
     background_url: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None
-    movie_genres: list[str] = []
-    show_genres: list[str] = []
-    disliked_genres: list[str] = []
     streaming_services: list[str] = []
-    content_language: Optional[str] = None
     metadata_language: Optional[str] = None
     privacy_level: PrivacyLevel = PrivacyLevel.private
     avatar_url: Optional[str] = None
     profile_color: str = "#3db4f2"
     apply_site_wide: bool = False
 
-    @field_validator('movie_genres', 'show_genres', 'disliked_genres', 'streaming_services', mode='before')
+    @field_validator('streaming_services', mode='before')
     @classmethod
     def _none_to_list(cls, v: object) -> list:
         return v if v is not None else []
@@ -493,8 +485,6 @@ class PublicProfileResponse(BaseModel):
     bio: Optional[str] = None
     profile_color: str = "#3db4f2"
     country: Optional[str] = None
-    movie_genres: list[str] = []
-    show_genres: list[str] = []
     created_at: datetime
     # Stats
     total_watched: int = 0

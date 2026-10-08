@@ -15,12 +15,14 @@ if ($Stop) {
             $process = Get-Process -Id $record.id -ErrorAction SilentlyContinue
             if (!$process) { continue }
             try {
-                $started = $process.StartTime.ToUniversalTime().ToString('o')
+                $started = $process.StartTime.ToUniversalTime()
             } catch {
                 continue
             }
-            if ($started -eq $record.started) {
-                Stop-Process -Id $process.Id -ErrorAction Continue
+            if ($started -eq ([datetime]$record.started).ToUniversalTime()) {
+                # Uvicorn's reload worker inherits its parent's listening socket.
+                # Stop the whole tree so the worker cannot keep the port open.
+                & taskkill.exe /PID $process.Id /T /F | Out-Null
             }
         }
         Remove-Item -LiteralPath $pidFile
@@ -45,6 +47,14 @@ if ($Stop) {
 foreach ($required in @('.venv\Scripts\python.exe','frontend\node_modules\astro\bin\astro.mjs')) {
     if (!(Test-Path -LiteralPath (Join-Path $projectRoot $required))) { throw "Missing $required. Install project dependencies first." }
 }
+if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
+    $dockerBin = @(
+        (Join-Path $env:USERPROFILE 'AppData\Local\Programs\DockerDesktop\resources\bin'),
+        (Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin')
+    ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'docker.exe') } | Select-Object -First 1
+    if (!$dockerBin) { throw 'Docker Desktop is missing. Install it before starting AnyList.' }
+    $env:PATH = "$dockerBin;$env:PATH"
+}
 & docker compose -p media-tracker-local -f compose.local.yaml up -d --wait
 if ($LASTEXITCODE -ne 0) { throw 'Start Docker Desktop, wait until it is ready, then run this launcher again.' }
 Push-Location backend
@@ -60,7 +70,7 @@ if (Test-Path -LiteralPath $pidFile) {
         $process = Get-Process -Id $record.id -ErrorAction SilentlyContinue
         if (!$process) { continue }
         try {
-            if ($process.StartTime.ToUniversalTime().ToString('o') -eq $record.started) {
+            if ($process.StartTime.ToUniversalTime() -eq ([datetime]$record.started).ToUniversalTime()) {
                 $records += $record
             }
         } catch {
@@ -78,9 +88,10 @@ foreach ($service in @(
         if (!$owned) {
             foreach ($listenerId in $listener.OwningProcess) {
                 $child = Get-CimInstance Win32_Process -Filter "ProcessId=$listenerId"
+                if (!$child) { continue }
                 $parentRecord = $records | Where-Object { $_.id -eq $child.ParentProcessId } | Select-Object -First 1
                 $parent = Get-Process -Id $child.ParentProcessId -ErrorAction SilentlyContinue
-                if ($parentRecord -and $parent -and $parent.StartTime.ToUniversalTime().ToString('o') -eq $parentRecord.started) { $owned=@($parentRecord) }
+                if ($parentRecord -and $parent -and $parent.StartTime.ToUniversalTime() -eq ([datetime]$parentRecord.started).ToUniversalTime()) { $owned=@($parentRecord) }
                 # A venv/node launcher can exit before a partial startup writes
                 # its child PID. Adopt only this project's exact dedicated
                 # listener so a retry can recover without touching other apps.
@@ -96,8 +107,10 @@ foreach ($service in @(
                 }
             }
         }
-        if (!$owned) { throw "Port $($service.port) is occupied by another process. Stop it before starting AnyList." }
-        continue
+        if ($owned) { continue }
+        if (Get-NetTCPConnection -LocalPort $service.port -State Listen -ErrorAction SilentlyContinue) {
+            throw "Port $($service.port) is occupied by another process. Stop it before starting AnyList."
+        }
     }
     $process = Start-Process -FilePath $service.exe -ArgumentList $service.args -WorkingDirectory $service.cwd -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $runtimeRoot "$($service.name).log") -RedirectStandardError (Join-Path $runtimeRoot "$($service.name).error.log")

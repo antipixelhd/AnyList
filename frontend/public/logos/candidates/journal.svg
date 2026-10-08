@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="293" height="242" viewBox="0 0 293 242" fill="none">
+  <defs><linearGradient id="cyan" x1="12" y1="12" x2="281" y2="230" gradientUnits="userSpaceOnUse"><stop stop-color="#35b2f1"/><stop offset="1" stop-color="#30aceb"/></linearGradient></defs>
+  <path fill="url(#cyan)" d="M124 14C130 10 135 13 135 20V230H38C23 230 12 220 12 205V98C12 85 16 76 28 69L124 14ZM172 14C166 10 160 13 160 20V230H255C270 230 281 220 281 205V98C281 85 277 76 265 69L172 14Z"/>
+</svg>

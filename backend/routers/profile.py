@@ -955,8 +955,6 @@ async def get_public_profile(
         "bio": profile.bio if profile else None,
         "profile_color": profile.profile_color if profile else "#3db4f2",
         "country": profile.country if profile else None,
-        "movie_genres": (profile.movie_genres or []) if profile else [],
-        "show_genres": (profile.show_genres or []) if profile else [],
         "created_at": user.created_at,
         "total_watched": total_watched,
         "total_collected": total_collected,

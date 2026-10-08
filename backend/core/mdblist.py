@@ -81,6 +81,12 @@ async def _request(
                 )
             if ignore_statuses and response.status_code in ignore_statuses:
                 return {}
+            if response.status_code == 202:
+                # List pages may be warming their provider-side cache.
+                if attempt < rate_limit_retries:
+                    await asyncio.sleep(min(max_wait, _retry_after(response) or 5.0))
+                    continue
+                raise MDBListAPIError("MDBList is still preparing the requested data")
             if response.status_code == 429:
                 body = response.text.strip()
                 if _DAILY_LIMIT_MARKER in body.lower():

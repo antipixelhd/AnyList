@@ -349,6 +349,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.save(self.movie,season_scores={'1':8})).status_code,422)
 
     async def test_catalog_search_tolerates_small_title_errors(self):
+        self.movie.tmdb_data = {'vote_count': 250}
+        await self.db.commit()
         response=await self.client.get('/tracking/catalog',params={'media_type':'movie','q':'Fxtur Flm'})
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['results'][0]['id'],self.movie.id)
@@ -358,9 +360,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         async def search(query, **_kwargs):
             if query == 'Mutiny':
-                return {'results':[{'id':101,'title':'Mutiny','poster_path':'/mutiny.jpg','release_date':'2026-01-01'}]}
+                return {'results':[{'id':101,'title':'Mutiny','poster_path':'/mutiny.jpg','release_date':'2026-01-01','vote_count':250}]}
             if query == 'The Odyssey':
-                return {'results':[{'id':102,'title':'The Odyssey','poster_path':'/odyssey.jpg','release_date':'2026-01-01'}]}
+                return {'results':[{'id':102,'title':'The Odyssey','poster_path':'/odyssey.jpg','release_date':'2026-01-01','vote_count':250}]}
             return {'results':[]}
 
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture-key')),

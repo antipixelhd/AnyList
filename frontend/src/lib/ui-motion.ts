@@ -9,7 +9,9 @@ let sequence = 0;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function stop(element: HTMLElement) {
-  running.get(element)?.stop();
+  const control = running.get(element);
+  if (element.getClientRects().length) control?.stop();
+  else control?.cancel();
   running.delete(element);
   element.style.removeProperty('opacity');
   element.style.removeProperty('transform');
@@ -18,12 +20,15 @@ function stop(element: HTMLElement) {
 function play(element: HTMLElement, entering: boolean, distance: number) {
   stop(element);
   if (reduced()) return null;
+  const fading = element.hasAttribute('data-motion-fade');
   const control = animate(element, {
     opacity: entering ? [0, 1] : [1, 0],
-    transform: entering
-      ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
-      : ['translateY(0) scale(1)', `translateY(${Math.max(2, distance / 2)}px) scale(.995)`],
-  }, { duration: entering ? .18 : .12, ease: entering ? [0.2, 0.7, 0.2, 1] : 'easeIn' });
+    ...(!fading ? {
+      transform: entering
+        ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
+        : ['translateY(0) scale(1)', `translateY(${Math.max(2, distance / 2)}px) scale(.995)`],
+    } : {}),
+  }, { duration: fading ? (entering ? .16 : .1) : (entering ? .18 : .12), ease: entering ? [0.2, 0.7, 0.2, 1] : 'easeIn' });
   running.set(element, control);
   void control.finished.then(() => {
     if (running.get(element) === control) stop(element);
@@ -146,6 +151,8 @@ export async function hideOverlay(overlay: HTMLElement) {
   overlay.inert = false;
 }
 
-export function cancelUiMotion() {
-  for (const element of running.keys()) stop(element);
+export function cancelUiMotion(root?: HTMLElement) {
+  for (const element of running.keys()) {
+    if (!root || root.contains(element)) stop(element);
+  }
 }
