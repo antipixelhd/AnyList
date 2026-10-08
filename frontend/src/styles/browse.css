@@ -574,7 +574,7 @@
   color: #f08892;
 }
 .browse-scroll-reveal {
-  scale: .7;
+  scale: .8;
   opacity: 0;
 }
 .browse-page [hidden] {
@@ -644,7 +644,7 @@
     right: 0;
   }
   .browse-scroll-reveal {
-    scale: .7;
+    scale: .8;
   }
   .browse-actions {
     right: 6px;

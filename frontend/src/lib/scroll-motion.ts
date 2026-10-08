@@ -6,6 +6,9 @@ export function initializeScrollMotion(
   revealClass = "lab-scroll-reveal",
   options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean } = {},
 ) {
+  // Approximate easeOutSine: fast arrival with a gentle finish.
+  const scaleTiming = { duration: 320, easing: "cubic-bezier(.39,.575,.565,1)" };
+  const scaleFrames = [{ opacity: 0, scale: "0.8" }, { opacity: 1, scale: "1" }];
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   if (reduced.matches || signal.aborted) return;
   const mobile = matchMedia("(max-width: 650px), (pointer: coarse)");
@@ -34,11 +37,11 @@ export function initializeScrollMotion(
   const start = (element: HTMLElement) => {
     appeared.add(element);
     const animation = element.animate(
-      [
-        options.scaleEntrance ? { opacity: 0, scale: "0.7" } : { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
-        options.scaleEntrance ? { opacity: 1, scale: "1" } : { opacity: 1, translate: "0 0" },
+      options.scaleEntrance ? scaleFrames : [
+        { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
+        { opacity: 1, translate: "0 0" },
       ],
-      { duration: options.scaleEntrance ? 160 : 260, easing: options.scaleEntrance ? "cubic-bezier(.2,.7,.2,1)" : "cubic-bezier(.25,.1,.25,1)", fill: "both" },
+      { ...(options.scaleEntrance ? scaleTiming : { duration: 260, easing: "cubic-bezier(.25,.1,.25,1)" }), fill: "both" },
     );
     pending.set(element, animation);
     animation.addEventListener("finish", () => complete(element), {
@@ -61,11 +64,11 @@ export function initializeScrollMotion(
         appeared.add(element);
         if (bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
           const entrance = element.animate(
-            [
-              options.scaleEntrance ? { opacity: 0, scale: "0.7" } : { opacity: 0, transform: "translateY(7px)" },
-              options.scaleEntrance ? { opacity: 1, scale: "1" } : { opacity: 1, transform: "translateY(0)" },
+            options.scaleEntrance ? scaleFrames : [
+              { opacity: 0, transform: "translateY(7px)" },
+              { opacity: 1, transform: "translateY(0)" },
             ],
-            { duration: options.scaleEntrance ? 160 : 260, easing: options.scaleEntrance ? "cubic-bezier(.2,.7,.2,1)" : "ease" },
+            options.scaleEntrance ? scaleTiming : { duration: 260, easing: "ease" },
           );
           entrances.add(entrance);
           entrance.addEventListener(

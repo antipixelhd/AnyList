@@ -276,20 +276,21 @@ test('Browse cancels an active entrance when the user reverses scroll direction'
 
 test('browse posters expand in place quickly without text or position transforms', t => {
   const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true});
-  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.7'}, {opacity: 1, scale: '1'}]);
-  assert.equal(p.animations[0].options.duration, 160);
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  assert.equal(p.animations[0].options.duration, 320);
+  assert.equal(p.animations[0].options.easing, "cubic-bezier(.39,.575,.565,1)");
   p.scroll(1400);
   p.scroll(1300);
   assert.equal(p.animations.length, 1);
   p.scroll(0);
   p.scroll(424);
-  assert.deepEqual(p.animations[1].keyframes, [{opacity: 0, scale: '0.7'}, {opacity: 1, scale: '1'}]);
-  assert.equal(p.animations[1].options.duration, 160);
+  assert.deepEqual(p.animations[1].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  assert.equal(p.animations[1].options.duration, 320);
 });
 
-test('browse arrival grows from seventy percent once, and new cards still transition', t => {
+test('browse arrival grows from eighty percent once, and new cards still transition', t => {
   const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true, once: true});
-  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.7'}, {opacity: 1, scale: '1'}]);
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
   p.animations[0].dispatchEvent(new Event('finish'));
   p.scroll(0);
   p.scroll(424);
