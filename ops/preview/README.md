@@ -113,7 +113,9 @@ Open **Actions → preview: manual actions → Run workflow**, choose `main` for
 then the target preview and operation. Main contains only the orchestration workflows;
 the shared workflow reads validated control configuration from beta. GitHub requires
 dispatch workflows on the default branch, so main remains the default. Production's
-manual `Publish AnyList container` workflow stays unchanged.
+`Publish AnyList container` workflow runs on pushes to main and manual dispatch,
+then deploys production through the same restricted private CI connection. See
+[production deployment](../production/README.md).
 
 | Operation | Behavior |
 | --- | --- |

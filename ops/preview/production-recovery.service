@@ -1,0 +1,14 @@
+[Unit]
+Description=Recover interrupted AnyList production deployment
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/anylist-production/transaction.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I -u /opt/anylist-preview/production.py --recover
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
