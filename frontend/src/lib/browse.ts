@@ -49,6 +49,15 @@ const statusLabels: Record<string, string> = {
 export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.enhanced = "";
   root.dataset.browseScripted = "";
+  // Start slots only after the native controls have finished their layout handoff.
+  // A repeated page-load event must not restart an already running entrance.
+  if (!root.hasAttribute("data-browse-arrivals-ready")) {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (signal.aborted || !root.isConnected) return;
+      root.setAttribute("data-browse-arrivals-ready", "");
+      root.removeAttribute("data-browse-arrivals-pending");
+    }));
+  }
   const find = <T extends HTMLElement>(selector: string) =>
     root.querySelector<T>(selector)!;
   const form = find<HTMLFormElement>("[data-browse-form]");

@@ -573,8 +573,11 @@
   margin: 20px 0;
   color: #f08892;
 }
-.browse-cover,
-.browse-skeleton {
+.browse-page[data-browse-arrivals-pending] :is(.browse-cover, .browse-skeleton) {
+  scale: .9;
+  opacity: 0;
+}
+.browse-page[data-browse-arrivals-ready] :is(.browse-cover, .browse-skeleton) {
   animation: browse-slot-arrival 320ms cubic-bezier(.39,.575,.565,1);
   transform-origin: center;
 }

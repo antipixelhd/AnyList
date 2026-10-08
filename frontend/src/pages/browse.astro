@@ -96,6 +96,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
   <div class="page-width browse-page" data-browse-page>
     <script is:inline data-astro-rerun>
       document.currentScript.parentElement.dataset.browseScripted = "";
+      document.currentScript.parentElement.dataset.browseArrivalsPending = "";
     </script>
     <header class="browse-header">
       <h1>Browse</h1>
