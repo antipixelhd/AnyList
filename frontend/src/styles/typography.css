@@ -26,8 +26,9 @@
   --type-body-size: 1.6rem; --type-body-weight: 400;
   --type-row-size: 1.5rem; --type-row-weight: 400;
   --type-table-heading-size: 1.5rem; --type-table-heading-weight: 500;
-  --type-compact-row-size: 1.3rem; --type-compact-row-weight: 400;
-  --type-compact-heading-size: 1.3rem; --type-compact-heading-weight: 500;
+  /* Responsive list geometry keeps the same typography as desktop. */
+  --type-compact-row-size: var(--type-row-size); --type-compact-row-weight: var(--type-row-weight);
+  --type-compact-heading-size: var(--type-table-heading-size); --type-compact-heading-weight: var(--type-table-heading-weight);
   --type-card-size: 1.4rem; --type-card-weight: 500;
   --type-control-size: 1.4rem; --type-control-weight: 400;
   --type-label-size: 1.3rem; --type-label-weight: 400;

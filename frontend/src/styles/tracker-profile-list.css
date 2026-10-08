@@ -153,6 +153,45 @@
   gap:var(--content-column-gap);
   padding:0 var(--page-gutter)
 }
+.list-filter-search-row {
+  display:flex;
+  align-items:center;
+  gap:12px
+}
+.list-filter-search-row .filter-search {
+  flex:1;
+  min-width:0
+}
+.list-filter-panel {
+  display:flex;
+  flex-direction:column;
+  gap:12px
+}
+.mobile-filter-toggle {
+  display:none;
+  flex:none;
+  align-items:center;
+  justify-content:center;
+  width:44px;
+  height:44px;
+  padding:0;
+  border:0;
+  border-radius:4px;
+  background:var(--panel);
+  color:var(--muted);
+  cursor:pointer;
+  transition:color .15s ease,background .15s ease
+}
+.mobile-filter-toggle:is(:hover,[aria-expanded="true"],[data-active]) {
+  color:var(--blue)
+}
+.mobile-filter-toggle:focus-visible {
+  outline:2px solid var(--blue);
+  outline-offset:3px
+}
+.mobile-filter-toggle .ui-icon {
+  font-size:18px
+}
 .list-content > .list-toolbar {
   position:absolute;
   z-index:1;
@@ -179,6 +218,9 @@
 }
 .filters .filter-search input {
   padding-left:34px
+}
+.list-shell .filter-search input:focus {
+  outline:none
 }
 .list-shell .filters {
   z-index:3
@@ -377,23 +419,6 @@
   }
 }
 @media(max-width:650px) {
-  .desktop-favorite-filter {
-    display:none
-  }
-  .filters .filter-dropdown-trigger {
-    background:var(--field)
-  }
-  .filter-year input[type="range"]::-webkit-slider-runnable-track {
-    background:var(--field)
-  }
-  .filter-year input[type="range"]::-moz-range-track {
-    background:var(--field)
-  }
-  .filter-dropdown-options {
-    position:static;
-    max-height:220px;
-    margin-top:5px
-  }
   .profile-hero {
     height:220px
   }
@@ -420,16 +445,31 @@
     padding:0 16px
   }
   .mobile-filter-toggle {
-    width:calc(100% - 106px);
+    display:flex
+  }
+  .filters .filter-search input {
     min-height:44px
   }
+  .list-filter-panel {
+    display:none;
+    padding-top:8px
+  }
+  .filters.open .list-filter-panel {
+    display:flex
+  }
+  .list-content {
+    position:relative;
+    margin-top:24px
+  }
   .list-content > .list-toolbar {
-    right:16px
+    top:0;
+    right:0
   }
   .list-content > .list-toolbar .view-switch {
     padding:0
   }
   .filters {
+    position:static;
     gap:12px
   }
   .filter-year input[type="range"] {
@@ -452,6 +492,10 @@
   }
   .status-section h2 {
     margin-left:4px
+  }
+  .status-section:nth-child(1 of :not([hidden])) h2 {
+    margin-top:0;
+    padding-right:100px
   }
 }
 
@@ -619,6 +663,7 @@
   }
 }
 @media(prefers-reduced-motion:reduce) {
+  .mobile-filter-toggle,
   .grid-view .entry-thumbnail .row-menu,
   .grid-view .entry-title .entry-title-link {
     transition:none

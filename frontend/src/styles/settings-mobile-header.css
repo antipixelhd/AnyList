@@ -1,0 +1,39 @@
+@media (max-width: 650px) {
+  .settings-app .settings-shell { margin-top: 0; row-gap: 20px; }
+
+  .settings-app .settings-heading {
+    position: relative;
+    min-height: 56px;
+    padding: 12px 0;
+  }
+
+  .settings-app .settings-heading h1 {
+    margin: 0;
+    padding-right: 44px;
+    font-family: var(--font-navigation);
+    font-size: 2rem;
+    font-weight: 500;
+    line-height: 1.4;
+    pointer-events: none;
+  }
+
+  .settings-app .settings-menu-toggle {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    justify-items: end;
+    background: transparent;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .settings-app .settings-menu-toggle:focus-visible { outline-offset: -2px; }
+
+  .settings-app .settings-category-title {
+    margin-bottom: 16px;
+    font-size: var(--type-panel-size);
+    font-weight: 500;
+    line-height: 1.4;
+  }
+}
