@@ -147,8 +147,9 @@ Single-stream work happens on beta. Parallel changes happen on development-1/2.
 Rebase a development branch onto latest beta as needed, use `--force-with-lease`,
 test its rebuilt preview, merge into beta, then test the combined state. Resolve
 parallel migration conflicts/merge revisions in code before integration. Never
-force-push beta. When satisfactory, separately integrate beta into main and run the
-existing production workflow yourself. Preview deployment does not perform that step.
+force-push beta. When satisfactory, separately integrate beta into main; the push
+automatically publishes and deploys the production container. Preview deployment
+does not perform that integration step.
 
 Recommend a beta branch ruleset that blocks force pushes/deletion while allowing
 normal direct development pushes. No branch protections are changed by this setup;
@@ -332,7 +333,8 @@ behavior rather than altering provider/scheduler business logic.
 
 The one intentional migration spelling difference is `upgrade heads` instead of
 `upgrade head`, needed for the requested parallel migration graphs. The existing
-Windows launcher and production Docker workflow are unchanged.
+Windows launcher is unchanged. Production container startup continues to use
+`upgrade head`.
 
 ## Checks and upstream documentation
 

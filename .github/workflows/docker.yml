@@ -52,30 +52,12 @@ jobs:
   deploy:
     name: Update VPS with automatic rollback
     needs: build
-    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-    steps:
-      - name: Mask private hostname
-        env:
-          HOST: ${{ secrets.PREVIEW_VPS_HOST }}
-        run: |
-          printf '::add-mask::%s\n' "$HOST"
-          printf '::add-mask::%s\n' "${HOST%%.*}"
-          printf '::add-mask::%s\n' "${HOST#*.}"
-      - name: Join private deployment network
-        uses: tailscale/github-action@v4
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ secrets.TS_AUDIENCE }}
-          tags: tag:ci
-          version: latest
-          log-mode: quiet
-      - name: Deploy published main commit
-        env:
-          HOST: ${{ secrets.PREVIEW_VPS_HOST }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          tailscale ssh "anylist-preview-ci@$HOST" anylist deploy "$SHA"
+    uses: ./.github/workflows/preview-remote.yml
+    with:
+      preview: main
+      operation: production-deploy
+      sha: ${{ github.sha }}
+    secrets: inherit

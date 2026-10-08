@@ -3,6 +3,8 @@
 `Publish AnyList container` builds and publishes main, then calls `anylist deploy
 <commit-sha>` through the existing preview Tailscale workload identity secrets.
 Only the current public main commit is accepted. Old queued runs skip deployment.
+The deploy job calls `preview-remote.yml`, preserving the reusable workflow identity
+allowed by the existing Tailscale federation policy.
 The controller pulls only `ghcr.io/antipixelhd/anylist:sha-<commit-sha>`, verifies
 its embedded version, and pins its digest in `/opt/anylist/compose.override.yaml`.
 
