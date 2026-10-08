@@ -27,7 +27,6 @@ from routers.tracking import browse_ids, router
 
 FILTERS = dict(
     genres=[],
-    tags=[],
     start=None,
     end=None,
     status="",
@@ -63,14 +62,13 @@ class FilterTests(unittest.TestCase):
                 self.assertEqual(params["sort_by"], f"{sort_field}.desc")
                 self.assertEqual(params[f"{sort_field}.lte"], today.isoformat())
 
-    def test_filters_use_and_for_multiple_genres_and_tags(self):
+    def test_filters_use_and_for_multiple_genres(self):
         params = remote_params(
             "series",
             page=3,
             **{
                 **FILTERS,
                 "genres": [18, 35],
-                "tags": [1, 2],
                 "status": "airing",
                 "provider": 8,
                 "region": "DE",
@@ -80,7 +78,6 @@ class FilterTests(unittest.TestCase):
             },
         )
         self.assertEqual(params["with_genres"], "18,35")
-        self.assertEqual(params["with_keywords"], "1,2")
         self.assertEqual(params["first_air_date.gte"], "2020-01-01")
         self.assertEqual(params["with_status"], "0")
         self.assertEqual(params["with_watch_providers"], 8)
@@ -99,7 +96,6 @@ class FilterTests(unittest.TestCase):
     def test_detail_search_respects_every_filter_and_excludes_rentals(self):
         item = {
             "genres": [{"id": 18}, {"id": 35}],
-            "keywords": {"results": [{"id": 1, "name": "space"}]},
             "first_air_date": "2021-02-03",
             "status": "Returning Series",
             "watch/providers": {
@@ -112,7 +108,6 @@ class FilterTests(unittest.TestCase):
         predicate = {k: v for k, v in FILTERS.items() if k != "sort"}
         predicate.update(
             genres=[18, 35],
-            tags=[1],
             start="2020-01-01",
             end="2022-01-01",
             status="airing",
@@ -122,7 +117,6 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(matches(item, media_type="series", **predicate))
         for changes in [
             {"genres": [18, 80]},
-            {"tags": [2]},
             {"region": "US"},
             {"start": "2022-01-01"},
             {"status": "finished"},
@@ -131,17 +125,15 @@ class FilterTests(unittest.TestCase):
                 matches(item, media_type="series", **{**predicate, **changes})
             )
 
-    def test_metadata_keeps_tags_and_regions_for_local_browsing(self):
+    def test_metadata_keeps_regions_for_local_browsing(self):
         result = metadata_fields(
             {
                 "vote_count": 250,
-                "keywords": {"keywords": [{"id": 1, "name": "space"}]},
                 "watch/providers": {
                     "results": {"US": {"flatrate": [{"provider_id": 8}]}}
                 },
             }
         )
-        self.assertEqual(result["keywords"], [{"id": 1, "name": "space"}])
         self.assertEqual(result["vote_count"], 250)
         self.assertEqual(
             result["watch_providers"]["US"]["flatrate"][0]["provider_id"], 8
@@ -330,7 +322,6 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                     "genres": ["Drama", "Comedy"],
                     "popularity": i,
                     "imdb": {"votes": 1000 - i, "popularity_rank": i + 1},
-                    "keywords": [{"id": 99999, "name": "space adventure"}],
                     "watch_providers": {
                         "US": {
                             "flatrate": [{"provider_id": 8, "provider_name": "Netflix"}]
@@ -402,6 +393,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_category_previews_match_view_all_and_keep_viewer_state_private(self):
         self.movies[2].release_date = date.today().isoformat()
         self.movies[3].release_date = (date.today() + timedelta(days=365)).isoformat()
+        self.movies[3].imdb_rating = 10
         await self.db.flush()
         response = await self.client.get("/tracking/browse/sections")
         self.assertEqual(response.status_code, 200, response.text)
@@ -422,8 +414,10 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 if row["id"] == self.movies[1].id:
                     self.assertIsNone(row["list_status"])
         self.assertEqual(
-            [row["id"] for row in sections[1]["results"]], [self.movies[2].id]
+            [row["id"] for row in sections[1]["results"]],
+            [self.movies[i].id for i in (2, 0, 1, 4, 5, 6)],
         )
+        self.assertNotIn(self.movies[3].id, [row["id"] for row in sections[1]["results"]])
         self.assertIn(self.movies[3].id, [row["id"] for row in sections[-1]["results"]])
         self.viewer = None
         anonymous = (await self.client.get("/tracking/browse/sections")).json()
@@ -526,7 +520,6 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_combined_local_filters_and_regional_streaming(self):
         filters = {
             "genres": "18,35",
-            "tags": "99999",
             "start": "2020-01-01",
             "end": "2022-01-01",
             "status": "released",
@@ -553,15 +546,10 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/tracking/browse", params={"q": "%"})
         self.assertEqual(response.json()["results"], [])
 
-    async def test_local_facets_retain_stored_services_and_tags(self):
+    async def test_local_facets_retain_stored_services(self):
         response = await self.client.get("/tracking/browse/facets")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn({"id": 8, "name": "Netflix"}, response.json()["providers"])
-        response = await self.client.get("/tracking/browse/tags", params={"q": "space"})
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn(
-            {"id": 99999, "name": "space adventure"}, response.json()["results"]
-        )
 
     async def test_editor_snapshots_include_complete_viewer_fields_without_provider_calls(self):
         from sqlalchemy import select

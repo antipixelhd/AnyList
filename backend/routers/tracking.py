@@ -1069,26 +1069,6 @@ async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region
     return {'genres': [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])], 'providers': providers, 'notice': notice}
 
 
-@router.get('/browse/tags')
-async def browse_tags(q: str = Query('', max_length=100), ids: str = Query('', max_length=200), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
-    from core import tmdb
-    await catalog_access(db, viewer)
-    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
-    selected = browse_ids(ids)
-    if key:
-        try:
-            if selected:
-                values = await asyncio.gather(*(tmdb._get(f'{tmdb.TMDB_BASE}/keyword/{i}', headers=tmdb.get_headers(key)) for i in selected))
-                return {'results': values}
-            if len(q.strip()) >= 2:
-                data = await tmdb._get(f'{tmdb.TMDB_BASE}/search/keyword', headers=tmdb.get_headers(key), params={'query': q.strip(), 'page': 1})
-                return {'results': data.get('results', [])[:20]}
-        except Exception:
-            raise HTTPException(502, 'Unable to load tags. Try again.')
-    from core.browse import local_tags
-    return {'results': await local_tags(db, q.strip(), selected) if selected or len(q.strip()) >= 2 else []}
-
-
 def browse_ids(value: str) -> list[int]:
     if not value:
         return []
@@ -1116,7 +1096,7 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
 
 @router.get('/browse')
 async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
-                 page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200), tags: str = Query('', max_length=200),
+                 page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200),
                  start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'finished', 'cancelled', 'upcoming', 'released'] = '',
                  provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
                  sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
@@ -1125,7 +1105,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
-    genre_ids, tag_ids = browse_ids(genres), browse_ids(tags)
+    genre_ids = browse_ids(genres)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
     if not set(genre_ids).issubset(allowed) or (start and end and start > end):
         raise HTTPException(422, 'Check genres and release dates')
@@ -1137,7 +1117,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     )
     try:
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
-            show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids, tags=tag_ids,
+            show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
             status=status, provider=provider, region=region, sort=sort, min_votes=min_votes)
     except Exception:

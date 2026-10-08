@@ -59,6 +59,38 @@ test('failed writes roll back without erasing a newer intent and allow a retry',
   assert.equal(title.entry.status,'watching');
 });
 
+test('deletion waits for draft import and queued saves and clears the shared entry', async () => {
+  const calls=[], pending=[];
+  const store=new EditorStore((path,options)=>{calls.push([path,options]);const job=deferred();pending.push(job);return job.promise;});
+  const title=store.seed(draft());
+  const first=store.write(title,{status:'planning'});
+  const second=store.write(title,{status:'watching'});
+  await turn();
+  const removed=store.remove(title);
+  assert.equal(title.entry,null);
+  assert.equal(calls.length,1);
+  pending[0].resolve({id:7});await turn();
+  pending[1].resolve({id:7,status:'planning'});await first;await turn();
+  assert.equal(title.entry,null);
+  pending[2].resolve({id:7,status:'watching'});await second;await turn();
+  assert.deepEqual(calls.map(([path])=>path),['catalog/movie/123','entry/7','entry/7','entry/7?confirmed=true']);
+  assert.equal(calls[3][1].method,'DELETE');
+  pending[3].resolve({});assert.equal(await removed,7);
+  assert.equal(store.find(7).entry,null);
+});
+
+test('failed deletion restores the saved entry and can be retried', async () => {
+  const pending=[];
+  const store=new EditorStore(()=>{const job=deferred();pending.push(job);return job.promise;});
+  const title=store.seed({...draft(),id:7,entry:{status:'watching',notes:'Keep me'}});
+  const removed=store.remove(title);
+  const failure=assert.rejects(removed,/offline/);
+  await turn();pending[0].reject(Error('offline'));await failure;
+  assert.equal(title.entry.notes,'Keep me');
+  const retry=store.remove(title);await turn();pending[1].resolve({});await retry;
+  assert.equal(title.entry,null);
+});
+
 test('library clicks remain optimistic and ordered when the editor closes or another write runs', async () => {
   const calls=[],pending=[];
   const store=new EditorStore((path,options)=>{calls.push([path,options]);const job=deferred();pending.push(job);return job.promise;});

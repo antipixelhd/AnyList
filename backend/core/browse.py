@@ -101,7 +101,6 @@ async def browse_sections(
         {
             **dict(
                 genres=[],
-                tags=[],
                 start=None,
                 end=None,
                 status="",
@@ -159,29 +158,17 @@ async def browse_sections(
     return {"sections": sections, "notice": next(iter(notices), None)}
 
 
-def keywords(data):
-    value = data.get("keywords") or []
-    if isinstance(value, dict):
-        value = value.get("keywords", value.get("results", []))
-    return [
-        row
-        for row in value
-        if isinstance(row, dict) and row.get("id") and row.get("name")
-    ]
-
-
 def metadata_fields(data):
     """Stored in existing JSONB so imports and refreshes retain discovery fields."""
     return {
         "popularity": data.get("popularity"),
         "vote_count": data.get("vote_count"),
-        "keywords": keywords(data),
         "watch_providers": (data.get("watch/providers") or {}).get("results", {}),
     }
 
 
 def remote_params(
-    media_type, *, page, genres, tags, start, end, status, provider, region, sort,
+    media_type, *, page, genres, start, end, status, provider, region, sort,
     min_votes=0,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
@@ -194,8 +181,6 @@ def remote_params(
         )
     if genres:
         params["with_genres"] = ",".join(map(str, genres))
-    if tags:
-        params["with_keywords"] = ",".join(map(str, tags))
     field = "primary_release_date" if media_type == "movie" else "first_air_date"
     if start:
         params[f"{field}.gte"] = start
@@ -224,7 +209,6 @@ def local_query(
     *,
     term,
     genres,
-    tags,
     start,
     end,
     status,
@@ -256,14 +240,6 @@ def local_query(
                 data["genres"].contains([GENRES[genre]]),
                 data["genres"].contains([{"id": genre}]),
                 data["genres"].contains([{"name": GENRES[genre]}]),
-            )
-        )
-    for tag in tags:
-        query = query.where(
-            or_(
-                data["keywords"].contains([{"id": tag}]),
-                data["keywords"]["keywords"].contains([{"id": tag}]),
-                data["keywords"]["results"].contains([{"id": tag}]),
             )
         )
     if start:
@@ -367,7 +343,7 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, tags, start, end, status, provider, region, min_votes=0):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0):
     if item.get("adult"):
         return False
     if title_vote_count(item) < min_votes:
@@ -375,9 +351,7 @@ def matches(item, *, media_type, genres, tags, start, end, status, provider, reg
     ids = set(item.get("genre_ids", [])) | {
         g["id"] for g in item.get("genres", []) if isinstance(g, dict) and g.get("id")
     }
-    if not set(genres).issubset(ids) or not set(tags).issubset(
-        {k["id"] for k in keywords(item)}
-    ):
+    if not set(genres).issubset(ids):
         return False
     released = item.get("release_date") or item.get("first_air_date") or ""
     if (start and released < start) or (end and (not released or released > end)):
@@ -428,14 +402,14 @@ async def imdb_page(
         media_type, filters["sort"], mdblist_key
     )
     semaphore = asyncio.Semaphore(6)
-    needs_details = filters["tags"] or filters["provider"]
+    needs_details = filters["provider"]
     get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
     predicate = {k: v for k, v in filters.items() if k != "sort"}
     if needs_details and not key:
-        raise ValueError("A TMDB key is needed for tags and streaming filters")
+        raise ValueError("A TMDB key is needed for streaming filters")
 
     # Apply cached date/genre/status/adult/anime filters across the full feed first.
-    basic = {**predicate, "tags": [], "provider": None}
+    basic = {**predicate, "provider": None}
     candidates = [
         row
         for row in rows
@@ -523,7 +497,7 @@ async def remote_page(
         ]
         # Corrections form one finite result set, never repeat page one during scrolling.
         data = {"total_pages": 1}
-    needs_details = filters["tags"] or filters["status"] or filters["provider"]
+    needs_details = filters["status"] or filters["provider"]
     if needs_details:
         semaphore = asyncio.Semaphore(6)
         get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
@@ -688,20 +662,5 @@ async def local_providers(db, region):
         {
             "path": f"$.watch_providers.{region}.** ? (@.provider_id != null && @.provider_name != null)"
         },
-    )
-    return [dict(row) for row in rows.mappings()]
-
-
-async def local_tags(db, term, selected):
-    rows = await db.execute(
-        text("""
-        SELECT DISTINCT (tag->>'id')::integer AS id, tag->>'name' AS name
-        FROM media, LATERAL jsonb_path_query(tmdb_data, '$.keywords.** ? (@.id != null && @.name != null)') AS tag
-        WHERE tag->>'id' ~ '^[0-9]+$' AND
-              (CASE WHEN :selected THEN (tag->>'id')::integer = ANY(CAST(:ids AS integer[]))
-                    ELSE strpos(lower(tag->>'name'), lower(:term)) > 0 END)
-        ORDER BY name LIMIT 20
-    """),
-        {"term": term, "selected": bool(selected), "ids": selected},
     )
     return [dict(row) for row in rows.mappings()]

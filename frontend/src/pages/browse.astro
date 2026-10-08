@@ -80,7 +80,6 @@ const voteLimit = Math.max(10000, minVotes);
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
   .map((genre: any) => genre.name);
-initialChips.push(...(params.get("tags") || "").split(",").filter(Boolean).map((id) => `Tag ${Number(id)}`));
 if (params.get("start")) initialChips.push(`After ${params.get("start")}`);
 if (params.get("end")) initialChips.push(`Before ${params.get("end")}`);
 const statusLabel = statusOptions.find(([id]) => id === params.get("status"))?.[1];
@@ -177,7 +176,6 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
           />
         </div>
 
-        <input type="hidden" name="tags" value={params.get("tags") || ""} />
         <label class="browse-filter">
           <span>Airing status</span>
           <select name="status">

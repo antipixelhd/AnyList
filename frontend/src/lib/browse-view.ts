@@ -1,4 +1,4 @@
-const filters = ["q", "genres", "tags", "start", "end", "status", "provider"];
+const filters = ["q", "genres", "start", "end", "status", "provider"];
 
 export function isCategoryView(values: URLSearchParams) {
   return (

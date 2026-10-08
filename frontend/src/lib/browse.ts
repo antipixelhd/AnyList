@@ -91,12 +91,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
   const items = new Map<HTMLElement, Item>();
   const seen = new Set<string>();
-  const tags = new Map<number, string>(
-    (field("tags").value || "")
-      .split(",")
-      .filter(Boolean)
-      .map((id) => [Number(id), `Tag ${id}`]),
-  );
   let request: AbortController | undefined,
     facetRequest: AbortController | undefined;
   let timer: number | undefined;
@@ -110,7 +104,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     for (const name of [
       "q",
       "genres",
-      "tags",
       "start",
       "end",
       "status",
@@ -321,11 +314,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           if (input) input.checked = false;
           syncGenres();
         });
-    for (const [id, name] of tags)
-      add(name, () => {
-        tags.delete(id);
-        syncTags();
-      });
     for (const name of ["start", "end", "status", "provider", "min_votes"])
       if (field(name).value && (name !== "min_votes" || field(name).value !== "250")) {
         const label =
@@ -370,10 +358,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     find("[id=browse-genres-value]").textContent = field("genres").value
       ? `${field("genres").value.split(",").length} selected`
       : "Any";
-  };
-  const syncTags = () => {
-    field("tags").value = [...tags.keys()].join(",");
-
   };
   const updateFooter = () => {
     find("[data-browse-sentinel]").hidden = displayedCategories;
@@ -518,7 +502,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     for (const name of [
       "q",
       "genres",
-      "tags",
       "start",
       "end",
       "status",
@@ -533,9 +516,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     );
     sort.value = "all";
     field("min_votes").value = "250";
-    tags.clear();
     syncGenres();
-    syncTags();
     changed();
   }
   async function loadFacets() {
@@ -759,14 +740,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { signal },
   );
-  if (tags.size)
-    void json(`browse/tags?ids=${[...tags.keys()].join(",")}`, { signal })
-      .then((result) => {
-        for (const tag of result.results)
-          if (tags.has(tag.id)) tags.set(tag.id, tag.name);
-        paintChips();
-      })
-      .catch(() => {});
   root
     .querySelectorAll("[data-browse-clear]")
     .forEach((button) => button.addEventListener("click", clear, { signal }));

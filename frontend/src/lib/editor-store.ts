@@ -8,7 +8,7 @@ export type EditorTitle = {
 };
 type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
-  pending: { patch: Record<string, any> }[]; tail: Promise<unknown>;
+  pending: { patch: Record<string, any> | null }[]; tail: Promise<unknown>;
   importing?: Promise<number>; stale?: boolean;
   posterSrc?: string; backdropSrc?: string; backdropReady?: boolean;
   libraryCommitted?: EditorTitle['editor_library']; libraryPending: {desired: boolean}[];
@@ -92,6 +92,7 @@ export class EditorStore {
   private paint(record: RecordState) {
     let entry = record.committed;
     for (const operation of record.pending) {
+      if (operation.patch === null) { entry = null; continue; }
       const previous = entry?.status;
       entry = {...(entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
         season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null}), ...operation.patch};
@@ -118,6 +119,29 @@ export class EditorStore {
         record.committed = saved;
         record.stale = false;
         return saved;
+      } finally {
+        record.pending.splice(record.pending.indexOf(operation), 1);
+        this.paint(record);
+      }
+    });
+    record.tail = task;
+    return task;
+  }
+  remove(title: EditorTitle) {
+    const viewer = this.viewer;
+    const record = this.record(title)!;
+    const operation = {patch:null};
+    record.pending.push(operation);
+    this.paint(record);
+    const task = record.tail.catch(() => {}).then(async () => {
+      try {
+        if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
+        const id = await this.resolveId(record.title);
+        if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
+        await this.request(`entry/${id}?confirmed=true`, {method:'DELETE'});
+        record.committed = null;
+        record.stale = false;
+        return id;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);

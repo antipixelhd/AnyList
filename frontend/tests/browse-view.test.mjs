@@ -13,7 +13,6 @@ test("browse starts with categories, while searches, filters and explicit sorts 
   for (const query of [
     "q=Arrval",
     "genres=18",
-    "tags=9",
     "start=2026-01-01",
     "end=2026-12-31",
     "status=airing",
