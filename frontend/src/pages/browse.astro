@@ -1,12 +1,15 @@
 ---
 import Tracker from "../layouts/Tracker.astro";
 import BrowseCard from "../components/BrowseCard.astro";
+import BrowseSkeleton from "../components/BrowseSkeleton.astro";
+import BrowseSelect from "../components/BrowseSelect.astro";
 import Icon from "../components/Icon.astro";
 import { tracker } from "../lib/tracker";
 import "../styles/browse.css";
 import { releaseYearBounds } from "../lib/browse-ranges";
 import {
   isCategoryView,
+  genreSelectionLabel,
   browseRequestParams,
   sectionHref,
 } from "../lib/browse-view";
@@ -76,6 +79,12 @@ const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 190
 const lastYear = Math.max(new Date().getFullYear() + 3, Number(params.get("start")?.slice(0, 4)) || 0, Number(params.get("end")?.slice(0, 4)) || 0);
 const years = releaseYearBounds(params.get("start") || "", params.get("end") || "", firstYear, lastYear);
 const minVotes = Math.max(0, Math.min(1000000, Number(params.get("min_votes") ?? 250) || 0));
+const hasSort = !categories;
+const resultsSort = hasSort ? browseRequestParams(params).get('sort') : 'all';
+const sortOptions = [
+  ['all', 'All categories'], ['trending', 'IMDb trending'], ['popular', 'IMDb votes'],
+  ['score', 'IMDb rating'], ['newest', 'Newest'], ['oldest', 'Oldest'], ['title', 'Title'],
+];
 const voteLimit = Math.max(10000, minVotes);
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
@@ -92,7 +101,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
 
 <Tracker title="Browse">
 
-  <div class="page-width browse-page" data-browse-page>
+  <div class="page-width browse-page" data-browse-page data-browse-sorted={hasSort ? '' : undefined} data-browse-chips={initialChips.length ? '' : undefined}>
     <script is:inline data-astro-rerun>
       document.currentScript.parentElement.dataset.browseScripted = "";
       document.currentScript.parentElement.dataset.browseArrivalsPending = "";
@@ -144,14 +153,20 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         </label>
       </div>
       <div class="browse-controls" id="browse-controls">
+        <label class="browse-sort" data-browse-primary-sort hidden={hasSort}>
+          <span>Sort</span>
+          <BrowseSelect name="sort" form="browse-filters" data-browse-sort valueLabel={params.get('q')?.trim() ? 'Relevance' : sortOptions.find(([id]) => id === (params.get('sort') || 'all'))?.[1]}>
+            {sortOptions.map(([id, label]) => (
+              <option value={id} selected={(params.get('sort') || 'all') === id}>{label}</option>
+            ))}
+          </BrowseSelect>
+        </label>
         <div class="browse-filter">
           <span id="browse-genres-label">Genres</span>
           <details class="browse-filter-menu" data-filter-menu>
             <summary aria-labelledby="browse-genres-label browse-genres-value">
               <span id="browse-genres-value">
-                {selectedGenres.filter(Boolean).length
-                  ? `${selectedGenres.filter(Boolean).length} selected`
-                  : "Any"}
+                {genreSelectionLabel(params.get('genres') || '', facets.genres)}
               </span>
               <Icon name="chevron-down" />
             </summary>
@@ -178,35 +193,14 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
 
         <label class="browse-filter">
           <span>Airing status</span>
-          <select name="status">
+          <BrowseSelect name="status" valueLabel={statusOptions.find(([id]) => id === params.get('status'))?.[1] || 'Any'}>
             <option value="">Any</option>
             {statusOptions.map(([id, label]) => (
               <option value={id} selected={params.get("status") === id}>
                 {label}
               </option>
             ))}
-          </select>
-        </label>
-        <label class="browse-sort">
-          <span>Sort</span>
-          <select name="sort" form="browse-filters" data-browse-sort>
-            {[
-              ["all", "All categories"],
-              ["trending", "IMDb trending"],
-              ["popular", "IMDb votes"],
-              ["score", "IMDb rating"],
-              ["newest", "Newest"],
-              ["oldest", "Oldest"],
-              ["title", "Title"],
-            ].map(([id, label]) => (
-              <option
-                value={id}
-                selected={(params.get("sort") || "all") === id}
-              >
-                {label}
-              </option>
-            ))}
-          </select>
+          </BrowseSelect>
         </label>
         <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minVotes !== 250 || region !== "US")}>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
@@ -258,6 +252,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         </details>
       </div>
     </form>
+    <div class="browse-results-area">
     <div class="browse-results-toolbar">
       <div class="browse-active-filters" data-active-filters>
         {initialChips.map((label) => (
@@ -265,15 +260,21 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         ))}
         {!!initialChips.length && <button type="button" data-reset>Clear all</button>}
       </div>
+      <label class="browse-results-sort" hidden={!hasSort}>
+        <Icon name="sort" />
+        <BrowseSelect aria-label="Sort results" data-browse-results-sort valueLabel={params.get('q')?.trim() ? 'Relevance' : sortOptions.find(([id]) => id === resultsSort)?.[1]}>
+          {sortOptions.map(([id, label]) => (
+            <option value={id} selected={resultsSort === id}>{label}</option>
+          ))}
+        </BrowseSelect>
+      </label>
     </div>
     <p
       class="browse-notice"
       data-browse-notice
       role="status"
       aria-live="polite"
-    >
-      {payload.notice || ""}
-    </p>
+    >{payload.notice || ""}</p>
     <div class="browse-error" data-browse-error role="alert" hidden={!error}>
       <span>{error}</span>
       <button type="button" class="button-secondary" data-browse-retry>
@@ -310,18 +311,24 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         ))}
       </div>
       <div
-        class="browse-grid browse-skeletons"
+        class="browse-loading-view"
         data-browse-skeleton
         hidden
         aria-hidden="true"
       >
-        {Array.from({ length: 12 }, () => (
-          <div class="browse-skeleton">
-            <span class="skeleton-block browse-skeleton-poster"></span>
-            <span class="skeleton-block browse-skeleton-title"></span>
-            <span class="skeleton-block browse-skeleton-meta"></span>
-          </div>
-        ))}
+        <div class="browse-grid browse-skeletons" data-skeleton-grid>
+          {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
+        </div>
+        <div class="browse-sections" data-skeleton-sections hidden>
+          {["Trending now", "Newest", "All-time popular", "Highest rated"].map(title => (
+            <section class="browse-category">
+              <header><h2>{title}</h2><span class="browse-skeleton-view-all">View all</span></header>
+              <div class="browse-grid browse-skeletons">
+                {Array.from({ length: 6 }, () => <BrowseSkeleton />)}
+              </div>
+            </section>
+          ))}
+        </div>
       </div>
       <div
         class="empty-state"
@@ -350,6 +357,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         </span>
       </div>
     </section>
+    </div>
     <template data-browse-template>
       <BrowseCard signedIn={signedIn} template />
     </template>

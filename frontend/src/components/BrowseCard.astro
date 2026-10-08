@@ -30,6 +30,7 @@ const href = item.id
   data-key={`${item.type}:${item.tmdb_id || item.id}`}
   data-state={state || undefined}
 >
+  <div class="browse-card-body">
   <div class="browse-cover">
     <a
       class="browse-poster-link"
@@ -111,6 +112,7 @@ const href = item.id
       </div>
     )}
   </div>
+  <div class="browse-card-caption">
   <a class="browse-card-title" href={template ? "#" : href}>
     <h2>{item.title}</h2>
   </a>
@@ -124,5 +126,7 @@ const href = item.id
       <Icon name="star" />
       <span data-score>{Number(item.score || 0).toFixed(1)}</span>
     </span>
+  </div>
+  </div>
   </div>
 </article>

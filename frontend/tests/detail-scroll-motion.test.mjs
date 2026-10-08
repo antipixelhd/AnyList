@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false, scaleEntrance = false, once = false} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -10,6 +10,9 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
   motion.matches = reduced;
   input.matches = mobile;
   const element = {
+    attributes: new Set(),
+    setAttribute(name) { this.attributes.add(name); },
+    hasAttribute(name) { return this.attributes.has(name); },
     isConnected: true,
     classList: {add: name => classes.add(name), remove: name => classes.delete(name)},
     getClientRects: () => hidden ? [] : [{}],
@@ -51,11 +54,15 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly, scaleEntrance, once});
+  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly, scaleEntrance, once, appearedAttribute});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
-    append() {const added={...element};elements.push(added);observers[0].callback();flush();},
+    append(alreadyAppeared = false) {
+      const added={...element, attributes: new Set()};
+      if (alreadyAppeared) added.setAttribute(appearedAttribute, '');
+      elements.push(added);observers[0].callback();flush();
+    },
     remove() {element.isConnected=false;elements.splice(0,1);observers[0].callback();flush();},
     scroll(to, elapsed = 100) {y = to;now += elapsed;viewport.dispatchEvent(new Event('scroll'));flush();},
     ready() {loading = false;observers[0].callback();flush();},
@@ -65,6 +72,18 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     changeInput() {input.matches = !input.matches;input.dispatchEvent(new Event('change'));},
   };
 }
+
+test('a poster inheriting an appeared skeleton slot does not zoom again', t => {
+  const p = preview(t, {initialY: 600, once: true, scaleEntrance: true, appearedAttribute: 'data-browse-appeared'});
+  assert.equal(p.animations.length, 1);
+  p.append(true);
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(600);
+  assert.equal(p.animations.length, 1);
+  p.append();
+  assert.equal(p.animations.length, 2);
+});
 
 test('Browse keeps initially visible cards painted but still animates new cards and scroll entries', t => {
   const p = preview(t, {initialY: 600, animateInitial: false});
@@ -276,21 +295,21 @@ test('Browse cancels an active entrance when the user reverses scroll direction'
 
 test('browse posters expand in place quickly without text or position transforms', t => {
   const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true});
-  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
-  assert.equal(p.animations[0].options.duration, 320);
-  assert.equal(p.animations[0].options.easing, "cubic-bezier(.39,.575,.565,1)");
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.92', offset: 0, easing: 'cubic-bezier(.39,.575,.565,1)'}, {opacity: 1, offset: 0.6}, {opacity: 1, scale: '1', offset: 1}]);
+  assert.equal(p.animations[0].options.duration, 300);
+  assert.equal(p.animations[0].options.easing, "linear");
   p.scroll(1400);
   p.scroll(1300);
   assert.equal(p.animations.length, 1);
   p.scroll(0);
   p.scroll(424);
-  assert.deepEqual(p.animations[1].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
-  assert.equal(p.animations[1].options.duration, 320);
+  assert.deepEqual(p.animations[1].keyframes, [{opacity: 0, scale: '0.92', offset: 0, easing: 'cubic-bezier(.39,.575,.565,1)'}, {opacity: 1, offset: 0.6}, {opacity: 1, scale: '1', offset: 1}]);
+  assert.equal(p.animations[1].options.duration, 300);
 });
 
-test('browse arrival grows from eighty percent once, and new cards still transition', t => {
+test('browse arrival grows from ninety-two percent once, and new cards still transition', t => {
   const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true, once: true});
-  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.92', offset: 0, easing: 'cubic-bezier(.39,.575,.565,1)'}, {opacity: 1, offset: 0.6}, {opacity: 1, scale: '1', offset: 1}]);
   p.animations[0].dispatchEvent(new Event('finish'));
   p.scroll(0);
   p.scroll(424);
@@ -298,4 +317,19 @@ test('browse arrival grows from eighty percent once, and new cards still transit
   assert.equal(p.classes.size, 0);
   p.append();
   assert.equal(p.animations.length, 2);
+});
+
+test('mobile browse posters animate downward entries and newly loaded cards', t => {
+  const p = preview(t, {mobile: true, animateInitial: false, scaleEntrance: true, downwardOnly: true});
+  p.scroll(424);
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.92', offset: 0, easing: 'cubic-bezier(.39,.575,.565,1)'}, {opacity: 1, offset: 0.6}, {opacity: 1, scale: '1', offset: 1}]);
+  p.animations[0].dispatchEvent(new Event('finish'));
+  p.scroll(1400);
+  p.scroll(1300);
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+  p.append();
+  assert.equal(p.animations.length, 3);
 });

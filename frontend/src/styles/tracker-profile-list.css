@@ -514,7 +514,7 @@
   background:var(--blue);
   color:var(--bright);
   opacity:0;
-  transition:opacity .12s ease
+  transition:none
 }
 .grid-view .entry-row:not([data-editor-deselected]):is(:hover,:focus-within) .entry-thumbnail .row-menu,
 .grid-view .entry-thumbnail .row-menu:focus-visible {
@@ -522,7 +522,7 @@
 }
 .grid-view .entry-thumbnail .row-menu .ui-icon {
   color:inherit;
-  font-size:var(--type-control-size)
+  font-size:24px
 }
 .grid-view .entry-title {
   position:absolute;

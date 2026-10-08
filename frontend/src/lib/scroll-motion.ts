@@ -4,11 +4,15 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean } = {},
+  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string } = {},
 ) {
   // Approximate easeOutSine: fast arrival with a gentle finish.
-  const scaleTiming = { duration: 320, easing: "cubic-bezier(.39,.575,.565,1)" };
-  const scaleFrames = [{ opacity: 0, scale: "0.8" }, { opacity: 1, scale: "1" }];
+  const scaleTiming = { duration: 300, easing: "linear" };
+  const scaleFrames = [
+    { opacity: 0, scale: "0.92", offset: 0, easing: "cubic-bezier(.39,.575,.565,1)" },
+    { opacity: 1, offset: 0.6 },
+    { opacity: 1, scale: "1", offset: 1 },
+  ];
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   if (reduced.matches || signal.aborted) return;
   const mobile = matchMedia("(max-width: 650px), (pointer: coarse)");
@@ -21,6 +25,10 @@ export function initializeScrollMotion(
   let initialRegistration = true;
   let previousScrollY = scrollY;
   let scrollingUp = false;
+  const markAppeared = (element: HTMLElement) => {
+    appeared.add(element);
+    if (options.appearedAttribute) element.setAttribute(options.appearedAttribute, "");
+  };
 
   const viewport = () => {
     const view = window.visualViewport;
@@ -35,7 +43,7 @@ export function initializeScrollMotion(
     pending.delete(element);
   };
   const start = (element: HTMLElement) => {
-    appeared.add(element);
+    markAppeared(element);
     const animation = element.animate(
       options.scaleEntrance ? scaleFrames : [
         { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
@@ -59,9 +67,13 @@ export function initializeScrollMotion(
       if (registered.has(element)) return;
       registered.add(element);
       modules.push(element);
+      if (options.appearedAttribute && element.hasAttribute(options.appearedAttribute)) {
+        appeared.add(element);
+        return;
+      }
       const bounds = element.getBoundingClientRect();
       if (element.getClientRects().length && bounds.top < viewport().bottom) {
-        appeared.add(element);
+        markAppeared(element);
         if (bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
           const entrance = element.animate(
             options.scaleEntrance ? scaleFrames : [
@@ -129,7 +141,7 @@ export function initializeScrollMotion(
       // Browse entrances come from the lower edge only. Returning through the
       // top edge, or reversing direction mid-fade, keeps content fully painted.
       if (options.downwardOnly && (moduleBottom <= viewportTop || (scrollingUp && top < bottom))) {
-        appeared.add(element);
+        markAppeared(element);
         complete(element);
         continue;
       }
