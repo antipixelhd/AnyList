@@ -573,9 +573,14 @@
   margin: 20px 0;
   color: #f08892;
 }
-.browse-scroll-reveal {
-  scale: .8;
-  opacity: 0;
+.browse-cover,
+.browse-skeleton {
+  animation: browse-slot-arrival 320ms cubic-bezier(.39,.575,.565,1);
+  transform-origin: center;
+}
+@keyframes browse-slot-arrival {
+  from { scale: .9; opacity: 0; }
+  to { scale: 1; opacity: 1; }
 }
 .browse-page [hidden] {
   display: none !important;
@@ -643,9 +648,6 @@
     left: auto;
     right: 0;
   }
-  .browse-scroll-reveal {
-    scale: .8;
-  }
   .browse-actions {
     right: 6px;
     bottom: 6px;
@@ -699,11 +701,6 @@
     transition: none !important;
     animation: none !important;
     scroll-behavior: auto !important;
-  }
-  .browse-scroll-reveal {
-    translate: none;
-    scale: 1;
-    opacity: 1;
   }
 }
 

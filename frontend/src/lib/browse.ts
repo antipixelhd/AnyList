@@ -8,7 +8,6 @@ import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { editorStore, type EditorTitle } from "./editor-store";
-import { initializeScrollMotion } from "./scroll-motion";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
 
 type Item = {
@@ -802,13 +801,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       autoLoadMore();
     });
   }, { passive: true, signal });
-  initializeScrollMotion(
-    region,
-    signal,
-    ".browse-cover",
-    "browse-scroll-reveal",
-    { downwardOnly: true, scaleEntrance: true, once: true },
-  );
   const editorTitle = (item: Item) => editorStore.get({...item, entry:item.entry ?? null});
   const warmEditor = (event: Event) => {
     const card = (event.target as Element).closest<HTMLElement>('[data-browse-card]');
