@@ -1,0 +1,46 @@
+---
+import Icon from './Icon.astro';
+import { renderProfileBio } from '../lib/profile-markdown';
+import { responsiveArtwork } from '../lib/responsive-artwork';
+import { scoreLabel } from '../lib/tracker';
+import { overviewDays, overviewGenres } from '../lib/profile-overview';
+import type { ProfileStats } from '../lib/profile-stats-data';
+interface Props { profile: any; movieStats: ProfileStats | null; seriesStats: ProfileStats | null; }
+const { profile, movieStats, seriesStats } = Astro.props;
+const base = `/user/${encodeURIComponent(profile.username)}`;
+const cards = [
+  { label: 'Movies', total: movieStats?.current.total ?? profile.counts.movies, data: movieStats },
+  { label: 'Series', total: seriesStats?.current.total ?? profile.counts.series, data: seriesStats },
+];
+const genres = movieStats && seriesStats ? overviewGenres([movieStats, seriesStats]) : [];
+const genreTotal = genres.reduce((total, item) => total + item.count, 0);
+const favorites: any[] = profile.favorites || [];
+---
+<div class="profile-overview-left">
+  {profile.bio && <section class="overview-bio" aria-labelledby="profile-bio-heading"><div class="section-heading"><h2 id="profile-bio-heading">Bio</h2></div><div class="profile-bio" set:html={renderProfileBio(profile.bio)} /></section>}
+  <section class="overview-genres" aria-labelledby="profile-genres">
+    <div class="section-heading"><h2 id="profile-genres">Genre overview</h2></div>
+    <div class="overview-genre-card">
+      {genres.length > 0 ? <>
+        <ul class="overview-genre-list">{genres.slice(0, 5).map(item => <li style={`--genre-color:${item.color}`}><span class="overview-genre-name">{item.genre}</span><span class="overview-genre-count"><strong>{item.count.toLocaleString('en')}</strong> {item.count === 1 ? 'entry' : 'entries'}</span></li>)}</ul>
+        <div class="overview-genre-bar" role="img" aria-label={genres.map(item => `${item.genre}: ${item.count} entries`).join(', ')}>{genres.map(item => <span style={`background:${item.color};width:${item.count / genreTotal * 100}%`} title={`${item.genre}: ${item.count} entries`} />)}</div>
+      </> : <p class="overview-card-empty">{movieStats && seriesStats ? 'No genres yet' : 'Genre statistics unavailable'}</p>}
+    </div>
+  </section>
+  <section class="overview-summary" aria-label="Movie and series overview">
+    {cards.map(card => <article aria-labelledby={`overview-${card.label.toLowerCase()}`}>
+      <div class="section-heading"><h2 id={`overview-${card.label.toLowerCase()}`}>{card.label}</h2></div>
+      <div class="overview-media-card">
+        <dl class="overview-media-metrics">
+          <div><dt>Total {card.label.toLowerCase()}</dt><dd>{card.total.toLocaleString('en')}</dd></div>
+          <div><dt title="Estimated from documented viewing dates and known runtimes">Days watched</dt><dd>{card.data ? overviewDays(card.data.viewing.estimated_watch_minutes) : '—'}</dd></div>
+          <div><dt>Mean score</dt><dd>{scoreLabel(card.data?.scores.average ?? null)}</dd></div>
+        </dl>
+        {!card.data && <p class="overview-card-empty">Statistics unavailable</p>}
+      </div>
+    </article>)}
+  </section>
+  {favorites.length > 0 && <section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2><a class="overview-section-link" href={`${base}/favorites`} aria-label="All favorites"><Icon name="arrow-right"/></a></div>
+    <div class="favorite-posters">{favorites.map((item: any) => {const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width: 700px) 25vw, 130px', route:'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src ? <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}<span class="favorite-poster-title">{item.title}</span></a>})}</div>
+  </section>}
+</div>
