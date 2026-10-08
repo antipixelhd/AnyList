@@ -3,30 +3,21 @@ import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ActivityCard from '../../../components/ActivityCard.astro';
 import Icon from '../../../components/Icon.astro';
-import {renderProfileBio} from '../../../lib/profile-markdown';
-import {tracker,scoreLabel} from '../../../lib/tracker';
-import {responsiveArtwork} from '../../../lib/responsive-artwork';
+import ProfileOverviewLeft from '../../../components/ProfileOverviewLeft.astro';
+import {tracker} from '../../../lib/tracker';
+import type { ProfileStats } from '../../../lib/profile-stats-data';
 import '../../../styles/profile-overview.css';
 let profile:any=null,error='';
 try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
-const highlights=profile?[
-  {label:'Movies',value:profile.counts.movies,detail:'tracked'},
-  {label:'Series',value:profile.counts.series,detail:'tracked'},
-  {label:'Completed',value:profile.counts.completed,detail:'current status'},
-  {label:'Average score',value:profile.average_score==null?'—':scoreLabel(profile.average_score),detail:`${profile.counts.rated} rated`},
-]:[];
-const favorites:any[]=profile?.favorites||[];
+let movieStats: ProfileStats | null = null, seriesStats: ProfileStats | null = null;
+if (profile) {
+  [movieStats, seriesStats] = await Promise.all(['movie', 'series'].map(type =>
+    tracker(`profile/${encodeURIComponent(Astro.params.username!)}/stats/summary?media_type=${type}`, Astro.locals.token).catch(() => null)
+  ));
+}
 ---
 <Tracker title={profile?.display_name||'Profile'} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
-  <div class="profile-overview-left">
-    <section class="overview-summary" aria-labelledby="overview-highlights"><div class="section-heading"><h2 id="overview-highlights">Overview</h2></div>
-      <div class="overview-highlights">{highlights.map(item=><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.detail}</small></div>)}</div>
-    </section>
-    {profile.bio && <section class="overview-bio" aria-labelledby="profile-bio-heading"><div class="section-heading"><h2 id="profile-bio-heading">Bio</h2></div><div class="profile-bio" set:html={renderProfileBio(profile.bio)} /></section>}
-    {favorites.length>0&&<section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2></div>
-      <div class="favorite-posters">{favorites.map((item:any)=>{const image=responsiveArtwork(item.poster,{size:'w342',sizes:'(max-width:700px) 30vw, 130px',route:'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}</a>})}</div>
-    </section>}
-  </div>
+  <ProfileOverviewLeft profile={profile} movieStats={movieStats} seriesStats={seriesStats}/>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>
     {profile.recent_activity.length?profile.recent_activity.map((a:any)=><ActivityCard activity={a}/>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
   </section>
