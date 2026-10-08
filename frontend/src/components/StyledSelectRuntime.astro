@@ -11,6 +11,7 @@
     originalTabIndex: string | null;
     originalAriaHidden: string | null;
     observer: MutationObserver;
+    serverRendered: boolean;
   };
 
   let cleanup: (() => void) | undefined;
@@ -90,30 +91,35 @@
       const parentWidth = parent?.getBoundingClientRect().width || 0;
       const selectWidth = select.getBoundingClientRect().width;
       const fullWidth = select.classList.contains('w-full') || parentWidth > 0 && selectWidth >= parentWidth - 2 && computed.display !== 'inline';
-      const wrapper = document.createElement('span');
+      const serverRendered = parent?.hasAttribute('data-select-shell') ?? false;
+      const wrapper = serverRendered ? parent! : document.createElement('span');
       wrapper.className = `tracker-select${fullWidth ? ' tracker-select-full' : ''}`;
       wrapper.dataset.motionStatic = '';
-      const trigger = document.createElement('button');
+      const trigger = serverRendered ? wrapper.querySelector<HTMLButtonElement>('.tracker-select-trigger')! : document.createElement('button');
       trigger.type = 'button';
       trigger.className = 'tracker-select-trigger tracker-dropdown-trigger';
       trigger.id = `tracker-select-trigger-${++nextId}`;
       trigger.setAttribute('aria-haspopup', 'listbox');
       trigger.setAttribute('aria-expanded', 'false');
-      trigger.style.padding = computed.padding;
-      trigger.style.paddingRight = '36px';
-      trigger.style.borderRadius = computed.borderRadius;
-      trigger.style.fontFamily = computed.fontFamily;
-      trigger.style.fontSize = computed.fontSize;
-      trigger.style.fontWeight = computed.fontWeight;
-      trigger.style.lineHeight = computed.lineHeight;
+      trigger.removeAttribute('tabindex');
+      trigger.removeAttribute('aria-hidden');
+      if (!serverRendered) {
+        trigger.style.padding = computed.padding;
+        trigger.style.paddingRight = '36px';
+        trigger.style.borderRadius = computed.borderRadius;
+        trigger.style.fontFamily = computed.fontFamily;
+        trigger.style.fontSize = computed.fontSize;
+        trigger.style.fontWeight = computed.fontWeight;
+        trigger.style.lineHeight = computed.lineHeight;
+      }
       // Browse surfaces vary between the primary row and advanced panel.
       // Keep their theme in CSS instead of freezing a computed color at mount.
-      if (!select.closest('[data-browse-form]')) trigger.style.backgroundColor = computed.backgroundColor;
-      trigger.style.border = computed.border;
-      trigger.style.color = computed.color;
-      const value = document.createElement('span');
+      if (!select.closest('[data-browse-form]') && !select.matches('[data-browse-results-sort]')) trigger.style.backgroundColor = computed.backgroundColor;
+      if (!serverRendered) trigger.style.border = computed.border;
+      if (!serverRendered && !select.matches('[data-browse-results-sort]')) trigger.style.color = computed.color;
+      const value = serverRendered ? trigger.querySelector<HTMLElement>('.tracker-select-value')! : document.createElement('span');
       value.className = 'tracker-select-value';
-      const chevron = document.createElement('span');
+      const chevron = serverRendered ? trigger.querySelector<HTMLElement>('.tracker-select-chevron')! : document.createElement('span');
       chevron.className = 'tracker-select-chevron';
       chevron.setAttribute('aria-hidden', 'true');
       chevron.innerHTML = '<svg viewBox="0 0 448 512" fill="currentColor"><path d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 54.6 137.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z"/></svg>';
@@ -121,7 +127,7 @@
       const menu = document.createElement('div');
       menu.id = `tracker-select-menu-${nextId}`;
       menu.className = 'tracker-select-options tracker-dropdown-menu';
-      if (select.closest('[data-browse-form]')) menu.classList.add('browse-select-options');
+      if (select.closest('[data-browse-form]') || select.matches('[data-browse-results-sort]')) menu.classList.add('browse-select-options');
       menu.setAttribute('role', 'listbox');
       menu.dataset.motionStatic = '';
       menu.hidden = true;
@@ -129,15 +135,16 @@
       const labels = Array.from(select.labels || [], label => [label, label.getAttribute('for')] as [HTMLLabelElement, string | null]);
       const originalTabIndex = select.getAttribute('tabindex');
       const originalAriaHidden = select.getAttribute('aria-hidden');
-      select.before(wrapper);
+      if (!serverRendered) select.before(wrapper);
       wrapper.append(select, trigger);
+      wrapper.setAttribute('data-select-enhanced', '');
       (select.closest('dialog') || document.body).append(menu);
       select.classList.add('tracker-select-native');
       select.tabIndex = -1;
       select.setAttribute('aria-hidden', 'true');
       labels.forEach(([label]) => label.setAttribute('for', trigger.id));
       const observer = new MutationObserver(() => sync(control, true));
-      const control: StyledSelect = { select, wrapper, trigger, value, menu, labels, originalTabIndex, originalAriaHidden, observer };
+      const control: StyledSelect = { select, wrapper, trigger, value, menu, labels, originalTabIndex, originalAriaHidden, observer, serverRendered };
       controls.set(select, control);
       observer.observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'selected', 'label', 'value'] });
       sync(control, true);
@@ -220,7 +227,12 @@
           if (original === null) label.removeAttribute('for');
           else label.setAttribute('for', original);
         });
-        control.wrapper.replaceWith(control.select);
+        if (control.serverRendered) {
+          control.select.classList.add('tracker-select-native');
+          control.wrapper.removeAttribute('data-select-enhanced');
+          control.trigger.tabIndex = -1;
+          control.trigger.setAttribute('aria-hidden', 'true');
+        } else control.wrapper.replaceWith(control.select);
       }
       controls.clear();
     };
