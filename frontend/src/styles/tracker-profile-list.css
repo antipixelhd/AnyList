@@ -20,8 +20,8 @@
   background:#242538
 }
 .profile-identity {
-  max-width:1340px;
-  padding:170px 24px 0;
+  max-width:var(--page-max-width);
+  padding:170px var(--page-gutter) 0;
   position:relative;
   z-index:1;
   gap:26px
@@ -148,16 +148,16 @@
 }
 .list-shell {
   position:relative;
-  max-width:1340px;
+  max-width:var(--page-max-width);
   grid-template-columns:190px minmax(0,1fr);
-  gap:30px;
-  padding:0 24px
+  gap:var(--content-column-gap);
+  padding:0 var(--page-gutter)
 }
 .list-content > .list-toolbar {
   position:absolute;
   z-index:1;
   top:calc(20px - var(--profile-content-gap));
-  right:24px;
+  right:var(--page-gutter);
   margin:0
 }
 .list-content > .list-toolbar .view-switch {
@@ -377,6 +377,18 @@
   }
 }
 @media(max-width:650px) {
+  .desktop-favorite-filter {
+    display:none
+  }
+  .filters .filter-dropdown-trigger {
+    background:var(--field)
+  }
+  .filter-year input[type="range"]::-webkit-slider-runnable-track {
+    background:var(--field)
+  }
+  .filter-year input[type="range"]::-moz-range-track {
+    background:var(--field)
+  }
   .filter-dropdown-options {
     position:static;
     max-height:220px;

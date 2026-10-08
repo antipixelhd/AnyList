@@ -1,8 +1,8 @@
 /* Statistics use type, icons, and measured whitespace instead of a card wall. */
 .stats-page {
-  max-width:1340px;
-  padding-right:24px;
-  padding-left:24px;
+  max-width:var(--page-max-width);
+  padding-right:var(--page-gutter);
+  padding-left:var(--page-gutter);
   padding-top:0
 }
 .stats-heading {
@@ -64,7 +64,7 @@
   color:var(--muted)
 }
 .stats-grid {
-  column-gap:44px;
+  column-gap:var(--content-column-gap);
   row-gap:46px
 }
 .stats-panel {

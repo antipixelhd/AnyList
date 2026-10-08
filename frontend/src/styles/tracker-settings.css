@@ -16,7 +16,7 @@ body.settings-app {
   display: grid;
   grid-template-columns: 180px minmax(0, 860px);
   grid-template-rows: auto 1fr;
-  column-gap: 48px;
+  column-gap: var(--content-column-gap);
   row-gap: 28px;
   max-width: 1200px;
   margin: 44px auto 0;
@@ -96,7 +96,7 @@ body.settings-app {
 .settings-app .profile-color-help { margin-bottom: 18px; }
 .settings-app #js-message { max-width: min(360px, calc(100vw - 32px)); }
 @media (max-width: 800px) {
-  .settings-shell { grid-template-columns: 160px minmax(0, 1fr); column-gap: 28px; margin-top: 32px; }
+  .settings-shell { grid-template-columns: 160px minmax(0, 1fr); column-gap: var(--content-column-gap); margin-top: 32px; }
   .settings-stack > section { padding: 24px; }
   .settings-app .localization-grid { grid-template-columns: minmax(0, 1fr); }
 }

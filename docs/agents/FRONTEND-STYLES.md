@@ -23,6 +23,8 @@ selection dialogs, file input wiring, and navigation cleanup.
 - global-theme.css: shared colors, surfaces, borders, and text colors.
 - global.css: Tailwind and shared theme/utility/component imports.
 - tailwind-rem-scale.css: utility scaling for the project's root size.
+- layout-width.css: shared 1320px usable content width, 32px desktop gutters,
+  and 40px column gap. Settings keeps its narrower page cap.
 - tracker-profile-list.css: shared profile/list alignment and content gaps
   (32px desktop, 24px at widths up to 650px).
 - app-bar.css and tracker-navigation.css: shared navigation styling.

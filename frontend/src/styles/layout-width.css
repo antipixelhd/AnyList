@@ -1,0 +1,7 @@
+/* Marquee measures usable content; page wrappers also include their gutters. */
+:root {
+  --content-max-width:1320px;
+  --page-gutter:32px;
+  --page-max-width:calc(var(--content-max-width) + 2 * var(--page-gutter));
+  --content-column-gap:40px;
+}

@@ -628,8 +628,8 @@
   color:var(--bright)
 }
 .list-shell {
-  max-width:1260px;
-  gap:42px
+  max-width:var(--page-max-width);
+  gap:var(--content-column-gap)
 }
 .ratings-overview {
   display:grid;

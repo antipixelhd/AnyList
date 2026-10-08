@@ -75,14 +75,13 @@
     height:210px
   }
 }
-/* Keep the compact list proportions close to AniList's narrower reading
-   column while preserving the existing responsive breakpoints. */
+/* The compact list uses the shared page width and responsive sidebar. */
 .list-shell {
-  max-width:1180px;
+  max-width:var(--page-max-width);
   grid-template-columns:200px minmax(0,1fr);
-  gap:34px;
-  padding-left:24px;
-  padding-right:24px
+  gap:var(--content-column-gap);
+  padding-left:var(--page-gutter);
+  padding-right:var(--page-gutter)
 }
 .entry-head,.entry-row {
   grid-template-columns:minmax(0,1fr) 82px 100px 64px;
