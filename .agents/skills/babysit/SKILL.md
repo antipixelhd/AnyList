@@ -10,7 +10,7 @@ Stay with the PR until it is actually clean. Do not stop after one check pass if
 ## Workflow
 
 1. Identify the PR number, branch, and base branch.
-2. Confirm the PR is not draft and inspect mergeability, checks, review decision, comments, review threads, and any expected automated reviewers. Record the current head SHA.
+2. Confirm the PR is not draft and inspect mergeability, checks, review decision, comments, review threads, and any expected automated reviewers. Record the current head SHA. Apply the Codex review-request rule below before waiting for reviews.
 3. Watch pending checks and expected automated reviews until they finish for the current head. Poll at a practical interval, usually 30-60 seconds unless the user asks for a different cadence.
 4. Read new comments and unresolved review threads. Treat bot summaries as useful, but verify actionable findings against the code.
 5. Fix real issues in focused commits, run relevant tests/builds, push, and return to step 2.
@@ -19,13 +19,16 @@ Stay with the PR until it is actually clean. Do not stop after one check pass if
 
 ## Automated Review Completion
 
+- Request a Codex review by posting `@codex review` on the PR unless the user explicitly instructs otherwise or Codex is already reviewing the current head. Invoking this skill authorizes this review-request comment; no additional confirmation is needed.
+- Before posting, inspect existing review requests and their reactions. A Codex reviewer-bot eyes reaction (👀) on the PR body or a review-request comment indicates an agent is already reviewing; wait for that review instead of posting a duplicate request. Verify that the active review covers the current head using the head-association rules below. A human eyes reaction or a retained reaction from an older, completed review does not satisfy this exception.
+- After a push, apply the same rule to the new head: request review via `@codex review` unless the user has waived it or Codex is already reviewing that head. If your request has not yet been acknowledged, wait within the review waiting window below instead of repeatedly posting requests.
 - Identify automated reviewers configured for this PR or requested in its comments. A reviewer may report through reactions or comments without creating a required status check or a formal approval.
 - Inspect reactions on the PR body and review-request comments through the GitHub API, including the reacting account. The coarse status and review-thread queries below do not include reactions.
 - For Codex connector reviews, a reviewer-bot eyes reaction (👀) signals that review is underway; a reviewer-bot thumbs-up (👍) signals a clean result; findings arrive as comments or review threads. Use the actual reviewer's convention for other bots. Human reactions do not establish automated review completion.
 - Treat eyes with no subsequent completion evidence as pending. A newer completed review can supersede a retained eyes reaction; do not wait forever merely because the old reaction remains.
 - Tie completion to the current head SHA using review commit IDs, check runs, or a review request associated with that head. An old thumbs-up or an old clean summary is not approval of a newer push. PR-wide reactions without a reliable connection to the latest head are insufficient; timestamps alone do not prove which changes were reviewed.
 - After every push, recheck whether the reviewer is scheduled or requested to review the new head. Process its new findings and repeat the cycle after fixes. A findings comment is actionable output, not a clean result; verify that the review has finished as well as that its findings are addressed.
-- If an expected review fails, stalls, or has no verifiable completion evidence, report it as pending or unverified, not clean. Allow a reasonable waiting window (default: about 10 minutes without meaningful progress, unless the user specifies otherwise), then report the blocker and next step rather than polling indefinitely. Do not trigger another review or post a review-request comment unless authorized.
+- If an expected review fails, stalls, or has no verifiable completion evidence, report it as pending or unverified, not clean. Allow a reasonable waiting window (default: about 10 minutes without meaningful progress, unless the user specifies otherwise), then report the blocker and next step rather than polling indefinitely. The rule above authorizes the initial Codex request for each head; ask the user before retrying a failed or stalled request or triggering other reviewers unless already authorized.
 
 ## GitHub CLI Checks
 

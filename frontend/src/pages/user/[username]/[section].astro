@@ -4,7 +4,7 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ListFilterSelect from '../../../components/ListFilterSelect.astro';
 import Icon from '../../../components/Icon.astro';
 import EntryAnnotations from '../../../components/EntryAnnotations.astro';
-import {tracker, statuses, scoreLabel} from '../../../lib/tracker';
+import {tracker, statuses, scoreLabel, compactListProgress} from '../../../lib/tracker';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
 const {username, section} = Astro.params;
 if (!['movies','series','list'].includes(section!)) return Astro.redirect('/404');
@@ -35,28 +35,32 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
   {data ? <>
     <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,follows_you:data.follows_you,combine_lists:data.combine_lists}} active={section}/>
     <div class="list-shell" data-initial-status={initialStatus}>
-      <button class="mobile-filter-toggle button-secondary" aria-expanded="false" aria-controls="list-filters"><Icon name="sliders"/> <span>Filters & sorting</span><span id="mobile-filter-count" class="filter-count" hidden>0</span></button>
       <aside class="filters" id="list-filters" aria-label="List filters">
-        <div class="mobile-filter-heading"><strong>Filters & sorting</strong><button type="button" class="button-quiet" data-close-filters aria-label="Close filters"><Icon name="close"/></button></div>
-        <label class="filter-search"><Icon name="search"/><input id="list-search" type="search" placeholder="Filter titles" aria-label="Search this list"/></label>
+        <div class="list-filter-search-row">
+          <label class="filter-search"><Icon name="search"/><input id="list-search" type="search" placeholder="Filter titles" aria-label="Search this list"/></label>
+          <button type="button" class="mobile-filter-toggle" aria-label="Filters and sorting" aria-expanded="false" aria-controls="list-filter-panel"><Icon name="ellipsis"/></button>
+        </div>
+        <div class="list-filter-panel" id="list-filter-panel">
         <h2>Lists</h2><div class="status-filters"><button data-status="all" class:list={{selected:initialStatus==='all'}}>All <span>{entries.length}</span></button>{statuses.map(([s,label])=><button data-status={s} class:list={{selected:initialStatus===s}}>{label}<span>{entries.filter((e:any)=>e.status===s).length}</span></button>)}</div>
         <h2>Filters</h2>
         <ListFilterSelect id="genre-filter" label="Genre" options={[["", "All genres"], ...genres.map((genre: string): [string, string] => [genre, genre])]} />
         <label class="filter-year filter-control"><span class="filter-year-heading"><span>Year</span><output id="year-value" for="year-filter">Any year</output></span><input id="year-filter" type="range" min="0" max={years.length} step="1" value="0" data-years={JSON.stringify(years)} aria-label="Release year" aria-valuetext="Any year" disabled={years.length===0}/></label>
-        <div class="desktop-favorite-filter"><ListFilterSelect id="favorite-filter" label="Favorites" options={[["", "All entries"], ["yes", "Favorites only"]]} /></div>
+        <ListFilterSelect id="favorite-filter" label="Favorites" options={[["", "All entries"], ["yes", "Favorites only"]]} />
         <h2>Sort</h2><ListFilterSelect id="sort-filter" label="Order" value={defaultSort} options={[["title", "Title"], ["score", "Score"], ["progress", "Progress"], ["updated", "Recently updated"]]} />
         <button class="button-secondary" id="reset-filters" data-default-sort={defaultSort}>Reset filters</button>
+        </div>
       </aside>
       <div class="list-content">
       <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span>{entries.length>0&&<div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div>}</div>
       <div id="entry-groups">
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
-        <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span>Progress</span>{isCombined&&<span>Type</span>}</div>
+        <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
         {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-media-type={entry.type} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
           <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:'direct'}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><div class="entry-title"><a class="entry-title-link" href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a><EntryAnnotations rewatchCount={entry.rewatch_count} notes={entry.notes}/></div>
           <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={quickRatePoster(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
           <span class="entry-progress">
             <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
+            <span class="entry-mobile-progress" data-mobile-progress-label>{compactListProgress(entry)}</span>
             {data.owner && canIncrement(entry) && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'}>+</button>}
             {entry.status==='completed'&&entry.new_seasons>0&&<small class="unwatched-indicator">{entry.new_seasons} new {entry.new_seasons===1?'season':'seasons'}</small>}
           </span>
@@ -77,8 +81,11 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
 </Tracker>
 <script>
 import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
+import {compactListProgress} from '../../../lib/tracker';
+import {placeDropdown} from '../../../lib/dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from '../../../lib/ui-motion';
 let pageListeners: AbortController;
+document.addEventListener('astro:before-swap',()=>pageListeners?.abort());
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
@@ -144,6 +151,7 @@ document.addEventListener('astro:page-load', () => {
       syncAvailability(row, updated);
       const label=row.querySelector<HTMLElement>('[data-progress-label]')!;
       label.textContent=row.dataset.mediaType==='movie'?String(updated.progress):(updated.season_position||'—');
+      row.querySelector<HTMLElement>('[data-mobile-progress-label]')!.textContent=compactListProgress({...updated,type:row.dataset.mediaType});
       const indicator=row.querySelector<HTMLElement>('.unwatched-indicator');
       if(indicator) indicator.remove();
       if(updated.status==='completed'&&updated.new_seasons>0){
@@ -173,7 +181,7 @@ document.addEventListener('astro:page-load', () => {
     const input = (id:string) => document.getElementById(id) as HTMLInputElement;
     const resetButton=document.querySelector<HTMLButtonElement>('#reset-filters')!;
     const defaultSort=resetButton.dataset.defaultSort||'title';
-    const mobileCount=document.querySelector<HTMLElement>('#mobile-filter-count')!;
+    const mobileToggle=document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
     const yearSlider=input('year-filter');
     const yearOutput=document.querySelector<HTMLOutputElement>('#year-value')!;
     const availableYears=JSON.parse(yearSlider.dataset.years||'[]') as string[];
@@ -186,6 +194,11 @@ document.addEventListener('astro:page-load', () => {
       options:[...root.querySelectorAll<HTMLButtonElement>('[data-filter-value]')],
     }));
     type FilterDropdown=(typeof filterDropdowns)[number];
+    pageListeners.signal.addEventListener('abort',()=>filterDropdowns.forEach(dropdown=>{
+      dropdown.menu.hidden=true;
+      dropdown.trigger.setAttribute('aria-expanded','false');
+      dropdown.root.append(dropdown.menu);
+    }),{once:true});
     function syncDropdown(dropdown:FilterDropdown) {
       const selected=dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value) || dropdown.options[0];
       dropdown.value.textContent=selected?.textContent||'';
@@ -199,6 +212,8 @@ document.addEventListener('astro:page-load', () => {
     }
     function openDropdown(dropdown:FilterDropdown,focusOption=false) {
       filterDropdowns.forEach(other=>{if(other!==dropdown)closeDropdown(other);});
+      document.body.append(dropdown.menu);
+      placeDropdown(dropdown.trigger,dropdown.menu);
       showMenu(dropdown.menu);
       dropdown.trigger.setAttribute('aria-expanded','true');
       if(focusOption)(dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value)||dropdown.options[0])?.focus();
@@ -239,13 +254,22 @@ document.addEventListener('astro:page-load', () => {
           if(match){event.preventDefault();match.focus();}
         }
       },{signal:pageListeners.signal});
-      dropdown.root.addEventListener('focusout',event=>{
-        if(!dropdown.root.contains(event.relatedTarget as Node))closeDropdown(dropdown);
-      },{signal:pageListeners.signal});
     });
     document.addEventListener('click',event=>{
-      filterDropdowns.forEach(dropdown=>{if(!dropdown.root.contains(event.target as Node))closeDropdown(dropdown);});
+      filterDropdowns.forEach(dropdown=>{if(!dropdown.root.contains(event.target as Node)&&!dropdown.menu.contains(event.target as Node))closeDropdown(dropdown);});
     },{signal:pageListeners.signal});
+    document.addEventListener('focusin',event=>{
+      filterDropdowns.forEach(dropdown=>{if(!dropdown.root.contains(event.target as Node)&&!dropdown.menu.contains(event.target as Node))closeDropdown(dropdown);});
+    },{signal:pageListeners.signal});
+    document.addEventListener('scroll',event=>{
+      filterDropdowns.forEach(dropdown=>{if(!dropdown.menu.contains(event.target as Node))closeDropdown(dropdown);});
+    },{capture:true,signal:pageListeners.signal});
+    const placeOpenDropdowns=()=>filterDropdowns.forEach(dropdown=>{
+      if(dropdown.trigger.getAttribute('aria-expanded')==='true')placeDropdown(dropdown.trigger,dropdown.menu);
+    });
+    window.addEventListener('resize',placeOpenDropdowns,{signal:pageListeners.signal});
+    window.visualViewport?.addEventListener('resize',placeOpenDropdowns,{signal:pageListeners.signal});
+    window.visualViewport?.addEventListener('scroll',placeOpenDropdowns,{signal:pageListeners.signal});
     function selectedYear(){const position=Number(yearSlider.value);return position>0?availableYears[position-1]:'';}
     function updateFilterControls() {
       const position=Number(yearSlider.value);
@@ -254,8 +278,8 @@ document.addEventListener('astro:page-load', () => {
       yearOutput.textContent=yearLabel;
       yearSlider.setAttribute('aria-valuetext',yearLabel);
       const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
-      mobileCount.textContent=String(active);
-      mobileCount.hidden=active===0;
+      mobileToggle.toggleAttribute('data-active',active>0);
+      mobileToggle.setAttribute('aria-label',active>0?`Filters and sorting (${active} active)`:'Filters and sorting');
       resetButton.disabled=active===0;
       filterDropdowns.forEach(syncDropdown);
       document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.status===status)));
@@ -286,25 +310,33 @@ document.addEventListener('astro:page-load', () => {
       });
       updateFilterControls();
     }
-    const mobileFilters=matchMedia('(max-width:650px)');
-    if(mobileFilters.matches)input('favorite-filter').value='';
-    mobileFilters.addEventListener('change',()=>{
-      if(mobileFilters.matches){input('favorite-filter').value='';filter();}
-    },{signal:pageListeners.signal});
     refreshList=filter;
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));
     resetButton.addEventListener('click',()=>{['list-search','genre-filter','favorite-filter'].forEach(id=>input(id).value='');yearSlider.value='0';input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
     document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();const grid=button.dataset.view==='grid';groups.classList.toggle('grid-view',grid);updateEntryImages(grid);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
-    const mobileToggle=document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
     const filters=document.querySelector<HTMLElement>('#list-filters')!;
+    const filterPanel=document.querySelector<HTMLElement>('#list-filter-panel')!;
+    const mobileFilters=matchMedia('(max-width:650px)');
+    filterPanel.inert=mobileFilters.matches;
     function setFiltersOpen(open:boolean){
+      if(!mobileFilters.matches)return;
       mobileToggle.setAttribute('aria-expanded',String(open));
-      if(open){filters.classList.add('open');reveal(filters);input('list-search').focus();}
-      else{filterDropdowns.forEach(dropdown=>closeDropdown(dropdown));void dismiss(filters).then(current=>{if(current)filters.classList.remove('open');});mobileToggle.focus();}
+      filterPanel.inert=!open;
+      if(open){filters.classList.add('open');reveal(filterPanel);}
+      else{filterDropdowns.forEach(dropdown=>closeDropdown(dropdown));void dismiss(filterPanel).then(current=>{if(current&&mobileFilters.matches)filters.classList.remove('open');});mobileToggle.focus();}
     }
-    mobileToggle.addEventListener('click',()=>setFiltersOpen(mobileToggle.getAttribute('aria-expanded')!=='true'));
-    document.querySelector('[data-close-filters]')!.addEventListener('click',()=>setFiltersOpen(false));
+    mobileToggle.addEventListener('click',()=>setFiltersOpen(mobileToggle.getAttribute('aria-expanded')!=='true'),{signal:pageListeners.signal});
+    mobileFilters.addEventListener('change',()=>{
+      const focusInside=filterPanel.contains(document.activeElement);
+      filterDropdowns.forEach(dropdown=>closeDropdown(dropdown));
+      reveal(filterPanel);
+      filters.classList.remove('open');
+      mobileToggle.setAttribute('aria-expanded','false');
+      filterPanel.inert=mobileFilters.matches;
+      if(mobileFilters.matches&&focusInside)mobileToggle.focus();
+      else if(!mobileFilters.matches&&document.activeElement===mobileToggle)input('list-search').focus();
+    },{signal:pageListeners.signal});
     document.addEventListener('keydown',event=>{if(!event.defaultPrevented&&event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
     document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});
     updateEntryImages(groups.classList.contains('grid-view'));

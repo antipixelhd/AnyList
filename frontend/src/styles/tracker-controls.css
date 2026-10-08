@@ -589,12 +589,3 @@
     transition:none
   }
 }
-/* List regression guard: the mobile filter trigger must not consume a desktop grid column. */
-.mobile-filter-toggle {
-  display:none!important
-}
-@media(max-width:650px) {
-  .mobile-filter-toggle {
-    display:inline-flex!important
-  }
-}

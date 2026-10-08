@@ -622,9 +622,6 @@ button:disabled {
   justify-content:space-between;
   margin:8px 0
 }
-.mobile-filter-toggle {
-  display:none
-}
 [hidden] {
   display:none!important
 }
@@ -709,20 +706,6 @@ button:disabled {
     display:block;
     margin:24px auto;
     padding:0 16px
-  }
-  .mobile-filter-toggle {
-    display:block;
-    margin-bottom:15px
-  }
-  .filters {
-    display:none;
-    margin-bottom:25px
-  }
-  .filters.open {
-    display:flex
-  }
-  .status-filters {
-    grid-template-columns:repeat(2,1fr)
   }
   .entry-head,.entry-row {
     grid-template-columns:minmax(0,1fr) 35px 48px 32px;

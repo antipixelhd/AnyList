@@ -1,5 +1,6 @@
 <script>
   import { showMenu, hideMenu } from '../lib/ui-motion';
+  import { placeDropdown } from '../lib/dropdown-position';
 
   type StyledSelect = {
     select: HTMLSelectElement;
@@ -34,17 +35,7 @@
     }
 
     function place(control: StyledSelect) {
-      const rect = control.trigger.getBoundingClientRect();
-      const below = innerHeight - rect.bottom - 8;
-      const above = rect.top - 8;
-      const upward = below < 180 && above > below;
-      const space = upward ? above : below;
-      const width = Math.min(rect.width, innerWidth - 16);
-      control.menu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - width - 8))}px`;
-      control.menu.style.width = `${width}px`;
-      control.menu.style.maxHeight = `${Math.min(290, Math.max(80, space - 5))}px`;
-      control.menu.style.top = upward ? 'auto' : `${rect.bottom + 5}px`;
-      control.menu.style.bottom = upward ? `${innerHeight - rect.top + 5}px` : 'auto';
+      placeDropdown(control.trigger, control.menu);
     }
 
     function sync(control: StyledSelect, rebuild = false) {
@@ -221,6 +212,8 @@
       if (openControl && !openControl.menu.contains(event.target as Node)) close(openControl);
     }, { capture: true, signal: listeners.signal });
     window.addEventListener('resize', () => { if (openControl) close(openControl); }, { signal: listeners.signal });
+    window.visualViewport?.addEventListener('resize', () => { if (openControl) place(openControl); }, { signal: listeners.signal });
+    window.visualViewport?.addEventListener('scroll', () => { if (openControl) place(openControl); }, { signal: listeners.signal });
 
     return () => {
       listeners.abort();
