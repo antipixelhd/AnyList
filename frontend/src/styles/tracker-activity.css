@@ -288,7 +288,7 @@ body.tracker {
   }
   .entry-thumbnail .row-menu .ui-icon {
     opacity:0;
-    transition:opacity .12s
+    transition:none
   }
   .entry-thumbnail .row-menu:focus,.entry-thumbnail .row-menu:active {
     background:#228fcbdc;

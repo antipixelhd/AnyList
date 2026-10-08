@@ -291,13 +291,15 @@ button:disabled {
   font-size:var(--type-control-size)
 }
 .row-menu {
+  display:grid;
+  place-items:center;
   border:0;
   border-radius:4px;
   background:#25445d;
   color:var(--bright);
   padding:5px 10px;
   opacity:0;
-  transition:opacity .12s
+  transition:none
 }
 .entry-row:hover .row-menu,.entry-row:focus-within .row-menu {
   opacity:1
