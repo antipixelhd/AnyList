@@ -43,7 +43,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
         <h2>Filters</h2>
         <ListFilterSelect id="genre-filter" label="Genre" options={[["", "All genres"], ...genres.map((genre: string): [string, string] => [genre, genre])]} />
         <label class="filter-year filter-control"><span class="filter-year-heading"><span>Year</span><output id="year-value" for="year-filter">Any year</output></span><input id="year-filter" type="range" min="0" max={years.length} step="1" value="0" data-years={JSON.stringify(years)} aria-label="Release year" aria-valuetext="Any year" disabled={years.length===0}/></label>
-        <ListFilterSelect id="favorite-filter" label="Favorites" options={[["", "All entries"], ["yes", "Favorites only"]]} />
+        <div class="desktop-favorite-filter"><ListFilterSelect id="favorite-filter" label="Favorites" options={[["", "All entries"], ["yes", "Favorites only"]]} /></div>
         <h2>Sort</h2><ListFilterSelect id="sort-filter" label="Order" value={defaultSort} options={[["title", "Title"], ["score", "Score"], ["progress", "Progress"], ["updated", "Recently updated"]]} />
         <button class="button-secondary" id="reset-filters" data-default-sort={defaultSort}>Reset filters</button>
       </aside>
@@ -286,6 +286,11 @@ document.addEventListener('astro:page-load', () => {
       });
       updateFilterControls();
     }
+    const mobileFilters=matchMedia('(max-width:650px)');
+    if(mobileFilters.matches)input('favorite-filter').value='';
+    mobileFilters.addEventListener('change',()=>{
+      if(mobileFilters.matches){input('favorite-filter').value='';filter();}
+    },{signal:pageListeners.signal});
     refreshList=filter;
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));

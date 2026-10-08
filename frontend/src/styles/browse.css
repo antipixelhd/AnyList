@@ -3,7 +3,7 @@
   --browse-sort-gap: 30px;
   --browse-category-gap: 20px;
   margin-top: 42px;
-  max-width: 1240px;
+  max-width: var(--page-max-width);
   padding-bottom: 30px;
 }
 .browse-header {

@@ -1,4 +1,4 @@
-.library-page { max-width:1340px; padding-inline:24px; }
+.library-page { max-width:var(--page-max-width); padding-inline:var(--page-gutter); }
 .library-intro { margin-bottom:30px; }
 .library-intro h1 { margin:0 0 5px; }
 .library-intro p { margin:0; color:var(--muted); }

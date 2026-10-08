@@ -1,5 +1,5 @@
 .anylist-auth{min-height:100dvh;background:radial-gradient(ellipse 75% 70% at 16% 23%,#294561 0%,transparent 65%),linear-gradient(125deg,#15283c 0%,#101f30 55%,#0d1a29 100%);color:#d7e4ee;font-family:var(--font-body)}
-  .auth-topbar{height:calc(72px + env(safe-area-inset-top));display:flex;align-items:center;justify-content:space-between;gap:28px;padding:env(safe-area-inset-top) max(24px,calc((100vw - 1340px)/2 + 24px)) 0;border-bottom:1px solid #ffffff12;background:#142131dd}
+  .auth-topbar{height:calc(72px + env(safe-area-inset-top));display:flex;align-items:center;justify-content:space-between;gap:28px;padding:env(safe-area-inset-top) max(var(--page-gutter),calc((100vw - var(--content-max-width))/2)) 0;border-bottom:1px solid #ffffff12;background:#142131dd}
   .auth-brand{display:inline-flex;align-items:center;gap:11px;color:#f1f8fd;font-size:var(--type-brand-size);font-weight:var(--type-brand-weight);letter-spacing:-.02em}
   .auth-topbar nav{display:flex;gap:28px;color:#a9bfd0;font-family:var(--font-navigation);font-size:var(--type-nav-size);font-weight:var(--type-nav-weight)}
   .auth-topbar nav a:hover,.auth-topbar nav a:focus-visible{color:#56c0f6}

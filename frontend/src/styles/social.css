@@ -3,10 +3,10 @@
   grid-template-columns: 160px minmax(0, 1fr);
   align-items: start;
   align-content: start;
-  gap: 40px;
-  max-width: 1340px;
+  gap: var(--content-column-gap);
+  max-width: var(--page-max-width);
   min-height: 420px;
-  padding-inline: 24px;
+  padding-inline: var(--page-gutter);
 }
 
 .social-content { min-width: 0; }
