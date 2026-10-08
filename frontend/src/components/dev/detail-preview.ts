@@ -143,8 +143,6 @@ function initializeDetails() {
       else state.seasonScores[season] = score;
       render();save();notify(season === undefined ? 'Score saved locally' : `Season ${season+1} score saved locally`);
     }});
-    const help = document.querySelector('#quick-rating-help');
-    if (help) help.textContent = 'Choose a half point. Saved in this preview.';
   };
   const artwork = [...root.querySelectorAll<HTMLElement>('[data-lab-gallery-image]')].map(el => ({src:el.dataset.labImage!,caption:el.dataset.labImageCaption!}));
   const scenes = [...root.querySelectorAll<HTMLElement>('[data-lab-scene]')].map(el => el.dataset.labImage!);
