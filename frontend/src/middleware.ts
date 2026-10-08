@@ -1,4 +1,5 @@
 import { sessionCookieName } from "./lib/session-cookies";
+import { displayPreferenceCookies } from "./lib/display-preferences";
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
@@ -176,6 +177,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (context.locals.user && token && !isStaticAsset && !pathname.startsWith('/api/')) {
     context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
+    for (const [name, value] of displayPreferenceCookies(context.locals.settings)) {
+      context.cookies.set(name, value, {
+        path: "/", sameSite: "lax", maxAge: 31536000,
+        secure: context.url.protocol === "https:",
+      });
+    }
   }
 
   const response = await next();

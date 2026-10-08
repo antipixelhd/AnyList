@@ -255,14 +255,6 @@ body.tracker {
   font-size:var(--type-panel-size);
   font-weight:var(--type-panel-weight)
 }
-.settings-heading h1 {
-  font-size:var(--type-page-size);
-  font-weight:var(--type-page-weight)
-}
-.settings-content .section-headline {
-  font-size:var(--type-panel-size);
-  font-weight:var(--type-panel-weight)
-}
 @media(max-width:650px) {
   .profile-identity h1 {
     font-size:var(--type-profile-size)

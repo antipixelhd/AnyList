@@ -27,7 +27,7 @@ export function appMobileNavigation({profile, pathname, signedIn, combineLists}:
     ...(signedIn ? [
       {label: 'Profile', icon: 'user', href: profile, active: pathname === profile || pathname === `${profile}/`},
       {label: 'Notifications', icon: 'bell', href: '/recent-events', notifications: true, active: pathname === '/recent-events'},
-      {label: 'Settings', icon: 'gear', href: '/user-settings', active: ['/settings','/user-settings','/connections','/admin'].includes(pathname)},
+      {label: 'Settings', icon: 'gear', href: '/user-settings', active: pathname.startsWith('/settings/') || ['/settings','/user-settings','/connections','/admin'].includes(pathname)},
       {label: 'Sign out', icon: 'sign-out', action: 'logout' as const},
     ] : [
       {label: 'Sign up', icon: 'plus', href: '/register'},

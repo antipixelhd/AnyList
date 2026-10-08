@@ -33,3 +33,10 @@ test('guest navigation has no account actions or invalid login/list links', () =
   assert.ok(items.some(item => item.href === '/register'));
   assert.ok(items.some(item => item.href === '/login'));
 });
+
+test('settings subcategories keep the Settings action active', () => {
+  for (const pathname of ['/settings/media', '/settings/lists', '/settings/notifications']) {
+    const {items} = navigation({pathname});
+    assert.equal(items.find(item => item.label === 'Settings').active, true);
+  }
+});
