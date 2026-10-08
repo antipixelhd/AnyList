@@ -62,6 +62,7 @@
   border-radius: 4px;
   background: var(--panel);
   color: var(--bright);
+  outline: none;
 }
 .social-search button { display: inline-flex; align-items: center; gap: 7px; }
 .social-content .error-message { margin: 0 0 20px; }

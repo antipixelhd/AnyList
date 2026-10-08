@@ -1,0 +1,65 @@
+.settings-mobile-menu { display: none; }
+
+@media (max-width: 800px) {
+  .settings-mobile-menu {
+    display: block;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-mobile-menu summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 56px;
+    padding: 12px 16px;
+    color: var(--bright);
+    font-family: var(--font-navigation);
+    font-size: 2rem;
+    font-weight: 500;
+    line-height: 1.4;
+    list-style: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .settings-mobile-menu summary::-webkit-details-marker { display: none; }
+  .settings-mobile-menu summary > .ui-icon { color: var(--blue); font-size: 20px; }
+  .settings-mobile-menu summary:focus-visible { outline: 2px solid var(--blue); outline-offset: -4px; }
+
+  .settings-mobile-menu nav {
+    display: grid;
+    gap: 4px;
+    padding: 0 16px 12px;
+    font-size: var(--type-nav-size);
+    font-weight: 500;
+  }
+
+  .settings-mobile-menu nav a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: 4px;
+  }
+
+  .settings-mobile-menu nav a:is(:hover, [aria-current="page"]) {
+    background: var(--panel);
+    color: var(--blue);
+  }
+
+  .settings-app .settings-heading { background: none; border: 0; }
+  .settings-app .settings-heading > div { padding: 20px 16px 16px; }
+  .settings-app .settings-heading :is(.eyebrow, p) { display: none; }
+  .settings-app .settings-heading h1 {
+    margin: 0;
+    font-size: var(--type-panel-size);
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  .settings-app .settings-shell { margin-top: 0; }
+  .settings-app .settings-nav { display: none; }
+}

@@ -15,6 +15,7 @@ import NavigationRuntime from '../components/NavigationRuntime.astro';
 import MotionRuntime from '../components/MotionRuntime.astro';
 import StyledSelectRuntime from '../components/StyledSelectRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
+import '../styles/settings-mobile-header.css';
 import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
 
@@ -48,6 +49,17 @@ if (user?.is_admin) {
     <a class="skip-link" href="#settings-content">Skip to settings</a>
     <AppBar />
 
+    <details class="settings-mobile-menu">
+      <summary><span>Settings</span><Icon name="ellipsis" /></summary>
+      <nav aria-label="Settings sections">
+        {settingsLinks.map((item) => (
+          <a href={item.href} aria-current={pathname === item.href ? 'page' : undefined}>
+            <Icon name={item.icon} fixedWidth /><span>{item.label}</span>
+          </a>
+        ))}
+      </nav>
+    </details>
+
     <div class="settings-heading">
       <div>
         <span class="eyebrow">Your account</span>
@@ -80,3 +92,14 @@ if (user?.is_admin) {
     <ProfileThemeRuntime />
   </body>
 </html>
+<script>
+  let settingsMenuListeners: AbortController | undefined;
+  document.addEventListener('astro:page-load', () => {
+    settingsMenuListeners?.abort();
+    settingsMenuListeners = new AbortController();
+    const menu = document.querySelector<HTMLDetailsElement>('.settings-mobile-menu');
+    menu?.querySelector('summary')?.addEventListener('click', event => {
+      if (!menu.open && window.scrollY > 0) event.preventDefault();
+    }, {signal: settingsMenuListeners.signal});
+  });
+</script>
