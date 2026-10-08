@@ -223,8 +223,7 @@
   outline:none
 }
 .list-shell .filter-search input:focus-visible {
-  border-color:var(--blue);
-  box-shadow:0 0 0 1px var(--blue)
+  background:#1d3144
 }
 .list-shell .filters {
   z-index:3
