@@ -299,3 +299,18 @@ test('browse arrival grows from eighty percent once, and new cards still transit
   p.append();
   assert.equal(p.animations.length, 2);
 });
+
+test('mobile browse posters animate downward entries and newly loaded cards', t => {
+  const p = preview(t, {mobile: true, animateInitial: false, scaleEntrance: true, downwardOnly: true});
+  p.scroll(424);
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  p.animations[0].dispatchEvent(new Event('finish'));
+  p.scroll(1400);
+  p.scroll(1300);
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+  p.append();
+  assert.equal(p.animations.length, 3);
+});

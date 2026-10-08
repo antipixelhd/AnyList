@@ -7,6 +7,8 @@ import { applyResponsiveArtwork } from "./responsive-artwork";
 import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
+import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
+import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
 
@@ -51,16 +53,19 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.browseScripted = "";
   // Start slots only after the native controls have finished their layout handoff.
   // A repeated page-load event must not restart an already running entrance.
-  if (!root.hasAttribute("data-browse-arrivals-ready")) {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (signal.aborted || !root.isConnected) return;
-      root.setAttribute("data-browse-arrivals-ready", "");
-      root.removeAttribute("data-browse-arrivals-pending");
-    }));
-  }
+  const animateInitial = !root.hasAttribute("data-browse-arrivals-ready");
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (signal.aborted || !root.isConnected) return;
+    root.setAttribute("data-browse-arrivals-ready", "");
+    root.removeAttribute("data-browse-arrivals-pending");
+    initializeScrollMotion(root, signal, '.browse-cover', 'browse-scroll-reveal', {
+      animateInitial, downwardOnly: true, scaleEntrance: true,
+    });
+  }));
   const find = <T extends HTMLElement>(selector: string) =>
     root.querySelector<T>(selector)!;
   const form = find<HTMLFormElement>("[data-browse-form]");
+  initializeMobileBrowseFilters(form, signal);
   const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
   const field = (name: string) =>
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
@@ -734,6 +739,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           "[data-filter-menu]",
         );
         if (menu?.open) {
+          event.stopPropagation();
           void closeFilter(menu, true);
         }
       }
