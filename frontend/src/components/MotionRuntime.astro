@@ -14,8 +14,11 @@
   }
 
   function animateScale(element: HTMLElement, scale: number, duration: number) {
-    active.get(element)?.stop();
-    if (reduced()) {
+    const rendered = element.isConnected && element.getClientRects().length > 0;
+    const previous = active.get(element);
+    if (rendered) previous?.stop();
+    else previous?.cancel();
+    if (reduced() || !rendered) {
       active.delete(element);
       element.style.removeProperty('scale');
       return;
@@ -102,11 +105,12 @@
       if (pressed === element) pressed = null;
     }
   });
-  visibility.observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['hidden','open']});
+  visibility.observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['class','hidden','open']});
   document.addEventListener('astro:before-swap', () => {
     cancelUiMotion();
     for (const [element, control] of active) {
-      control.stop();
+      if (element.isConnected && element.getClientRects().length) control.stop();
+      else control.cancel();
       element.style.removeProperty('scale');
     }
     active.clear();

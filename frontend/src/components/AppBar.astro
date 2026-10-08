@@ -52,7 +52,7 @@ const primaryItems = [
   ...listItems,
   {href: '/browse', label: 'Browse', icon: 'browse', active: active('/browse')},
 ];
-const settingsRoute = ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
+const settingsRoute = pathname.startsWith('/settings/') || ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
 const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists});
 ---
 <header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">

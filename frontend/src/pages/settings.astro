@@ -1,14 +1,12 @@
 ---
+import AccountNameSettings from "../components/settings/AccountNameSettings.astro";
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import Icon from "../components/Icon.astro";
 import { api } from "../lib/api";
 import type { TotpBackupCode } from "../lib/api";
 
 const { token } = Astro.locals;
-const [settings, me] = await Promise.all([
-  Astro.locals.settings ?? api.auth.getSettings(token!),
-  api.auth.me(token!),
-]);
+const me = await api.auth.me(token!);
 const security = await api.auth.accountSecurity(token!);
 let backupCodes: TotpBackupCode[] = [];
 if (me.totp_enabled) {
@@ -25,72 +23,14 @@ if (me.totp_enabled) {
   <div
     id="app-data"
     data-token={token}
-    data-blur-explicit={String(settings.blur_explicit !== false)}
-    data-time-format-24h={String(settings.time_format_24h !== false)}
     class="hidden"
     aria-hidden="true"
   ></div>
   <div data-account-settings-page class="max-w-4xl mx-auto">
     <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
-    <div class="space-y-12">
-      <!-- General Settings -->
-      <section>
-        <div class="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
-          <h2 class="section-headline">General</h2>
-        </div>
-        <form id="settings-form" class="space-y-6">
-          <div class="space-y-6 max-w-xl">
-          <!-- RPDB API Key -->
-          <div class="space-y-2">
-            <label for="rpdb_api_key" class="block text-sm font-medium text-zinc-400">RPDB API Key</label>
-            <p class="text-xs"><a href="https://ratingposterdb.com/login" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Open your RPDB API key</a></p>
-            <div class="flex gap-2">
-              <div class="relative flex-1 group/field">
-                <input
-                  type="password"
-                  name="rpdb_api_key"
-                  id="rpdb_api_key"
-                  value={settings.rpdb_api_key || ""}
-                  maxlength="255"
-                  class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  <Icon name="eye" class="w-5 h-5 eye-icon" />
-                  <Icon name="eye-slash" class="w-5 h-5 eye-slash-icon hidden" />
-                </button>
-              </div>
-              <button
-                type="button"
-                data-action="test_rpdb"
-                title="Test RPDB key"
-                class="js-action-btn px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <Icon name="play" class="w-5 h-5" />
-              </button>
-            </div>
-            <div class="text-xs text-zinc-500 space-y-1">
-              <p>Optional personal key for rating posters. Leave blank to disable and use original artwork. AnyList fetches the posters from RPDB server-side, so your key is never exposed in the page.</p>
-              <p>Choose poster style and ratings in the <a href="https://manager.ratingposterdb.com/" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">RPDB manager</a>. Feature availability for your current plan is managed by RPDB.</p>
-            </div>
-          </div>
-          </div>
-
-          <div class="pt-6">
-            <button
-              id="save-settings-btn"
-              type="submit"
-              class="w-full sm:w-auto button-primary font-bold px-8 py-3 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-            >
-              Save Changes
-            </button>
-          </div>
-        </form>
-      </section>
+    <div class="settings-stack">
+      <AccountNameSettings username={me.username} />
 
       <!-- Security -->
       <section id="2fa-section">
@@ -263,6 +203,7 @@ if (me.totp_enabled) {
                   type="password"
                   name="current_password"
                   id="current_password"
+                  autocomplete="current-password"
                   required
                   class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 />
@@ -283,6 +224,7 @@ if (me.totp_enabled) {
                   type="password"
                   name="new_password"
                   id="new_password"
+                  autocomplete="new-password"
                   required
                   class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 />
@@ -303,6 +245,7 @@ if (me.totp_enabled) {
                   type="password"
                   name="confirm_password"
                   id="confirm_password"
+                  autocomplete="new-password"
                   required
                   class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 />
@@ -522,68 +465,6 @@ if (me.totp_enabled) {
   }
 
   function setupActions() {
-    const btns = document.querySelectorAll<HTMLButtonElement>('[data-account-settings-page] .js-action-btn');
-    btns.forEach(btn => {
-      // Clean up previous listeners if any (important for Astro View Transitions)
-      const newBtn = btn.cloneNode(true) as HTMLButtonElement;
-      if (btn.parentNode) {
-        btn.parentNode.replaceChild(newBtn, btn);
-      }
-      
-      newBtn.addEventListener('click', async () => {
-        const action = newBtn.getAttribute('data-action');
-        newBtn.disabled = true;
-        const originalHTML = newBtn.innerHTML;
-        newBtn.textContent = '...';
-
-        try {
-          let url = '';
-          let method = 'POST';
-          let requestBody: Record<string, string | null> | undefined;
-
-          if (action === 'test_tmdb') {
-            const val = (document.getElementById('tmdb_api_key') as HTMLInputElement).value;
-            url = '/api/proxy/auth/test-tmdb';
-            requestBody = { key: val };
-          } else if (action === 'test_tvdb') {
-            const val = (document.getElementById('tvdb_api_key') as HTMLInputElement).value;
-            const pin = (document.getElementById('tvdb_subscriber_pin') as HTMLInputElement)?.value;
-            url = '/api/proxy/auth/test-tvdb';
-            requestBody = { key: val, pin: pin || null };
-          } else if (action === 'test_rpdb') {
-            const val = (document.querySelector<HTMLInputElement>('#rpdb_api_key') as HTMLInputElement).value;
-            url = '/api/proxy/auth/test-rpdb';
-            requestBody = { key: val };
-          }
-
-          if (!url) throw new Error('This account action is unavailable.');
-          const res = await fetch(url, {
-            method,
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              ...(requestBody ? { 'Content-Type': 'application/json' } : {}),
-            },
-            body: requestBody ? JSON.stringify(requestBody) : undefined,
-          });
-          const data = await res.json();
-          if (action === 'test_rpdb' && data.success !== true) {
-            throw new Error('RPDB could not validate this API key. Check the key and try again.');
-          }
-
-          if (res.ok) {
-            showMessage(data.message || 'Action successful!');
-          } else {
-            throw new Error(data.detail || 'Action failed');
-          }
-        } catch (e) {
-          showMessage(errorMessage(e), 'error');
-        } finally {
-          newBtn.disabled = false;
-          newBtn.innerHTML = originalHTML;
-        }
-      });
-    });
-
     // Delete Account Logic
     const deleteBtn = document.querySelector<HTMLButtonElement>('#delete-account-btn');
     const modal = document.getElementById('delete-modal');
@@ -623,72 +504,16 @@ if (me.totp_enabled) {
   }
 
 
-  function applySavedAccent() {
-    const saved = localStorage.getItem('accentTheme') || 'blue';
-    if (saved === 'blue') {
-      document.documentElement.removeAttribute('data-accent');
-    } else {
-      document.documentElement.setAttribute('data-accent', saved);
-    }
-    localStorage.setItem('accentTheme', saved);
-  }
-
-  function setupSettingsForm() {
-    const form = document.querySelector<HTMLFormElement>('#settings-form');
-    const saveBtn = document.querySelector<HTMLButtonElement>('#save-settings-btn');
-    if (!form || !saveBtn || form.dataset.initialized) return;
-    form.dataset.initialized = 'true';
-    const fields = ['rpdb_api_key'];
-    const fieldValue = (data: FormData, field: string) => {
-      const value = String(data.get(field) || '');
-      return (field === 'rpdb_api_key' ? value.trim() : value) || null;
-    };
-    const savedValues = Object.fromEntries(fields.map(field => [field, (document.getElementById(field) as HTMLInputElement).defaultValue.trim() || null]));
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-
-      saveBtn.disabled = true;
-      const originalText = saveBtn.textContent;
-      saveBtn.textContent = 'Saving...';
-
-      try {
-        const formData = new FormData(form);
-        const settings: Record<string, string | null> = {};
-        for (const field of fields) {
-          const value = fieldValue(formData, field);
-          if (value !== savedValues[field]) settings[field] = value;
-        }
-
-        const res = await fetch(`/api/proxy/auth/settings`, {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(settings),
-        });
-
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.detail || 'Failed to update settings');
-        }
-        Object.assign(savedValues, settings);
-
-        showMessage('Settings updated successfully!');
-      } catch (e) {
-        showMessage(errorMessage(e), 'error');
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = originalText;
-      }
-    });
-  }
-
   function setupPasswordForm() {
     const form = document.querySelector<HTMLFormElement>('#password-form');
     const updateBtn = document.querySelector<HTMLButtonElement>('#update-password-btn');
-    if (!form || !updateBtn) return;
+    if (!form || !updateBtn || form.dataset.initialized) return;
+    form.dataset.initialized = 'true';
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+
+      if (updateBtn.disabled) return;
 
       const formData = new FormData(form);
       const current_password = formData.get('current_password') || null;
@@ -728,7 +553,8 @@ if (me.totp_enabled) {
 
   function setupEmailForm() {
     const form = document.querySelector<HTMLFormElement>('#email-form');
-    if (!form) return;
+    if (!form || form.dataset.initialized) return;
+    form.dataset.initialized = 'true';
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
@@ -755,7 +581,8 @@ if (me.totp_enabled) {
 
   function setupExportData() {
     const btn = document.querySelector<HTMLButtonElement>('#export-data-btn');
-    if (!btn) return;
+    if (!btn || btn.dataset.initialized) return;
+    btn.dataset.initialized = 'true';
 
     btn.addEventListener('click', async () => {
       const selection = await showExportDataModal();
@@ -803,26 +630,14 @@ if (me.totp_enabled) {
     });
   }
 
-  applySavedAccent();
   setupActions();
-  setupSettingsForm();
   setupPasswordForm();
   setupEmailForm();
-
-  // Keep browser display preferences in sync with the account values.
-  if (appData) {
-    const blurExplicit = appData.dataset.blurExplicit === 'true';
-    document.cookie = `blur_explicit=${blurExplicit}; path=/; SameSite=Lax; Max-Age=31536000`;
-    document.documentElement.classList.toggle('blur-explicit', blurExplicit);
-    document.cookie = `time_format_24h=${appData.dataset.timeFormat24h}; path=/; SameSite=Lax; Max-Age=31536000`;
-  }
 
   setupExportData();
 
   document.addEventListener('astro:after-swap', () => {
-    applySavedAccent();
     setupActions();
-    setupSettingsForm();
     setupPasswordForm();
     setupEmailForm();
     setupExportData();
@@ -833,7 +648,7 @@ if (me.totp_enabled) {
 
 <script>
   import QRCode from 'qrcode';
-  import { escapeHtml as esc } from '../lib/settings-feedback';
+  import { escapeHtml as esc, showMessage, errorMessage } from '../lib/settings-feedback';
 
   const appData = document.getElementById('app-data') as HTMLElement | null;
   const token: string = appData?.dataset.token ?? '';
@@ -859,6 +674,10 @@ if (me.totp_enabled) {
   }
 
   function setup2fa() {
+    const section = document.getElementById('2fa-section');
+    if (!section || section.dataset.initialized) return;
+    section.dataset.initialized = 'true';
+    pendingTotpSecret = '';
     // Enable flow
     const enableBtn = document.querySelector<HTMLButtonElement>('#enable-2fa-btn');
     const setupPanel = document.getElementById('2fa-setup-panel');
@@ -900,7 +719,7 @@ if (me.totp_enabled) {
 
         setupPanel?.classList.remove('hidden');
       } catch (e: unknown) {
-        show2faSetupError(e instanceof Error ? e.message : 'Setup failed');
+        showMessage(errorMessage(e), 'error');
       } finally {
         enableBtn.textContent = 'Enable 2FA';
         (enableBtn as HTMLButtonElement).disabled = false;
