@@ -41,31 +41,34 @@ import Icon from './Icon.astro';
 </dialog>
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
-import { applyResponsiveArtwork } from '../lib/responsive-artwork';
+import { editorStore, seedEditorPage, type EditorTitle } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
+  const sessionSignal = pageListeners.signal;
   if (!document.querySelector('#tracking-editor')) return;
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
   setupScoreSteppers(dialog);
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
   let current: any = null;
+  let currentTitle: EditorTitle | null = null;
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
   let displayedScore = '';
   const libraryButton = dialog.querySelector<HTMLButtonElement>('[data-editor-library]')!;
-  let libraryRequest: AbortController | null = null;
   let libraryDesired = false;
-  let libraryCommitted = false;
-  let libraryRevision = 0;
-  let libraryEpoch = 0;
-  let librarySyncing = false;
-  const retained = new Map<number, any>((JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]') as any[]).map(entry => [entry.id, entry]));
-  // The embedded list entries are only a first-load shortcut. A quick rating or
-  // another in-place write makes them stale even while this page stays mounted.
-  document.addEventListener('anylist:data-changed', () => retained.clear(), { signal: pageListeners.signal });
+  seedEditorPage();
+  document.addEventListener('media-tracker:rating-changed', event => {
+    const saved = (event as CustomEvent).detail;
+    if (saved.status) editorStore.acceptSaved(saved);
+    else editorStore.invalidate(saved.id);
+  }, {signal:pageListeners.signal});
+  document.addEventListener('anylist:entry-saved', event => {
+    const saved = (event as CustomEvent).detail;
+    editorStore.acceptSaved(saved);
+  }, {signal:pageListeners.signal});
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
   const saveButton = dialog.querySelector<HTMLButtonElement>('.editor-save')!;
@@ -113,29 +116,32 @@ document.addEventListener('astro:page-load', () => {
     void closeDialog(dialog);
   };
   function finishEditing() {
-    // A successful write ends this search/editor flow before reloading the list.
+    // Close immediately; background writes keep their own snapshot for retry.
     const search = document.querySelector<HTMLDialogElement>('[data-quick-search]');
     if (dialog.open) dialog.close();
     if (search?.open) search.close();
   }
   function populateEditor(title: any) {
-    const embedded = !Object.prototype.hasOwnProperty.call(title, 'entry');
-    const entry = embedded ? title : title.entry;
+    const entry = title.entry;
+    currentTitle = title;
     current = {id:title.id, type:title.type, ...(entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null})};
     document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !entry;
+    document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.disabled = false;
     document.querySelector('#editor-title')!.textContent = title.title;
     document.querySelector('#editor-media-type')!.textContent = title.type === 'series' ? 'TV series' : 'Movie';
     const poster = document.querySelector<HTMLImageElement>('#editor-poster')!;
     const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
-    if (title.poster) {
-      applyResponsiveArtwork(poster,title.poster,{size:'w342',sizes:'(max-width:760px) 78px, 104px',route:'direct'});
+    const artwork = editorStore.artwork(title);
+    [poster, backdrop].forEach(image => { image.removeAttribute('srcset'); image.removeAttribute('sizes'); });
+    if (artwork.poster) {
+      poster.src = artwork.poster;
       poster.alt = `${title.title} poster`;
     } else {
       poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.alt = '';
     }
     poster.hidden = !title.poster;
-    const backdropPath = title.backdrop || title.poster;
-    if (backdropPath) applyResponsiveArtwork(backdrop,backdropPath,{size:'w1280',sizes:'(max-width:760px) calc(100vw - 18px), min(980px, calc(100vw - 32px))',route:'direct'});
+    const backdropPath = artwork.backdrop;
+    if (backdropPath) backdrop.src = backdropPath;
     else { backdrop.removeAttribute('src'); backdrop.removeAttribute('srcset'); backdrop.removeAttribute('sizes'); }
     backdrop.hidden = !backdropPath;
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
@@ -144,31 +150,20 @@ document.addEventListener('astro:page-load', () => {
     field('manual_score').value = calculatedScore == null ? '' : String(current.rating_mode === 'average' ? Number(Number(calculatedScore).toFixed(1)) : calculatedScore);
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
-    loadLibraryState(current.id);
+    loadLibraryState(title);
     field('progress').disabled = title.type === 'movie';
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type === 'movie';
     saveButton.disabled = false;
   }
-  async function loadLibraryState(mediaId: number) {
-    libraryRequest?.abort();
-    const epoch = ++libraryEpoch;
-    librarySyncing = false;
-    const controller = new AbortController();
-    libraryRequest = controller;
+  function loadLibraryState(title: EditorTitle) {
     libraryButton.hidden = true;
-    libraryButton.disabled = true;
-    try {
-      const response = await fetch(`/api/proxy/tracking/library/${mediaId}`, {signal: controller.signal});
-      if (!response.ok) return;
-      const state = await response.json();
-      if (libraryRequest !== controller || libraryEpoch !== epoch || current?.id !== mediaId) return;
-      if (!Array.isArray(state.connections) || state.connections.length === 0) return;
-      libraryDesired = state.desired === true;
-      libraryCommitted = libraryDesired;
+    libraryButton.disabled = false;
+    if (title.editor_library?.available) {
+      libraryDesired = title.editor_library.desired;
       renderLibraryButton();
       libraryButton.hidden = false;
       libraryButton.disabled = false;
-    } catch (cause) { if ((cause as Error).name !== 'AbortError') console.warn('Could not load streaming-library state.', cause); }
+    }
   }
   function renderLibraryButton() {
     libraryButton.setAttribute('aria-pressed', String(libraryDesired));
@@ -178,54 +173,26 @@ document.addEventListener('astro:page-load', () => {
   }
   libraryButton.addEventListener('click', () => {
     if (!current || libraryButton.disabled) return;
-    libraryDesired = !libraryDesired;
-    libraryRevision++;
-    renderLibraryButton();
-    void syncLibraryIntent(current.id, libraryEpoch);
+    const editing = currentTitle!;
+    void editorStore.writeLibrary(editing, !libraryDesired).catch(cause => {
+      if (sessionSignal.aborted) return;
+      if (!dialog.open || currentTitle !== editing) { window.anyListToast?.(cause.message); return; }
+      error.textContent = cause.message; error.hidden = false;
+    });
   });
-  async function syncLibraryIntent(mediaId: number, epoch: number) {
-    if (librarySyncing || epoch !== libraryEpoch) return;
-    librarySyncing = true;
-    libraryButton.setAttribute('aria-busy', 'true');
-    while (epoch === libraryEpoch && current?.id === mediaId && libraryDesired !== libraryCommitted) {
-      const target = libraryDesired;
-      const revision = libraryRevision;
-      try {
-        const response = await fetch(`/api/proxy/tracking/library/${mediaId}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({in_library:target})});
-        if (!response.ok) { const data = await response.json().catch(() => null); throw new Error(typeof data?.detail === 'string' ? data.detail : 'Could not update the streaming library.'); }
-        const state = await response.json();
-        if (epoch !== libraryEpoch || current?.id !== mediaId) return;
-        libraryCommitted = state.desired === true;
-        if (revision === libraryRevision) libraryDesired = libraryCommitted;
-        renderLibraryButton();
-        document.dispatchEvent(new CustomEvent('anylist:data-changed'));
-      } catch (cause) {
-        if (epoch !== libraryEpoch || current?.id !== mediaId) return;
-        if (revision === libraryRevision) {
-          libraryDesired = libraryCommitted;
-          renderLibraryButton();
-          error.textContent = cause instanceof Error ? cause.message : 'Could not update the streaming library.';
-          error.hidden = false;
-          break;
-        }
-        // A newer click arrived during this failed write; try to apply that final intent.
-      }
+  document.addEventListener('anylist:editor-state', event => {
+    const title = (event as CustomEvent<EditorTitle>).detail;
+    if (dialog.open && currentTitle && (title === currentTitle || title.id && title.id === currentTitle.id)) {
+      libraryDesired = title.editor_library?.desired === true;
+      renderLibraryButton();
     }
-    if (epoch === libraryEpoch) {
-      librarySyncing = false;
-      libraryButton.removeAttribute('aria-busy');
-    }
-  }
-  async function openEditor(mediaId: number, button: HTMLElement) {
-    if (!Number.isSafeInteger(mediaId) || mediaId <= 0) return;
+  }, {signal:pageListeners.signal});
+  async function openEditor(mediaId: number | null, button: HTMLElement, supplied?: EditorTitle) {
+    if (!supplied && (!mediaId || !Number.isSafeInteger(mediaId) || mediaId <= 0)) return;
     error.hidden = true;
     form.reset();
     syncStatus(); closeStatus();
     current = null;
-    libraryRequest?.abort();
-    libraryRequest = null;
-    libraryEpoch++;
-    librarySyncing = false;
     libraryButton.hidden = true;
     opener = button;
     const listRow = button.closest<HTMLElement>('.entry-row');
@@ -237,30 +204,28 @@ document.addEventListener('astro:page-load', () => {
     loadController?.abort();
     const controller = new AbortController();
     loadController = controller;
-    const cached = retained.get(mediaId);
+    const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
     if (cached) {
+      const image = button.closest('.browse-card, .entry-row, .quick-search-result')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.detail-poster');
+      editorStore.warmArtwork(cached, image?.currentSrc || image?.src);
       populateEditor(cached);
       showDialog(dialog);
       return;
     }
-    showDialog(dialog);
-    document.querySelector('#editor-title')!.textContent = 'Loading entry…';
-    saveButton.disabled = true;
     try {
-      const res = await fetch(`/api/proxy/tracking/title/${mediaId}`, { signal: controller.signal });
-      if (!res.ok) throw new Error('Unable to load this entry. Try again.');
-      const title = await res.json();
-      if (loadController !== controller || !dialog.open || opener !== button) return;
+      const title = await editorStore.load(mediaId!);
+      if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
       populateEditor(title);
-    } catch(e) { if ((e as Error).name !== 'AbortError') { error.textContent = (e as Error).message; error.hidden = false; } }
+      showDialog(dialog);
+    } catch(e) { if ((e as Error).name !== 'AbortError') window.anyListToast?.((e as Error).message); }
   }
   document.addEventListener('click', event => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
     if (button) void openEditor(Number(button.dataset.editEntry), button);
   }, { signal: pageListeners.signal });
   document.addEventListener('anylist:open-editor', event => {
-    const {mediaId, opener} = (event as CustomEvent<{mediaId:number;opener:HTMLElement}>).detail;
-    if (Number.isSafeInteger(mediaId) && mediaId > 0 && opener instanceof HTMLElement) void openEditor(mediaId, opener);
+    const {mediaId, opener, title} = (event as CustomEvent<{mediaId:number|null;opener:HTMLElement;title?:EditorTitle}>).detail;
+    if (opener instanceof HTMLElement) void openEditor(mediaId, opener, title);
   }, { signal: pageListeners.signal });
   function ratedSeasonScores() {
     return Object.entries(current?.season_scores || {}).filter(([season, score]) => Number(season) > 0 && Number(score) > 0).map(([, score]) => Number(score));
@@ -277,7 +242,7 @@ document.addEventListener('astro:page-load', () => {
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
   dialog.addEventListener('close', () => {
-    loadController?.abort(); loadController = null; libraryRequest?.abort(); libraryRequest = null; libraryEpoch++; librarySyncing = false; libraryButton.hidden = true; libraryButton.disabled = true; libraryButton.removeAttribute('aria-busy'); current = null; displayedScore = ''; form.reset();
+    loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();
     const listRow = opener?.closest<HTMLElement>('.entry-row');
     if (listRow) {
       const sectionHeading = listRow.closest<HTMLElement>('.status-section')?.querySelector<HTMLElement>('h2');
@@ -292,12 +257,11 @@ document.addEventListener('astro:page-load', () => {
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
-    try{const response=await fetch(`/api/proxy/tracking/entry/${current.id}?confirmed=true`,{method:'DELETE'});if(!response.ok)throw new Error('Could not delete the entry. Try again.');finishEditing();location.reload();}catch(e){error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+    try{const id=await editorStore.remove(currentTitle!);finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
   });
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!current) return;
     error.hidden = true;
-    const submit = saveButton;
     const status = field('status').value;
     const body: any = {status, notes:field('notes').value, favorite:field('favorite').checked,
       rewatch_count:Number(field('rewatch_count').value || 0)};
@@ -321,13 +285,38 @@ document.addEventListener('astro:page-load', () => {
         body.confirm_rollback = true;
       }
     }
-    submit.disabled = true;
+    const editing = currentTitle!;
+    const previous = {...current};
+    const previousScore = displayedScore;
+    const previousOpener = opener;
+    finishEditing();
     try {
-      const response = await fetch(`/api/proxy/tracking/entry/${current.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      if (!response.ok) { const data = await response.json(); throw new Error(typeof data.detail === 'string' ? data.detail : 'Check your entry and try again.'); }
-      finishEditing();
-      location.reload();
-    } catch(e) { error.textContent = (e as Error).message; error.hidden = false; submit.disabled = false; }
+      const saved = await editorStore.write(editing, body);
+      if (sessionSignal.aborted) return;
+      document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
+      if(!document.querySelector('[data-browse-page]')) location.reload();
+    } catch(e) {
+      if (sessionSignal.aborted) return;
+      if (dialog.open) { window.anyListToast?.((e as Error).message); return; }
+      opener = previousOpener;
+      populateEditor({...editing, entry:{...previous,...body}});
+      current = {...previous, id:editing.id};
+      document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !editing.entry;
+      displayedScore = previousScore;
+      error.textContent = (e as Error).message; error.hidden = false;
+      showDialog(dialog);
+    }
   });
+  const prepare = (event: Event) => {
+    const button = (event.target as Element).closest<HTMLElement>('[data-edit-entry]');
+    if (!button) return;
+    const id = Number(button.dataset.editEntry);
+    const image = button.closest('.entry-row')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.detail-poster');
+    const title = editorStore.find(id);
+    if (title) editorStore.warmArtwork(title, image?.currentSrc || image?.src);
+    else void editorStore.load(id).then(title => editorStore.warmArtwork(title, image?.currentSrc || image?.src)).catch(() => {});
+  };
+  document.addEventListener('pointerover', prepare, {signal:pageListeners.signal});
+  document.addEventListener('focusin', prepare, {signal:pageListeners.signal});
 });
 </script>

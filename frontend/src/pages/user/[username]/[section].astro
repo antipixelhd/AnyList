@@ -66,7 +66,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
       </div>
       <div id="list-empty" class="empty-state" hidden={entries.length>0}><h2>{entries.length ? 'No matching titles' : 'Every list starts with a story'}</h2><p>{entries.length ? 'Try a different search or filter.' : data.owner ? 'Find a movie or series and add it to your list.' : 'There are no entries in this list yet.'}</p>{data.owner&&<a class="button-primary" href="/browse">Browse titles</a>}</div>
       </div>
-    </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div><script id="list-editor-entries" type="application/json" set:html={JSON.stringify(entries).replace(/</g, '\\u003c')}></script>
+    </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>{data.owner && <script id="list-editor-entries" type="application/json" set:html={JSON.stringify(entries).replace(/</g, '\\u003c')}></script>}
     <script is:inline data-astro-rerun>
       (() => {
         const tabs = document.querySelector('.profile-tabs');

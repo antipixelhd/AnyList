@@ -1,9 +1,6 @@
 ---
 import { sessionCookieName, secureSessionCookie } from "../lib/session-cookies";
-import Base from "../layouts/Base.astro";
-import PosterWall from "../components/PosterWall.astro";
-import AuthHero from "../components/AuthHero.astro";
-import AuthMobileFeatures from "../components/AuthMobileFeatures.astro";
+import Auth from "../layouts/Auth.astro";
 import { api } from "../lib/api";
 
 let error = "";
@@ -21,7 +18,7 @@ if (Astro.request.method === "POST") {
   try {
     const data = await Astro.request.formData();
     const email = data.get("email")?.toString();
-    const username = data.get("username")?.toString();
+    const username = (data.get("account_name") ?? data.get("username"))?.toString();
     const password = data.get("password")?.toString();
     const confirmPassword = data.get("confirm_password")?.toString();
 
@@ -61,56 +58,23 @@ if (Astro.request.method === "POST") {
   }
 }
 
-// When the nav bar renders (logged-out navigation enabled), it adds real
-// height above this section that the fixed 9rem/5rem budget below doesn't
-// know about - without this, the page overflows by the nav's height even
-// though the hero content itself fits the viewport.
-const heroMinHeightClass = showNav
-  ? "min-h-[calc(100dvh-22.4rem)] md:min-h-[calc(100dvh-16rem)]"
-  : "min-h-[calc(100dvh-14.4rem)] md:min-h-[calc(100dvh-8rem)]";
 ---
 
-<Base title="Register" hideNav={!showNav}>
-  <!-- Decorative poster-wall background (full viewport, behind content) -->
-  <PosterWall />
-
-  {!showNav && (
-  <button
-    id="theme-toggle"
-    tabindex="1"
-    class="fixed top-4 right-4 z-20 p-2 rounded-lg bg-zinc-900/80 backdrop-blur-sm border border-zinc-700 text-zinc-400 hover:text-zinc-100 transition-all hover:scale-110 active:scale-95"
-    aria-label="Toggle Theme"
-  >
-    <span id="sun-icon" class="hidden">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-    </span>
-    <span id="moon-icon">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-    </span>
-  </button>
-  )}
-
-  <div class={`relative z-10 ${heroMinHeightClass} flex items-center py-6 md:py-10`}>
-    <div class="w-full grid md:grid-cols-2 gap-8 md:gap-12 lg:gap-20 items-center">
-
-      <AuthHero />
-
-      <!-- Register card -->
-      <div class="w-full max-w-md mx-auto md:justify-self-end">
-        <div class="p-8 bg-zinc-900/85 backdrop-blur-md rounded-xl border border-zinc-800 shadow-2xl">
+<Auth title="Register" showNav={showNav}>
+        <div class="auth-panel p-8 bg-zinc-900/85 backdrop-blur-md rounded-xl border border-zinc-800 shadow-2xl">
           <h2 class="text-2xl font-bold mb-6 text-zinc-100 text-center">
             {pendingEmailConfirmation ? "Account created" : "Create your account"}
           </h2>
 
           {error && (
-            <div class="bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6">
+            <div role="alert" class="auth-error bg-red-500/10 border border-red-500 text-red-500 p-3 rounded-lg mb-6">
               {error}
             </div>
           )}
 
           {pendingEmailConfirmation ? (
-            <div class="text-center py-4">
-              <div class="w-14 h-14 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div role="status" class="auth-confirmation text-center py-4">
+              <div class="auth-confirmation-icon w-14 h-14 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-7 h-7 text-zinc-300">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
                 </svg>
@@ -124,29 +88,30 @@ const heroMinHeightClass = showNav
             </div>
           ) : (
             <>
-              <form method="POST" class="space-y-4">
+              <form method="POST" class="auth-form space-y-4">
+                <div>
+                  <label for="account-name" class="block text-sm font-medium text-zinc-400 mb-1">Account name</label>
+                  <input
+                    type="text"
+                    name="account_name"
+                    id="account-name"
+                    autocomplete="nickname"
+                    required
+                    class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
+                </div>
                 <div>
                   <label for="email" class="block text-sm font-medium text-zinc-400 mb-1">Email</label>
                   <input
                     type="email"
                     name="email"
                     id="email"
-                    autocomplete="email"
-                    required
-                    tabindex="2"
-                    class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div>
-                  <label for="username" class="block text-sm font-medium text-zinc-400 mb-1">Username</label>
-                  <input
-                    type="text"
-                    name="username"
-                    id="username"
                     autocomplete="username"
+                    inputmode="email"
+                    autocapitalize="none"
+                    spellcheck="false"
                     required
-                    tabindex="3"
-                    class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   />
                 </div>
                 <div>
@@ -158,12 +123,10 @@ const heroMinHeightClass = showNav
                       id="password"
                       autocomplete="new-password"
                       required
-                      tabindex="4"
-                      class="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                      class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                     />
                     <button
                       type="button"
-                      tabindex="-1"
                       class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
                       aria-label="Toggle password visibility"
                     >
@@ -186,12 +149,10 @@ const heroMinHeightClass = showNav
                       id="confirm_password"
                       autocomplete="new-password"
                       required
-                      tabindex="5"
-                      class="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                      class="auth-input w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                     />
                     <button
                       type="button"
-                      tabindex="-1"
                       class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors"
                       aria-label="Toggle password visibility"
                     >
@@ -207,15 +168,14 @@ const heroMinHeightClass = showNav
                 </div>
                 <button
                   type="submit"
-                  tabindex="6"
-                  class="w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
+                  class="auth-submit w-full bg-zinc-100 text-zinc-950 font-bold py-2 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer mt-4"
                 >
                   Create Account
                 </button>
               </form>
 
               <div class="mt-6 text-center text-sm text-zinc-500">
-                Already have an account? <a href="/login" tabindex="7" class="text-zinc-100 hover:underline">Sign in</a>
+                Already have an account? <a href="/login" class="text-zinc-100 hover:underline">Sign in</a>
               </div>
             </>
           )}
@@ -228,7 +188,7 @@ const heroMinHeightClass = showNav
               <span class="text-xs text-zinc-600">or restore from backup</span>
               <div class="flex-1 border-t border-zinc-800"></div>
             </div>
-            <div class="p-6 bg-zinc-900/85 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl">
+            <div class="bootstrap-restore-panel p-6 bg-zinc-900/85 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl">
               <h2 class="font-semibold text-zinc-100 mb-1">Restore Database</h2>
               <p class="text-sm text-zinc-400 mb-4">Upload a <code class="text-zinc-300">.bak</code> file to restore a previous installation.</p>
               <div class="flex flex-col gap-3">
@@ -244,16 +204,12 @@ const heroMinHeightClass = showNav
           </div>
         )}
 
-        <AuthMobileFeatures />
-      </div>
-    </div>
-  </div>
-</Base>
+</Auth>
 
 <!-- Bootstrap Restore Confirmation Modal -->
 <div id="bootstrap-restore-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
   <div id="bootstrap-restore-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
-  <div class="relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
+  <div class="bootstrap-restore-dialog relative bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md shadow-2xl">
     <h2 class="text-xl font-black text-zinc-100 mb-2">Restore Database?</h2>
     <p class="text-sm text-zinc-400 mb-1">Restoring from:</p>
     <p id="bootstrap-restore-modal-filename" class="text-sm text-zinc-100 font-medium mb-4 break-all"></p>

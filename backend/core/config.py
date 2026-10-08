@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     tmdb_api_key: Optional[str] = Field(default=None, repr=False)
     tvdb_api_key: Optional[str] = Field(default=None, repr=False)
     tvdb_subscriber_pin: Optional[str] = Field(default=None, repr=False)
+    # Public MDBList catalogues used by Browse's IMDb rating/vote rankings.
+    mdblist_browse_movie_list_id: int = Field(default=64016, gt=0)
+    mdblist_browse_series_list_id: int = Field(default=177610, gt=0)
 
     # Trakt.tv
     trakt_client_id: Optional[str] = None

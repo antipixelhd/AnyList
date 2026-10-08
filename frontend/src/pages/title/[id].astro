@@ -39,6 +39,7 @@ const posterImage = responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-wid
 const quickRatePoster = responsiveArtwork(title?.poster,{size:'w185',sizes:'42px',route:'direct'});
 ---
 <Tracker title={title?.title || 'Title'}>
+  {title && Astro.locals.user && <script id="title-editor-data" type="application/json" set:html={JSON.stringify({...title, editor_library:{available:!!library?.connections?.length, desired:library?.desired===true}}).replace(/</g, '\\u003c')} />}
   {title ? (
     <>
       <div class="detail-banner">

@@ -165,7 +165,7 @@ async def validate_api_key(api_key: str) -> bool:
 
 async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     params: dict = {
-        "append_to_response": "credits,release_dates,recommendations,external_ids,keywords",
+        "append_to_response": "credits,release_dates,recommendations,external_ids,keywords,watch/providers",
     }
     if language:
         params["language"] = language
@@ -188,7 +188,7 @@ def extract_credits_stingers(data: dict) -> tuple[bool, bool]:
 
 async def get_show(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     params: dict = {
-        "append_to_response": "credits,content_ratings,recommendations,external_ids",
+        "append_to_response": "credits,content_ratings,recommendations,external_ids,keywords,watch/providers",
     }
     if language:
         params["language"] = language

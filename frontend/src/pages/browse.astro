@@ -1,142 +1,379 @@
 ---
-import Tracker from '../layouts/Tracker.astro';
-import {api} from '../lib/api';
-import {tracker} from '../lib/tracker';
-import {responsiveArtwork} from '../lib/responsive-artwork';
-
-const type = Astro.url.searchParams.get('type')==='series'?'series':'movie';
-const q = Astro.url.searchParams.get('q')?.trim()||'';
-let results:any[]=[],error='',notice='',trending=!q;
-const normalize = (item:any) => ({
-  id:item.id??null,tmdb_id:item.tmdb_id??null,type:item.type?.value||item.type||type,
-  title:item.title,poster:item.poster??item.poster_path??null,
-  year:(item.year||item.release_date||'').slice(0,4),adult:item.adult===true,
-});
-const unique = (items:any[]) => {
-  const seen=new Set<string>();
-  return items.filter(item=>{
-    const key=`${item.type}:${item.title.toLocaleLowerCase()}:${item.year}`;
-    if(seen.has(key))return false;seen.add(key);return true;
-  });
-};
-try{
-  if(q){
-    const response=await tracker(`catalog?${new URLSearchParams({media_type:type,q})}`,Astro.locals.token);
-    results=unique(response.results.map(normalize));notice=response.notice||'';
-  }else{
-    try{
-      const response=type==='movie'?await api.media.trendingMovies(1,Astro.locals.token):await api.media.trendingShows(1,Astro.locals.token);
-      results=unique(response.results.map(normalize).filter((item:any)=>!item.adult));
-    }catch{results=[];}
-    if(!results.length){
-      const fallback=await tracker(`catalog?${new URLSearchParams({media_type:type})}`,Astro.locals.token);
-      results=unique(fallback.results.map(normalize));trending=false;
-      notice='Trending is temporarily unavailable. Showing the local catalogue.';
-    }
-  }
-}catch(e){error=(e as Error).message;}
-const heading=q?'Search results':trending?`Trending ${type==='movie'?'movies':'series'}`:`Browse ${type==='movie'?'movies':'series'}`;
-const intro=q?`Live results for “${q}”.`:'See what people are watching now.';
-const browseImageOptions={size:'w342',sizes:'(max-width: 650px) calc((100vw - 57px) / 2), 190px',route:'direct' as const};
+import Tracker from "../layouts/Tracker.astro";
+import BrowseCard from "../components/BrowseCard.astro";
+import Icon from "../components/Icon.astro";
+import { tracker } from "../lib/tracker";
+import "../styles/browse.css";
+import { releaseYearBounds } from "../lib/browse-ranges";
+import {
+  isCategoryView,
+  browseRequestParams,
+  sectionHref,
+} from "../lib/browse-view";
+const params = new URLSearchParams(Astro.url.search);
+const type = params.get("type") === "series" ? "series" : "movie";
+params.delete("type");
+params.set("media_type", type);
+params.delete("page");
+params.delete("source");
+const categories = isCategoryView(params);
+let sections: any[] = [];
+let payload: any = { results: [], has_more: false, page: 1, source: "" },
+  facets: any = { genres: [], providers: [] },
+  error = "";
+const responses = await Promise.allSettled([
+  tracker(
+    categories
+      ? `browse/sections?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", min_votes: params.get("min_votes") || "250" })}`
+      : `browse?${browseRequestParams(params)}`,
+    Astro.locals.token,
+  ),
+  tracker(
+    `browse/facets?${new URLSearchParams({ media_type: type, region: params.get("region") || "US" })}`,
+    Astro.locals.token,
+  ),
+]);
+if (responses[0].status === "fulfilled") {
+  if (categories) {
+    sections = responses[0].value.sections;
+    payload.notice = responses[0].value.notice;
+  } else payload = responses[0].value;
+} else error = "Unable to load titles. Check your filters and try again.";
+if (responses[1].status === "fulfilled") facets = responses[1].value;
+const selectedGenres = (params.get("genres") || "").split(",");
+const statusOptions =
+  type === "movie"
+    ? [
+        ["released", "Released"],
+        ["upcoming", "Upcoming"],
+      ]
+    : [
+        ["airing", "Airing"],
+        ["finished", "Finished"],
+        ["cancelled", "Cancelled"],
+        ["upcoming", "Upcoming"],
+      ];
+const regions = [
+  ["US", "United States"],
+  ["GB", "United Kingdom"],
+  ["CA", "Canada"],
+  ["AU", "Australia"],
+  ["DE", "Germany"],
+  ["FR", "France"],
+  ["IT", "Italy"],
+  ["ES", "Spain"],
+  ["NL", "Netherlands"],
+  ["BR", "Brazil"],
+  ["MX", "Mexico"],
+  ["JP", "Japan"],
+  ["IN", "India"],
+  ["KR", "South Korea"],
+];
+const region = params.get("region") || "US";
+if (!regions.some(([id]) => id === region)) regions.push([region, region]);
+const signedIn = !!Astro.locals.user;
+const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 1900);
+const lastYear = Math.max(new Date().getFullYear() + 3, Number(params.get("start")?.slice(0, 4)) || 0, Number(params.get("end")?.slice(0, 4)) || 0);
+const years = releaseYearBounds(params.get("start") || "", params.get("end") || "", firstYear, lastYear);
+const minVotes = Math.max(0, Math.min(1000000, Number(params.get("min_votes") ?? 250) || 0));
+const voteLimit = Math.max(10000, minVotes);
+const initialChips: string[] = facets.genres
+  .filter((genre: any) => selectedGenres.includes(String(genre.id)))
+  .map((genre: any) => genre.name);
+if (params.get("start")) initialChips.push(`After ${params.get("start")}`);
+if (params.get("end")) initialChips.push(`Before ${params.get("end")}`);
+const statusLabel = statusOptions.find(([id]) => id === params.get("status"))?.[1];
+if (statusLabel) initialChips.push(statusLabel);
+const providerLabel = facets.providers.find((provider: any) => String(provider.id) === params.get("provider"))?.name;
+if (providerLabel) initialChips.push(providerLabel);
+if (minVotes !== 250) initialChips.push(`${minVotes.toLocaleString()}+ votes`);
+if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”`);
 ---
-<Tracker title="Browse"><div class="page-width browse-page">
-  <header class="browse-heading"><span class="eyebrow">Browse</span><h1 data-browse-heading>{heading}</h1><p data-browse-intro>{intro}</p></header>
-  <form class="browse-form" role="search" data-browse-form>
-    <label class="sr-only" for="browse-query">Search titles</label><input id="browse-query" type="search" name="q" placeholder="Search titles…" value={q} autocomplete="off"/>
-    <label class="sr-only" for="browse-type">Media type</label><select id="browse-type" name="type"><option value="movie" selected={type==='movie'}>Movies</option><option value="series" selected={type==='series'}>Series</option></select>
-    <button class="sr-only" type="submit">Search</button>
-  </form>
-  <p class="browse-status" role="status" aria-live="polite" data-browse-status>{notice}</p>
-  <div data-browse-region aria-busy="false">
-    {error?<p class="error-message" data-browse-error>{error}</p>:<p class="error-message" data-browse-error hidden></p>}
-    <div class="card-grid" data-browse-results hidden={results.length===0}>{results.map(m=>{const image=responsiveArtwork(m.poster,browseImageOptions);return <a class="media-card" href={m.id?`/title/${m.id}`:`/discover-title?type=${m.type}&id=${m.tmdb_id}`}>{image?.src?<img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>:<span class="media-card-placeholder" aria-hidden="true">{m.title.slice(0,1)}</span>}<h2>{m.title}</h2><small>{m.year}</small></a>})}</div>
-    <div class="card-grid browse-skeleton-grid" data-browse-skeleton aria-hidden="true" hidden>{Array.from({length:10},(_,index)=><div class="browse-skeleton-card" data-skeleton-card={index}><span class="skeleton-block skeleton-poster"></span><span class="skeleton-block skeleton-title"></span><span class="skeleton-block skeleton-meta"></span></div>)}</div>
-    <div class="empty-state" data-browse-empty hidden={results.length>0}><h2>No matching titles</h2><p>Try another title or media type.</p></div>
-  </div>
-</div></Tracker>
-<script>
-import {applyResponsiveArtwork} from '../lib/responsive-artwork';
-document.addEventListener('astro:page-load', () => {
-  if (!document.querySelector('[data-browse-form]')) return;
-  const form=document.querySelector<HTMLFormElement>('[data-browse-form]');
-  const query=form?.querySelector<HTMLInputElement>('[name=q]');
-  const typeSelect=form?.querySelector<HTMLSelectElement>('[name=type]');
-  const heading=document.querySelector<HTMLElement>('[data-browse-heading]');
-  const intro=document.querySelector<HTMLElement>('[data-browse-intro]');
-  const status=document.querySelector<HTMLElement>('[data-browse-status]');
-  const error=document.querySelector<HTMLElement>('[data-browse-error]');
-  const grid=document.querySelector<HTMLElement>('[data-browse-results]');
-  const skeleton=document.querySelector<HTMLElement>('[data-browse-skeleton]');
-  const empty=document.querySelector<HTMLElement>('[data-browse-empty]');
-  const region=document.querySelector<HTMLElement>('[data-browse-region]');
-  let searchTimer:number|undefined;
-  let controller:AbortController|undefined;
 
-  const imageOptions={size:'w342',sizes:'(max-width: 650px) calc((100vw - 57px) / 2), 190px',route:'direct' as const};
-  const normalize=(item:any,type:string)=>({
-    id:item.id??null,tmdb_id:item.tmdb_id??null,type:item.type?.value||item.type||type,
-    title:item.title,poster:item.poster??item.poster_path??null,
-    year:String(item.year||item.release_date||'').slice(0,4),adult:item.adult===true,
+<Tracker title="Browse">
+
+  <div class="page-width browse-page" data-browse-page>
+    <script is:inline data-astro-rerun>
+      document.currentScript.parentElement.dataset.browseScripted = "";
+      document.currentScript.parentElement.dataset.browseArrivalsPending = "";
+    </script>
+    <header class="browse-header">
+      <h1>Browse</h1>
+      <nav aria-label="Media type" class="browse-types">
+        <a
+          href="/browse"
+          data-browse-type="movie"
+          aria-current={type === "movie" ? "page" : undefined}
+        >
+          Movies
+        </a>
+        <a
+          href="/browse?type=series"
+          data-browse-type="series"
+          aria-current={type === "series" ? "page" : undefined}
+        >
+          Series
+        </a>
+      </nav>
+
+    </header>
+    <form
+      id="browse-filters"
+      class="browse-filters" data-motion-static
+      role="search"
+      data-browse-form
+    >
+      <input type="hidden" name="type" value={type} />
+      <div class="browse-search-row">
+        <label class="browse-search">
+          <span>Search</span>
+          <div>
+            <Icon name="search" />
+            <input
+              type="search"
+              name="q"
+              value={params.get("q") || ""}
+              placeholder="Search titles…"
+              autocomplete="off"
+              aria-label="Search titles"
+            />
+            <button type="button" class="browse-search-clear" data-browse-search-clear aria-label="Clear search" hidden={!params.get("q")}>
+              <Icon name="close" />
+            </button>
+          </div>
+        </label>
+      </div>
+      <div class="browse-controls" id="browse-controls">
+        <div class="browse-filter">
+          <span id="browse-genres-label">Genres</span>
+          <details class="browse-filter-menu" data-filter-menu>
+            <summary aria-labelledby="browse-genres-label browse-genres-value">
+              <span id="browse-genres-value">
+                {selectedGenres.filter(Boolean).length
+                  ? `${selectedGenres.filter(Boolean).length} selected`
+                  : "Any"}
+              </span>
+              <Icon name="chevron-down" />
+            </summary>
+            <div class="browse-options" data-genre-options>
+              {facets.genres.map((genre: any) => (
+                <label>
+                  <input
+                    type="checkbox"
+                    name="genre"
+                    value={genre.id}
+                    checked={selectedGenres.includes(String(genre.id))}
+                  />
+                  <span>{genre.name}</span>
+                </label>
+              ))}
+            </div>
+          </details>
+          <input
+            type="hidden"
+            name="genres"
+            value={params.get("genres") || ""}
+          />
+        </div>
+
+        <label class="browse-filter">
+          <span>Airing status</span>
+          <select name="status">
+            <option value="">Any</option>
+            {statusOptions.map(([id, label]) => (
+              <option value={id} selected={params.get("status") === id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="browse-sort">
+          <span>Sort</span>
+          <select name="sort" form="browse-filters" data-browse-sort>
+            {[
+              ["all", "All categories"],
+              ["trending", "IMDb trending"],
+              ["popular", "IMDb votes"],
+              ["score", "IMDb rating"],
+              ["newest", "Newest"],
+              ["oldest", "Oldest"],
+              ["title", "Title"],
+            ].map(([id, label]) => (
+              <option
+                value={id}
+                selected={(params.get("sort") || "all") === id}
+              >
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minVotes !== 250 || region !== "US")}>
+          <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
+            <Icon name="sliders" />
+          </summary>
+          <div class="browse-secondary-filters" id="browse-secondary-filters" data-motion-fade>
+            <label class="browse-filter browse-streaming">
+              <span>Streaming on</span>
+              <select name="provider">
+                <option value="">Any service</option>
+                {facets.providers.map((provider: any) => (
+                  <option
+                    value={provider.id}
+                    selected={params.get("provider") === String(provider.id)}
+                  >
+                    {provider.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class="browse-filter">
+              <span>Streaming region</span>
+              <select name="region">
+                {regions.map(([id, label]) => (
+                  <option value={id} selected={region === id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div class="browse-range" data-year-range style={`--range-start:${(years.lower - firstYear) / (lastYear - firstYear) * 100}%;--range-end:${(years.upper - firstYear) / (lastYear - firstYear) * 100}%`}>
+              <div class="browse-range-heading"><span id="browse-year-label">Year range</span><output>{params.get("start") || params.get("end") ? `${years.lower} – ${years.upper}` : "Any year"}</output></div>
+              <div class="browse-range-track">
+                <input type="range" min={firstYear} max={lastYear} value={years.lower} data-range-lower aria-label="Earliest release year" />
+                <input type="range" min={firstYear} max={lastYear} value={years.upper} data-range-upper aria-label="Latest release year" />
+              </div>
+              <div class="browse-year-dates">
+                <label><span>Released after</span><input type="date" name="start" value={params.get("start") || ""} /></label>
+                <label><span>Released before</span><input type="date" name="end" value={params.get("end") || ""} /></label>
+              </div>
+            </div>
+            <div class="browse-range" data-vote-range style={`--range-start:0%;--range-end:${minVotes / voteLimit * 100}%`}>
+              <div class="browse-range-heading"><label for="browse-min-votes">Minimum votes</label><output for="browse-min-votes">{minVotes.toLocaleString()}</output></div>
+              <div class="browse-range-track">
+                <input id="browse-min-votes" type="range" name="min_votes" min="0" max={voteLimit} step="1" value={minVotes} />
+              </div>
+            </div>
+          </div>
+        </details>
+      </div>
+    </form>
+    <div class="browse-results-toolbar">
+      <div class="browse-active-filters" data-active-filters>
+        {initialChips.map((label) => (
+          <button type="button" aria-label={`Remove ${label} filter`}>{label}<Icon name="close" /></button>
+        ))}
+        {!!initialChips.length && <button type="button" data-reset>Clear all</button>}
+      </div>
+    </div>
+    <p
+      class="browse-notice"
+      data-browse-notice
+      role="status"
+      aria-live="polite"
+    >
+      {payload.notice || ""}
+    </p>
+    <div class="browse-error" data-browse-error role="alert" hidden={!error}>
+      <span>{error}</span>
+      <button type="button" class="button-secondary" data-browse-retry>
+        Try again
+      </button>
+    </div>
+    <section aria-label="Browse results" data-browse-region aria-busy="false">
+      <div class="browse-sections" data-browse-sections hidden={!categories}>
+        {sections.map((section: any) => (
+          <section class="browse-category" aria-label={section.title}>
+            <header>
+              <h2><a href={sectionHref(type, region, section.filters)} data-view-all>{section.title}</a></h2>
+              <a
+                href={sectionHref(type, region, section.filters)}
+                data-view-all
+              >
+                View all
+              </a>
+            </header>
+            <div class="browse-grid">
+              {section.results.map((item: any) => (
+                <BrowseCard item={item} signedIn={signedIn} />
+              ))}
+            </div>
+            {!section.results.length && (
+              <p class="browse-category-empty">No titles found.</p>
+            )}
+          </section>
+        ))}
+      </div>
+      <div class="browse-grid" data-browse-results hidden={categories}>
+        {payload.results.map((item: any) => (
+          <BrowseCard item={item} signedIn={signedIn} />
+        ))}
+      </div>
+      <div
+        class="browse-grid browse-skeletons"
+        data-browse-skeleton
+        hidden
+        aria-hidden="true"
+      >
+        {Array.from({ length: 12 }, () => (
+          <div class="browse-skeleton">
+            <span class="skeleton-block browse-skeleton-poster"></span>
+            <span class="skeleton-block browse-skeleton-title"></span>
+            <span class="skeleton-block browse-skeleton-meta"></span>
+          </div>
+        ))}
+      </div>
+      <div
+        class="empty-state"
+        data-browse-empty
+        hidden={categories || payload.results.length > 0 || !!error}
+      >
+        <h2>No matching titles</h2>
+        <button type="button" class="button-secondary" data-browse-clear>
+          Clear filters
+        </button>
+      </div>
+      <div class="browse-load" data-browse-sentinel hidden={categories}>
+        <button
+          type="button"
+          class="button-quiet"
+          data-browse-more
+          hidden={!payload.has_more}
+        >
+          Load more
+        </button>
+        <span
+          data-browse-end
+          hidden={payload.has_more || !payload.results.length}
+        >
+          You're all caught up
+        </span>
+      </div>
+    </section>
+    <template data-browse-template>
+      <BrowseCard signedIn={signedIn} template />
+    </template>
+    <template data-browse-close-icon>
+      <Icon name="close" />
+    </template>
+    <script
+      id="browse-data"
+      type="application/json"
+      set:html={JSON.stringify({ payload, facets, sections }).replaceAll(
+        "<",
+        "\\u003c",
+      )}
+    />
+  </div>
+</Tracker>
+<script>
+  import { initializeBrowse } from "../lib/browse";
+  let session: AbortController;
+  document.addEventListener("astro:page-load", () => {
+    session?.abort();
+    session = new AbortController();
+    const root = document.querySelector<HTMLElement>("[data-browse-page]");
+    if (root) initializeBrowse(root, session.signal);
   });
-  const unique=(items:any[])=>{
-    const seen=new Set<string>();
-    return items.filter(item=>{const key=`${item.type}:${item.title.toLocaleLowerCase()}:${item.year}`;if(seen.has(key))return false;seen.add(key);return true;});
-  };
-  const render=(items:any[])=>{
-    if(!grid||!empty)return;
-    grid.replaceChildren();
-    for(const item of items){
-      const card=document.createElement('a');card.className='media-card browse-result-card';
-      card.href=item.id?`/title/${item.id}`:`/discover-title?type=${encodeURIComponent(item.type)}&id=${item.tmdb_id}`;
-      if(item.poster){const img=document.createElement('img');applyResponsiveArtwork(img,item.poster,imageOptions);img.alt='';img.loading='lazy';card.append(img);}
-      else{const placeholder=document.createElement('span');placeholder.className='media-card-placeholder';placeholder.ariaHidden='true';placeholder.textContent=item.title.slice(0,1);card.append(placeholder);}
-      const title=document.createElement('h2');title.textContent=item.title;card.append(title);
-      const year=document.createElement('small');year.textContent=item.year;card.append(year);grid.append(card);
-    }
-    grid.hidden=items.length===0;empty.hidden=items.length>0;
-  };
-  async function load(){
-    if(!query||!typeSelect)return;
-    controller?.abort();const request=new AbortController();controller=request;
-    const term=query.value.trim();const type=typeSelect.value;
-    let loadingTimer=window.setTimeout(()=>{
-      if(controller!==request)return;
-      if(grid)grid.hidden=true;if(empty)empty.hidden=true;if(skeleton)skeleton.hidden=false;
-      if(heading)heading.textContent=term?'Search results':`Browse ${type==='movie'?'movies':'series'}`;
-      if(intro)intro.textContent=term?`Live results for “${term}”.`:'See what people are watching now.';
-    },150);
-    if(status)status.textContent='';if(error)error.hidden=true;if(empty)empty.hidden=true;region?.setAttribute('aria-busy','true');
-    const params=new URLSearchParams();if(term)params.set('q',term);if(type==='series')params.set('type','series');
-    history.replaceState(null,'',`${location.pathname}${params.size?`?${params}`:''}`);
-    try{
-      let response:Response;let payload:any;let isTrending=!term;
-      if(term){response=await fetch(`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:type,q:term})}`,{signal:request.signal});payload=await response.json();if(!response.ok)throw new Error('Unable to load titles. Please try again.');}
-      else{response=await fetch(`/api/proxy/media/trending/${type==='movie'?'movies':'shows'}?page=1`,{signal:request.signal});payload=response.ok?await response.json():{results:[]};}
-      let items=unique((payload.results||[]).map((item:any)=>normalize(item,type)).filter((item:any)=>!item.adult));
-      let message=payload.notice||'';
-      if(!term&&!items.length){
-        const fallback=await fetch(`/api/proxy/tracking/catalog?media_type=${type}`,{signal:request.signal});
-        if(!fallback.ok)throw new Error('Unable to load titles. Please try again.');
-        items=unique((await fallback.json()).results.map((item:any)=>normalize(item,type)));isTrending=false;
-        message='Trending is temporarily unavailable. Showing the local catalogue.';
-      }
-      if(controller!==request||query.value.trim()!==term||typeSelect.value!==type)return;
-      window.clearTimeout(loadingTimer);if(skeleton)skeleton.hidden=true;
-      render(items);if(heading)heading.textContent=term?'Search results':`${isTrending?'Trending':'Browse'} ${type==='movie'?'movies':'series'}`;
-      if(intro)intro.textContent=term?`Live results for “${term}”.`:'See what people are watching now.';
-      if(status)status.textContent=message;
-    }catch(reason){
-      if((reason as Error).name==='AbortError'||controller!==request||query.value.trim()!==term||typeSelect.value!==type)return;
-      window.clearTimeout(loadingTimer);if(skeleton)skeleton.hidden=true;if(status)status.textContent='';if(grid)grid.hidden=true;if(empty)empty.hidden=true;
-      if(heading)heading.textContent=term?'Search unavailable':'Browse unavailable';
-      if(intro)intro.textContent='Try again in a moment.';
-      if(error){error.hidden=false;error.textContent=navigator.onLine?'Unable to load titles. Please try again.':'No internet access. Reconnect and try again.';}
-    }finally{
-      if(controller===request){window.clearTimeout(loadingTimer);if(skeleton)skeleton.hidden=true;region?.setAttribute('aria-busy','false');}
-    }
-  }
-  form?.addEventListener('submit',event=>{event.preventDefault();void load();});
-  query?.addEventListener('input',()=>{window.clearTimeout(searchTimer);searchTimer=window.setTimeout(()=>void load(),280);});
-  typeSelect?.addEventListener('change',()=>void load());
-});
+  document.addEventListener("astro:before-swap", () => session?.abort());
 </script>

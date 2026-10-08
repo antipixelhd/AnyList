@@ -1,4 +1,5 @@
 import { sessionCookieName } from "./lib/session-cookies";
+import { displayPreferenceCookies } from "./lib/display-preferences";
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
@@ -11,7 +12,7 @@ const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oid
 const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/confirm-email-change/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/device/code", "/api/proxy/auth/device/token", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
-const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
+const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|browse(?:\/facets|\/tags|\/sections)?|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
 // Old numeric Stats bookmarks redirect to the username-based profile Stats
 // route after the same public-profile permission check as /profile/{id}.
 const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
@@ -176,6 +177,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (context.locals.user && token && !isStaticAsset && !pathname.startsWith('/api/')) {
     context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
+    for (const [name, value] of displayPreferenceCookies(context.locals.settings)) {
+      context.cookies.set(name, value, {
+        path: "/", sameSite: "lax", maxAge: 31536000,
+        secure: context.url.protocol === "https:",
+      });
+    }
   }
 
   const response = await next();

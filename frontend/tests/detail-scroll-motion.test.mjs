@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false, scaleEntrance = false, once = false} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -10,6 +10,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
   motion.matches = reduced;
   input.matches = mobile;
   const element = {
+    isConnected: true,
     classList: {add: name => classes.add(name), remove: name => classes.delete(name)},
     getClientRects: () => hidden ? [] : [{}],
     getBoundingClientRect: () => ({top: 1200 - y + (classes.size ? mobile ? 8 : 12 : 0), bottom: 1360 - y + (classes.size ? mobile ? 8 : 12 : 0)}),
@@ -22,7 +23,8 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     },
   };
   const root = new EventTarget();
-  root.querySelectorAll = () => [element];
+  const elements = [element];
+  root.querySelectorAll = () => elements;
   const observers = [];
   class Observer {
     constructor(callback) {this.callback = callback;observers.push(this);}
@@ -49,10 +51,12 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal);
+  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly, scaleEntrance, once});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
+    append() {const added={...element};elements.push(added);observers[0].callback();flush();},
+    remove() {element.isConnected=false;elements.splice(0,1);observers[0].callback();flush();},
     scroll(to, elapsed = 100) {y = to;now += elapsed;viewport.dispatchEvent(new Event('scroll'));flush();},
     ready() {loading = false;observers[0].callback();flush();},
     hide() {hidden = true;observers[0].callback();flush();},
@@ -61,6 +65,17 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     changeInput() {input.matches = !input.matches;input.dispatchEvent(new Event('change'));},
   };
 }
+
+test('Browse keeps initially visible cards painted but still animates new cards and scroll entries', t => {
+  const p = preview(t, {initialY: 600, animateInitial: false});
+  assert.equal(p.animations.length, 0);
+  assert.equal(p.classes.size, 0);
+  p.append();
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 3);
+});
 
 test('desktop fades on entry without replaying while still visible', t => {
   const p = preview(t);
@@ -215,4 +230,72 @@ test('navigation cancels motion and disconnects observers', t => {
   assert(p.observers.every(observer => observer.disconnected));
   p.scroll(400);
   assert.equal(p.animations.length, 1);
+});
+
+
+test('new infinite-scroll cards are registered for viewport entry', t => {
+  const p = preview(t);
+  p.append();
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+});
+
+test('removed filter results cancel their pending motion', t => {
+  const p = preview(t);
+  p.scroll(424);
+  p.remove();
+  assert(p.animations[0].cancelled);
+  p.scroll(0);p.scroll(424);
+  assert.equal(p.animations.length, 1);
+});
+
+test('Browse paints upward entries immediately and replays only on downward entry', t => {
+  const p = preview(t, {downwardOnly: true, animateInitial: false});
+  p.scroll(424);
+  assert.equal(p.animations.length, 1);
+  p.animations[0].dispatchEvent(new Event('finish'));
+  p.scroll(1400);
+  assert.equal(p.classes.size, 0);
+  p.scroll(1300);
+  assert.equal(p.animations.length, 1);
+  assert.equal(p.classes.size, 0);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+});
+
+test('Browse cancels an active entrance when the user reverses scroll direction', t => {
+  const p = preview(t, {downwardOnly: true});
+  p.scroll(480);
+  p.scroll(450);
+  assert(p.animations[0].cancelled);
+  assert.equal(p.classes.size, 0);
+  p.ready();
+  assert.equal(p.animations.length, 1);
+});
+
+test('browse posters expand in place quickly without text or position transforms', t => {
+  const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true});
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  assert.equal(p.animations[0].options.duration, 320);
+  assert.equal(p.animations[0].options.easing, "cubic-bezier(.39,.575,.565,1)");
+  p.scroll(1400);
+  p.scroll(1300);
+  assert.equal(p.animations.length, 1);
+  p.scroll(0);
+  p.scroll(424);
+  assert.deepEqual(p.animations[1].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  assert.equal(p.animations[1].options.duration, 320);
+});
+
+test('browse arrival grows from eighty percent once, and new cards still transition', t => {
+  const p = preview(t, {initialY: 600, scaleEntrance: true, downwardOnly: true, once: true});
+  assert.deepEqual(p.animations[0].keyframes, [{opacity: 0, scale: '0.8'}, {opacity: 1, scale: '1'}]);
+  p.animations[0].dispatchEvent(new Event('finish'));
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 1);
+  assert.equal(p.classes.size, 0);
+  p.append();
+  assert.equal(p.animations.length, 2);
 });

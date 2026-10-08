@@ -38,12 +38,6 @@ from models.users import User, UserSettings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_FOR_YOU_CACHE: dict[int, tuple[float, dict]] = {}
-
-
-_FOR_YOU_TTL = 900  # 15 minutes
-
-
 MOVIE_GENRE_IDS: dict[str, int] = {
     "Action": 28, "Adventure": 12, "Animation": 16, "Comedy": 35,
     "Crime": 80, "Documentary": 99, "Drama": 18, "Family": 10751,
@@ -60,32 +54,6 @@ TV_GENRE_IDS: dict[str, int] = {
     "Sci-Fi & Fantasy": 10765, "Soap": 10766, "Talk": 10767,
     "War & Politics": 10768, "Western": 37,
 }
-
-
-MOVIE_GENRE_NAMES: dict[int, str] = {v: k for k, v in MOVIE_GENRE_IDS.items()}
-
-
-TV_GENRE_NAMES: dict[int, str] = {v: k for k, v in TV_GENRE_IDS.items()}
-
-
-def _filter_disliked(
-    results: list[dict],
-    disliked: set[str],
-    liked: set[str],
-    name_map: dict[int, str],
-) -> list[dict]:
-    """Drop items whose only genres are disliked and none are liked."""
-    if not disliked:
-        return results
-    out = []
-    for r in results:
-        gids = r.get("genre_ids", [])
-        names = {name_map.get(gid) for gid in gids} - {None}
-        has_liked = bool(names & liked)
-        has_only_disliked = bool(names) and names <= disliked
-        if not has_only_disliked or has_liked:
-            out.append(r)
-    return out
 
 
 TV_STATUS_IDS: dict[str, int] = {
@@ -1338,125 +1306,6 @@ async def top_rated_shows(
         return {"results": []}
 
 
-@router.get("/for-you")
-async def for_you(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
-):
-    import random
-
-    cached = _FOR_YOU_CACHE.get(current_user.id)
-    if cached and (_time.monotonic() - cached[0]) < _FOR_YOU_TTL:
-        return cached[1]
-
-    tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
-    if not settings_store.check_tmdb_key(tmdb_key):
-        return {"results": []}
-
-    profile_q = await db.execute(
-        select(UserProfileData).where(UserProfileData.user_id == current_user.id)
-    )
-    profile = profile_q.scalar_one_or_none()
-
-    if not profile:
-        return {"results": []}
-
-    movie_genres = profile.movie_genres or []
-    show_genres = profile.show_genres or []
-    disliked_genres: set[str] = set(profile.disliked_genres or [])
-    language: str | None = getattr(profile, "content_language", None)
-
-    if not movie_genres and not show_genres:
-        return {"results": []}
-
-    selected_movie_genres = random.sample(movie_genres, min(2, len(movie_genres)))
-    selected_show_genres = random.sample(show_genres, min(2, len(show_genres)))
-
-    movie_coros = []
-    show_coros = []
-
-    for genre_name in selected_movie_genres:
-        genre_id = MOVIE_GENRE_IDS.get(genre_name)
-        if genre_id:
-            movie_coros.append(tmdb.discover_movies(
-                genre_id=genre_id,
-                sort_by="popularity.desc",
-                with_original_language=language,
-                api_key=tmdb_key,
-            ))
-
-    for genre_name in selected_show_genres:
-        genre_id = TV_GENRE_IDS.get(genre_name)
-        if genre_id:
-            show_coros.append(tmdb.discover_shows(
-                genre_id=genre_id,
-                sort_by="popularity.desc",
-                with_original_language=language,
-                api_key=tmdb_key,
-            ))
-
-    if not movie_coros and not show_coros:
-        return {"results": []}
-
-    all_results = await asyncio.gather(*(movie_coros + show_coros), return_exceptions=True)
-
-    num_movie_coros = len(movie_coros)
-    movie_raw: list[dict] = []
-    show_raw: list[dict] = []
-
-    for i, res in enumerate(all_results):
-        if isinstance(res, Exception):
-            continue
-        raw = res.get("results", [])[:8]
-        if i < num_movie_coros:
-            movie_raw.extend(raw)
-        else:
-            show_raw.extend(raw)
-
-    movie_liked_set = set(movie_genres)
-    show_liked_set = set(show_genres)
-
-    seen: set[int] = set()
-    unique_movies: list[dict] = []
-    for r in _filter_disliked(movie_raw, disliked_genres, movie_liked_set, MOVIE_GENRE_NAMES):
-        rid = r.get("id")
-        if rid and rid not in seen:
-            seen.add(rid)
-            unique_movies.append(r)
-
-    seen2: set[int] = set()
-    unique_shows: list[dict] = []
-    for r in _filter_disliked(show_raw, disliked_genres, show_liked_set, TV_GENRE_NAMES):
-        rid = r.get("id")
-        if rid and rid not in seen2:
-            seen2.add(rid)
-            unique_shows.append(r)
-
-    movie_ids = [r["id"] for r in unique_movies]
-    show_ids = [r["id"] for r in unique_shows]
-
-    movie_lib = await _movie_library_ids(db, current_user.id, movie_ids) if movie_ids else set()
-    show_lib = await _show_library_ids(db, current_user.id, show_ids) if show_ids else set()
-
-    movie_items = _enrich_movie_list(unique_movies, movie_lib)
-    show_items = _enrich_show_list(unique_shows, show_lib)
-
-    combined = movie_items + show_items
-    random.shuffle(combined)
-
-    await media_presentation.enrich_with_state(db, current_user.id, combined)
-    # Dropped items must never come back as a recommendation (#117).
-    dropped_movie_ids, dropped_show_ids = await media_presentation._dropped_tmdb_ids(db, current_user.id)
-    unwatched = [
-        item for item in combined
-        if not item.get("watched")
-        and item.get("tmdb_id") not in (dropped_movie_ids if item.get("type") == MediaType.movie else dropped_show_ids)
-    ]
-    result = {"results": unwatched[:20]}
-    _FOR_YOU_CACHE[current_user.id] = (_time.monotonic(), result)
-    return result
-
-
 @router.get("/streaming")
 async def streaming(
     provider_id: int,
@@ -1619,15 +1468,9 @@ async def pick_for_me(
     # ── Streaming pool (progressive fallback) ─────────────────────────────
     streaming_candidates: list[dict] = []
     if streaming_ids and settings_store.check_tmdb_key(tmdb_key):
-        disliked: set[str] = set(profile.disliked_genres or []) if profile else set()
-        user_genres = ((profile.movie_genres if type == "movie" else profile.show_genres) or []) if profile else []
-        genre_map = MOVIE_GENRE_IDS if type == "movie" else TV_GENRE_IDS
-        genre_ids = [genre_map[g] for g in user_genres if g in genre_map]
-
         tiers = [
-            {"genre_ids": genre_ids[:3], "min_rating": 6.0},
-            {"genre_ids": [], "min_rating": 6.0},
-            {"genre_ids": [], "min_rating": None},
+            {"min_rating": 6.0},
+            {"min_rating": None},
         ]
 
         for tier in tiers:
@@ -1638,13 +1481,9 @@ async def pick_for_me(
                 kwargs: dict = dict(watch_provider_id=pid, watch_region=region, api_key=tmdb_key)
                 if tier["min_rating"]:
                     kwargs["min_rating"] = tier["min_rating"]
-                if tier["genre_ids"]:
-                    for gid in tier["genre_ids"]:
-                        fn = tmdb.discover_movies if type == "movie" else tmdb.discover_shows
-                        coros.append(fn(genre_id=gid, **kwargs))
-                else:
-                    fn = tmdb.discover_movies if type == "movie" else tmdb.discover_shows
-                    coros.append(fn(**kwargs))
+
+                fn = tmdb.discover_movies if type == "movie" else tmdb.discover_shows
+                coros.append(fn(**kwargs))
 
             if coros:
                 results_list = await asyncio.gather(*coros, return_exceptions=True)
@@ -1688,21 +1527,7 @@ async def pick_for_me(
     if not all_candidates:
         raise HTTPException(status_code=404, detail="no_results")
 
-    liked_set = set(user_genres)
-    if disliked or liked_set:
-        weights = []
-        for item in all_candidates:
-            item_genres: list[str] = item.get("genres") or []
-            score = 1.0
-            for g in item_genres:
-                if g in liked_set:
-                    score += 2.0
-                elif g in disliked:
-                    score -= 1.5
-            weights.append(max(0.05, score))
-        pick = random.choices(all_candidates, weights=weights, k=1)[0]
-    else:
-        pick = random.choice(all_candidates)
+    pick = random.choice(all_candidates)
 
     # ── Fetch genres from local DB for the picked item ─────────────────────
     if not pick.get("genres"):

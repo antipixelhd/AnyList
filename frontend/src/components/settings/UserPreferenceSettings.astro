@@ -1,0 +1,901 @@
+---
+import RatingPosterSettings from "./RatingPosterSettings.astro";
+import { api } from "../../lib/api";
+import { tracker } from "../../lib/tracker";
+import type { UserPreferences, PrivacyLevel } from "../../lib/api";
+import '../../styles/profile-color-settings.css';
+
+interface Props { category: 'profile' | 'media' | 'lists' | 'notifications' }
+const { category } = Astro.props;
+const { token } = Astro.locals;
+const settings = Astro.locals.settings;
+const [profileData, me, trackingPrefs] = await Promise.all([
+  api.profile.get(token!).catch(() => null),
+  api.auth.me(token!),
+  tracker('preferences', token!).catch(() => ({ combine_lists: true, default_sort: 'title' })),
+]);
+
+const prefs: UserPreferences = {
+  avatar_url: null,
+  bio: null,
+  country: null,
+  streaming_services: [],
+  metadata_language: null,
+  privacy_level: "private",
+  profile_color: "#3db4f2",
+  apply_site_wide: false,
+  ...(profileData ?? {}),
+};
+// Release one exposes the agreed profile-level private/public choice. Older
+// friends-only values behave as private until the owner explicitly publishes.
+prefs.privacy_level = prefs.privacy_level === "public" ? "public" : "private";
+
+const PRIVACY_LEVELS: [PrivacyLevel, string, string][] = [
+  ["private", "Private", "Only you can see your profile and activity."],
+  ["public", "Public", "Anyone on this instance can see your profile and activity."],
+];
+
+const PROFILE_COLORS = [
+  ["#3db4f2", "Blue"],
+  ["#c063ff", "Purple"],
+  ["#4cca51", "Green"],
+  ["#ef881a", "Orange"],
+  ["#e13333", "Red"],
+  ["#fc9dd6", "Pink"],
+  ["#677b94", "Slate"],
+] as const;
+const profileColor = /^#[0-9a-f]{6}$/i.test(prefs.profile_color ?? '') ? prefs.profile_color!.toLowerCase() : '#3db4f2';
+const customColor = PROFILE_COLORS.some(([color]) => color === profileColor) ? '#3db4f2' : profileColor;
+
+const METADATA_LANGUAGES: [string, string][] = [
+  ["en", "English"],
+  ["fr", "French"],
+  ["de", "German"],
+  ["es", "Spanish (Spain)"],
+  ["es-MX", "Spanish (Mexico)"],
+  ["it", "Italian"],
+  ["pt-BR", "Portuguese (Brazil)"],
+  ["pt-PT", "Portuguese (Portugal)"],
+  ["ja", "Japanese"],
+  ["ko", "Korean"],
+  ["zh-CN", "Chinese (Simplified)"],
+  ["zh-TW", "Chinese (Traditional)"],
+  ["hi", "Hindi"],
+  ["ar", "Arabic"],
+  ["ru", "Russian"],
+  ["nl", "Dutch"],
+  ["pl", "Polish"],
+  ["tr", "Turkish"],
+  ["sv", "Swedish"],
+  ["cs", "Czech"],
+  ["hu", "Hungarian"],
+  ["hr", "Croatian"],
+  ["sr", "Serbian"],
+];
+
+const STREAMING_SERVICES = [
+  { id: "8",    name: "Netflix" },
+  { id: "9",    name: "Prime Video" },
+  { id: "337",  name: "Disney+" },
+  { id: "350",  name: "Apple TV+" },
+  { id: "1899", name: "Max" },
+  { id: "15",   name: "Hulu" },
+];
+
+const COUNTRIES = [
+  ["DZ","Algeria"],["AR","Argentina"],["AU","Australia"],["AT","Austria"],
+  ["AZ","Azerbaijan"],["BH","Bahrain"],["BD","Bangladesh"],["BE","Belgium"],
+  ["BO","Bolivia"],["BA","Bosnia and Herzegovina"],["BR","Brazil"],
+  ["BG","Bulgaria"],["CA","Canada"],["CL","Chile"],["CN","China"],
+  ["CO","Colombia"],["HR","Croatia"],["CY","Cyprus"],["CZ","Czech Republic"],
+  ["DK","Denmark"],["EC","Ecuador"],["EG","Egypt"],["EE","Estonia"],
+  ["FI","Finland"],["FR","France"],["GE","Georgia"],["DE","Germany"],
+  ["GH","Ghana"],["GR","Greece"],["GT","Guatemala"],["HK","Hong Kong"],
+  ["HU","Hungary"],["IS","Iceland"],["IN","India"],["ID","Indonesia"],
+  ["IE","Ireland"],["IL","Israel"],["IT","Italy"],["JM","Jamaica"],
+  ["JP","Japan"],["JO","Jordan"],["KZ","Kazakhstan"],["KE","Kenya"],
+  ["KW","Kuwait"],["LV","Latvia"],["LB","Lebanon"],["LT","Lithuania"],
+  ["LU","Luxembourg"],["MY","Malaysia"],["MT","Malta"],["MX","Mexico"],
+  ["MA","Morocco"],["NL","Netherlands"],["NZ","New Zealand"],["NG","Nigeria"],
+  ["NO","Norway"],["OM","Oman"],["PK","Pakistan"],["PA","Panama"],
+  ["PY","Paraguay"],["PE","Peru"],["PH","Philippines"],["PL","Poland"],
+  ["PT","Portugal"],["QA","Qatar"],["RO","Romania"],["RU","Russia"],
+  ["SA","Saudi Arabia"],["RS","Serbia"],["SG","Singapore"],["SK","Slovakia"],
+  ["SI","Slovenia"],["ZA","South Africa"],["KR","South Korea"],["ES","Spain"],
+  ["LK","Sri Lanka"],["SE","Sweden"],["CH","Switzerland"],["TW","Taiwan"],
+  ["TH","Thailand"],["TN","Tunisia"],["TR","Turkey"],["UA","Ukraine"],
+  ["AE","United Arab Emirates"],["GB","United Kingdom"],["US","United States"],
+  ["UY","Uruguay"],["VE","Venezuela"],["VN","Vietnam"],
+];
+---
+
+
+  <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
+  <div class="profile-settings" data-preference-settings data-username={me.username}>
+    <div id="js-message" class="hidden" role="status" aria-live="polite"></div>
+    {category === "profile" && (
+    <div class="settings-stack">
+
+      <!-- Profile color -->
+      <section class="profile-color-settings" aria-labelledby="profile-color-heading">
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 id="profile-color-heading" class="section-headline">Profile Color</h2>
+          <span class="setting-save-state" data-save-state="profile-appearance" role="status"></span>
+        </div>
+        <div class="profile-color-swatches" role="group" aria-label="Profile color">
+          {PROFILE_COLORS.map(([color, name]) => (
+            <button type="button" class="profile-color-swatch" data-profile-color={color} aria-label={name} aria-pressed={profileColor === color} title={name} style={`--swatch-color: ${color}`} />
+          ))}
+          <label class="profile-color-custom" data-selected={!PROFILE_COLORS.some(([color]) => color === profileColor)} title="Custom color">
+            <span aria-hidden="true">✎</span>
+            <input id="profile-custom-color" type="color" value={customColor} aria-label="Custom profile color" />
+          </label>
+        </div>
+        <p class="setting-help profile-color-help">Your color appears on your profile for everyone who visits it.</p>
+        <label class="setting-switch-row profile-color-site-wide" for="apply-site-wide">
+          <span><strong>Apply site wide</strong><small>Use this color throughout the site when you are signed in.</small></span>
+          <input id="apply-site-wide" type="checkbox" checked={prefs.apply_site_wide === true} />
+        </label>
+      </section>
+
+
+      <!-- Identity -->
+      <section>
+        <div class="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">Identity</h2>
+        </div>
+
+        <!-- Avatar -->
+        <div class="flex items-center gap-6 mb-8">
+          <div id="avatar-preview" class="w-20 h-20 rounded-2xl overflow-hidden bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
+            {prefs.avatar_url ? (
+              <img id="avatar-img" src={`/api/proxy${prefs.avatar_url}`} alt="Avatar" class="w-full h-full object-cover" />
+            ) : (
+              <span id="avatar-initials" class="text-2xl font-black text-zinc-400 select-none">
+                {me.username[0].toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div class="space-y-2">
+            <p class="text-sm font-medium text-zinc-300">Profile Picture <span id="avatar-status" class="setting-save-state" role="status"></span></p>
+            <p class="text-xs text-zinc-500">JPEG, PNG or WebP · Max 5 MB</p>
+            <div class="flex items-center gap-2 flex-wrap">
+              <label class="cursor-pointer px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 text-zinc-200 text-sm font-medium rounded-lg transition-all">
+                <span id="upload-label">Choose file</span>
+                <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" />
+              </label>
+              {prefs.avatar_url && (
+                <button id="remove-avatar-btn" type="button" class="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium rounded-lg transition-all">
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-5">
+          <div class="space-y-2">
+            <div class="setting-label-line"><label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
+            <textarea id="bio" name="bio" rows="5" maxlength="5000" aria-describedby="bio-count" placeholder="Write a short bio…" class="w-full resize-y border border-zinc-800 bg-zinc-900 px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500">{prefs.bio ?? ''}</textarea>
+            <div class="flex items-center justify-between gap-3"><span id="bio-count" class="text-xs text-zinc-500" aria-live="polite">{(prefs.bio ?? '').length.toLocaleString()} / 5,000</span><button id="save-bio" type="button" class="button-primary px-4 py-2 text-sm" disabled>Save bio</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mb-8" aria-labelledby="background-heading">
+        <h2 id="background-heading" class="section-headline mb-4">Profile Background</h2>
+        <form id="background-form" class="space-y-3">
+          <label for="background-url" class="block text-sm text-zinc-400">Background image URL</label>
+          <input id="background-url" type="url" maxlength="2048" value={prefs.background_url ?? ''} placeholder="https://example.com/banner.jpg" class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100" />
+          <p class="text-xs text-zinc-400">Use a wide image for your profile banner. Clear the URL to restore the default background.</p>
+          <div class="relative h-40 overflow-hidden rounded-lg" style="background:#242538">
+            <img id="background-preview" src={prefs.background_url || undefined} hidden={!prefs.background_url} alt="Background preview" referrerpolicy="no-referrer" class="w-full h-full object-cover" />
+            <div class="absolute inset-0" style="background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6))"></div>
+          </div>
+          <button type="submit" id="save-background" class="button-primary px-4 py-2 text-sm">Save background</button>
+          <span class="setting-save-state" data-save-state="background" role="status" aria-live="polite"></span>
+        </form>
+      </section>
+
+      <!-- Privacy -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">Privacy</h2>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {PRIVACY_LEVELS.map(([value, label, desc]) => (
+            <label class={`relative flex flex-col p-4 rounded-xl border cursor-pointer transition-all hover:bg-zinc-900/50 group ${prefs.privacy_level === value ? 'bg-blue-500/5 border-blue-500/50' : 'bg-zinc-900 border-zinc-800'}`}>
+              <div class="flex items-center justify-between mb-1">
+                <span class={`font-semibold ${prefs.privacy_level === value ? 'text-blue-400' : 'text-zinc-100 group-hover:text-zinc-200'}`}>{label}</span>
+                <input
+                  type="radio"
+                  name="privacy_level"
+                  value={value}
+                  checked={prefs.privacy_level === value}
+                  class="w-4 h-4 text-blue-500 bg-zinc-800 border-zinc-700 focus:ring-blue-500 focus:ring-offset-zinc-900"
+                />
+              </div>
+              <span class="text-xs text-zinc-500 leading-relaxed">{desc}</span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      </div>
+      )}
+      {category === "lists" && <div class="settings-stack">
+      <!-- List presentation -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">List presentation</h2>
+        </div>
+        <label class="setting-switch-row" for="combine-lists">
+          <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
+          <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
+        </label>
+        <div class="settings-inline-grid settings-single-column">
+          <label>Default list sorting
+            <select id="default-list-sort">
+              <option value="title" selected={trackingPrefs.default_sort === 'title'}>Title</option>
+              <option value="score" selected={trackingPrefs.default_sort === 'score'}>Score</option>
+              <option value="progress" selected={trackingPrefs.default_sort === 'progress'}>Progress</option>
+              <option value="updated" selected={trackingPrefs.default_sort === 'updated'}>Recently updated</option>
+            </select>
+            <small>Applied when you open your own or another public list.</small>
+          </label>
+        </div>
+      </section>
+
+      </div>}
+      {category === "notifications" && <div class="settings-stack">
+      <!-- Device notifications -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">Device notifications</h2>
+        </div>
+        <div class="setting-switch-row push-notification-setting">
+          <span><strong>Completion rating reminders</strong><small>Remind me to rate a movie or series after a sync marks it complete.</small></span>
+          <button id="push-notifications-toggle" type="button" class="button-secondary">Checking…</button>
+        </div>
+        <p id="push-notifications-status" class="setting-help" role="status">Requires the installed PWA or a supported browser and notification permission.</p>
+      </section>
+
+      </div>}
+      {category === "media" && <div class="settings-stack">
+      <!-- Localization -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">Localization</h2>
+        </div>
+        <div class="localization-grid">
+        <div class="space-y-2 max-w-xs">
+          <div class="setting-label-line"><label for="country" class="block text-sm font-medium text-zinc-400">Country</label><span class="setting-save-state" data-save-state="country" role="status"></span></div>
+          <select
+            id="country"
+            name="country"
+            class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          >
+            <option value="">— Not set —</option>
+            {COUNTRIES.map(([code, name]) => (
+              <option value={code} selected={prefs.country === code}>{name}</option>
+            ))}
+          </select>
+          <p class="text-xs text-zinc-500">
+            Streaming availability on title pages uses this region.
+          </p>
+        </div>
+        <div class="space-y-2 max-w-xs">
+          <div class="setting-label-line"><label for="metadata_language" class="block text-sm font-medium text-zinc-400">Metadata language</label><span class="setting-save-state" data-save-state="metadata_language" role="status"></span></div>
+          <select
+            id="metadata_language"
+            name="metadata_language"
+            class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          >
+            <option value="">— English (default) —</option>
+            {METADATA_LANGUAGES.map(([code, name]) => (
+              <option value={code} selected={prefs.metadata_language === code}>{name}</option>
+            ))}
+          </select>
+          <p class="text-xs text-zinc-500">
+            Use this language for titles and descriptions where translations are available.
+          </p>
+        </div>
+        </div>
+
+        <!-- Backfill card — only visible when a language is set -->
+        <div id="backfill-section" class={`mt-4 max-w-lg ${prefs.metadata_language ? '' : 'hidden'}`}>
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-sm font-medium text-zinc-300">Update library translations</p>
+                <p class="text-xs text-zinc-500 mt-0.5">Fetch translated metadata for all items in your collection and watch history at once.</p>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button
+                  id="backfill-cancel-btn"
+                  type="button"
+                  class="hidden px-3 py-1.5 text-sm bg-zinc-800 hover:bg-red-900/60 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
+                >Cancel</button>
+                <button
+                  id="backfill-btn"
+                  type="button"
+                  class="px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg transition-colors cursor-pointer"
+                >Start</button>
+              </div>
+            </div>
+            <div id="backfill-progress" class="hidden space-y-1.5">
+              <div class="flex justify-between items-center">
+                <span id="backfill-label" class="text-xs text-zinc-400"></span>
+                <span id="backfill-pct" class="text-xs font-bold text-zinc-400"></span>
+              </div>
+              <div class="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div id="backfill-bar" class="h-full bg-blue-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Streaming Services -->
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2">
+          <h2 class="section-headline">Streaming Services</h2>
+        </div>
+        <p class="text-sm text-zinc-400 mb-4">
+          Highlight your services in streaming availability on title pages.
+        </p>
+        <div id="streaming-chips" class="flex flex-wrap gap-2">
+          {STREAMING_SERVICES.map(({ id, name }) => {
+            const active = prefs.streaming_services.includes(id);
+            return (
+              <button
+                type="button"
+                aria-pressed={active}
+                data-chip="streaming"
+                data-value={id}
+                class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:scale-95 active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
+              >
+                {name}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+
+      {settings ? <RatingPosterSettings settings={settings} /> : <p role="alert">Rating poster settings are temporarily unavailable. Refresh to try again.</p>}
+    </div>}
+  </div>
+
+<script>
+  import { showMessage } from '../../lib/settings-feedback';
+  function setup() {
+    const page = document.querySelector<HTMLElement>('[data-preference-settings]');
+    if (!page || page.dataset.initialized) return;
+    page.dataset.initialized = 'true';
+    const appData = document.getElementById('app-data');
+    const token = appData?.dataset.token ?? '';
+
+    function esc(s: unknown): string {
+      if (s == null) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+
+
+    function setStatus(group: string, message: string, state: 'saving' | 'saved' | 'error' = 'saved') {
+      let targets = [...document.querySelectorAll<HTMLElement>(`[data-save-state="${group}"]`)];
+      if (!targets.length) {
+        const chip = group === 'streaming_services' ? 'streaming' : group;
+        const control = document.querySelector<HTMLElement>(`[data-chip="${chip}"], [name="${group}"]`) || document.getElementById(group);
+        const section = control?.closest('section');
+        const heading = section?.querySelector('.section-headline');
+        if (!heading) return;
+        const target = document.createElement('span');
+        target.className = 'setting-save-state';
+        target.dataset.saveState = group;
+        heading.after(target);
+        targets = [target];
+      }
+      for (const target of targets) {
+        target.textContent = message;
+        target.dataset.state = state;
+        target.setAttribute('role', 'status');
+      }
+    }
+
+    // Avatar upload
+    const avatarInput = document.getElementById('avatar-input') as HTMLInputElement | null;
+    const uploadLabel = document.getElementById('upload-label');
+    const removeBtn = document.getElementById('remove-avatar-btn') as HTMLButtonElement | null;
+
+    function setAvatarPreview(src: string | null) {
+      const preview = document.getElementById('avatar-preview');
+      if (!preview) return;
+      const appbarAvatar = document.querySelector<HTMLElement>('[data-appbar-avatar]');
+      if (src) {
+        preview.innerHTML = `<img id="avatar-img" src="${esc(src)}" alt="Avatar" class="w-full h-full object-cover" />`;
+        const image = document.createElement('img');
+        image.src = src;
+        image.alt = '';
+        appbarAvatar?.replaceChildren(image);
+      } else {
+        const initial = page?.dataset.username?.[0]
+          ?? (uploadLabel?.closest('section')?.querySelector('span')?.textContent?.trim()[0] ?? '?');
+        preview.innerHTML = `<span class="text-2xl font-black text-zinc-400 select-none">${esc(initial.toUpperCase())}</span>`;
+        const fallback = document.createElement('span');
+        fallback.setAttribute('aria-hidden', 'true');
+        fallback.textContent = initial.toUpperCase();
+        appbarAvatar?.replaceChildren(fallback);
+      }
+    }
+
+    avatarInput?.addEventListener('change', async () => {
+      const file = avatarInput.files?.[0];
+      if (!file) return;
+      if (uploadLabel) uploadLabel.textContent = 'Uploading…';
+      const form = new FormData();
+      form.append('file', file);
+      try {
+        const res = await fetch('/api/proxy/profile/me/avatar', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: form,
+        });
+        if (!res.ok) {
+          const data = await res.json() as { detail?: string };
+          throw new Error(data.detail ?? 'Upload failed');
+        }
+        const data = await res.json() as { avatar_url: string };
+        setAvatarPreview(`/api/proxy${data.avatar_url}?t=${Date.now()}`);
+        if (removeBtn) removeBtn.classList.remove('hidden');
+        // A normal reload clears client-navigation snapshots rendered with the old avatar.
+        location.reload();
+      } catch (e: unknown) {
+        showMessage(e instanceof Error ? e.message : 'Upload failed.', 'error');
+      } finally {
+        if (uploadLabel) uploadLabel.textContent = 'Choose file';
+        avatarInput.value = '';
+      }
+    });
+
+    removeBtn?.addEventListener('click', async () => {
+      removeBtn.disabled = true;
+      try {
+        const res = await fetch('/api/proxy/profile/me/avatar', {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed to remove avatar');
+        setAvatarPreview(null);
+        removeBtn.classList.add('hidden');
+        location.reload();
+      } catch (e: unknown) {
+        showMessage(e instanceof Error ? e.message : 'Failed to remove avatar.', 'error');
+      } finally {
+        removeBtn.disabled = false;
+      }
+    });
+
+    const streamingButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-chip="streaming"]')];
+    const streamingValues = () => streamingButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => button.dataset.value!);
+    function paintStreaming(values: string[]) {
+      for (const button of streamingButtons) button.setAttribute('aria-pressed', String(values.includes(button.dataset.value!)));
+    }
+    const committed = new Map<string, Record<string, unknown>>();
+    const chains = new Map<string, Promise<void>>();
+    const revisions = new Map<string, number>();
+    async function patchProfile(change: Record<string, unknown>) {
+      const response = await fetch('/api/proxy/profile/me', {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(change),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { detail?: string | unknown[] };
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save this setting.');
+      }
+    }
+    const backgroundForm = document.getElementById('background-form') as HTMLFormElement | null;
+    const backgroundInput = document.getElementById('background-url') as HTMLInputElement | null;
+    const backgroundPreview = document.getElementById('background-preview') as HTMLImageElement | null;
+    backgroundInput?.addEventListener('input', () => {
+      if (!backgroundPreview) return;
+      const value = backgroundInput.value.trim();
+      const valid = /^https?:\/\//i.test(value) && backgroundInput.validity.valid;
+      backgroundPreview.hidden = !valid;
+      if (valid) backgroundPreview.src = value;
+      else backgroundPreview.removeAttribute('src');
+    });
+    backgroundForm?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = document.getElementById('save-background') as HTMLButtonElement;
+      if (button.disabled || !backgroundInput) return;
+      button.disabled = true;
+      setStatus('background', 'Saving…', 'saving');
+      try {
+        await patchProfile({ background_url: backgroundInput.value.trim() || null });
+        setStatus('background', 'Saved');
+      } catch (error) {
+        setStatus('background', error instanceof Error ? error.message : 'Could not save background.', 'error');
+      } finally { button.disabled = false; }
+    });
+    const bio = document.getElementById('bio') as HTMLTextAreaElement | null;
+    const bioCount = document.getElementById('bio-count');
+    const saveBio = document.getElementById('save-bio') as HTMLButtonElement | null;
+    if (bio && saveBio) {
+      let savedBio = bio.value;
+      let bioSaving = false;
+      const updateBio = () => {
+        if (bioCount) bioCount.textContent = `${bio.value.length.toLocaleString()} / 5,000`;
+        saveBio.disabled = bioSaving || bio.value === savedBio;
+      };
+      bio.addEventListener('input', updateBio);
+      saveBio.addEventListener('click', async () => {
+        if (bioSaving || bio.value === savedBio) return;
+        const requested = bio.value;
+        bioSaving = true;
+        updateBio();
+        setStatus('bio', 'Saving…', 'saving');
+        try {
+          await patchProfile({ bio: requested || null });
+          savedBio = requested;
+          setStatus('bio', 'Saved');
+        } catch (error) {
+          setStatus('bio', error instanceof Error ? error.message : 'Could not save bio.', 'error');
+        } finally {
+          bioSaving = false;
+          updateBio();
+        }
+      });
+    }
+    function queueSave(group: string, value: Record<string, unknown>, rollback?: (previous: Record<string, unknown>) => void, afterSave?: () => void) {
+      const revision = (revisions.get(group) || 0) + 1;
+      revisions.set(group, revision);
+      setStatus(group, 'Saving…', 'saving');
+      const pending = (chains.get(group) || Promise.resolve()).catch(() => {}).then(async () => {
+        try {
+          await patchProfile(value);
+          committed.set(group, value);
+          if (revisions.get(group) === revision) { afterSave?.(); setStatus(group, 'Saved'); }
+        } catch (error) {
+          if (revisions.get(group) === revision) {
+            rollback?.(committed.get(group) || {});
+            setStatus(group, error instanceof Error ? error.message : 'Could not save this setting.', 'error');
+          }
+        }
+      });
+      chains.set(group, pending);
+    }
+    const colorButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-profile-color]')];
+    const customColorInput = document.getElementById('profile-custom-color') as HTMLInputElement | null;
+    const customColorLabel = customColorInput?.closest<HTMLElement>('.profile-color-custom');
+    const siteWideToggle = document.getElementById('apply-site-wide') as HTMLInputElement | null;
+    const initialColor = colorButtons.find(button => button.getAttribute('aria-pressed') === 'true')?.dataset.profileColor
+      ?? (customColorLabel?.dataset.selected === 'true' ? customColorInput?.value : undefined)
+      ?? '#3db4f2';
+    let selectedProfileColor = initialColor.toLowerCase();
+    const savedAppearance = { profile_color: selectedProfileColor, apply_site_wide: siteWideToggle?.checked ?? false };
+    committed.set('profile-appearance', savedAppearance);
+    function paintProfileColor() {
+      for (const button of colorButtons) button.setAttribute('aria-pressed', String(button.dataset.profileColor === selectedProfileColor));
+      if (customColorLabel) customColorLabel.dataset.selected = String(!colorButtons.some(button => button.dataset.profileColor === selectedProfileColor));
+    }
+    function publishProfileColor() {
+      document.dispatchEvent(new CustomEvent('anylist:profile-color-changed', {
+        detail: { profileColor: selectedProfileColor, applySiteWide: siteWideToggle?.checked ?? false },
+      }));
+    }
+    function saveAppearance() {
+      const value = { profile_color: selectedProfileColor, apply_site_wide: siteWideToggle?.checked ?? false };
+      publishProfileColor();
+      queueSave('profile-appearance', value, previous => {
+        selectedProfileColor = String(previous.profile_color ?? '#3db4f2');
+        if (siteWideToggle) siteWideToggle.checked = previous.apply_site_wide === true;
+        if (customColorInput && !colorButtons.some(button => button.dataset.profileColor === selectedProfileColor)) customColorInput.value = selectedProfileColor;
+        paintProfileColor();
+        publishProfileColor();
+      });
+    }
+    colorButtons.forEach(button => button.addEventListener('click', () => {
+      selectedProfileColor = button.dataset.profileColor!;
+      paintProfileColor();
+      saveAppearance();
+    }));
+    customColorInput?.addEventListener('change', () => {
+      selectedProfileColor = customColorInput.value.toLowerCase();
+      paintProfileColor();
+      saveAppearance();
+    });
+    siteWideToggle?.addEventListener('change', saveAppearance);
+    for (const field of ['country', 'metadata_language']) {
+      const select = document.getElementById(field) as HTMLSelectElement | null;
+      if (!select) continue;
+      committed.set(field, { [field]: select.value || null });
+      select.addEventListener('change', () => queueSave(field, { [field]: select.value || null }, previous => {
+        select.value = String(previous[field] || '');
+        if (field === 'metadata_language') backfillSection?.classList.toggle('hidden', !select.value);
+      }, () => { if (field === 'metadata_language') backfillSection?.classList.toggle('hidden', !select.value); }));
+    }
+    committed.set('streaming_services', { streaming_services: streamingValues() });
+    streamingButtons.forEach(button => button.addEventListener('click', () => {
+      button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
+      queueSave('streaming_services', { streaming_services: streamingValues() }, previous => paintStreaming(previous.streaming_services as string[]));
+    }));
+
+    // Privacy radio buttons
+    function paintPrivacy() {
+        document.querySelectorAll<HTMLInputElement>('input[name="privacy_level"]').forEach(r => {
+          const label = r.closest('label');
+          const span = label?.querySelector('.font-semibold');
+          if (r.checked) {
+            label?.classList.add('bg-blue-500/5', 'border-blue-500/50');
+            label?.classList.remove('bg-zinc-900', 'border-zinc-800');
+            span?.classList.add('text-blue-400');
+            span?.classList.remove('text-zinc-100');
+          } else {
+            label?.classList.remove('bg-blue-500/5', 'border-blue-500/50');
+            label?.classList.add('bg-zinc-900', 'border-zinc-800');
+            span?.classList.remove('text-blue-400');
+            span?.classList.add('text-zinc-100');
+          }
+        });
+    }
+    const initialPrivacy = document.querySelector<HTMLInputElement>('input[name="privacy_level"]:checked')?.value || 'private';
+    committed.set('privacy_level', { privacy_level: initialPrivacy });
+    document.querySelectorAll<HTMLInputElement>('input[name="privacy_level"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        paintPrivacy();
+        queueSave('privacy_level', { privacy_level: radio.value }, previous => {
+          const prior = document.querySelector<HTMLInputElement>(`input[name="privacy_level"][value="${previous.privacy_level}"]`);
+          if (prior) prior.checked = true;
+          paintPrivacy();
+        });
+      });
+    });
+
+    // Save
+    const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
+    const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
+    if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
+    if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
+    const trackingChains = new Map<string, Promise<void>>();
+    const trackingRevisions = new Map<string, number>();
+    function publishCombinePreference(value: boolean) {
+      document.dispatchEvent(new CustomEvent('anylist:combine-lists-changed', { detail: { combineLists: value } }));
+    }
+    function saveTrackingPreferences(change: Record<string, unknown>, control: HTMLInputElement | HTMLSelectElement, field: string) {
+      const revision = (trackingRevisions.get(field) || 0) + 1;
+      trackingRevisions.set(field, revision);
+      const requestedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
+      if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
+      setStatus('combine-lists', 'Saving…', 'saving');
+      const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
+        try {
+          const response = await fetch('/api/proxy/tracking/preferences', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(change),
+          });
+          if (!response.ok) throw new Error('Could not update your list preferences.');
+          const saved = await response.json() as { combine_lists?: boolean; default_sort?: string };
+          // Keep the last confirmed server value available for rollback, even when
+          // a newer change is already queued behind this request.
+          control.dataset.savedValue = field === 'combine_lists' ? String(saved.combine_lists !== false) : saved.default_sort || requestedValue;
+          if (trackingRevisions.get(field) === revision) setStatus('combine-lists', 'Saved');
+        } catch (error) {
+          if (trackingRevisions.get(field) === revision) {
+            const savedValue = control.dataset.savedValue ?? '';
+            if (control instanceof HTMLInputElement) control.checked = savedValue === 'true';
+            else control.value = savedValue;
+            if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
+            setStatus('combine-lists', error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
+          }
+        }
+      });
+      trackingChains.set(field, pending);
+    }
+    combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists, 'combine_lists'));
+    defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort, 'default_sort'));
+
+    // Completion-rating Web Push is enrolled per browser/PWA installation.
+    const pushButton = document.getElementById('push-notifications-toggle') as HTMLButtonElement | null;
+    const pushStatus = document.getElementById('push-notifications-status') as HTMLElement | null;
+    const decodeKey = (value: string) => {
+      const padded = value + '='.repeat((4 - value.length % 4) % 4);
+      const bytes = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from(bytes, char => char.charCodeAt(0));
+    };
+    const subscriptionBody = (subscription: PushSubscription) => subscription.toJSON();
+    async function pushRegistration() {
+      if (!('serviceWorker' in navigator)) throw new Error('This browser does not support PWA notifications.');
+      return navigator.serviceWorker.ready;
+    }
+    async function refreshPushState() {
+      if (!pushButton) return;
+      if (!window.isSecureContext || !('Notification' in window) || !('PushManager' in window)) {
+        pushButton.textContent = 'Unavailable'; pushButton.disabled = true;
+        if (pushStatus) pushStatus.textContent = 'Push notifications need a supported browser over HTTPS.';
+        return;
+      }
+      try {
+        const registration = await pushRegistration();
+        const subscription = await registration.pushManager.getSubscription();
+        pushButton.dataset.enabled = subscription ? 'true' : 'false';
+        pushButton.textContent = subscription ? 'Disable on this device' : 'Enable on this device';
+        pushButton.disabled = Notification.permission === 'denied';
+        if (pushStatus) pushStatus.textContent = Notification.permission === 'denied'
+          ? 'Notifications are blocked in this browser. Allow them in site settings first.'
+          : subscription ? 'This device will receive rating reminders.' : 'No notifications are sent until you enable this device.';
+      } catch (cause) {
+        pushButton.textContent = 'Try again';
+        if (pushStatus) pushStatus.textContent = cause instanceof Error ? cause.message : 'Could not inspect notification support.';
+      }
+    }
+    pushButton?.addEventListener('click', async () => {
+      pushButton.disabled = true;
+      try {
+        const registration = await pushRegistration();
+        const current = await registration.pushManager.getSubscription();
+        if (current) {
+          await fetch('/api/proxy/push/subscriptions', { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify(subscriptionBody(current)) });
+          await current.unsubscribe();
+        } else {
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+          const keyResponse = await fetch('/api/proxy/push/vapid-public-key');
+          if (!keyResponse.ok) throw new Error('Could not load notification configuration.');
+          const { public_key } = await keyResponse.json();
+          const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeKey(public_key) });
+          const response = await fetch('/api/proxy/push/subscriptions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(subscriptionBody(subscription)) });
+          if (!response.ok) { await subscription.unsubscribe(); throw new Error('Could not enable notifications for this device.'); }
+        }
+      } catch (cause) {
+        if (pushStatus) pushStatus.textContent = cause instanceof Error ? cause.message : 'Could not change notification settings.';
+      } finally {
+        pushButton.disabled = false;
+        await refreshPushState();
+      }
+    });
+    if (pushButton) void refreshPushState();
+
+    // ── Translation backfill ──────────────────────────────────────────────────
+    const backfillSection    = document.getElementById('backfill-section') as HTMLDivElement | null;
+    const backfillBtn        = document.getElementById('backfill-btn') as HTMLButtonElement | null;
+    const backfillCancelBtn  = document.getElementById('backfill-cancel-btn') as HTMLButtonElement | null;
+    const backfillProgress   = document.getElementById('backfill-progress') as HTMLDivElement | null;
+    const backfillLabel    = document.getElementById('backfill-label') as HTMLSpanElement | null;
+    const backfillPct      = document.getElementById('backfill-pct') as HTMLSpanElement | null;
+    const backfillBar      = document.getElementById('backfill-bar') as HTMLDivElement | null;
+
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    function stopPoll() {
+      if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    type BackfillStatus = { running: boolean; progress: number; total: number; done: boolean; error: string | null };
+
+    function applyStatus(s: BackfillStatus) {
+      if (s.total === 0 && s.done) {
+        if (backfillLabel) backfillLabel.textContent = s.error ? `Error: ${s.error}` : 'Nothing to backfill.';
+        if (backfillPct) backfillPct.textContent = '';
+        if (backfillBar) { backfillBar.style.width = '0%'; backfillBar.classList.remove('animate-pulse'); }
+        if (backfillBtn) { backfillBtn.disabled = false; backfillBtn.textContent = 'Start'; }
+        backfillCancelBtn?.classList.add('hidden');
+        stopPoll();
+        return;
+      }
+      if (s.total > 0) {
+        const pct = Math.round((s.progress / s.total) * 100);
+        if (backfillBar) { backfillBar.style.width = `${pct}%`; backfillBar.classList.remove('animate-pulse'); }
+        if (backfillPct) backfillPct.textContent = `${pct}%`;
+        if (backfillLabel) backfillLabel.textContent = s.done
+          ? `Done — ${s.total} items translated`
+          : `Translating… ${s.progress} / ${s.total}`;
+      }
+      if (s.done || s.error) {
+        stopPoll();
+        if (backfillBtn) { backfillBtn.disabled = false; backfillBtn.textContent = 'Run again'; }
+        backfillCancelBtn?.classList.add('hidden');
+      } else if (s.running) {
+        backfillCancelBtn?.classList.remove('hidden');
+      }
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/api/proxy/profile/me/translations/backfill/status', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        applyStatus(await res.json() as BackfillStatus);
+      } catch (_) {}
+    }
+
+    function startPolling() {
+      stopPoll();
+      pollTimer = setInterval(poll, 5000);
+    }
+
+    // Resume display if a job was already running
+    async function initStatus() {
+      try {
+        const res = await fetch('/api/proxy/profile/me/translations/backfill/status', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const s = await res.json() as BackfillStatus;
+        if (!s.running && !s.done) return;
+        if (backfillProgress) backfillProgress.classList.remove('hidden');
+        applyStatus(s);
+        if (s.running) {
+          if (backfillBtn) { backfillBtn.disabled = true; backfillBtn.textContent = 'Running…'; }
+          startPolling();
+        }
+      } catch (_) {}
+    }
+
+    backfillBtn?.addEventListener('click', async () => {
+      if (!backfillBtn || backfillBtn.disabled) return;
+      backfillBtn.disabled = true;
+      backfillBtn.textContent = 'Starting…';
+      try {
+        const res = await fetch('/api/proxy/profile/me/translations/backfill', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const d = await res.json() as { detail?: string };
+          showMessage(d.detail ?? 'Failed to start backfill.', 'error');
+          backfillBtn.disabled = false;
+          backfillBtn.textContent = 'Start';
+          return;
+        }
+        backfillBtn.textContent = 'Running…';
+        if (backfillProgress) backfillProgress.classList.remove('hidden');
+        if (backfillBar) { backfillBar.style.width = '0%'; backfillBar.classList.add('animate-pulse'); }
+        if (backfillLabel) backfillLabel.textContent = 'Starting…';
+        if (backfillPct) backfillPct.textContent = '';
+        backfillCancelBtn?.classList.remove('hidden');
+        startPolling();
+      } catch (e: unknown) {
+        backfillBtn.disabled = false;
+        backfillBtn.textContent = 'Start';
+        showMessage(e instanceof Error ? e.message : 'Failed to start backfill.', 'error');
+      }
+    });
+
+    backfillCancelBtn?.addEventListener('click', async () => {
+      backfillCancelBtn.disabled = true;
+      try {
+        await fetch('/api/proxy/profile/me/translations/backfill', {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        backfillCancelBtn.classList.add('hidden');
+        if (backfillLabel) backfillLabel.textContent = 'Cancelling…';
+      } catch (_) {}
+      finally {
+        backfillCancelBtn.disabled = false;
+      }
+    });
+
+    // Hide the backfill section as soon as the select is cleared - safe to
+    // do immediately since it only ever removes the option to start a job.
+    // The reverse (showing it) must NOT happen here: the backfill endpoint
+    // needs the language actually persisted, and reacting to the select's
+    // live value let a user pick a language and hit "Start" before ever
+    // saving, which 400'd with "No metadata language set" (#401). Revealing
+    // it is handled by the save handler above, only after a successful save.
+    document.getElementById('metadata_language')?.addEventListener('change', (e) => {
+      const val = (e.target as HTMLSelectElement).value;
+      if (!val) backfillSection?.classList.add('hidden');
+    });
+
+    if (token && backfillSection) initStatus();
+  }
+
+  setup();
+  document.addEventListener('astro:after-swap', setup);
+</script>

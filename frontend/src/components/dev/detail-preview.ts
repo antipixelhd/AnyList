@@ -66,6 +66,7 @@ function initializeDetails() {
   const showScore = () => state.useSeasonAverage ? seasonAverage() : state.rating ? Number(state.rating) : null;
   const render = () => {
     statusInput.value = state.status;
+    statusInput.dispatchEvent(new Event('input', {bubbles:true}));
     progressInput.value = String(state.progress);
     if (bar) bar.value = state.progress;
     root.dataset.spoilers = String(state.spoilers);
@@ -100,14 +101,6 @@ function initializeDetails() {
       if (nextMeta) nextMeta.textContent = next ? `S${String(next.season+1).padStart(2,'0')} · E${String(next.episode+1).padStart(2,'0')} · ${next.minutes} min` : `${item.total} episodes watched`;
       const nextImage = root.querySelector<HTMLImageElement>('.lab-next > img');
       if (nextImage) {nextImage.hidden = !next?.image;if (next?.image) nextImage.src = next.image;}
-      const art = root.querySelector<HTMLElement>('[data-lab-art-preview]');
-      if (art) {
-        const key = (url: string) => url.split('/').pop();
-        const used = new Set([item.poster,item.backdrop,next?.image ?? ''].map(key));
-        const distinct = item.gallery.find(url => !used.has(key(url)));
-        art.closest<HTMLElement>('.lab-art-preview')!.hidden = !distinct;
-        if (distinct) {art.dataset.labImage = distinct;art.querySelector<HTMLImageElement>('img')!.src = distinct;}
-      }
       root.querySelectorAll<HTMLElement>('[data-lab-season]').forEach(el => el.hidden = Number(el.dataset.labSeason) !== state.season);
       item.seasons!.forEach((season,s) => {
         const count = season.filter((_,e) => watched.has(`${s}:${e}`)).length;
@@ -153,8 +146,61 @@ function initializeDetails() {
     const help = document.querySelector('#quick-rating-help');
     if (help) help.textContent = 'Choose a half point. Saved in this preview.';
   };
+  const artwork = [...root.querySelectorAll<HTMLElement>('[data-lab-gallery-image]')].map(el => ({src:el.dataset.labImage!,caption:el.dataset.labImageCaption!}));
+  const scenes = [...root.querySelectorAll<HTMLElement>('[data-lab-scene]')].map(el => el.dataset.labImage!);
+  const imageKey = (url: string) => new URL(url,location.href).pathname.split('/').pop();
+  const lightbox = root.querySelector<HTMLDialogElement>('#lab-lightbox')!;
+  const thumbnails = root.querySelector<HTMLElement>('.lab-lightbox-thumbnails')!;
+  let frameIndex = 0;
+  let lightboxImages = artwork;
+  let lightboxIndex = 0;
+  const showArtwork = (index: number, focusThumbnail = false) => {
+    lightboxIndex = (index + lightboxImages.length) % lightboxImages.length;
+    const art = lightboxImages[lightboxIndex];
+    const image = root.querySelector<HTMLImageElement>('#lab-lightbox-image')!;
+    image.src = art.src; image.alt = art.caption;
+    root.querySelector('#lab-lightbox-caption')!.textContent = art.caption;
+    thumbnails.querySelectorAll<HTMLButtonElement>('button').forEach((button,i) => {
+      button.setAttribute('aria-pressed',String(i === lightboxIndex));
+      if (i === lightboxIndex) {
+        button.scrollIntoView({block:'nearest',inline:'nearest'});
+        if (focusThumbnail) button.focus();
+      }
+    });
+  };
+  const openArtwork = (src: string, caption: string) => {
+    const index = artwork.findIndex(art => imageKey(art.src) === imageKey(src));
+    lightboxImages = index < 0 ? [{src,caption},...artwork] : artwork;
+    lightbox.querySelectorAll<HTMLElement>('[data-lab-lightbox-step]').forEach(button => button.hidden = lightboxImages.length < 2);
+    thumbnails.replaceChildren(...lightboxImages.map((art,i) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.labThumbnail = String(i);
+      button.setAttribute('aria-label',art.caption);
+      const image = document.createElement('img'); image.src = art.src; image.alt = ''; image.loading = 'lazy';
+      button.append(image); return button;
+    }));
+    lightbox.showModal();
+    showArtwork(index < 0 ? 0 : index);
+  };
+  lightbox.addEventListener('keydown',event => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+    event.preventDefault();
+    showArtwork(event.key === 'Home' ? 0 : event.key === 'End' ? lightboxImages.length-1 : lightboxIndex + (event.key === 'ArrowRight' ? 1 : -1), document.activeElement?.hasAttribute('data-lab-thumbnail'));
+  },{signal});
   root.addEventListener('click',event => {
     const target = event.target instanceof Element ? event.target : null;
+    const frameStep = target?.closest<HTMLElement>('[data-lab-frame-step]');
+    if (frameStep && scenes.length) {
+      frameIndex = (frameIndex + Number(frameStep.dataset.labFrameStep) + scenes.length) % scenes.length;
+      const frame = root.querySelector<HTMLElement>('[data-lab-art-preview]')!;
+      frame.dataset.labImage = scenes[frameIndex];
+      frame.querySelector<HTMLImageElement>('img')!.src = scenes[frameIndex];
+      return;
+    }
+    const lightboxStep = target?.closest<HTMLElement>('[data-lab-lightbox-step]');
+    if (lightboxStep) {showArtwork(lightboxIndex + Number(lightboxStep.dataset.labLightboxStep));return;}
+    const thumbnail = target?.closest<HTMLElement>('[data-lab-thumbnail]');
+    if (thumbnail) {showArtwork(Number(thumbnail.dataset.labThumbnail));return;}
     const tab = target?.closest<HTMLElement>('[data-lab-tab], [data-lab-open-tab]');
     if (tab) { selectTab(tab.dataset.labTab ?? tab.dataset.labOpenTab!,!!tab.dataset.labOpenTab); return; }
     const seasonRating = target?.closest<HTMLElement>('[data-lab-rate-season]');
@@ -165,11 +211,7 @@ function initializeDetails() {
     if (close) { close.closest<HTMLDialogElement>('dialog')!.close(); return; }
     const image = target?.closest<HTMLElement>('[data-lab-image]');
     if (image) {
-      const caption = image.dataset.labImageCaption ?? item.title;
-      const preview = root.querySelector<HTMLImageElement>('#lab-lightbox-image')!;
-      preview.src = image.dataset.labImage!; preview.alt = caption;
-      root.querySelector('#lab-lightbox-caption')!.textContent = caption;
-      root.querySelector<HTMLDialogElement>('#lab-lightbox')!.showModal(); return;
+      openArtwork(image.dataset.labImage!,image.dataset.labImageCaption ?? item.title); return;
     }
     const episode = target?.closest<HTMLButtonElement>('[data-lab-episode]');
     if (episode) {

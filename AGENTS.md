@@ -6,6 +6,7 @@ if you make changes to the database apply the migration before ending the turn
 
 Avoid cluttering UIs with excessive micro-copy, subtitles, helper text, badges, and tiny metadata. Prefer clean layouts with strong hierarchy, spacing, and obvious controls. If text is not necessary for understanding or action, leave it out.
 
+Dont prefer bandade fixes but prefer concrete systems that fix the problem or implement the features
 
 ## Start with the task
 
