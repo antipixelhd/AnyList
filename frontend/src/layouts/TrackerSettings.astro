@@ -88,7 +88,6 @@ const pathname = Astro.url.pathname;
     const button = target.closest<HTMLButtonElement>('.settings-menu-toggle');
     if (!button) return;
     const open = button.getAttribute('aria-expanded') !== 'true';
-    if (open && window.scrollY > 0) return;
     document.querySelector('.settings-shell')?.toggleAttribute('data-menu-open', open);
     button.setAttribute('aria-expanded', String(open));
     button.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} settings categories`);
