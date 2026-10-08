@@ -33,7 +33,7 @@ const favorites: any[] = profile.favorites || [];
       <div class="overview-media-card">
         <dl class="overview-media-metrics">
           <div><dt>Total {card.label.toLowerCase()}</dt><dd>{card.total.toLocaleString('en')}</dd></div>
-          <div><dt title="Estimated from documented viewing dates and known runtimes">Days watched <span aria-label="estimated">≈</span></dt><dd>{card.data ? overviewDays(card.data.viewing.estimated_watch_minutes) : '—'}</dd></div>
+          <div><dt title="Estimated from documented viewing dates and known runtimes">Days watched</dt><dd>{card.data ? overviewDays(card.data.viewing.estimated_watch_minutes) : '—'}</dd></div>
           <div><dt>Mean score</dt><dd>{scoreLabel(card.data?.scores.average ?? null)}</dd></div>
         </dl>
         {!card.data && <p class="overview-card-empty">Statistics unavailable</p>}
