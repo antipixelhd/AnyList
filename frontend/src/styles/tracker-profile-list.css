@@ -222,9 +222,6 @@
 .list-shell .filter-search input:focus {
   outline:none
 }
-.list-shell .filter-search input:focus-visible {
-  background:#1d3144
-}
 .list-shell .filters {
   z-index:3
 }

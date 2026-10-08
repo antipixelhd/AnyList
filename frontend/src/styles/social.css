@@ -64,9 +64,6 @@
   color: var(--bright);
   outline: none;
 }
-.social-search input:focus-visible {
-  background: #1d3144;
-}
 .social-search button { display: inline-flex; align-items: center; gap: 7px; }
 .social-content .error-message { margin: 0 0 20px; }
 
