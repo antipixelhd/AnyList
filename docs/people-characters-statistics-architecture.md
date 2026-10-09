@@ -1,4 +1,4 @@
-# People, characters, credits, and daily statistics
+# People, organizations, characters, credits, and daily statistics
 
 Date: 2026-10-09
 
@@ -8,7 +8,7 @@ Status: architecture and planning only. Supplements the [statistics redesign pla
 
 ## 1. Recommended direction
 
-Use a shared **Person** entity for real individual contributors and a separate **Character** entity for fictional identities. Connect them to media through normalized credits and character appearances. Calculate user statistics from those relations in a background job and publish a coherent snapshot approximately every 24 hours.
+Use a shared **Person** entity for real individual contributors, **Organization** for companies/brands/institutions, and a separate **Character** entity for fictional identities. Connect contributors to media through normalized credits and characters through scoped appearances. Keep streaming availability separate from creative/production credits. Calculate user statistics from those relations in a background job and publish a coherent snapshot approximately every 24 hours.
 
 The same person can act in a movie, voice a game character, write a book, or design a board game. Those are roles on a credit, not separate kinds of person. A character needs its own identity and artwork because it can be portrayed by several people, have several language casts, or appear in a book without an actor at all.
 
@@ -59,9 +59,15 @@ erDiagram
     CHARACTERS ||--o{ CHARACTER_EXTERNAL_IDS : has
     MEDIA ||--o| LEGACY_PERSON_MEDIA_LINKS : bridges
     PEOPLE ||--o{ LEGACY_PERSON_MEDIA_LINKS : preserves
+    ORGANIZATIONS ||--o{ ORGANIZATION_EXTERNAL_IDS : has
+    ORGANIZATIONS ||--o{ MEDIA_ORGANIZATION_CREDITS : contributes
+    MEDIA ||--o{ MEDIA_ORGANIZATION_CREDITS : credits
+    ORGANIZATIONS |o--o{ DISTRIBUTION_SERVICES : optionally_operates
+    DISTRIBUTION_SERVICES ||--o{ MEDIA_AVAILABILITY : offers
+    MEDIA ||--o{ MEDIA_AVAILABILITY : available_on
 ```
 
-This is a conceptual design, not executable migration DDL. Table names can follow repository conventions during implementation.
+This is a conceptual design, not executable migration DDL. Table names can follow repository conventions during implementation. The normalized distribution-service/availability tables are an optional later phase: the existing remote browse filter can support a streaming-service catalogue first.
 
 ### People and identity
 
@@ -75,7 +81,7 @@ Use text for external IDs: future book/game providers may use strings, URLs, or 
 
 Do not put an `actor/developer/writer` enum on Person as its authoritative type. Roles belong to each media credit. Do not merge people by name or portrait similarity. Link multiple provider identities only through verified cross-references or an explicit reviewed merge. Keep provenance for merges and a way to correct a mistaken link.
 
-A development studio or publisher is an **organization**, not a person. Future organization credits can use a separate Organization entity and explicitly typed contributor relations when needed. Do not create fictional people to represent companies. No organization schema expansion is needed just for the current actor page.
+A development studio, publisher, or production company uses the shared Organization model described below. Keep typed person and organization credit relations with actual foreign keys, while reusing the role vocabulary where appropriate.
 
 ### Credits and role vocabulary
 
@@ -109,6 +115,68 @@ Current TMDB credits often supply only a role string. Preserve it on the credit 
 
 Enforce that `credit_characters` connects a credit and character appearance in the **same media scope**. Composite FKs with the scope's `media_id`, or an equivalent database-enforced constraint, can prevent linking a movie actor to an unrelated game's character. If later episode-level credits are added, attach the corresponding episode appearance in that scope and retain its series parent relationship separately.
 
+### Organizations and their contributions
+
+An Organization is a reusable public identity for a company, brand, studio, publisher, or broadcaster. It is not a legal ownership registry. One organization can perform several roles across media, so avoid a single exclusive `studio/publisher/network` enum that forces duplicate identities.
+
+| Table | Core fields and constraints | Purpose |
+| --- | --- | --- |
+| `organizations` | Local primary key, display name, nullable logo/homepage, descriptive source metadata, timestamps | Shared studio/publisher/network identity |
+| `organization_external_ids` | Organization FK, provider, **namespace**, external ID as text; unique `(provider, namespace, external_id)` | Distinguish company IDs, network IDs, and future publisher/provider identifiers |
+| `media_organization_credits` | Media FK, organization FK, role-code FK, provenance/scope; unique canonical media/organization/role contribution | Production studio, publisher, distributor, development studio, broadcast network, etc. |
+
+Roles belong to the media relationship. For example, an organization can be a production company on one title and a distributor on another. A game developer company uses a development-studio role; its individual developers use Person credits.
+
+Keep the person credit table and organization credit table explicitly typed, using the common role catalogue with contributor applicability. Each reader must validate the allowed role family. Do not replace real FKs with a generic `contributor_type + contributor_id` pointer. A shared contributor read projection is possible without a universal entity table.
+
+**External-ID namespaces are essential:** TMDB company ID 100, network ID 100, and watch-provider ID 100 are different identity spaces. Matching the numbers, names, or logos does not establish one organization. Link cross-namespace identities only through verified source evidence or reviewed mapping. A service brand and its parent company may legitimately remain separate identities.
+
+Default organization-to-media lookups need only one indexed credit join. Group by canonical media ID to deduplicate a title where the organization has several roles. Studio/network metadata does not prove an entire streaming catalogue, and an organization producing a title does not establish where it is currently available.
+
+No parent-company hierarchy, acquisition history, licensing-contract model, or general organization-to-organization graph is required to show a studio's credits or a service's current title list. Add a verified parent/brand relationship later only for a real feature. Do not automatically include all subsidiaries when filtering one organization.
+
+### Streaming services: a distinct availability relationship
+
+Streaming-service support is useful for the requested catalogue list, but its relationship is **availability**, not a creative credit. Availability varies by country and access type, and changes independently of who made the show.
+
+A company can operate multiple offerings: subscription, ad-supported, or channel/add-on variants. Preserve each provider's service identity so a user can select the exact offering. A verified Organization link can group those services on an organization page later; a shared parent must not silently merge their subscriptions/catalogues.
+
+If local indexed availability becomes useful, use this small optional extension:
+
+| Table | Core fields and constraints | Purpose |
+| --- | --- | --- |
+| `distribution_services` | Local primary key, display name, logo, nullable organization FK | User-selectable service/product, with optional verified organization affiliation |
+| `distribution_service_external_ids` | Service FK, provider, namespace, external ID; unique source identity | Preserve service IDs and reconcile future metadata sources |
+| `media_availability` | Media FK, service FK, country code, offer type, source identity, observed/fetched time, optional source listing URL | Indexed current observed title availability |
+
+Canonical membership is `(media_id, service_id, country_code, offer_type)`. If multiple sources are retained, include source in the stored observation's uniqueness and reconcile/deduplicate those observations in the read projection. Country codes should be validated; offer type should retain source distinctions such as subscription (`flatrate`), free, ads, rent, and buy.
+
+Do not invent a licensing start/end date from a fetch timestamp. An observation time establishes when we checked, not when availability began. A provider's regional listing link may be a discovery/aggregator URL; label it accordingly rather than claiming it is a direct playback link.
+
+For a service page, filter service + country + selected offer type, and return distinct media. Subscription should be a clear option; rental-only titles should not unexpectedly enter its subscription list. A title-level TV listing does not establish that every season/episode is available; represent finer scope only if a source supplies it.
+
+**Freshness and replacement:** retain fetch status/freshness per source, media item, and covered region scope, including successful empty results. On a successful complete response for that scope, replace its previous memberships, including removing titles/services no longer present. Failed or partial responses retain last-good data and do not establish absence. Omitted country keys must not be treated as authoritative removal without a defined provider completeness contract. A service catalogue page and a single-title provider response have different coverage scopes.
+
+The availability state is shared metadata; it must not be recomputed per user, duplicated into twenty user snapshots, or fetched inside the daily statistics transaction. Its refresh schedule is independent. Region-filtered browse results can have a short cache, while provider title metadata uses its own per-title freshness policy.
+
+### Existing streaming support and the lean first step
+
+The source audit establishes that a basic service catalogue needs no new availability schema:
+
+- [`browse.metadata_fields`](../backend/core/browse.py) retains `watch/providers.results` in `Media.tmdb_data.watch_providers` through movie/series enrichment.
+- Existing [`GET /tracking/browse`](../backend/routers/tracking.py) accepts `provider`, `region`, `media_type`, pagination, and local/remote source selection.
+- Remote discovery already sends `with_watch_providers`, `watch_region`, and `with_watch_monetization_types=flatrate|free|ads`.
+- Local filtering reads regional provider arrays for those same three access types.
+- `local_providers()` scans retained provider JSON to build a fallback selector. This is a working fallback, not an indexed organization identity model.
+
+For a provider's broader catalogue, use remote discovery with the chosen provider ID and region. The local database covers retained titles only and cannot establish all shows on a service. Provider results also have their own coverage and pagination limits. Preserve media visibility rules; remove the default minimum-vote threshold only if the intended catalogue should include low-vote titles.
+
+Current filtering combines subscription/free/ad-supported availability and does not offer rental/purchase selection. An exact subscription-only view requires an explicit access-type filter, consistently passed to remote discovery and local matching. It does not require a corporate relationship graph.
+
+Shared metadata writers must preserve watch-provider fields across show/series refreshes: some Show projections do not currently retain them, and `enrich_series_from_show()` can replace the media snapshot. The earlier shared-writer fix applies to streaming metadata too. Do not claim the cached local service membership is complete or reliably fresh until that retention and coverage audit is done.
+
+**Recommended scope:** plan Organization identities and production/publishing/network credits as part of the reusable contributor schema. Reuse the existing regional provider-discovery path for service lists first. Add normalized service/availability tables when we need efficient local/offline catalogue queries, richer organization/service pages, or reliable shared availability caching. This avoids importing an entire streaming catalogue solely to render a paginated service list.
+
 ## 5. Connecting to media now and later
 
 Use actual `media_id` foreign keys rather than unrestricted `(entity_type, entity_id)` pointers. Real FKs prevent dangling relations and support straightforward indexed joins.
@@ -138,6 +206,8 @@ Initial index/constraint candidates:
 - Unique canonical credit identity, including specified/unspecified language handling.
 - Unique `media_characters(media_id, character_id)` plus reverse `(character_id, media_id)` access.
 - Unique performance link pairs plus an index in the reverse direction.
+- Unique organization external identities, including namespace; organization credit indexes in media-to-organization and organization-to-media directions.
+- If availability is normalized later: `(service_id, country_code, offer_type, media_id)` for service catalogue membership and a reverse media lookup; reuse existing unique indexes where possible.
 - Existing user/media and completed/watch-date indexes on watch events.
 - Snapshot/ranking indexes described below, only for actual supported sort/filter combinations.
 
@@ -219,7 +289,7 @@ Cache dimensions must include media scope, supported acting-role/language scope,
 
 ## 9. Keep metadata refresh separate from stats refresh
 
-Shared people, credits, countries, and artwork are provider metadata. A user's watched/rated totals are local derived facts. They need separate schedules:
+Shared people, organizations, credits, countries, availability, and artwork are provider metadata. A user's watched/rated totals are local derived facts. They need separate schedules:
 
 - Deduplicate metadata targets across users and fetch missing/stale/version-old media/people once per provider identity.
 - Use per-title/provider completion and retry state. Mark a successful empty result separately from “not fetched” or “failed.”
@@ -237,6 +307,9 @@ The existing [`scheduler.py`](../backend/core/scheduler.py) already registers ba
 | Person IDs/names | TMDB cast/crew IDs; TVDB person IDs in cast formatter | Normalize people/external identities; verified cross-provider links |
 | Portraits | Media detail cast fields and provider portrait paths | Retain with stable person identity; broaden cast scope and image-host access |
 | Contributor jobs | TMDB crew job strings and basic cast | Normalize role vocabulary; retain source labels; avoid actor/staff misclassification |
+| Production companies/networks | IDs/names/logos in media/show metadata and shared title-credit snapshots | Normalize organizations/namespace-qualified IDs/credit roles; verify cross-source links |
+| Streaming membership | Retained regional watch-provider data and existing local/remote browse filters | Explicit offer-type selection, retention/freshness audit; optional normalized availability later |
+| Future publishers/development studios | No book/game/board-game integration established here | Organization schema can support their roles; provider data and identifiers still needed |
 | Actor → title | Existing title credits and provider title IDs | Relational backfill; canonical media resolution; complete cast fetching |
 | Actor → role name | TMDB `character` text; TVDB character name | Preserve on credit; distinguish labels from trusted fictional identities |
 | Fictional character ID | No established cross-media character model | Verify provider entity meaning; do not reuse TMDB credit IDs as character IDs |
@@ -254,7 +327,7 @@ The screenshots show anime-specific voice-actor information. Exact Japanese voic
 
 1. Confirm the semantic boundaries in this document: real people, separate characters, contribution roles, title-level actor hours, and scheduled statistics.
 2. Audit live data for person media rows, title aliases, existing credits, stable external identities, role labels, portraits, and usable character identities/artwork. This is still a required read-only operational step.
-3. Add canonical people/identity/credit/character relations and the legacy person bridge with non-destructive Alembic migrations. The tables can support nullable character art and character links without requiring unavailable game/book APIs.
+3. Add canonical people/organization identities, typed contributor credits, character relations, and the legacy person bridge with non-destructive Alembic migrations. The tables can support nullable character art and character links without requiring unavailable game/book APIs. Keep normalized streaming availability in its optional phase.
 4. Backfill TMDB people from `TitleCredits` IDs, bridge legacy person media rows by verified IDs, and map credits to canonical title media. Legacy media cast without IDs cannot be globally deduplicated by name alone.
 5. Extend provider adapters to retain complete source-appropriate credits, role labels, portraits, language where known, and trusted character associations. Refresh discarded metadata only through controlled provider calls.
 6. Treat existing `TitleCredits` as an ingestion/compatibility snapshot during transition. Move statistics readers to normalized relations; later retire obsolete aggregation/write paths. A provider-aware ingestion state extension may still be useful, but its JSON is not a second canonical person database.
@@ -274,7 +347,8 @@ No need to request broad database privileges for daily statistics readers. Deplo
 
 Recommended defaults:
 
-- Person means an individual; organization support is separate when introduced.
+- Person means an individual; Organization is a shared company/brand/institution identity with media-specific production/publishing/network roles.
+- Streaming service membership uses regional availability, independently of contribution credits. Reuse existing provider discovery before adding a local availability index.
 - Characters are separate and may be source-qualified/media-scoped until verified canonical links exist.
 - Credits, role vocabulary, and performance links are normalized now; unavailable artwork remains null.
 - Overview/Genres/Actors snapshots refresh together on a staggered approximately 24-hour cadence.
@@ -282,4 +356,4 @@ Recommended defaults:
 - Preserve legacy person-list links and movie/series history through migration.
 - Implement future media catalogue/progress/APIs separately; reuse these contribution/character boundaries.
 
-This document changes the architectural recommendation from a JSON-only actor cache expansion to a shared normalized contributor/character model with a persistent statistics cache. It does not claim the missing metadata has already been obtained.
+The recommended architecture is a shared normalized person/organization contributor model, separate characters and performance links, and a persistent statistics cache. Streaming catalogue support can begin with existing provider discovery and evolve into normalized observed availability when needed. This does not claim missing metadata or future API access has already been obtained.

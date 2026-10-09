@@ -6,7 +6,7 @@ Branch: `beta`
 
 Status: planning only. No application changes, migrations, or metadata backfills are part of this document.
 
-Updated after the genre/voice-actor references and the request for reusable people, fictional characters, and approximately 24-hour statistics updates. See the companion [people, characters, and daily-statistics architecture](people-characters-statistics-architecture.md) for the expanded schema and refresh design.
+Updated after the genre/voice-actor references and the requests for reusable people, organizations, fictional characters, and approximately 24-hour statistics updates. See the companion [people, organizations, characters, and daily-statistics architecture](people-characters-statistics-architecture.md) for the expanded schema and refresh design, including the lean streaming-service catalogue approach.
 
 ## 1. Recommendation
 
@@ -22,7 +22,7 @@ The principal work is:
 4. Expose the required grouped metrics through statistics APIs.
 5. Publish coherent, approximately 24-hour per-user statistics snapshots and build the three sections using the references' visual language.
 
-**Feasibility:** I can implement the UI, aggregation service, shared person/character/credit models, scheduled statistics cache, ingestion changes, tests, and additive Alembic migrations. TMDB and TVDB API credentials are configured in this workspace. The underlying overview metrics can mostly use existing facts, but the newly requested reusable identities/relations and daily cache require migrations. Character identities/artwork and future game/book/board-game APIs still have source/access gaps. Accurate historical dates and individual dates for collapsed repeat plays cannot be recovered from metadata APIs.
+**Feasibility:** I can implement the UI, aggregation service, shared person/organization/character/credit models, scheduled statistics cache, ingestion changes, tests, and additive Alembic migrations. TMDB and TVDB API credentials are configured in this workspace. The underlying overview metrics can mostly use existing facts, but the newly requested reusable identities/relations and daily cache require migrations. Character identities/artwork and future game/book/board-game APIs still have source/access gaps. Accurate historical dates and individual dates for collapsed repeat plays cannot be recovered from metadata APIs.
 
 **Evidence limit:** this is a source-code and configuration audit, not a read of the live beta or production database. No real-user coverage percentages, provider authentication results, or live migration readiness are asserted here.
 
@@ -311,9 +311,9 @@ Then run an idempotent metadata/credits backfill. JSONB supports additional keys
 
 This path leaves TVDB-only actor coverage incomplete. It is a valid smaller release only if that limitation is accepted and accurately represented.
 
-### Path B: shared people, characters, credits, and daily snapshots — recommended
+### Path B: shared people, organizations, characters, credits, and daily snapshots — recommended
 
-The broader contributor/character requirement changes the recommended architecture. Use normalized Person records with provider identities; Character records with their own artwork/identities; media credits with extensible roles; media-character appearances; and performance links connecting an acting credit to one or more characters.
+The broader contributor/character requirement changes the recommended architecture. Use normalized Person and Organization records with namespace-qualified provider identities; Character records with their own artwork/identities; typed media credits with extensible roles; media-character appearances; and performance links connecting an acting credit to one or more characters. An organization's studio/publisher/network role belongs to its media relationship. Regional streaming availability remains separate from production credits.
 
 Preserve existing `MediaType.person` list/import rows through a legacy-to-canonical person bridge. Backfill canonical people/credits from the existing `TitleCredits` cache and verified IDs, then migrate statistics reads to those relations. The old cache can remain an ingestion/compatibility snapshot during cutover; it must not become a competing identity database.
 
@@ -322,6 +322,8 @@ Add durable per-user refresh state, successful snapshot generations, and genre/p
 The companion [architecture plan](people-characters-statistics-architecture.md) defines the proposed tables, constraints, indexes, future media boundaries, role/character semantics, scheduling races, failure recovery, and migration sequence. This supersedes the earlier recommendation to only expand the JSON actor cache.
 
 The existing `SyncJob` model is account/source-sync specific and is not assumed to be a generic metadata/statistics queue. Integrate with the existing scheduler using database coordination and durable state. Metadata fetching stays separate from per-user statistics computation.
+
+For a streaming service's title list, reuse the existing provider/region remote browse filter first; it already has provider discovery and pagination. Normalized services and observed availability are an optional later phase for indexed local queries. Local retained provider data is not an exhaustive streaming catalogue, and service/company/network IDs must not be merged solely because their numbers or names match.
 
 ### Changes not needed for this scope
 
@@ -507,6 +509,7 @@ These do not block the planning deliverable. Recommended defaults are stated so 
 | Planned time | Remaining released regular workload in Planning | Include announced future episodes: forecast rather than a known backlog; weaker coverage |
 | Visual surfaces | Open layout with optional tint inside plots; no outer cards | Full AniList chart cards would conflict with the earlier no-cards request |
 | Person / character structure | Individual contributors and separate fictional characters, linked through scoped credits/appearances | One untyped entity conflates real people, fictional identities, and organizations |
+| Organization / streaming structure | Shared organizations with media-specific credits; regional service availability; existing discovery first | A corporate ownership/licensing graph would add work without being required for a service's title list |
 | Statistics updates | Coherent, staggered approximately 24-hour per-user snapshots with live access checks | Request-time recalculation adds load and makes refresh races/failures visible to visitors |
 
 ## 16. Work completed in this planning pass
