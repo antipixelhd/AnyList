@@ -26,6 +26,7 @@ KEYS = {
     "ITAD_API_KEY",
     "OPENLIBRARY_CONTACT_EMAIL",
     "HARDCOVER_DAILY_BUDGET",
+    "RAWG_MONTHLY_BUDGET",
 }
 ETC = Path("/etc/anylist-preview")
 INSTALL = Path("/opt/anylist-preview")
@@ -41,7 +42,7 @@ def validate(values):
             r"[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
             if key == "OPENLIBRARY_CONTACT_EMAIL"
             else r"[0-9]+"
-            if key == "HARDCOVER_DAILY_BUDGET"
+            if key in {"HARDCOVER_DAILY_BUDGET", "RAWG_MONTHLY_BUDGET"}
             else r"[A-Za-z0-9._-]+"
         )
         if not isinstance(value, str) or not re.fullmatch(pattern, value):
@@ -51,6 +52,8 @@ def validate(values):
         and int(values["HARDCOVER_DAILY_BUDGET"]) > 5000
     ):
         raise ValueError("Daily budget exceeds provider limit")
+    if "RAWG_MONTHLY_BUDGET" in values and int(values["RAWG_MONTHLY_BUDGET"]) > 20000:
+        raise ValueError("Monthly budget exceeds provider limit")
     return values
 
 

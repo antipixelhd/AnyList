@@ -24,6 +24,15 @@ class ProviderInstallerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 installer.validate({key:value})
 
+    def test_provider_budgets_match_settings_bounds(self):
+        for key, maximum in [("HARDCOVER_DAILY_BUDGET", 5000), ("RAWG_MONTHLY_BUDGET", 20000)]:
+            for valid in ("0", "19000" if key == "RAWG_MONTHLY_BUDGET" else "4999", str(maximum)):
+                with self.subTest(key=key, valid=valid):
+                    self.assertEqual(installer.validate({key: valid}), {key: valid})
+            for invalid in ("-1", "1.5", "20000\nOTHER=value", str(maximum + 1), 100):
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    installer.validate({key: invalid})
+
     def test_shared_defaults_precede_slot_override_and_are_idempotent(self):
         original = "[Service]\nEnvironmentFile=/etc/anylist-preview/beta.env\n"
         updated = installer.updated_unit(original, "beta")
