@@ -88,4 +88,8 @@ __all__ = [
     "TitleCredits", "UserCalendarCache",
     "TrackedEntry", "TrackingActivity", "TrackingDeletion", "TrackingPreferences",
     "SyncReview", "StreamBaseline",
+    "CatalogueEntity", "CatalogueIdentity", "CatalogueLegacyLink", "CatalogueShowLink",
+    "BookEdition", "GameRelease", "CatalogueCredit", "CharacterAppearance",
+    "CharacterPerformance", "CatalogueRelationship", "MetadataSnapshot",
+    "MetadataProviderBudget", "SteamPriceSnapshot",
 ]
