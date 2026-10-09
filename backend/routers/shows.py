@@ -1,6 +1,7 @@
 from core import media_presentation
 from core import arr_settings
 from core import show_metadata
+from core.descriptive_metadata import tvdb_fields
 from core import settings_store
 import asyncio
 from datetime import datetime, date, timezone
@@ -2233,7 +2234,7 @@ async def get_tvdb_show(
                 status=show_data.get("status"),
                 first_air_date=show_data.get("first_air_date"),
                 last_air_date=show_data.get("last_air_date"),
-                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+                tmdb_data={**tvdb_fields(show_data), "seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
             )
             db.add(show)
             await db.flush()
@@ -2572,7 +2573,7 @@ async def get_tvdb_season(
                 status=show_data.get("status"),
                 first_air_date=show_data.get("first_air_date"),
                 last_air_date=show_data.get("last_air_date"),
-                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+                tmdb_data={**tvdb_fields(show_data), "seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
             )
             db.add(show)
             await db.flush()
@@ -2936,7 +2937,7 @@ async def get_tvdb_episode(
                 status=show_data.get("status"),
                 first_air_date=show_data.get("first_air_date"),
                 last_air_date=show_data.get("last_air_date"),
-                tmdb_data={"seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
+                tmdb_data={**tvdb_fields(show_data), "seasons": show_data.get("seasons", []), "genres": show_data.get("genres", []), "source": "tvdb"},
             )
             db.add(show)
             await db.flush()
@@ -3229,6 +3230,7 @@ async def refresh_tvdb_show_metadata(
     show.last_air_date = show_fmt.get("last_air_date")
     show.tmdb_data = {
         **(show.tmdb_data or {}),
+        **tvdb_fields(show_fmt, show.tmdb_data),
         "seasons": show_fmt.get("seasons", []),
         "genres": show_fmt.get("genres", []),
         "source": "tvdb",

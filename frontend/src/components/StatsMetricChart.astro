@@ -1,0 +1,28 @@
+---
+import type { MetricGroup } from '../lib/stats-overview-data';
+import { displayNumber } from '../lib/stats-overview-data';
+interface Props { id: string; title: string; rows: MetricGroup[]; score?: boolean; hidden?: boolean; }
+const { id, title, rows, score = false, hidden = false } = Astro.props;
+---
+<section class="overview-chart" data-chart-section={id} hidden={hidden} aria-labelledby={`${id}-title`}>
+  <header class="overview-chart-heading">
+    <h3 id={`${id}-title`}>{title}</h3>
+    <div class="overview-metrics" role="group" aria-label={`${title} metric`}>
+      {([['titles', 'Titles'], ['hours', 'Hours'], ...(!score ? [['mean_score', 'Mean score']] : [])]).map(([metric, label]) =>
+        <button type="button" data-chart={id} data-metric={metric} aria-pressed={metric === 'titles'}>{label}</button>)}
+    </div>
+  </header>
+  {id === 'watch_years' && <div class="overview-year-controls">
+    <label>From <select data-watch-from aria-label="Watch year from"><option value="">First year</option>{rows.map(row => <option value={row.key}>{row.label}</option>)}</select></label>
+    <label>Through <select data-watch-through aria-label="Watch year through"><option value="">Latest year</option>{rows.map(row => <option value={row.key}>{row.label}</option>)}</select></label>
+  </div>}
+  <div class="overview-plot"><canvas data-overview-chart={id} role="img" aria-label={`${title}: titles watched`} aria-describedby={`${id}-data`}></canvas>
+    <p class="overview-plot-empty" data-chart-empty={id} hidden={rows.some(row => row.titles)}>No watched titles.</p>
+  </div>
+  <details class="overview-data" id={`${id}-data`}>
+    <summary>Data</summary>
+    <div class="overview-table-scroll"><table><caption>{title}</caption><thead><tr><th scope="col">{id === 'scores' ? 'Score interval' : id.includes('years') ? 'Year' : 'Episode count'}</th><th scope="col">Titles</th><th scope="col">Hours</th><th scope="col">Mean score</th><th scope="col">Rated titles</th></tr></thead>
+      <tbody data-chart-table={id}>{rows.map(row => <tr><th scope="row">{id === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label}</th><td>{displayNumber(row.titles)}</td><td>{displayNumber(row.minutes / 60, 1)}</td><td>{displayNumber(row.mean_score, 2)}</td><td>{displayNumber(row.rated_titles)}</td></tr>)}</tbody>
+    </table></div>
+  </details>
+</section>

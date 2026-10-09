@@ -1,71 +1,56 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
-import '../../../styles/profile-stats.css';
+import StatsMetricChart from '../../../components/StatsMetricChart.astro';
+import StatsDistribution from '../../../components/StatsDistribution.astro';
+import '../../../styles/stats-overview.css';
 import { tracker } from '../../../lib/tracker';
-import type { ProfileStats } from '../../../lib/profile-stats-data';
-import { statsHighlights, statsStatuses, watchTime, scoreBuckets } from '../../../lib/profile-stats-presentation';
+import type { OverviewResponse, Overview, MediaScope } from '../../../lib/stats-overview-data';
+import { headlineValues, displayNumber } from '../../../lib/stats-overview-data';
 
 const { username } = Astro.params;
-let data: ProfileStats | null = null, error = '';
-try { data = await tracker(`profile/${encodeURIComponent(username!)}/stats/summary`, Astro.locals.token); }
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+const requested = Astro.url.searchParams.get('media') || 'all';
+const media: MediaScope = requested === 'movie' || requested === 'series' ? requested : 'all';
+let data: OverviewResponse | null = null, error = '';
+try { data = await tracker(`profile/${encodeURIComponent(username!)}/stats/overview?media_type=${media}`, Astro.locals.token); }
 catch (cause) { error = (cause as Error).message; }
-const years = [...new Set((data?.activity || []).map(item => item.month.slice(0, 4)))].sort().reverse();
-const highlights = data ? statsHighlights(data) : null;
-const time = watchTime(data?.viewing.estimated_watch_minutes || 0);
+const ready = data?.status === 'ready' && data.overview !== null;
+const overview: Overview = data?.overview || {
+  media_type: media, totals: { listed_titles: 0, watched_titles: 0, episode_plays: 0, distinct_episodes: 0, watch_minutes: 0, watch_days: 0, planned_minutes: 0, planned_days: 0, mean_score: null, standard_deviation: null, rated_titles: 0 },
+  scores: [], episode_counts: [], statuses: [], formats: [], countries: [], release_years: [], watch_years: [], coverage: {},
+};
+const highlights = headlineValues(overview);
+const coverageLabels: Record<string, string> = {
+  runtime_known_plays: 'Plays with known runtime', runtime_estimated_plays: 'Plays with estimated episode runtime', runtime_missing_plays: 'Plays missing runtime',
+  authoritative_dated_plays: 'Plays with authoritative dates', unattributed_date_plays: 'Plays excluded from annual chronology',
+  planned_unknown_titles: 'Planning titles with incomplete workload', planned_unknown_episodes: 'Planning episodes missing runtime',
+  orphan_episode_plays: 'Episode plays without a resolved series', uncatalogued_titles: 'Titles using retained local metadata',
+};
 ---
 <Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
-  {data && highlights ? <>
+  {data ? <>
     <ProfileHeader profile={{ ...data.profile, owner: data.owner, following: data.following, follows_you: data.follows_you, combine_lists: data.combine_lists }} active="stats" />
-    <div class="page-width stats-page" id="profile-stats" data-username={username} data-initial={JSON.stringify(data)}>
-      <header class="stats-heading">
-        <h2>Statistics</h2>
-        <div class="stats-controls">
-          <div class="stats-segment" role="group" aria-label="Media type" data-motion-static>
-            <span class="stats-segment-indicator" aria-hidden="true"></span>
-            {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <button type="button" data-stats-media={value} aria-pressed={value === 'all'}>{label}</button>)}
-          </div>
-          <label class="stats-period"><span>Viewing year</span><select id="stats-year" aria-label="Viewing year"><option value="">All time</option>{years.map(year => <option value={year}>{year}</option>)}</select></label>
-        </div>
-      </header>
-      <p class="stats-error error-message" role="alert" hidden></p>
-      <span class="stats-sr-only" data-stats-announcement role="status" aria-live="polite"></span>
-      <div class="stats-results">
-        <dl class="stats-overview" aria-label="Primary statistics" data-stats-reveal>
-          <div class="stats-metric stats-metric-time"><dt>Estimated watch time</dt><dd><strong data-stat="time-value">{time.value.toLocaleString()}</strong><span class="stats-value-unit" data-stat="time-unit">{time.unit}</span></dd><span class="stats-metric-detail" data-stat="time-detail">{time.detail}</span></div>
-          <div class="stats-metric stats-metric-titles"><dt data-stat="titles-label">Viewed titles</dt><dd><strong data-stat="titles">{highlights.titles}</strong></dd><span class="stats-metric-detail" data-stat="title-detail">{highlights.movies} · {highlights.series}</span></div>
-          <div class="stats-metric"><dt>Average score</dt><dd><strong data-stat="average">{highlights.average}</strong><span class="stats-value-unit">/ 10</span></dd><span class="stats-metric-detail" data-stat="rated">{highlights.rated}</span></div>
-          <div class="stats-metric stats-series-metric"><dt>Episodes</dt><dd><strong data-stat="episodes">{highlights.episodes}</strong></dd><span class="stats-metric-detail"><span data-stat="seasons">{highlights.seasons}</span> seasons</span></div>
-          <div class="stats-metric"><dt>Current titles</dt><dd><strong data-stat="current">{highlights.current}</strong></dd></div>
-          <div class="stats-metric"><dt>Repeat views</dt><dd><strong data-stat="repeats">{highlights.repeats}</strong></dd></div>
-        </dl>
-
-        <section class="stats-activity" aria-labelledby="stats-activity-title" data-stats-reveal>
-          <header class="stats-section-heading"><div><h3 id="stats-activity-title">Viewing activity</h3><span class="stats-section-meta" data-activity-range></span></div>
-            <div class="stats-chart-legend" role="group" aria-label="Activity chart series" data-motion-static><button type="button" data-chart-series="movie" aria-pressed="true"><i></i>Movies</button><button type="button" data-chart-series="series" aria-pressed="true"><i></i>Episodes</button></div>
-          </header>
-          <div class="stats-chart-frame"><canvas id="activity-chart" role="img" aria-label="Viewing activity by month"></canvas><p class="stats-chart-empty" data-activity-empty hidden>No viewing activity.</p></div>
-        </section>
-
-        <div class="stats-breakdowns">
-          <section class="stats-list" aria-labelledby="stats-list-title" data-stats-reveal>
-            <header class="stats-section-heading"><h3 id="stats-list-title">List status</h3><span class="stats-section-meta"><span data-stat="completion">{highlights.completion}%</span> completed</span></header>
-            <dl class="stats-statuses">{statsStatuses.map(status => <div data-status={status.key}><dt><i class={`stats-status-dot stats-status-${status.key}`} aria-hidden="true"></i>{status.label}</dt><dd>{(data!.current.statuses[status.key] || 0).toLocaleString()}</dd><span class="stats-status-percent">{data!.current.total ? Math.round((data!.current.statuses[status.key] || 0) / data!.current.total * 100) : 0}%</span><span class="stats-status-track" aria-hidden="true"><i class={`stats-status-${status.key}`} style={`width:${data!.current.total ? (data!.current.statuses[status.key] || 0) / data!.current.total * 100 : 0}%`}></i></span></div>)}</dl>
-          </section>
-          <section class="stats-scores" aria-labelledby="stats-scores-title" data-stats-reveal>
-            <header class="stats-section-heading"><h3 id="stats-scores-title">Score distribution</h3><span class="stats-section-meta">Current ratings</span></header>
-            <div class="stats-chart-frame stats-score-frame"><canvas id="score-chart" role="img" aria-label="Number of titles in each score range"></canvas><p class="stats-chart-empty" data-scores-empty hidden>No ratings.</p></div>
-          </section>
-        </div>
-
-        <section class="stats-genres" aria-labelledby="stats-genres-title" data-stats-reveal>
-          <header class="stats-section-heading"><h3 id="stats-genres-title">Top genres</h3><span class="stats-section-meta">Current titles</span></header>
-          <ol class="stats-genre-list" data-genres>{data.genres.slice(0, 8).map((genre, index) => <li><span class="stats-genre-rank">{String(index + 1).padStart(2, '0')}</span><div><div class="stats-genre-label"><span>{genre.genre}</span><strong>{genre.count.toLocaleString()}</strong></div><span class="stats-genre-track" aria-hidden="true"><i style={`width:${data!.current.total ? genre.count / data!.current.total * 100 : 0}%`}></i></span></div></li>)}</ol>
-          <p class="stats-panel-empty" data-genres-empty hidden={data.genres.length > 0}>No genre data.</p>
-        </section>
-        <details class="stats-data"><summary>Data tables</summary><div class="stats-data-tables"><table><caption>Viewing activity</caption><thead><tr><th scope="col">Month</th><th scope="col">Movies</th><th scope="col">Episodes</th></tr></thead><tbody data-activity-table>{data.activity.map(item => <tr><th scope="row">{item.month}</th><td>{item.movies}</td><td>{item.episodes}</td></tr>)}</tbody></table><table><caption>Rating ranges</caption><thead><tr><th scope="col">Score</th><th scope="col">Titles</th></tr></thead><tbody data-scores-table>{scoreBuckets(data.scores.distribution).map(item => <tr><th scope="row">{item.range}</th><td>{item.count}</td></tr>)}</tbody></table></div><p class="stats-note">Year filters apply to viewing history. List totals and ratings are current. Watch time uses dated plays with known runtimes.</p></details>
+    <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} aria-label="Statistics overview">
+      <header class="overview-heading"><h2>Overview</h2><nav class="overview-media" aria-label="Statistics media type">
+        {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?media=${value}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
+      </nav></header>
+      <p class="overview-error error-message" role="alert" hidden></p>
+      <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>Check again</button></div>
+      <span class="overview-sr-only" data-overview-announcement role="status" aria-live="polite"></span>
+      <div class="overview-results" hidden={!ready}>
+        <dl class="overview-totals" aria-label="Primary statistics">{highlights.map((metric, index) => <div title={metric.detail}><dt data-headline-label={index}>{metric.label}</dt><dd data-headline-value={index}>{metric.value}</dd></div>)}</dl>
+        <div class="overview-chart-grid"><StatsMetricChart id="scores" title="Scores" rows={overview.scores} score /><StatsMetricChart id="episode_counts" title="Episode count" rows={overview.episode_counts} hidden={media === 'movie'} /></div>
+        <div class="overview-distribution-grid"><StatsDistribution id="statuses" title="List status" data={overview} /><StatsDistribution id="formats" title="Format" data={overview} /><StatsDistribution id="countries" title="Country" data={overview} /></div>
+        <div class="overview-chart-grid overview-years"><StatsMetricChart id="release_years" title="Release year" rows={overview.release_years} /><StatsMetricChart id="watch_years" title="Watch year" rows={overview.watch_years} /></div>
+        <details class="overview-about"><summary>About the data</summary>
+          <p>Updated <time data-computed-at datetime={data.computed_at || undefined}>{data.computed_at ? new Date(data.computed_at).toLocaleString('en', { timeZone: 'UTC' }) + ' UTC' : '—'}</time>.</p>
+          <p>List status uses current entries. Other charts use titles with completed watch evidence and their current scores. Watch time is estimated from runtimes. Countries share a title equally when several apply.</p>
+          <p>Annual history uses authoritative UTC dates. Inferred dates and repeats with no separate timestamp stay in lifetime totals. Planning includes remaining released regular episodes, with incomplete workload shown as a lower bound or unavailable.</p>
+          <dl data-overview-coverage>{Object.entries(coverageLabels).map(([key, label]) => <div><dt>{label}</dt><dd>{displayNumber(overview.coverage[key] || 0)}</dd></div>)}</dl>
+        </details>
       </div>
-    </div>
+    </section>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
-<script src="../../../lib/profile-stats.ts"></script>
+<script src="../../../lib/stats-overview.ts"></script>

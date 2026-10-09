@@ -4,7 +4,7 @@ Date: 2026-10-09
 
 Branch: `beta`
 
-Status: catalogue/schema and server metadata foundation implemented on `beta` (2026-10-09). Statistics APIs, daily snapshots/jobs and frontend remain planned. See [catalogue-foundation.md](catalogue-foundation.md) for the implemented architecture, provider evidence, authenticated routes and migration delivery.
+Status: catalogue/schema foundation and the movie/series Overview API, daily snapshots/jobs, and frontend are implemented on `beta` (2026-10-10). See [statistics-overview.md](statistics-overview.md) for the Overview contract and validation, and [catalogue-foundation.md](catalogue-foundation.md) for the provider foundation. Genres and Actors remain planned.
 
 Updated after the genre/voice-actor references and the requests for reusable people, organizations, fictional characters, and approximately 24-hour statistics updates. See the companion [people, organizations, characters, and daily-statistics architecture](people-characters-statistics-architecture.md) for the expanded schema and refresh design, including the lean streaming-service catalogue approach.
 

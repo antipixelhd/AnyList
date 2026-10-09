@@ -315,6 +315,8 @@ async def get_series_episodes(
 
 def format_series(raw: dict, language: str | None = None) -> dict:
     """Normalise TVDB extended series data into a frontend-friendly dict."""
+    from core.countries import country_codes
+
     image = raw.get("image") or ""
     poster = _image_url(image) if image else None
 
@@ -405,6 +407,7 @@ def format_series(raw: dict, language: str | None = None) -> dict:
         "network": network,
         "seasons": seasons,
         "original_language": raw.get("originalLanguage"),
+        "origin_country": country_codes(raw.get("originalCountry")),
         "age_rating": age_rating,
         "imdb_id": imdb_id,
         "tmdb_id_cross": tmdb_id_cross,

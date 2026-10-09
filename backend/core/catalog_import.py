@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.descriptive_metadata import tmdb_fields
 from core.enrichment import create_media_safely, enrich_media
 from models.base import MediaType
 from models.media import Media
@@ -38,6 +39,7 @@ async def get_or_create_show(db: AsyncSession, tmdb_id: int, title: str, api_key
         first_air_date=d.get("first_air_date"),
         last_air_date=d.get("last_air_date"),
         tmdb_data={
+            **tmdb_fields(d),
             "genres": [g["name"] for g in d.get("genres", [])],
             "external_ids": d.get("external_ids", {}),
             "original_language": d.get("original_language"),

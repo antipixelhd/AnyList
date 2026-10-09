@@ -149,14 +149,14 @@ class UserSettings(Base):
     use_hls_player  : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     shuffle_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     minimalist_next_up : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
+    next_up_hidden_shows : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="[]")
     # Dropped is stronger than hidden - unlike next_up_hidden_shows, dropped
     # items are also excluded from the Calendar and from Discover/
     # recommendations (#117). dropped_shows holds local Show.id values (same
     # convention as next_up_hidden_shows); dropped_movies holds local
     # Media.id values (movies have no next-up/hidden precedent to match).
-    dropped_shows  : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
-    dropped_movies : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="'[]'")
+    dropped_shows  : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="[]")
+    dropped_movies : Mapped[Optional[list[int]]] = mapped_column(JSONB, server_default="[]")
     hide_watched_from_recently_added : Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # Collapse consecutive same-show episodes within a date on the History
     # page into one row instead of listing each individually (#391).

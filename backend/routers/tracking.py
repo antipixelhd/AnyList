@@ -7,7 +7,7 @@ import binascii
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from models import Media, User, UserSettings, UserProfileData, GlobalSettings, F
 from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
+from schemas_statistics import MediaScope, OverviewResponse
 
 router = APIRouter()
 
@@ -985,6 +986,35 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "entries": entries,
     }
+
+
+@router.get("/profile/{username}/stats/overview")
+async def profile_stats_overview(
+    username: str,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+    media_type: Annotated[MediaScope, Query()] = "all",
+) -> OverviewResponse:
+    from core.statistics_snapshots import read_overview
+
+    user, owner = await profile_access(db, username, viewer)
+    response.headers["Cache-Control"] = "private, no-store"
+    following = follows_you = False
+    if viewer and not owner:
+        following = (await db.scalar(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))) is not None
+        follows_you = (await db.scalar(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))) is not None
+    prefs = await db.get(TrackingPreferences, user.id)
+    header = {
+        "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
+                    "bio": user.profile.bio if user.profile else None,
+                    "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
+                    "has_avatar": bool(user.profile and user.profile.avatar_path),
+                    "background_url": user.profile.background_url if user.profile else None},
+        "owner": owner, "following": following, "follows_you": follows_you,
+        "combine_lists": True if prefs is None else prefs.combine_lists,
+    }
+    return OverviewResponse.model_validate({**header, **await read_overview(db, user.id, media_type)})
 
 
 @router.get("/profile/{username}/stats/summary")

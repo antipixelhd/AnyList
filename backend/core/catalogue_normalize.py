@@ -3,9 +3,21 @@
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+from core.countries import country_codes
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
+
+
+def regular_episode_count(seasons):
+    if not isinstance(seasons, list):
+        return None
+    regular = [s for s in seasons if isinstance(s, dict) and isinstance(s.get("season_number"), int) and s["season_number"] > 0]
+    if not regular or not all(isinstance(s.get("episode_count"), int) and not isinstance(s["episode_count"], bool) and s["episode_count"] >= 0 for s in regular):
+        return None
+    return sum(s["episode_count"] for s in regular)
+
+
 NAMESPACE_KINDS = {
     "tmdb.movie": {"movie"},
     "tmdb.series": {"series"},
@@ -144,6 +156,8 @@ def normalize_tmdb(raw, kind):
                 "genres": raw.get("genres"),
                 "episode_count": raw.get("number_of_episodes"),
                 "episode_run_time": raw.get("episode_run_time"),
+                "original_language": raw.get("original_language"),
+                "regular_episode_count": regular_episode_count(raw.get("seasons")),
             },
         )
     )
@@ -243,9 +257,8 @@ def normalize_tvdb(raw):
             artwork=raw.get("image"),
             attributes={
                 "release_date": raw.get("firstAired"),
-                "origin_countries": [raw["originalCountry"]]
-                if raw.get("originalCountry")
-                else None,
+                "origin_countries": country_codes(raw.get("originalCountry")),
+                "original_language": raw.get("originalLanguage"),
                 "genres": raw.get("genres"),
             },
         )

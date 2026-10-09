@@ -3,6 +3,7 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from core import tmdb, tvdb
+from core.descriptive_metadata import tvdb_fields, tmdb_fields
 from core.enrichment import create_media_safely
 from models import Media, Show
 from models.base import MediaType
@@ -118,7 +119,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
             episode.runtime = data.get('runtime')
         air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
         media.status = details.get('status') or media.status
-        media.tmdb_data = {**(media.tmdb_data or {}), **air_metadata, 'seasons': details.get('seasons', []),
+        media.tmdb_data = {**(media.tmdb_data or {}), **tvdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': details.get('seasons', []),
             'tracking_episode_ids': [item['tvdb_id'] for item in fetched],
             'tracking_catalogue_provider': 'tvdb',
             'tracking_catalogue_refreshed_at': datetime.now(timezone.utc).isoformat()}
@@ -159,7 +160,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
         episode.runtime = data.get('runtime')
     air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
     media.status = details.get('status') or media.status
-    media.tmdb_data = {**(media.tmdb_data or {}), **air_metadata, 'seasons': seasons,
+    media.tmdb_data = {**(media.tmdb_data or {}), **tmdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': seasons,
         'tracking_episode_ids': [data['id'] for _, data in fetched],
         'tracking_catalogue_refreshed_at': datetime.now(timezone.utc).isoformat()}
     await db.flush()
@@ -260,6 +261,7 @@ async def refresh_tracked_tvdb_show_summaries(db, api_key, now: datetime | None 
         show.last_air_date = details.get("last_air_date")
         show.tmdb_data = {
             **metadata,
+            **tvdb_fields(details, metadata),
             "seasons": details.get("seasons", []),
             "genres": details.get("genres", []),
             "source": "tvdb",

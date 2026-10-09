@@ -1,0 +1,14 @@
+---
+import type { Overview } from '../lib/stats-overview-data';
+import { displayNumber, distributionRows } from '../lib/stats-overview-data';
+interface Props { id: 'statuses' | 'formats' | 'countries'; title: string; data: Overview; }
+const { id, title, data } = Astro.props;
+const rows = distributionRows(data, id);
+---
+<section class="overview-distribution" aria-labelledby={`${id}-title`}>
+  <h3 id={`${id}-title`}>{title}</h3>
+  <div class="overview-pie"><canvas data-overview-distribution={id} role="img" aria-label={`${title} distribution`} aria-describedby={`${id}-legend`}></canvas><p class="overview-plot-empty" data-distribution-empty={id} hidden={rows.some(row => row.titles > 0)}>No titles.</p></div>
+  <dl class="overview-distribution-rows" id={`${id}-legend`} data-distribution-rows={id}>
+    {rows.map(row => <div><dt><button type="button" data-pie={id} data-category={row.key} aria-label={`${row.label}: ${displayNumber(row.titles)} titles, ${displayNumber(row.percent, 1)} percent`}><i data-category-color={row.key} aria-hidden="true"></i>{row.label}</button></dt><dd>{displayNumber(row.titles)}</dd><dd>{displayNumber(row.percent, 1)}%</dd></div>)}
+  </dl>
+</section>

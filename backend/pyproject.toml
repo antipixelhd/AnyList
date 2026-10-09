@@ -42,6 +42,7 @@ dependencies = [
     "xmltodict>=1.0.4",
     "pyotp>=2.9.0",
     "slowapi>=0.1.9",
+    "pycountry>=26.2.16",
 ]
 
 [dependency-groups]

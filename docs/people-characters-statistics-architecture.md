@@ -4,7 +4,7 @@ Date: 2026-10-09
 
 Branch: `beta`
 
-Status: catalogue/schema and server metadata foundation implemented on `beta` (2026-10-09). Statistics APIs, daily jobs/snapshots, frontend redesign, game/book tracking and board games remain deferred. The [implemented catalogue contract](catalogue-foundation.md) is authoritative for exact tables, routes, migration, provider verification, limits and terms; this document retains the future statistics design.
+Status: catalogue/schema foundation and movie/series Overview daily snapshots/API/frontend are implemented on `beta` (2026-10-10). See [the Overview contract](statistics-overview.md). Genre/people statistics, game/book tracking, and board games remain deferred. The [implemented catalogue contract](catalogue-foundation.md) is authoritative for provider tables/routes/limits; the broader statistics sections below retain the future design.
 
 ## 1. Recommended direction
 

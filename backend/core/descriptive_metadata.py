@@ -16,6 +16,14 @@ def retained_fields(previous):
     return {key: previous[key] for key in FIELDS if (previous or {}).get(key)}
 
 
+def tvdb_fields(data, previous=None):
+    fields = retained_fields(previous or {})
+    for key in ("origin_country", "original_language"):
+        if data.get(key):
+            fields[key] = data[key]
+    return fields
+
+
 def tmdb_fields(data, previous=None):
     fields = retained_fields(previous or {})
     for key in (

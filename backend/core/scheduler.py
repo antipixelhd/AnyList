@@ -801,7 +801,10 @@ async def _watchlist_poller():
 @asynccontextmanager
 async def background_jobs():
     """Run periodic jobs for the application lifespan and cancel them on exit."""
+    from core.statistics_snapshots import scheduler as statistics_scheduler
+
     jobs = (
+        statistics_scheduler,
         _auto_sync_scheduler,
         _stream_action_retry_scheduler,
         _rating_push_scheduler,
