@@ -1,0 +1,285 @@
+# People, characters, credits, and daily statistics
+
+Date: 2026-10-09
+
+Branch: `beta`
+
+Status: architecture and planning only. Supplements the [statistics redesign plan](profile-statistics-anilist-plan.md). No schema or application changes have been applied.
+
+## 1. Recommended direction
+
+Use a shared **Person** entity for real individual contributors and a separate **Character** entity for fictional identities. Connect them to media through normalized credits and character appearances. Calculate user statistics from those relations in a background job and publish a coherent snapshot approximately every 24 hours.
+
+The same person can act in a movie, voice a game character, write a book, or design a board game. Those are roles on a credit, not separate kinds of person. A character needs its own identity and artwork because it can be portrayed by several people, have several language casts, or appear in a book without an actor at all.
+
+The relations are necessary for the requested behavior. They also make querying efficient: indexed joins and shared identity records replace repeated scans of duplicated cast JSON. PostgreSQL is sufficient for this scope; neither a graph database nor Redis is required.
+
+Keep the initial implementation focused on movie/series data we can obtain. Design the relational boundaries for future games/books/board games, but do not add imaginary provider data, playtime, reading duration, or character art.
+
+## 2. What the new screenshots add
+
+The new references show two useful patterns:
+
+- **Genres:** a Count / Mean Score / Time Watched selector; each ranked genre displays all three values and a strip of connected title posters.
+- **Voice Actors:** a titles/characters selector plus the same metric selector; each ranked person has a portrait, three metrics, and connected title posters.
+
+In these screenshots the selected metric appears to determine ranking while all three metrics remain visible. Our implementation should use that behavior: sorting should not remove the other useful values or require recalculation.
+
+Adopt the information structure, cyan selection, navy surfaces, portraits, and related artwork. Retain the earlier dense/minimal/no-cards requirement: use aligned sections with space, not oversized boxed entries. Genre headings sit above a compact three-value row and a poster strip. Person rows use a modest portrait beside the name and metrics, followed by the related artwork strip. Use a quiet rank number rather than a decorative badge.
+
+On mobile, keep the selectors at the top and allow the poster strip to scroll locally without causing page overflow. On desktop, use more horizontal alignment, not larger portraits. Hover/focus may reveal title names and precise values. Related posters must be links with useful accessible names.
+
+For our movies-and-series application, label the first person view **Titles**, rather than Anime. A future **Characters** view uses actual character identity/artwork where available. Generic acting and voice acting are distinct credit-role filters; dubbing language is meaningful only when supplied by the source.
+
+## 3. Existing person support that must be preserved
+
+There is already a `person` value in [`MediaType`](../backend/models/base.py). People can be stored as `Media` rows for lists and Trakt imports, using a name as the title and a portrait as the poster. Relevant consumers include:
+
+- [`lists.py`](../backend/routers/lists.py): adding a person to a list.
+- [`trakt_sync.py`](../backend/core/trakt_sync.py): importing list people.
+- [`media_discovery.py`](../backend/routers/media_discovery.py): person detail and list membership lookup.
+- [`media.py`](../backend/routers/media.py): people search/discovery responses.
+
+This is not yet a reusable normalized person/credit model. Do not immediately remove `MediaType.person` or change existing list item IDs. Introduce canonical people and bridge legacy person media rows to them; preserve existing routes and imports while migrating their readers/writers deliberately.
+
+Existing [`TitleCredits`](../backend/models/title_credits.py) and media cast JSON are useful migration inputs and provider snapshots. After cutover, the canonical people/credit relations become the statistics read source. Do not maintain two independent competing actor identity systems.
+
+## 4. Proposed domain model
+
+```mermaid
+erDiagram
+    PEOPLE ||--o{ PERSON_EXTERNAL_IDS : has
+    MEDIA ||--o{ MEDIA_CREDITS : credits
+    PEOPLE ||--o{ MEDIA_CREDITS : contributes
+    CREDIT_ROLES ||--o{ MEDIA_CREDITS : classifies
+    MEDIA_CREDITS ||--o{ CREDIT_CHARACTERS : performs
+    MEDIA_CHARACTERS ||--o{ CREDIT_CHARACTERS : portrayed_as
+    MEDIA ||--o{ MEDIA_CHARACTERS : includes
+    CHARACTERS ||--o{ MEDIA_CHARACTERS : appears_in
+    CHARACTERS ||--o{ CHARACTER_EXTERNAL_IDS : has
+    MEDIA ||--o| LEGACY_PERSON_MEDIA_LINKS : bridges
+    PEOPLE ||--o{ LEGACY_PERSON_MEDIA_LINKS : preserves
+```
+
+This is a conceptual design, not executable migration DDL. Table names can follow repository conventions during implementation.
+
+### People and identity
+
+| Table | Core fields and constraints | Purpose |
+| --- | --- | --- |
+| `people` | Local primary key, display name, nullable portrait reference, small source/metadata fields, timestamps | One reusable individual, independent of their jobs |
+| `person_external_ids` | `person_id` FK, provider, external ID as text; unique `(provider, external_id)`; index `person_id` | TMDB, TVDB, and future provider identities for that individual |
+| `legacy_person_media_links` | `media_id` FK/primary key, `person_id` FK/index | Preserve existing list/import person rows, including legacy aliases |
+
+Use text for external IDs: future book/game providers may use strings, URLs, or identifiers that are not integers. If a provider has multiple person namespaces, include its namespace in the uniqueness key.
+
+Do not put an `actor/developer/writer` enum on Person as its authoritative type. Roles belong to each media credit. Do not merge people by name or portrait similarity. Link multiple provider identities only through verified cross-references or an explicit reviewed merge. Keep provenance for merges and a way to correct a mistaken link.
+
+A development studio or publisher is an **organization**, not a person. Future organization credits can use a separate Organization entity and explicitly typed contributor relations when needed. Do not create fictional people to represent companies. No organization schema expansion is needed just for the current actor page.
+
+### Credits and role vocabulary
+
+| Table | Core fields and constraints | Purpose |
+| --- | --- | --- |
+| `credit_roles` | Stable role code/primary key, label, role family | Extensible vocabulary such as actor, voice_actor, director, writer, author, illustrator, programmer, game_designer, translator |
+| `media_credits` | Local primary key; `media_id` and `person_id` FKs; role-code FK; language code; billing order; credited-as name; source/scope fields | A person's contribution to a particular media item |
+| `credit_characters` | Credit FK, media-character FK; unique pair; media-scope consistency enforced | One credit can portray several characters; one character can have several performers |
+
+Recommend canonical credit uniqueness on `(media_id, person_id, role_code, language_code)`. Store a known language code or `und` for unspecified language; do not infer a dub language from a person's nationality or a title's original language. Keep original source job labels/credit identifiers in provenance so normalization does not discard information.
+
+Multiple source records for the same canonical contribution should enrich its provenance, not create duplicate counted credits. The cast provider's credit ID identifies a **credit**, not necessarily a person or fictional character. Verify each provider's identifier meaning before storing it in the corresponding identity table.
+
+For people with multiple acting roles or characters in one title, title-based actor stats count that title once. A writer/director credit must not put the person into the actor ranking unless they also have an acting credit.
+
+### Characters and appearances
+
+| Table | Core fields and constraints | Purpose |
+| --- | --- | --- |
+| `characters` | Local primary key, display name, nullable default artwork reference, identity scope/provenance, optional descriptive metadata | A fictional identity independently of its performer |
+| `character_external_ids` | Character FK, provider, external ID as text; unique provider/namespace identity; index character FK | Trusted fictional-character identifiers where providers offer them |
+| `media_characters` | Local primary key; media FK and character FK; unique `(media_id, character_id)`; display/role label, nullable artwork override, source/scope | A character's appearance in a work, including adaptation-specific artwork |
+
+Keep a default image on Character and permit an artwork override on its media appearance. A novel illustration, game portrait, and movie adaptation should not overwrite one another. Store image source/provider and attribution/license data where supplied. A full image-gallery table can be added when multiple artworks per context are actually needed.
+
+The absence of a portrait or character art remains null with a neutral UI fallback. An actor portrait is not character artwork. Do not silently present a cast member's photograph as a fictional character.
+
+Character identity across adaptations/continuities requires evidence. Two people named “Batman” in different versions are not automatically one globally merged character. Use source-qualified identities or explicitly media-scoped local characters until a trustworthy canonical link exists.
+
+Current TMDB credits often supply only a role string. Preserve it on the credit even when no trusted Character record exists. A local, media-scoped character can be curated from that evidence, but an unstructured role such as “Guard,” “Self,” or “Bruce Wayne / Batman” must not automatically become a globally deduplicated entity. Splitting role strings is not a reliable identity resolver.
+
+Enforce that `credit_characters` connects a credit and character appearance in the **same media scope**. Composite FKs with the scope's `media_id`, or an equivalent database-enforced constraint, can prevent linking a movie actor to an unrelated game's character. If later episode-level credits are added, attach the corresponding episode appearance in that scope and retain its series parent relationship separately.
+
+## 5. Connecting to media now and later
+
+Use actual `media_id` foreign keys rather than unrestricted `(entity_type, entity_id)` pointers. Real FKs prevent dangling relations and support straightforward indexed joins.
+
+For the current application:
+
+- Movie credits attach to the movie `Media` row.
+- Series credits attach to the canonical whole-series `Media` row.
+- Episode-scoped credits, if deliberately fetched later, attach to episode `Media` rows and declare their scope.
+- Episode history still follows `Media.show_id → Show`; map it to the whole-series media identity once when building title-level stats.
+
+A shared resolver must reconcile legacy duplicate series media aliases through verified provider IDs. Make the canonical whole-series selection explicit during migration; do not attach half the credits to a new duplicate media row. Missing whole-series rows may be created from their existing Show metadata without modifying episode/history identities.
+
+Future books, games, and board games can use this contributor/character design **if** their catalogue items join the same canonical media registry. Their domain-specific fields should live in dedicated detail models, rather than filling movie runtime or TMDB columns with unrelated values. Provider title identities should eventually use a general mapping table when those integrations are introduced.
+
+The current `MediaType` and tracking flows are movie/series oriented. Adding a Person/Character schema does not itself implement game/book catalogue types, editions/releases, progress, reading sessions, play sessions, or their APIs. Those need a separately scoped migration and domain contract. The current plan establishes reusable credit relations without pretending future media support is already solved.
+
+For books, distinguish work-level characters/contributors from edition-level translators and narrators when that domain is added. Games can have release-specific credits and voice casts. Choose the correct media scope rather than globally assigning all adaptation/edition credits to every version.
+
+## 6. Efficient queries and indexes
+
+Initial index/constraint candidates:
+
+- Unique provider identity lookups on person/character external-ID tables.
+- `media_credits(media_id, role_code, person_id)` for a selected user's watched-title set.
+- `media_credits(person_id, role_code, media_id)` for person detail/drill-down.
+- Unique canonical credit identity, including specified/unspecified language handling.
+- Unique `media_characters(media_id, character_id)` plus reverse `(character_id, media_id)` access.
+- Unique performance link pairs plus an index in the reverse direction.
+- Existing user/media and completed/watch-date indexes on watch events.
+- Snapshot/ranking indexes described below, only for actual supported sort/filter combinations.
+
+Measure query plans before adding redundant indexes: composite unique indexes can already cover some of these lookups. FK definitions do not automatically create every useful referencing-column index in PostgreSQL.
+
+Build one per-user canonical title fact set first: distinct title ID, movie/series kind, completed minutes, current effective score, and date/coverage information. Then join those title facts to **distinct `(person_id, media_id)`** acting memberships, or distinct genre memberships. Do not join raw episodes directly to multiple credit-character rows: that multiplies runtime, counts, and scores.
+
+Example: two roles, three characters, and twenty watched episodes for one actor still produce **one title**, the title's watched hours once, and its current personal score once. Character count is calculated separately from trusted distinct character identities, not by multiplying title metrics by performance links.
+
+Use bulk upserts and batched reads. A page of twenty people must not issue twenty person requests and eighty individual poster queries. Fetch relevant people/media IDs in bounded queries, and use the shared image cache for reusable artwork.
+
+## 7. A 24-hour statistics policy
+
+The proposed cadence is a sensible default. At twenty users, the main issue is avoiding repeated work on every page load, not creating a distributed analytics platform. Keep the design small and database-backed while leaving a path for a separate worker at higher volume.
+
+### Recommended behavior
+
+1. Each user's job builds **Overview, Genres, and People metrics together**, for All/Movies/Series, from one consistent local-data snapshot.
+2. Schedule ordinary successful updates roughly 24 hours apart per user. Stagger due times across users rather than recomputing everyone at midnight.
+3. Ordinary history/score/status/import changes increment a per-user source revision and mark stats dirty in the same transaction as the committed facts. Coalesce a large import's writes into batch-level revisions where possible; an import that commits partially must still invalidate those committed changes even if its final step fails. Do not launch calculations for every changed episode or each profile visit.
+4. A scheduler checks due work periodically, for example every five minutes, and uses database coordination to claim jobs. Process a small configurable number concurrently.
+5. Skip a due calculation if neither user facts nor relevant shared metadata changed and the contract/version is current. Advance its check schedule without pretending the old data was newly computed.
+6. Publish the new snapshot atomically only after all its sections succeed. Requests continue to read the last successful snapshot during work.
+7. The page can expose one compact “Updated …” value in its options/data details, rather than repeated freshness text for every chart.
+8. On failure, keep the previous successful snapshot, record the error safely, and retry with backoff. A failed attempt does not reset the successful-update timestamp.
+
+Twenty changed users would ordinarily mean about **twenty snapshot jobs per day**, not twenty jobs per visitor or twenty times the number of graphs. That is a scheduling target, not a benchmark or guaranteed upper bound: first builds, failures, contract changes, and exceptional invalidations can require additional attempts.
+
+The 24-hour interval is a target freshness window plus scheduler/queue time, not a guarantee that an offline worker can meet it. Record overdue work and successful computation times. Small deployments can use the existing application scheduler with PostgreSQL leases/advisory locking; multiple app workers must not each run the same user's calculation. Process-local booleans alone are insufficient.
+
+### Important exceptions
+
+- **First build:** queue once immediately. Return a compact pending state if no successful snapshot exists; do not fabricate zero statistics or block a public request on provider fetches.
+- **Privacy/access changes:** take effect immediately. Authenticate and enforce current profile visibility before returning any stored snapshot. Cached profile access is not a 24-hour permission grant.
+- **User deletion:** delete their state, snapshots, and user-specific aggregates through appropriate cascade behavior.
+- **Sensitive history removal or explicit purge:** invalidate affected snapshots immediately and queue replacement; a cached poster strip must not keep disclosing removed history for another day. Other ordinary edits can follow the chosen daily policy.
+- **Contract/schema change:** invalidate incompatible builds and queue compatible snapshots; do not deserialize an old shape as current data.
+
+Ordinary listing/detail/status edits elsewhere in the application should remain live. This cadence is for the statistics pages, not a reason to make all profile/tracking controls stale.
+
+### Why a TTL alone is insufficient
+
+“Recalculate on the first request after 24 hours” moves expensive work into a profile visit and can cause simultaneous duplicate builds. A plain in-memory cache disappears on restart and does not coordinate multiple workers. A scheduled persistent snapshot avoids both problems.
+
+Dirty state should remain set when facts change during an ongoing build. Read a consistent database snapshot, capture its revision, and publish its computed data with that revision. Clear dirty state only if the current revision still matches; otherwise retain the pending change for the next scheduled pass. Do not lose concurrent updates by blindly writing `dirty=false`.
+
+Use a dedicated worker connection/session for consistent snapshot reads; avoid keeping locks on history-writing rows throughout calculation. There must be no external provider calls inside the statistics transaction.
+
+Audit every writer, including manual edits, provider syncs, webhooks, bulk updates, and deletions. A shared mutation service or database-assisted revision mechanism must cover them; ORM callbacks alone may miss direct/bulk SQL. Tests should establish that each committed fact change is visible to the refresh state without forcing immediate recalculation.
+
+## 8. Proposed statistics storage
+
+These tables cache derived results. Watch events, tracked scores/statuses, and normalized shared metadata remain authoritative.
+
+| Table | Proposed contents | Purpose |
+| --- | --- | --- |
+| `user_stats_state` | User PK/FK, current source revision, dirty/invalid state, next due time, retry/attempt fields, job lease token/expiry, active snapshot ID | Durable scheduling and one active published generation |
+| `user_stats_snapshots` | Snapshot PK, user FK, computed/source-cutoff time, captured user/metadata revisions, contract version, overview JSON for supported media scopes, coverage and privacy-sensitive validity state | Coherent last-successful overview and generation identity |
+| `user_person_stats` | Snapshot FK, media scope, supported acting-role scope, person FK, title count, minutes, score sum/count, trusted character count/coverage, bounded preview media/character IDs | Indexed, paginated actor/voice-actor rankings without scanning full history |
+| `user_genre_stats` | Snapshot FK, media scope, stable normalized genre key, title count, minutes, score sum/count, bounded preview media IDs | Genre ranking and associated poster previews |
+
+Use uniqueness on the snapshot plus each row's grouping dimensions. Add ranking indexes matching Count / Mean Score / Time Watched only where measured and useful. Define null-score ordering and stable tie-breaking by canonical ID. Character count uses its own distinct identity denominator.
+
+Enforce that a state's active snapshot belongs to the same user, for example with an owner-qualified composite foreign key. User-specific snapshot/aggregate rows need an explicit deletion/cleanup policy. Shared canonical person/character records must not be casually deleted while legacy lists or published aggregates still reference them; merge identities through a controlled relation rewrite.
+
+Keep additive score components so means can be calculated accurately; do not average rounded per-title-group means. Snapshot overview can include score sum/squared sum/count for standard deviation. Retain precision until formatting.
+
+The initial poster strip contains a bounded set, for example four related media IDs, chosen consistently from the same generation. Artwork URLs/names can be read in a bulk query from shared metadata; dimensions/links do not require provider calls. Do not duplicate full biography/cast/history payloads into every user's cache.
+
+For full title/character drill-downs, define a same-generation membership representation before implementation: a snapshot membership table or retained member IDs with supporting snapshot title facts. Do not display a frozen count of 22 alongside a live, differently filtered list of 19 titles. Start with the bounded previews if full drill-down persistence would expand the first release unnecessarily.
+
+A snapshot membership table should enforce an actual person/genre grouping reference and media FK rather than unconstrained arbitrary entity pointers. If all related IDs are temporarily kept in JSON for the small instance, document that compromise, enforce payload limits, and measure pagination cost before treating it as the long-term solution.
+
+Build each new generation in staging, then update the user's active pointer in a short transaction. Old successful generation remains available until publication; clean up superseded generations after they are no longer referenced. First-generation failure leaves a pending/error state, not a half-published page.
+
+Lease claims must include an ownership token and expiry so a crashed worker can be retried and a late worker cannot publish after losing its claim. Consistent per-user claim ordering and short transactions avoid blocking user activity. A simpler connection-owned PostgreSQL advisory lock is also possible, but must be used on a dedicated connection for the full job and released reliably.
+
+Cache dimensions must include media scope, supported acting-role/language scope, visibility policy, and contract version. Avoid arbitrary parameter combinations creating infinite cached variants. The initial UI supports a small documented set. Recheck live profile access on every request regardless of snapshot age.
+
+## 9. Keep metadata refresh separate from stats refresh
+
+Shared people, credits, countries, and artwork are provider metadata. A user's watched/rated totals are local derived facts. They need separate schedules:
+
+- Deduplicate metadata targets across users and fetch missing/stale/version-old media/people once per provider identity.
+- Use per-title/provider completion and retry state. Mark a successful empty result separately from “not fetched” or “failed.”
+- Keep last-good metadata when a provider request fails. Record batch source/revision changes after a successful committed update.
+- Mark users whose tracked/watched titles intersect changed metadata as dirty. For the small instance, a simple batch invalidation is acceptable; an indexed affected-user lookup avoids marking everyone as the library grows.
+- Do not re-fetch every credit/person every 24 hours simply because user stats refresh daily. Cadence depends on metadata type and airing/credit stability; missing data should be fetched promptly, stable images and credits can have a longer TTL.
+- Resolve new people from title-credit payloads first; biography/image-gallery requests should be lazy or separately batched when actually needed.
+
+The existing [`scheduler.py`](../backend/core/scheduler.py) already registers background jobs and contains a daily show metadata sweep. It is an integration point, not evidence that a durable statistics scheduler or normalized person cache already exists. Add explicit multi-worker coordination for the new tasks.
+
+## 10. What our current providers can and cannot supply
+
+| Required information | Existing foundation | Remaining work / limitation |
+| --- | --- | --- |
+| Person IDs/names | TMDB cast/crew IDs; TVDB person IDs in cast formatter | Normalize people/external identities; verified cross-provider links |
+| Portraits | Media detail cast fields and provider portrait paths | Retain with stable person identity; broaden cast scope and image-host access |
+| Contributor jobs | TMDB crew job strings and basic cast | Normalize role vocabulary; retain source labels; avoid actor/staff misclassification |
+| Actor → title | Existing title credits and provider title IDs | Relational backfill; canonical media resolution; complete cast fetching |
+| Actor → role name | TMDB `character` text; TVDB character name | Preserve on credit; distinguish labels from trusted fictional identities |
+| Fictional character ID | No established cross-media character model | Verify provider entity meaning; do not reuse TMDB credit IDs as character IDs |
+| Character artwork | Not established by the current actor cache | Source/API support or curated art; current cast portraits do not satisfy this |
+| Actor → canonical character | Role text and some provider association records | Normalize verified/local scoped appearances; multi-role/language links |
+| All series guest actors | Current basic series credits are insufficient | Broader aggregate/season/episode source and explicit scope |
+| Game/book/board-game credits, art and characters | No integration established in this task | Future provider access, identifiers, taxonomy, catalogue details and licensing |
+| Gameplay/reading duration | Current watch events/runtimes only | New domain-specific session/progress evidence; do not convert movies' watch-time formulas blindly |
+
+Do not automatically show AniList's Characters tab as complete with current role strings. Show it when meaningful character data is available, or explicitly present its unavailable/partial state. A true character-based mean score should deduplicate the related watched media set for that person/character cohort; it is not a personal character rating unless the application later adds such ratings.
+
+The screenshots show anime-specific voice-actor information. Exact Japanese voice casting and fictional-character artwork may require a provider such as AniList or another domain source; current provider credentials alone do not establish that coverage. No new external integration is authorized or assumed merely by planning its schema.
+
+## 11. Migration and delivery sequence
+
+1. Confirm the semantic boundaries in this document: real people, separate characters, contribution roles, title-level actor hours, and scheduled statistics.
+2. Audit live data for person media rows, title aliases, existing credits, stable external identities, role labels, portraits, and usable character identities/artwork. This is still a required read-only operational step.
+3. Add canonical people/identity/credit/character relations and the legacy person bridge with non-destructive Alembic migrations. The tables can support nullable character art and character links without requiring unavailable game/book APIs.
+4. Backfill TMDB people from `TitleCredits` IDs, bridge legacy person media rows by verified IDs, and map credits to canonical title media. Legacy media cast without IDs cannot be globally deduplicated by name alone.
+5. Extend provider adapters to retain complete source-appropriate credits, role labels, portraits, language where known, and trusted character associations. Refresh discarded metadata only through controlled provider calls.
+6. Treat existing `TitleCredits` as an ingestion/compatibility snapshot during transition. Move statistics readers to normalized relations; later retire obsolete aggregation/write paths. A provider-aware ingestion state extension may still be useful, but its JSON is not a second canonical person database.
+7. Add state/snapshot/ranking tables and scheduled computation. Test job claims, revision races, failure/restart recovery, atomic publication, privacy, and purge invalidation before exposing cached data.
+8. Build the overview and ranked genre/person sections against the stored snapshot contract. Use fixture-only characters for a clearly labeled design prototype if provider character/art coverage is missing; do not present those fixtures as user data.
+9. Apply/test migrations in the isolated test environment, then deploy beta through the existing migration path when implementation is authorized. No production migration is part of this planning pass.
+
+For approximately twenty users, start with bounded jobs and PostgreSQL indexing. Measure job duration, rows scanned, ranking latency, snapshot size, due-work backlog, provider request volume, and coverage. More infrastructure is justified by those measurements, not by speculative scale.
+
+## 12. Permissions and decisions still outstanding
+
+The schema, migrations, backend jobs, and UI can be authored and tested in this workspace. Applying them is deferred because the active request remains planning. The established beta workflow can apply forward migrations when healthy; direct live database connectivity has not been verified.
+
+Movie/series provider API credentials remain configured. Full payload access, person cross-links, and character-art coverage still need verification. Future game/book/board-game API credentials and permitted hosts are not available through this task. Planning nullable image/provenance fields requires no extra credentials; populating them reliably does.
+
+No need to request broad database privileges for daily statistics readers. Deployment uses the existing migration role; application workers need the ordinary read/write rights for their own new tables. A coverage audit should use permitted read-only access. Image-host/network grants are separate from metadata API credentials.
+
+Recommended defaults:
+
+- Person means an individual; organization support is separate when introduced.
+- Characters are separate and may be source-qualified/media-scoped until verified canonical links exist.
+- Credits, role vocabulary, and performance links are normalized now; unavailable artwork remains null.
+- Overview/Genres/Actors snapshots refresh together on a staggered approximately 24-hour cadence.
+- Actor hours mean hours in credited titles, not screen time.
+- Preserve legacy person-list links and movie/series history through migration.
+- Implement future media catalogue/progress/APIs separately; reuse these contribution/character boundaries.
+
+This document changes the architectural recommendation from a JSON-only actor cache expansion to a shared normalized contributor/character model with a persistent statistics cache. It does not claim the missing metadata has already been obtained.

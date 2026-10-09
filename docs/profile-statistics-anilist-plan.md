@@ -6,6 +6,8 @@ Branch: `beta`
 
 Status: planning only. No application changes, migrations, or metadata backfills are part of this document.
 
+Updated after the genre/voice-actor references and the request for reusable people, fictional characters, and approximately 24-hour statistics updates. See the companion [people, characters, and daily-statistics architecture](people-characters-statistics-architecture.md) for the expanded schema and refresh design.
+
 ## 1. Recommendation
 
 Rebuild statistics around three sections: **Overview, Genres, Actors**. Use the references' navy/cyan graph treatment, clear numeric hierarchy, chart-specific metric switches, and readable distributions. Keep the page dense and restrained: no promotional copy, metric cards, decorative badges, or boxed ranking rows.
@@ -16,11 +18,11 @@ The principal work is:
 
 1. Define one consistent set of title, watch-time, rating, and date rules.
 2. Retain missing descriptive metadata and backfill it without altering watch history.
-3. Replace the partial actor aggregation with complete, provider-aware credits.
+3. Replace the partial actor aggregation with shared people, normalized contributor credits, and separate fictional-character appearances/performance links.
 4. Expose the required grouped metrics through statistics APIs.
-5. Build the three sections using the references' visual language.
+5. Publish coherent, approximately 24-hour per-user statistics snapshots and build the three sections using the references' visual language.
 
-**Feasibility:** I can implement the UI, aggregation service, ingestion changes, tests, and additive Alembic migrations. TMDB and TVDB API credentials are configured in this workspace. A complete actor page covering TVDB-only titles needs a cache schema extension; a TMDB-only actor page can use the existing schema. Accurate historical dates and individual dates for collapsed repeat plays cannot be recovered from metadata APIs.
+**Feasibility:** I can implement the UI, aggregation service, shared person/character/credit models, scheduled statistics cache, ingestion changes, tests, and additive Alembic migrations. TMDB and TVDB API credentials are configured in this workspace. The underlying overview metrics can mostly use existing facts, but the newly requested reusable identities/relations and daily cache require migrations. Character identities/artwork and future game/book/board-game APIs still have source/access gaps. Accurate historical dates and individual dates for collapsed repeat plays cannot be recovered from metadata APIs.
 
 **Evidence limit:** this is a source-code and configuration audit, not a read of the live beta or production database. No real-user coverage percentages, provider authentication results, or live migration readiness are asserted here.
 
@@ -36,7 +38,7 @@ The five supplied images show AniList's **overview**, including:
 
 The references make the numbers and graphs the content. Cyan connects the headline values, selected switches, bars, line, and leading distribution category. The navy background and quieter labels give the graphs contrast without a busy grid or heavy framing.
 
-They do not show the Genres or Actors pages. The proposals for those sections below are our design recommendations, not claims about an unseen AniList layout.
+The two subsequently supplied images show Genres and Voice Actors: ranked entries with Count / Mean Score / Time Watched, title-poster strips, actor portraits, and a titles/characters switch. Adopt that information structure while keeping the previously requested open layout without outer cards. The companion architecture document records the source comparison and implications for fictional-character identity/artwork.
 
 ## 3. Proposed design
 
@@ -92,7 +94,7 @@ Use stable category-to-color mappings; colors must not move when a different cat
 
 ## 4. Graph-by-graph comparison with our retained data
 
-“No schema migration” below means the data can fit existing columns/JSONB. It can still require ingestion changes, a metadata backfill, new aggregation code, and API fields.
+“No schema migration” below means the source metric can be derived from existing columns/JSONB. It can still require ingestion changes, a metadata backfill, new aggregation code, and API fields. The shared contributor/character model and persistent daily statistics snapshots are additional schema changes across the feature, even where an individual graph's source facts need no new columns.
 
 | Reference item | What we retain today | What the current summary exposes | What is still required | Schema migration? |
 | --- | --- | --- | --- | --- |
@@ -111,7 +113,8 @@ Use stable category-to-color mappings; colors must not move when a different cat
 | Release Year → three metrics | Movie `release_date`, series `Media.release_date`, `Show.first_air_date`; scores/events/runtimes | No release-year grouping | Group by movie release or series first-air year, not episode air dates or watch dates; join current scores and completed play minutes | No |
 | Watch Year → three metrics | `watched_at`, inferred/shared/provisional date flags, completed events, play counts | Monthly movie/episode activity and an event-year filter | Annual canonical-title counts, hours, current mean scores; explicit date quality and collapsed-repeat policy | No for recorded history; lost historical dates are not recoverable |
 | Genres page | Genre names in movie/series/show JSON | Top-level genre counts across current entries | Watched-title cohort, canonical genre mapping, title/hour/mean-score metrics, complete ranking and title drill-down | No initially |
-| Actors page | Shared TMDB `TitleCredits` cache; cast names/portraits on some media metadata; TVDB cast formatter | No actors in current summary; legacy endpoint has top actors | Full cast with stable IDs and portraits in the same cache; reliable scheduling; pagination; score/hour metrics; explicit title-level attribution | No for TMDB-only JSON enrichment; recommended migration for TVDB-native coverage |
+| Actors page | Shared TMDB `TitleCredits` cache; cast names/portraits on some media metadata; TVDB cast formatter; legacy person media rows | No actors in current summary; legacy endpoint has top actors | Shared Person identities, normalized media credits, full cast/portraits, scheduled snapshots, rankings and related poster strips | Yes for the newly requested reusable model; JSON-only enrichment remains a smaller alternative |
+| Characters view | Role strings and some provider cast associations; no canonical character schema/art cache | Nothing | Separate Character identities/artwork, media appearances and person-performance links; verified source identity and art access | Yes; schema is feasible but complete source coverage is not established |
 
 ### Data that we must not substitute
 
@@ -130,7 +133,7 @@ Use stable category-to-color mappings; colors must not move when a different cat
 
 [`TrackedEntry`](../backend/models/tracking.py) stores status, score mode, manual score, season scores, progress, start/finish dates, and rewatch count. [`WatchEvent`](../backend/models/events.py) stores completed plays, repeat counts, nullable watch dates, and separate inferred/shared/provisional flags. [`Media`](../backend/models/media.py) and [`Show`](../backend/models/show.py) store provider identity, release dates, and metadata JSON.
 
-There is no need to create a new user statistics fact table simply to draw these graphs. Initially derive the metrics from these records. Add cached summaries or indexes only if measured query plans justify them, and ensure invalidation covers history edits, ratings, statuses, imports, and metadata refreshes.
+These records remain authoritative. The requested daily cadence adds derived state/snapshot/ranking tables so page loads do not recalculate history. Build snapshots from the same source facts and ensure change detection covers history edits, ratings, statuses, imports, and relevant metadata refreshes. Do not replace source history with cached totals.
 
 ### Metadata is a reduced projection, not the full provider response
 
@@ -267,11 +270,11 @@ Provider totals can change as shows air. Use a consistent catalogue scope, metad
 
 ### Genres
 
-Top controls: media selection and metric: Titles Watched / Hours Watched / Mean Score. Default to title count.
+Top controls: media selection and sort metric: Count / Mean Score / Time Watched. Default to title count.
 
-Use a full-width ranked horizontal bar view or closely aligned rows: genre name, bar, selected metric. Keep title count and rated sample size available in tooltips/details rather than stacking persistent badges. Mean-score sorting should expose its rated sample; do not hide low-sample genres behind an undisclosed threshold.
+Use closely aligned ranked sections: genre name, all three compact metrics, and a bounded strip of related title posters, as shown in the new reference. The switch changes sorting; it does not hide the other metrics or trigger recalculation. Keep rated sample size available in tooltips/details rather than stacking persistent badges. Mean-score sorting should expose its rated sample; do not hide low-sample genres behind an undisclosed threshold.
 
-Selecting a genre opens its watched-title list with title, poster where useful, current score, and watched time. Preserve filters and offer pagination. Do not repeat a page of genre cards or limit the section silently to eight genres, as the current summary UI does.
+Related posters link to their media. A full genre watched-title drill-down can follow with title, current score, and watched time, using the same snapshot membership and pagination. Preserve filters. Do not repeat a page of genre cards or limit the section silently to eight genres, as the current summary UI does.
 
 No new genre relation table is required initially. A normalized genre catalogue/association table is a later option if filtering/query plans justify it; it is not a prerequisite for a useful page.
 
@@ -279,7 +282,7 @@ No new genre relation table is required initially. A normalized genre catalogue/
 
 Top controls: media selection and sort by Titles Watched / Hours in Credited Titles / Mean Score. Default to title count.
 
-Use dense aligned rows with a small portrait, name, selected metric/bar, and optional expanded credited-title list. Do not create large biography cards. Use a neutral portrait fallback when images are absent.
+Use dense aligned sections with a modest portrait, name, all three compact metrics, and a related title-poster strip. Sort by the selected metric while keeping the other values visible. Do not create large biography cards. Use a neutral portrait fallback when images are absent. Provide a Titles / Characters view when trustworthy fictional-character identity and artwork are available; role-name strings alone do not establish a complete Characters view.
 
 For the first release, define this as **actors credited in watched titles**. A credited series receives its watched-series hours as a title-level association; this is not actual actor screen time or proof of appearances in specific watched episodes. Use the precise “Hours in Credited Titles” label when that metric is selected.
 
@@ -308,39 +311,25 @@ Then run an idempotent metadata/credits backfill. JSONB supports additional keys
 
 This path leaves TVDB-only actor coverage incomplete. It is a valid smaller release only if that limitation is accepted and accurately represented.
 
-### Path B: complete provider-aware title-level actors — recommended
+### Path B: shared people, characters, credits, and daily snapshots — recommended
 
-Evolve the **existing** `title_credits` cache instead of building a competing second cache:
+The broader contributor/character requirement changes the recommended architecture. Use normalized Person records with provider identities; Character records with their own artwork/identities; media credits with extensible roles; media-character appearances; and performance links connecting an acting credit to one or more characters.
 
-| Change | Purpose |
-| --- | --- |
-| Add `provider` and `provider_title_id` | Support TMDB and TVDB-native titles without ID collisions |
-| Backfill existing rows as `provider=tmdb`, `provider_title_id=tmdb_id` | Preserve current cache data |
-| Make legacy `tmdb_id` nullable for TVDB rows | Existing table currently requires a TMDB ID |
-| Add uniqueness on `(provider, provider_title_id, media_type)` | Correct shared cache identity |
-| Add `metadata_version` and `credit_scope` | Distinguish legacy top-ten payloads, full title cast, and richer series scopes |
-| Add fetch status / last attempt / retry-after fields | Distinguish genuine empty cast, missing data, pending work, and fetch failures |
-| Expand cast JSON with provider-qualified IDs, portraits, order, and roles | Support a useful actor page without a separate person table |
+Preserve existing `MediaType.person` list/import rows through a legacy-to-canonical person bridge. Backfill canonical people/credits from the existing `TitleCredits` cache and verified IDs, then migrate statistics reads to those relations. The old cache can remain an ingestion/compatibility snapshot during cutover; it must not become a competing identity database.
 
-Keep existing TMDB lookups working during the transition; update consumers to explicitly select the right provider/scope. Existing rows remain readable while backfill progresses. Do not drop the old TMDB identity until a separately validated cleanup is warranted.
+Add durable per-user refresh state, successful snapshot generations, and genre/person aggregate rows. Build all sections and supported media scopes together on a staggered approximately 24-hour cadence. Serve the last successful snapshot, with immediate live access checks and invalidation for sensitive removals.
 
-Use a database-backed claim/lock and bounded scheduled batches for fetching. A restart can rediscover missing/stale/version-old rows; successful empty results are cached, failures retain last-good data and retry with backoff. Coordinate attempts across workers. Provider credentials stay in configured settings/environment, never the cache.
+The companion [architecture plan](people-characters-statistics-architecture.md) defines the proposed tables, constraints, indexes, future media boundaries, role/character semantics, scheduling races, failure recovery, and migration sequence. This supersedes the earlier recommendation to only expand the JSON actor cache.
 
-The existing `SyncJob` model is tied to account/source sync and required user IDs. Do not assume it is already a generic shared metadata job queue. Prefer a small credits-specific scheduler using the cache's retry state and database coordination unless a general job service is deliberately introduced.
-
-For TVDB people, use `(provider, person_id)` keys. Merge cross-provider people only with verified identity links. Name matching is insufficient. The existing TVDB formatter proves that person IDs/portraits are accessible to our code, but full cast payload coverage and authoritative cross-provider person links still need verification.
-
-Provider-aware coverage and a unified human-actor ranking are separate requirements. Until verified cross-provider person links exist, the same actor can have separate TMDB and TVDB identities. A fully merged ranking may need a small verified person-identity mapping table, plus a source/backfill for those links. Do not claim that adding provider columns alone solves person deduplication. Prefer TMDB person identities where a TVDB-native title has a verified TMDB title match; preserve its TVDB episode numbering independently.
-
-This is an additive, manageable migration. I can implement and test it locally, then use the existing beta deployment workflow for its application when implementation is authorized.
+The existing `SyncJob` model is account/source-sync specific and is not assumed to be a generic metadata/statistics queue. Integrate with the existing scheduler using database coordination and durable state. Metadata fetching stays separate from per-user statistics computation.
 
 ### Changes not needed for this scope
 
-- No stored statistics table solely for these charts.
+- No new authoritative watch/score fact table solely for these charts; the daily cache is derived.
 - No conversion of stored 0–10 scores to 0–100.
 - No rewrite of existing watch dates or series episode numbering.
 - No new watch-time session tracker to provide estimated runtime-based hours.
-- No person biography table just to display names and portraits.
+- No full biography/image-gallery schema just for names/portraits; canonical Person/Character identities are now explicitly required.
 - No historical rating table unless score-at-the-time is explicitly requested.
 
 If exact repeat chronology becomes a requirement, future imports must retain each individual play timestamp. A schema alone cannot recreate past dates discarded by upstream providers/imports.
@@ -450,7 +439,7 @@ The frontend can reuse its existing Chart.js loading and lifecycle patterns in [
 
 Query only the target user's records and relevant credit keys. Do not scan the whole instance credits cache into Python. Paginate drill-downs and actor rankings. Assess query plans on realistic volumes before adding indexes; existing watch-event and title-credit indexes are useful starting points.
 
-Any cache of user results must include access scope, media/visibility filters, and source revisions. Never share a private profile's computed result through a public cache key.
+The requested persistent snapshots must include media/visibility filters, source revisions, and contract version. Check live access before serving them. Never share a private profile's computed result through a public cache key. Metric sorting should read the stored ranking, not recalculate user facts; related artwork previews must come from the same snapshot generation.
 
 ## 12. Permissions and operational feasibility
 
@@ -476,9 +465,9 @@ The observed cloud configuration allows the TMDB and TVDB API hosts and reports 
 1. **Review this plan:** resolve the few product choices below, then authorize implementation.
 2. **Read-only target coverage audit:** report the exact missing-data counts and confirm provider/cast access.
 3. **Data contract and visual prototype:** verify overview hierarchy, chart palette, spacing, and desktop/mobile navigation before broad UI work. Use explicitly identified fixture data if live data access is unavailable.
-4. **Shared metadata mapping and credits migration:** implement the selected provider coverage path; test upgrades against both existing and empty databases.
+4. **Shared identities, metadata, and statistics-cache migrations:** implement the normalized contributor/character architecture and durable daily snapshots; test upgrades against both existing and empty databases, preserving legacy person-list links.
 5. **Controlled backfill:** refresh descriptive metadata/credits, preserving tracking/history and last-good snapshots; measure coverage and API load.
-6. **Shared aggregates and APIs:** implement precise metric semantics, privacy rules, coverage, pagination, and compatibility.
+6. **Shared aggregates, scheduler, and APIs:** implement precise metric semantics, daily jobs, coherent snapshot publication, privacy rules, coverage, pagination, and compatibility.
 7. **Overview, Genres, Actors UI:** build against the agreed data contract and prototype; validate hover/tap/focus/reduced-motion behavior.
 8. **Beta verification and push:** run repository checks, browser checks, and reconcile known fixture totals; push beta under the existing authorization once implementation is requested. Verify deployment/migration health if accessible.
 
@@ -496,6 +485,8 @@ Do not ship the actor section as complete while its backfill is silently pending
 - Country/episode/runtime fields survive every metadata writer and scheduled refresh, including TVDB-native series.
 - Old top-ten credits are upgraded; new missing titles are scheduled despite fresh unrelated cache rows. Failed fetches retry and retain prior successful data.
 - Actor sorting/pagination and credited-title expansion work without merging people by name. Title-level hours are accurately labeled.
+- Person-role/character links preserve multiple performances without multiplying title counts, score contributions, or watched time. Legacy person-list links survive migration.
+- Daily snapshots coalesce changes, coordinate across workers, preserve last-good data after failure, and never delay privacy changes. Title/character artwork previews match their ranking generation.
 - Anonymous/public, owner, unauthorized/private, and hidden-anime behavior are consistent across overview and drill-downs.
 - Empty/error/loading states, browser back/forward, Astro client navigation, SSR fallback, keyboard/touch interaction, and reduced motion work.
 - Mobile widths around 320/390 px, tablet, and desktop show no unintended page overflow or clipped switches/labels. Dark/light contrast is checked with real chart colors.
@@ -508,16 +499,20 @@ These do not block the planning deliverable. Recommended defaults are stated so 
 
 | Choice | Recommended default | Alternative and impact |
 | --- | --- | --- |
-| Actor coverage | TMDB + TVDB-native title-level credits; evolve existing cache | TMDB-only: less schema work, incomplete TVDB-native rankings |
+| Actor coverage | Shared Person identities and normalized TMDB + TVDB-native title-level credits | TMDB-only JSON enrichment: less schema work, incomplete coverage and insufficient foundation for the broader contributor/character requirement |
 | Actor meaning | Cast credited in watched titles, with precise title-level hour label | Episode-accurate/voice-language statistics: additional credit fetching, schema and coverage work |
 | Format | Movie / Series for this movies-and-series application | Exact anime taxonomy: new enrichment source and mapping; cannot infer ONA/OVA from current data |
 | Score display | Existing 0–10 scale, reference-inspired bars | 0–100 display only; no stored-score conversion |
 | Annual history | Authoritative dates; estimated inclusion optional | Include all recorded dates: fuller-looking history, but imports/inferred dates can misrepresent past years |
 | Planned time | Remaining released regular workload in Planning | Include announced future episodes: forecast rather than a known backlog; weaker coverage |
 | Visual surfaces | Open layout with optional tint inside plots; no outer cards | Full AniList chart cards would conflict with the earlier no-cards request |
+| Person / character structure | Individual contributors and separate fictional characters, linked through scoped credits/appearances | One untyped entity conflates real people, fictional identities, and organizations |
+| Statistics updates | Coherent, staggered approximately 24-hour per-user snapshots with live access checks | Request-time recalculation adds load and makes refresh races/failures visible to visitors |
 
 ## 16. Work completed in this planning pass
 
-Reviewed the current stats page/API, legacy statistics endpoint, tracking/watch/rating/media/show models, metadata writers, provider formatters, credits cache/import, released-episode catalogue logic, profile section navigation, and beta migration/deployment configuration. Compared each visible reference graph against retained and exposed data, identified missing fields and semantic mismatches, and separated no-DDL enrichment from the recommended actor-cache migration.
+Reviewed the current stats page/API, legacy statistics endpoint, tracking/watch/rating/media/show models, metadata writers, provider formatters, credits cache/import, released-episode catalogue logic, profile section navigation, and beta migration/deployment configuration. Compared each visible reference graph against retained and exposed data, identified missing fields and semantic mismatches, and separated no-DDL metadata enrichment from contributor/character and statistics-cache migrations.
+
+Follow-up planning incorporated the supplied genre/voice-actor screenshots, existing person media/list/Trakt support, reusable Person/Character/credit relations, and a durable approximately 24-hour statistics policy. See the companion architecture document for the revised recommended migration scope.
 
 No page redesign, API changes, schema migration, live coverage audit, provider calls, or backfill has been performed. The next implementation should start from this contract rather than another visual restyling of incomplete aggregates.
