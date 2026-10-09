@@ -361,7 +361,11 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.flush()
             movie = Media(id=40, tmdb_id=550, media_type=MediaType.movie, title="Movie")
             person = Media(
-                id=41, tmdb_id=7, media_type=MediaType.person, title="Person"
+                id=41,
+                tmdb_id=7,
+                media_type=MediaType.person,
+                title="Person",
+                poster_path="https://image.tmdb.org/t/p/w185/portrait.jpg",
             )
             show = Show(id=42, tvdb_id=121361, title="Show", canonical_source="tvdb")
             db.add_all([movie, person, show])
@@ -410,6 +414,8 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 .all()
             )
             self.assertEqual([r.media_id for r in links], [40, 41])
+            canonical_person = await db.get(CatalogueEntity, links[1].entity_id)
+            self.assertEqual(canonical_person.image_url, person.poster_path)
             self.assertEqual((await db.get(Show, 42)).canonical_source, "tvdb")
             self.assertEqual((await db.get(Media, 41)).media_type, MediaType.person)
             self.assertEqual((await db.get(ListItem, 1)).media_id, 41)

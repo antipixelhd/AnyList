@@ -25,7 +25,7 @@ from models.catalogue import (
     MetadataSnapshot,
     SteamPriceSnapshot,
 )
-from .catalogue_normalize import NAMESPACE_KINDS, PRIMARY, identity, document
+from .catalogue_normalize import NAMESPACE_KINDS, PRIMARY, identity, document, image
 from .catalogue_providers import ProviderError
 
 
@@ -664,7 +664,7 @@ async def backfill_legacy(db, media_cursor=0, show_cursor=0, limit=50):
             "kind": kind,
             "name": row.title,
             "description": getattr(row, "overview", None),
-            "image_url": None,
+            "image_url": image(getattr(row, "poster_path", None)),
             "identities": ids,
             "attributes": {
                 "release_date": getattr(row, "release_date", None)

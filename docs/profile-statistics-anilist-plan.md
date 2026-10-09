@@ -503,4 +503,4 @@ Reviewed the current stats page/API, legacy statistics endpoint, tracking/watch/
 
 Follow-up planning incorporated the supplied genre/voice-actor screenshots, existing person media/list/Trakt support, reusable Person/Character/credit relations, and a durable approximately 24-hour statistics policy. See the companion architecture document for the revised recommended migration scope.
 
-No page redesign, API changes, schema migration, live coverage audit, provider calls, or backfill has been performed. The next implementation should start from this contract rather than another visual restyling of incomplete aggregates.
+That original planning pass made no application or database changes. The subsequent catalogue foundation implemented API/schema changes, provider verification and beta backfill as recorded in [catalogue-foundation.md](catalogue-foundation.md). Page redesign, statistics APIs/jobs and a comprehensive live user-data coverage audit remain outstanding.

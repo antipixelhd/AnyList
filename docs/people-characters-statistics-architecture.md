@@ -300,13 +300,13 @@ The catalogue migration, adapters, authenticated endpoints and resumable legacy 
 
 1. Confirm the semantic boundaries in this document: real people, separate characters, contribution roles, title-level actor hours, and scheduled statistics.
 2. Audit live data for person media rows, title aliases, existing credits, stable external identities, role labels, portraits, and usable character identities/artwork. This is still a required read-only operational step.
-3. Add canonical people/organization identities, typed contributor credits, character relations, and the legacy person bridge with non-destructive Alembic migrations. The tables can support nullable character art and character links without requiring unavailable game/book APIs. Keep normalized streaming availability in its optional phase.
+3. Completed: canonical work/person/organization identities, typed credits, characters, editions/releases and legacy bridges use additive `mt036`. Nullable art retains actual provider availability. Normalized streaming availability remains optional.
 4. Backfill TMDB people from `TitleCredits` IDs, bridge legacy person media rows by verified IDs, and map credits to canonical title media. Legacy media cast without IDs cannot be globally deduplicated by name alone.
 5. Extend provider adapters to retain complete source-appropriate credits, role labels, portraits, language where known, and trusted character associations. Refresh discarded metadata only through controlled provider calls.
 6. Treat existing `TitleCredits` as an ingestion/compatibility snapshot during transition. Move statistics readers to normalized relations; later retire obsolete aggregation/write paths. A provider-aware ingestion state extension may still be useful, but its JSON is not a second canonical person database.
 7. Add state/snapshot/ranking tables and scheduled computation. Test job claims, revision races, failure/restart recovery, atomic publication, privacy, and purge invalidation before exposing cached data.
 8. Build the overview and ranked genre/person sections against the stored snapshot contract. Use fixture-only characters for a clearly labeled design prototype if provider character/art coverage is missing; do not present those fixtures as user data.
-9. Apply/test migrations in the isolated test environment, then deploy beta through the existing migration path when implementation is authorized. No production migration is part of this planning pass.
+9. Foundation completed: isolated migrations and beta forward deployment passed. Future statistics migrations should follow the same backup/deployment path. Production promotion is outside this phase.
 
 For approximately twenty users, start with bounded jobs and PostgreSQL indexing. Measure job duration, rows scanned, ranking latency, snapshot size, due-work backlog, provider request volume, and coverage. More infrastructure is justified by those measurements, not by speculative scale.
 
