@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -144,6 +146,115 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["historical_low_at"], "2024-06-27T19:30:27+02:00")
         self.assertEqual(result["url"], fixture("itad-prices")[0]["deals"][0]["url"])
         self.assertEqual(requests[0].url.params["appid"], "292030")
+
+    async def test_oversized_response_stops_stream_and_closes_without_caching(self):
+        class Body(httpx.AsyncByteStream):
+            consumed = 0
+            closed = False
+
+            async def __aiter__(self):
+                for _ in range(20):
+                    self.consumed += 1
+                    yield b"x" * 65536
+
+            async def aclose(self):
+                self.closed = True
+
+        for advertised in (False, True):
+            body = Body()
+            headers = {"Content-Length": "9999999"} if advertised else {}
+            with patch.object(providers, "MAX_RESPONSE_BYTES", 100000):
+                async with httpx.AsyncClient(
+                    transport=httpx.MockTransport(
+                        lambda r: httpx.Response(200, headers=headers, stream=body)
+                    )
+                ) as client:
+                    with self.assertRaisesRegex(
+                        providers.ProviderError, "^payload_too_large$"
+                    ):
+                        await providers.ProviderHTTP(client).request(
+                            "rawg", "GET", "https://api.rawg.io/test"
+                        )
+            self.assertEqual(body.consumed, 0 if advertised else 2)
+            self.assertTrue(body.closed)
+            self.assertEqual(len(providers._cache), 0)
+
+    async def test_cache_has_a_total_byte_bound_and_date_retry_after_is_respected(self):
+        calls = []
+
+        def handle(request):
+            calls.append(request)
+            return httpx.Response(200, json={"text": "x" * 200})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            api = providers.ProviderHTTP(client)
+            with (
+                patch.object(providers, "MAX_CACHE_BYTES", 300),
+                patch.object(providers.asyncio, "sleep", new=AsyncMock()),
+            ):
+                await api.request("rawg", "GET", "https://api.rawg.io/one")
+                await api.request("rawg", "GET", "https://api.rawg.io/two")
+                self.assertLessEqual(
+                    sum(len(v[1]) for v in providers._cache.values()), 300
+                )
+                await api.request("rawg", "GET", "https://api.rawg.io/one")
+                self.assertEqual(len(calls), 3)
+        retry = format_datetime(
+            datetime.now(timezone.utc) + timedelta(minutes=10), usegmt=True
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(429, headers={"Retry-After": retry}, json={})
+            )
+        ) as client:
+            with self.assertRaises(providers.ProviderError) as ctx:
+                await providers.ProviderHTTP(client).request(
+                    "itad", "GET", "https://api.isthereanydeal.com/throttled"
+                )
+            self.assertGreater(ctx.exception.retry_after, 590)
+            self.assertLessEqual(ctx.exception.retry_after, 600)
+
+    async def test_game_edition_retains_native_and_steam_aliases_on_parent_work(self):
+        adapter = providers.CatalogueProviders()
+        version = {
+            "id": 43,
+            "name": "Edition",
+            "version_parent": 42,
+            "external_games": [
+                {
+                    "uid": "123",
+                    "url": "https://store.steampowered.com/app/123/",
+                    "external_game_source": {"name": "Steam"},
+                }
+            ],
+        }
+        adapter.igdb = AsyncMock(side_effect=[[version], [{"id": 42, "name": "Base"}]])
+        adapter._igdb_pages = AsyncMock(return_value=([], True))
+        doc, raw = await adapter.detail("igdb", "game", "43")
+        self.assertEqual(doc["work"]["name"], "Base")
+        self.assertIn(normalize.identity("igdb.game", 43), doc["work"]["identities"])
+        self.assertIn(normalize.identity("steam.app", 123), doc["work"]["identities"])
+        self.assertEqual(
+            doc["releases"][0]["entity"]["identities"],
+            [normalize.identity("igdb.game_version", 43)],
+        )
+        related = normalize.normalize_igdb(
+            {
+                "id": 1,
+                "name": "Other",
+                "similar_games": [
+                    {
+                        "id": 43,
+                        "name": "Edition",
+                        "version_parent": {"id": 42, "name": "Base"},
+                    }
+                ],
+            }
+        )
+        self.assertEqual(
+            related["relationships"][0]["target"]["identities"],
+            [normalize.identity("igdb.game", 42), normalize.identity("igdb.game", 43)],
+        )
 
     async def test_igdb_expired_token_exchanges_once_and_does_not_recurse(self):
         calls = []

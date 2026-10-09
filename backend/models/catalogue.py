@@ -75,6 +75,12 @@ class CatalogueIdentity(Base):
     __tablename__ = "catalogue_identities"
     __table_args__ = (
         UniqueConstraint("namespace", "external_id", name="uq_catalogue_identity"),
+        UniqueConstraint(
+            "entity_id",
+            "namespace",
+            "external_id",
+            name="uq_catalogue_identity_reference",
+        ),
         Index("ix_catalogue_identity_entity", "entity_id"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -134,6 +140,7 @@ class BookEdition(Base):
     format: Mapped[str | None] = mapped_column(String(100))
     pages: Mapped[int | None] = mapped_column(Integer)
     __table_args__ = (
+        UniqueConstraint("entity_id", "work_id", name="uq_catalogue_edition_work"),
         CheckConstraint(
             "pages IS NULL OR pages >= 0", name="ck_catalogue_edition_pages"
         ),
@@ -164,6 +171,12 @@ class GameRelease(Base):
 class CatalogueCredit(Base):
     __tablename__ = "catalogue_credits"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["edition_id", "work_id"],
+            ["catalogue_book_editions.entity_id", "catalogue_book_editions.work_id"],
+            ondelete="RESTRICT",
+            name="fk_catalogue_credit_edition_work",
+        ),
         UniqueConstraint(
             "work_id", "provider", "source_key", name="uq_catalogue_credit_source"
         ),
@@ -320,6 +333,19 @@ class MetadataProviderBudget(Base):
 class SteamPriceSnapshot(Base):
     __tablename__ = "catalogue_steam_prices"
     __table_args__ = (
+        CheckConstraint(
+            "identity_namespace = 'steam.app'", name="ck_catalogue_price_namespace"
+        ),
+        ForeignKeyConstraint(
+            ["work_id", "identity_namespace", "steam_app_id"],
+            [
+                "catalogue_identities.entity_id",
+                "catalogue_identities.namespace",
+                "catalogue_identities.external_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_catalogue_price_steam_identity",
+        ),
         UniqueConstraint(
             "work_id", "steam_app_id", "country", name="uq_catalogue_steam_price"
         ),
@@ -329,6 +355,9 @@ class SteamPriceSnapshot(Base):
         ForeignKey("catalogue_entities.id", ondelete="RESTRICT"), nullable=False
     )
     steam_app_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    identity_namespace: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="steam.app", server_default="steam.app"
+    )
     country: Mapped[str] = mapped_column(String(2), nullable=False)
     # Money objects retain currency and integer minor units from ITAD.
     current: Mapped[dict | None] = mapped_column(JSONB)

@@ -384,6 +384,16 @@ async def performance(body: PerformanceBinding, db: DB, current_user: Admin) -> 
         raise safe_error(e) from None
 
 
+@router.delete("/performances/{performance_id}")
+async def remove_performance(
+    performance_id: Annotated[int, Path(gt=0)], db: DB, current_user: Admin
+) -> dict:
+    if not await catalogue.unlink_performance(db, performance_id):
+        raise HTTPException(404, "Performance link not found")
+    await db.commit()
+    return {"deleted": True}
+
+
 @router.post("/backfill")
 async def backfill(
     db: DB,

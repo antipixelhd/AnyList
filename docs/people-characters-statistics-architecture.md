@@ -330,3 +330,7 @@ Recommended defaults:
 - Implement future media catalogue/progress/APIs separately; reuse these contribution/character boundaries.
 
 The recommended architecture is a shared normalized person/organization contributor model, separate characters and performance links, and a persistent statistics cache. Streaming catalogue support can begin with existing provider discovery and evolve into normalized observed availability when needed. This does not claim missing metadata or future API access has already been obtained.
+
+## Catalogue completion audit
+
+The completed foundation was audited again on 2026-10-09. Additive `mt037` strengthens Steam identity, edition/work and concurrent performer-link integrity. Partial relation data and placeholder names preserve known metadata; provider downloads/cache sizes and durable error/retry state are bounded. See [catalogue-foundation.md](catalogue-foundation.md#goal-completion-audit-2026-10-09) for tests and delivery evidence. Statistics/UI and game/book tracking remain deferred.

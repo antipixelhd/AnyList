@@ -53,6 +53,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             ("GET", "/catalogue/search?provider=igdb&kind=game&q=x"),
             ("GET", "/catalogue/entities/1"),
             ("POST", "/catalogue/backfill"),
+            ("DELETE", "/catalogue/performances/1"),
         ]:
             response = await self.client.request(method, path)
             self.assertEqual(response.status_code, 401)
@@ -68,6 +69,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 {"namespace": "steam.app", "external_id": "1", "reason": "reviewed"},
             ),
             ("POST", "/catalogue/performances", {"credit_id": 1, "appearance_id": 1}),
+            ("DELETE", "/catalogue/performances/1", None),
         ]:
             response = await self.client.request(method, path, json=body)
             self.assertEqual(response.status_code, 403)

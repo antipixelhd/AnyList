@@ -5,6 +5,7 @@ import importlib
 import os
 import unittest
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -25,6 +26,8 @@ from models.catalogue import (
     BookEdition,
     CharacterAppearance,
     SteamPriceSnapshot,
+    CatalogueRelationship,
+    CharacterPerformance,
 )
 from models.media import Media
 from models.show import Show
@@ -37,6 +40,7 @@ from core.catalogue_normalize import (
     normalize_rawg,
     normalize_hardcover,
     normalize_tvdb,
+    normalize_tmdb,
 )
 from test_catalogue_providers import fixture
 
@@ -76,6 +80,9 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module(
                     "migrations.versions.mt036_catalogue_foundation"
+                ).upgrade()
+                importlib.import_module(
+                    "migrations.versions.mt037_catalogue_reference_integrity"
                 ).upgrade()
 
         async with self.engine.begin() as conn:
@@ -342,6 +349,374 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.refresh(row)
             self.assertIsNone(row.current)
             self.assertEqual(row.historical_low["amountInt"], 299)
+            state.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+            client.steam_prices.return_value["historical_low"] = {
+                "amountInt": 199,
+                "currency": "EUR",
+            }
+            await catalogue.refresh_prices(db, client, work.id, "292030", "DE")
+            await db.refresh(row)
+            self.assertEqual(row.historical_low["amountInt"], 299)
+            self.assertEqual(row.historical_low_at, "2024-06-27")
+            state.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+            client.steam_prices.side_effect = RuntimeError("private provider error")
+            result = await catalogue.refresh_prices(db, client, work.id, "292030", "DE")
+            self.assertEqual(result["status"], "last_good")
+            self.assertEqual(result["error_code"], "ingestion_failed")
+            self.assertEqual(
+                (await catalogue.refresh_prices(db, client, work.id, "292030", "DE"))[
+                    "status"
+                ],
+                "last_good",
+            )
+            state.lease_token = "other-worker"
+            state.lease_until = datetime.utcnow() + timedelta(minutes=1)
+            await db.commit()
+            self.assertEqual(
+                (await catalogue.refresh_prices(db, client, work.id, "292030", "DE"))[
+                    "status"
+                ],
+                "refreshing",
+            )
+
+    async def test_placeholder_names_and_unexpected_failures_retain_last_good(self):
+        async with self.Session() as db:
+            doc = normalize_igdb(fixture("igdb"))
+            work = await catalogue.ingest_document(db, doc, "igdb")
+            name = work.name
+            partial = normalize_igdb(
+                {"id": 99999, "name": "Other", "similar_games": [{"id": 1942}]}
+            )
+            await catalogue.ingest_document(db, partial, "igdb")
+            self.assertEqual(work.name, name)
+            stub = await catalogue.upsert_entity(
+                db, entity("person", "tmdb.person", {"id": 777}), "legacy"
+            )
+            self.assertNotIn("name", stub.field_sources)
+            await catalogue.upsert_entity(
+                db,
+                entity("person", "tmdb.person", {"id": 777, "name": "Known"}),
+                "tmdb",
+            )
+            self.assertEqual(stub.name, "Known")
+            await db.commit()
+            adapter = AsyncMock()
+            adapter.validate = lambda *args: None
+            adapter.detail.return_value = (doc, {"known": "payload"})
+            await catalogue.refresh_metadata(db, adapter, "igdb", "game", "1942")
+            state = (await db.execute(select(MetadataSnapshot))).scalar_one()
+            state.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+            adapter.detail.side_effect = RuntimeError("private provider error")
+            result = await catalogue.refresh_metadata(
+                db, adapter, "igdb", "game", "1942"
+            )
+            self.assertEqual(result["status"], "last_good")
+            self.assertEqual(result["error_code"], "ingestion_failed")
+            self.assertNotIn("private", str(result))
+            await db.refresh(state)
+            self.assertEqual(state.payload, {"known": "payload"})
+            self.assertIsNone(state.lease_token)
+            self.assertIsNotNone(state.next_attempt_at)
+            # An unexpected failure after canonical writes must roll them back.
+            state.next_attempt_at = None
+            await db.commit()
+            broken = deepcopy(doc)
+            broken["work"]["name"] = "Faulty overwrite"
+            broken["credits"][0].pop("source_key")
+            adapter.detail.side_effect = None
+            adapter.detail.return_value = (broken, {"faulty": "payload"})
+            result = await catalogue.refresh_metadata(
+                db, adapter, "igdb", "game", "1942"
+            )
+            self.assertEqual(result["status"], "last_good")
+            self.assertEqual(result["error_code"], "ingestion_failed")
+            await db.refresh(work)
+            await db.refresh(state)
+            self.assertEqual(work.name, name)
+            self.assertEqual(state.payload, {"known": "payload"})
+
+    async def test_partial_relations_preserve_known_labels_and_attributes(self):
+        async with self.Session() as db:
+            raw = {
+                "id": 550,
+                "title": "Film",
+                "credits": {
+                    "cast": [
+                        {
+                            "id": 7,
+                            "name": "Actor",
+                            "credit_id": "stable-credit",
+                            "character": "Hero",
+                            "order": 0,
+                        }
+                    ]
+                },
+            }
+            film = await catalogue.ingest_document(
+                db, normalize_tmdb(raw, "movie"), "tmdb"
+            )
+            raw["credits"]["cast"][0].pop("character")
+            raw["credits"]["cast"][0].pop("order")
+            await catalogue.ingest_document(db, normalize_tmdb(raw, "movie"), "tmdb")
+            credit = (
+                await db.execute(
+                    select(CatalogueCredit).where(CatalogueCredit.work_id == film.id)
+                )
+            ).scalar_one()
+            self.assertEqual(credit.character_label, "Hero")
+            self.assertEqual(credit.position, 0)
+            book = {
+                "id": 1,
+                "title": "Book",
+                "_characters": [
+                    {
+                        "id": 2,
+                        "character": {"id": 3, "name": "Character"},
+                        "spoiler": True,
+                        "only_mentioned": False,
+                    }
+                ],
+                "_series": [
+                    {
+                        "id": 4,
+                        "series": {"id": 5, "name": "Series"},
+                        "position": 1,
+                        "compilation": False,
+                    }
+                ],
+            }
+            work = await catalogue.ingest_document(
+                db, normalize_hardcover(book), "hardcover"
+            )
+            for key in ("spoiler", "only_mentioned"):
+                book["_characters"][0].pop(key)
+            for key in ("position", "compilation"):
+                book["_series"][0].pop(key)
+            await catalogue.ingest_document(db, normalize_hardcover(book), "hardcover")
+            appearance = (
+                await db.execute(
+                    select(CharacterAppearance).where(
+                        CharacterAppearance.work_id == work.id
+                    )
+                )
+            ).scalar_one()
+            relation = (
+                await db.execute(
+                    select(CatalogueRelationship).where(
+                        CatalogueRelationship.source_id == work.id
+                    )
+                )
+            ).scalar_one()
+            self.assertEqual(
+                appearance.attributes, {"spoiler": True, "only_mentioned": False}
+            )
+            self.assertEqual(relation.attributes, {"position": 1, "compilation": False})
+
+    async def test_steam_price_identity_cannot_be_removed_or_reassigned(self):
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            other = await catalogue.upsert_entity(
+                db, entity("game", "igdb.game", {"id": 99999, "name": "Other"}), "igdb"
+            )
+            db.add(
+                SteamPriceSnapshot(
+                    work_id=work.id, steam_app_id="292030", country="DE", payload={}
+                )
+            )
+            await db.commit()
+            for sql in (
+                "DELETE FROM catalogue_identities WHERE namespace='steam.app' AND external_id='292030'",
+                "UPDATE catalogue_identities SET entity_id=:other WHERE namespace='steam.app' AND external_id='292030'",
+            ):
+                async with db.begin_nested() as savepoint:
+                    with self.assertRaises(IntegrityError):
+                        await db.execute(text(sql), {"other": other.id})
+                    await savepoint.rollback()
+
+    async def test_linked_performer_credit_cannot_become_nonperformer(self):
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(
+                db, normalize_tvdb(fixture("tvdb")), "tvdb"
+            )
+            credit = (
+                (
+                    await db.execute(
+                        select(CatalogueCredit).where(
+                            CatalogueCredit.work_id == work.id,
+                            CatalogueCredit.role == "actor",
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            character = await catalogue.upsert_entity(
+                db,
+                entity("character", "igdb.character", {"id": 999, "name": "Character"}),
+                "igdb",
+            )
+            appearance = await catalogue.upsert(
+                db,
+                CharacterAppearance,
+                {
+                    "work_id": work.id,
+                    "character_id": character.id,
+                    "provider": "reviewed",
+                },
+                ["work_id", "character_id", "provider"],
+            )
+            performance = await catalogue.link_performance(db, credit.id, appearance.id)
+            await db.commit()
+            async with db.begin_nested() as savepoint:
+                with self.assertRaises(IntegrityError):
+                    await db.execute(
+                        text("UPDATE catalogue_credits SET role='writer' WHERE id=:id"),
+                        {"id": credit.id},
+                    )
+                await savepoint.rollback()
+            self.assertTrue(await catalogue.unlink_performance(db, performance.id))
+            await db.flush()
+            self.assertFalse(await catalogue.unlink_performance(db, performance.id))
+            await db.execute(text("UPDATE catalogue_credits SET role='writer' WHERE id=:id"), {"id": credit.id})
+            await db.refresh(credit)
+            self.assertEqual(credit.role, "writer")
+            with self.assertRaises(catalogue.IdentityConflict):
+                await catalogue.link_performance(db, credit.id, appearance.id)
+
+    async def test_edition_with_credits_cannot_move_to_another_work(self):
+        async with self.Session() as db:
+            doc = normalize_hardcover(fixture("hardcover"))
+            doc["credits"].append(
+                {
+                    "contributor": entity(
+                        "person", "hardcover.author", {"id": 999, "name": "Translator"}
+                    ),
+                    "role": "translator",
+                    "source_key": "edition-translator",
+                    "edition_identity": doc["editions"][0]["entity"]["identities"][0],
+                }
+            )
+            work = await catalogue.ingest_document(db, doc, "hardcover")
+            other = await catalogue.upsert_entity(
+                db,
+                entity("book", "hardcover.book", {"id": 99999, "name": "Other"}),
+                "hardcover",
+            )
+            edition = (
+                (
+                    await db.execute(
+                        select(BookEdition).where(BookEdition.work_id == work.id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            await db.commit()
+            async with db.begin_nested() as savepoint:
+                with self.assertRaises(IntegrityError):
+                    await db.execute(
+                        text(
+                            "UPDATE catalogue_book_editions SET work_id=:other WHERE entity_id=:id"
+                        ),
+                        {"id": edition.entity_id, "other": other.id},
+                    )
+                await savepoint.rollback()
+
+    async def test_concurrent_performer_insert_and_role_change_are_serialized(self):
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(
+                db, normalize_tvdb(fixture("tvdb")), "tvdb"
+            )
+            credit = (
+                (
+                    await db.execute(
+                        select(CatalogueCredit).where(
+                            CatalogueCredit.work_id == work.id,
+                            CatalogueCredit.role == "actor",
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            char = await catalogue.upsert_entity(
+                db,
+                entity("character", "igdb.character", {"id": 999, "name": "Character"}),
+                "igdb",
+            )
+            appearance = await catalogue.upsert(
+                db,
+                CharacterAppearance,
+                {"work_id": work.id, "character_id": char.id, "provider": "reviewed"},
+                ["work_id", "character_id", "provider"],
+            )
+            ids = {
+                "work_id": work.id,
+                "credit_id": credit.id,
+                "appearance_id": appearance.id,
+            }
+            await db.commit()
+        for performance_first in (False, True):
+            ready, release = asyncio.Event(), asyncio.Event()
+
+            async def first():
+                async with self.Session() as db:
+                    if performance_first:
+                        db.add(CharacterPerformance(**ids, language="en"))
+                        await db.flush()
+                    else:
+                        await db.execute(
+                            text(
+                                "UPDATE catalogue_credits SET role='writer' WHERE id=:id"
+                            ),
+                            {"id": ids["credit_id"]},
+                        )
+                    ready.set()
+                    await release.wait()
+                    await db.commit()
+
+            async def second():
+                async with self.Session() as db:
+                    with self.assertRaises(IntegrityError):
+                        if performance_first:
+                            await db.execute(
+                                text(
+                                    "UPDATE catalogue_credits SET role='writer' WHERE id=:id"
+                                ),
+                                {"id": ids["credit_id"]},
+                            )
+                        else:
+                            db.add(CharacterPerformance(**ids, language="en"))
+                            await db.flush()
+                        await db.commit()
+                    await db.rollback()
+
+            task1 = asyncio.create_task(first())
+            try:
+                await asyncio.wait_for(ready.wait(), 3)
+                task2 = asyncio.create_task(second())
+                await asyncio.sleep(0.1)
+                self.assertFalse(task2.done())
+            finally:
+                release.set()
+            await asyncio.wait_for(asyncio.gather(task1, task2), 5)
+            async with self.Session() as db:
+                await db.execute(
+                    text(
+                        "DELETE FROM catalogue_character_performances WHERE credit_id=:id"
+                    ),
+                    {"id": ids["credit_id"]},
+                )
+                await db.execute(
+                    text("UPDATE catalogue_credits SET role='actor' WHERE id=:id"),
+                    {"id": ids["credit_id"]},
+                )
+                await db.commit()
 
     async def test_legacy_backfill_preserves_media_ids_and_person_links(self):
         from models.users import User
@@ -434,7 +809,7 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("Refusing non-disposable catalogue DB")
         engine = create_async_engine(URL)
         try:
-            for populated in (False, True):
+            for populated in (False, True, "invalid"):
                 schema = "catalogue_migration_" + uuid.uuid4().hex
                 async with engine.connect() as conn:
                     tx = await conn.begin()
@@ -470,6 +845,82 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
                         0,
                     )
                     if populated:
+                        for sql in (
+                            "INSERT INTO catalogue_entities(id,kind,name) VALUES(1,'game','Game'),(2,'book','Book'),(3,'edition','Edition'),(4,'person','Narrator'),(5,'character','Character')",
+                            "INSERT INTO catalogue_identities(entity_id,namespace,external_id,source) VALUES(1,'steam.app','123','igdb')",
+                            "INSERT INTO catalogue_steam_prices(work_id,steam_app_id,country,payload,historical_low,historical_low_at) VALUES(1,'123','DE','{}',jsonb_build_object('amountInt',299),'2024-06-27')",
+                            "INSERT INTO catalogue_book_editions(entity_id,work_id,pages) VALUES(3,2,300)",
+                            "INSERT INTO catalogue_credits(id,work_id,contributor_id,edition_id,role,provider,source_key,scope) VALUES(1,2,4,3,'narrator','hardcover','one','edition')",
+                            "INSERT INTO catalogue_character_appearances(id,work_id,character_id,provider) VALUES(1,2,5,'hardcover')",
+                            "INSERT INTO catalogue_character_performances(work_id,credit_id,appearance_id,language) VALUES(2,1,1,'en')",
+                        ):
+                            await conn.execute(text(sql))
+
+                    def upgrade_integrity(sync_conn):
+                        with Operations.context(MigrationContext.configure(sync_conn)):
+                            importlib.import_module(
+                                "migrations.versions.mt037_catalogue_reference_integrity"
+                            ).upgrade()
+
+                    if populated == "invalid":
+                        await conn.execute(
+                            text(
+                                "DELETE FROM catalogue_identities WHERE namespace='steam.app'"
+                            )
+                        )
+                        async with conn.begin_nested() as savepoint:
+                            with self.assertRaises(IntegrityError):
+                                await conn.run_sync(upgrade_integrity)
+                            await savepoint.rollback()
+                        self.assertEqual(
+                            (
+                                await conn.execute(
+                                    text("SELECT count(*) FROM catalogue_steam_prices")
+                                )
+                            ).scalar_one(),
+                            1,
+                        )
+                        self.assertFalse(
+                            (
+                                await conn.execute(
+                                    text(
+                                        "SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='catalogue_steam_prices'::regclass AND attname='identity_namespace' AND NOT attisdropped)"
+                                    )
+                                )
+                            ).scalar_one()
+                        )
+                    else:
+                        await conn.run_sync(upgrade_integrity)
+                    if populated and populated != "invalid":
+                        self.assertEqual(
+                            (
+                                await conn.execute(
+                                    text(
+                                        "SELECT identity_namespace,historical_low_at FROM catalogue_steam_prices"
+                                    )
+                                )
+                            ).one(),
+                            ("steam.app", "2024-06-27"),
+                        )
+                    if populated:
+                        self.assertEqual(
+                            (
+                                await conn.execute(
+                                    text("SELECT pages FROM catalogue_book_editions")
+                                )
+                            ).scalar_one(),
+                            300,
+                        )
+                        self.assertEqual(
+                            (
+                                await conn.execute(
+                                    text(
+                                        "SELECT count(*) FROM catalogue_character_performances"
+                                    )
+                                )
+                            ).scalar_one(),
+                            1,
+                        )
                         self.assertEqual(
                             (
                                 await conn.execute(text("SELECT id,title FROM media"))

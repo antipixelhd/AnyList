@@ -166,17 +166,21 @@ def normalize_tmdb(raw, kind):
             )
             roles = p.get("roles") if group == "cast" else p.get("jobs")
             for r in roles or [p]:
-                job = r.get("job") or ("Actor" if group == "cast" else "Contributor")
-                role = {
-                    "Actor": "actor",
-                    "Director": "director",
-                    "Writer": "writer",
-                    "Screenplay": "writer",
-                    "Story": "writer",
-                    "Teleplay": "writer",
-                    "Producer": "producer",
-                    "Executive Producer": "producer",
-                }.get(job, "contributor")
+                job = r.get("job") or ("Actor" if group == "cast" else None)
+                role = (
+                    {
+                        "Actor": "actor",
+                        "Director": "director",
+                        "Writer": "writer",
+                        "Screenplay": "writer",
+                        "Story": "writer",
+                        "Teleplay": "writer",
+                        "Producer": "producer",
+                        "Executive Producer": "producer",
+                    }.get(job, "contributor")
+                    if job is not None
+                    else None
+                )
                 doc["credits"].append(
                     {
                         "contributor": person,
@@ -262,7 +266,9 @@ def normalize_tvdb(raw):
         doc["credits"].append(
             {
                 "contributor": person,
-                "role": "actor" if p.get("type") == 3 else "contributor",
+                "role": ("actor" if p["type"] == 3 else "contributor")
+                if p.get("type") is not None
+                else None,
                 "role_label": p.get("peopleType"),
                 "character_label": p.get("name"),
                 "source_key": str(p["id"]),
@@ -374,9 +380,21 @@ def normalize_igdb(raw):
         for r in raw.get(field) or []:
             if not isinstance(r, dict):
                 r = {"id": r}
+            parent = r.get("version_parent")
+            target = (
+                entity(
+                    "game",
+                    "igdb.game",
+                    parent if isinstance(parent, dict) else {"id": parent},
+                )
+                if parent
+                else entity("game", "igdb.game", r)
+            )
+            if parent:
+                target["identities"].append(identity("igdb.game", r["id"]))
             doc["relationships"].append(
                 {
-                    "target": entity("game", "igdb.game", r),
+                    "target": target,
                     "relation": rel,
                     "reverse": rel != "recommendation",
                 }
@@ -489,14 +507,18 @@ def normalize_hardcover(raw):
         p = c.get("author")
         if not p:
             continue
-        label = c.get("contribution") or "Author"
-        role = {
-            "author": "author",
-            "narrator": "narrator",
-            "translator": "translator",
-            "illustrator": "illustrator",
-            "editor": "editor",
-        }.get(label.lower(), "contributor")
+        label = (c["contribution"] or "Author") if "contribution" in c else None
+        role = (
+            {
+                "author": "author",
+                "narrator": "narrator",
+                "translator": "translator",
+                "illustrator": "illustrator",
+                "editor": "editor",
+            }.get(label.lower(), "contributor")
+            if label is not None
+            else None
+        )
         credit = {
             "contributor": entity(
                 "person",

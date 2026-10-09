@@ -7,7 +7,8 @@ import logging
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 import httpx
 from sqlalchemy import select, text
@@ -84,6 +85,23 @@ _local_next = {}
 _cache = OrderedDict()
 _tokens = {}
 _token_locks = {}
+MAX_RESPONSE_BYTES = 4_000_000
+MAX_CACHE_BYTES = 16_000_000
+
+
+def retry_after_seconds(value, fallback):
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            deadline = parsedate_to_datetime(value)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            seconds = (deadline - datetime.now(timezone.utc)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return fallback
+    # Retry-After must not produce NaN/Infinity or negative sleep durations.
+    return max(0, min(seconds, 86400)) if seconds >= 0 else fallback
 
 
 class ProviderHTTP:
@@ -124,7 +142,7 @@ class ProviderHTTP:
                         )
                     )
                 ).scalar_one()
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 if row.next_request_at and row.next_request_at > now:
                     await asyncio.sleep(
                         min(2, (row.next_request_at - now).total_seconds())
@@ -142,9 +160,9 @@ class ProviderHTTP:
                 try:
                     yield
                 finally:
-                    row.next_request_at = datetime.utcnow() + timedelta(
-                        seconds=INTERVALS[provider]
-                    )
+                    row.next_request_at = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    ) + timedelta(seconds=INTERVALS[provider])
                     await db.commit()
         else:
             lock = _local_locks.setdefault(provider, asyncio.Lock())
@@ -178,42 +196,60 @@ class ProviderHTTP:
             for attempt in range(3):
                 try:
                     async with self.lane(provider):
-                        response = await client.request(method, url, **kwargs)
-                    if response.status_code in (429, 500, 502, 503, 504):
-                        delay = response.headers.get("Retry-After", "")
-                        delay = (
-                            float(delay)
-                            if delay.replace(".", "", 1).isdigit()
-                            else 2**attempt
+                        async with client.stream(method, url, **kwargs) as response:
+                            status = response.status_code
+                            headers = response.headers
+                            body = bytearray()
+                            if status == 200:
+                                length = headers.get("Content-Length", "")
+                                if (
+                                    length.isdigit()
+                                    and int(length) > MAX_RESPONSE_BYTES
+                                ):
+                                    raise ProviderError("payload_too_large")
+                                async for chunk in response.aiter_bytes(
+                                    chunk_size=65536
+                                ):
+                                    if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
+                                        raise ProviderError("payload_too_large")
+                                    body.extend(chunk)
+                    if status in (429, 500, 502, 503, 504):
+                        delay = retry_after_seconds(
+                            headers.get("Retry-After", ""), 2**attempt
                         )
                         if attempt == 2 or delay > 5:
                             raise ProviderError(
-                                "rate_limited"
-                                if response.status_code == 429
-                                else "unavailable",
-                                min(delay, 3600),
+                                "rate_limited" if status == 429 else "unavailable",
+                                delay,
                             )
                         await asyncio.sleep(max(0.1, delay))
                         continue
-                    if response.status_code != 200:
+                    if status != 200:
                         raise ProviderError(
                             {
                                 401: "unauthorized",
                                 403: "forbidden",
                                 404: "not_found",
-                            }.get(response.status_code, "bad_response")
+                            }.get(status, "bad_response")
                         )
-                    if len(response.content) > 4_000_000:
-                        raise ProviderError("payload_too_large")
                     try:
-                        data = response.json()
+                        data = json.loads(body)
                     except ValueError:
                         raise ProviderError("invalid_json") from None
                     if isinstance(data, dict) and data.get("errors"):
                         raise ProviderError("graphql_error")
                     if cache:
-                        _cache[key] = (time.monotonic() + 600, json.dumps(data))
-                        while len(_cache) > 128:
+                        _cache[key] = (
+                            time.monotonic() + 600,
+                            json.dumps(
+                                data, ensure_ascii=False, separators=(",", ":")
+                            ).encode("utf-8"),
+                        )
+                        while (
+                            len(_cache) > 128
+                            or sum(len(hit[1]) for hit in _cache.values())
+                            > MAX_CACHE_BYTES
+                        ):
                             _cache.popitem(last=False)
                     return data
                 except (
@@ -229,7 +265,22 @@ class ProviderHTTP:
                 await client.aclose()
 
 
-IGDB_FIELDS = "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,dlcs.name,expansions.name,standalone_expansions.name,remakes.name,remasters.name,ports.name,similar_games.name"
+IGDB_FIELDS = (
+    "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,"
+    + ",".join(
+        f"{field}.{projection}"
+        for field in (
+            "dlcs",
+            "expansions",
+            "standalone_expansions",
+            "remakes",
+            "remasters",
+            "ports",
+            "similar_games",
+        )
+        for projection in ("name", "version_parent.name")
+    )
+)
 
 
 class CatalogueProviders:
@@ -456,6 +507,8 @@ class CatalogueProviders:
                 if not rows:
                     raise ProviderError("not_found")
                 raw = rows[0]
+                if raw.get("version_parent"):
+                    raise ProviderError("identity_conflict")
             raw["_characters"], complete = await self._igdb_pages(
                 "characters",
                 f"fields id,name,description,mug_shot.url; where games = ({raw['id']}); sort id asc;",
@@ -475,6 +528,13 @@ class CatalogueProviders:
                         "platform_namespace": "igdb.version",
                         "platform_id": str(version["id"]),
                     }
+                )
+                # Provider search/detail IDs and verified Steam IDs of an
+                # edition resolve to the work, while its release stays distinct.
+                doc["work"]["identities"].extend(
+                    x
+                    for x in normalize_igdb(version)["work"]["identities"]
+                    if x not in doc["work"]["identities"]
                 )
             return doc, {"game": raw, "version": version}
         if provider == "hardcover":
@@ -713,6 +773,9 @@ class CatalogueProviders:
         return out, False
 
     async def steam_prices(self, appid, country="DE"):
+        return await asyncio.wait_for(self._steam_prices(appid, country), timeout=120)
+
+    async def _steam_prices(self, appid, country):
         if not settings.itad_api_key:
             raise ProviderError("not_configured")
         if (

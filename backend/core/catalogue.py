@@ -6,7 +6,7 @@ cross-references (or an administrator's reviewed binding) link identities.
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -119,12 +119,22 @@ def source_rank(kind, source):
     return 80
 
 
+def placeholder_name(values):
+    return values.get("name") in {
+        f"{x['namespace']}:{x['external_id']}" for x in values.get("identities", [])
+    }
+
+
 def merge_fields(row, values, source):
     sources = dict(row.field_sources or {})
     protected = set(row.protected_fields or [])
     for field in ("name", "description", "image_url"):
         value = values.get(field)
-        if not value or field in protected:
+        if (
+            not value
+            or field in protected
+            or (field == "name" and placeholder_name(values))
+        ):
             continue
         old = getattr(row, field)
         old_source = sources.get(field)
@@ -186,9 +196,7 @@ async def upsert_entity(db, values, source):
             kind=values["kind"],
             name=values["name"],
             attributes={},
-            field_sources={"name": source}
-            if not values["name"].startswith(ids[0]["namespace"] + ":")
-            else {},
+            field_sources={} if placeholder_name(values) else {"name": source},
             protected_fields=[],
         )
         db.add(row)
@@ -206,9 +214,24 @@ async def upsert_entity(db, values, source):
     return row
 
 
-async def upsert(db, model, values, keys):
-    statement = insert(model).values(**values)
+def has_value(value):
+    return value is not None and value != "" and value != [] and value != {}
+
+
+async def upsert(db, model, values, keys, preserve_missing=False):
+    if preserve_missing:
+        values = {k: v for k, v in values.items() if k in keys or has_value(v)}
+        if "attributes" in values:
+            values["attributes"] = {
+                k: v for k, v in values["attributes"].items() if has_value(v)
+            }
+    insert_values = (
+        {"role": "contributor", **values} if model is CatalogueCredit else values
+    )
+    statement = insert(model).values(**insert_values)
     update = {k: statement.excluded[k] for k in values if k not in keys}
+    if preserve_missing and "attributes" in update:
+        update["attributes"] = model.attributes.op("||")(statement.excluded.attributes)
     if update:
         statement = statement.on_conflict_do_update(index_elements=keys, set_=update)
     else:
@@ -247,6 +270,7 @@ async def ingest_document(db, doc, provider):
                 "position": c.get("position"),
             },
             ["work_id", "provider", "source_key"],
+            preserve_missing=True,
         )
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
@@ -262,6 +286,7 @@ async def ingest_document(db, doc, provider):
                 "attributes": c.get("attributes", {}),
             },
             ["work_id", "character_id", "provider"],
+            preserve_missing=True,
         )
     for e in doc["editions"]:
         if work.kind != "book":
@@ -283,7 +308,7 @@ async def ingest_document(db, doc, provider):
         }
         # Partial editions may not clear previously known descriptive fields.
         if old:
-            values = {k: v for k, v in values.items() if v is not None}
+            values = {k: v for k, v in values.items() if has_value(v)}
         await upsert(db, BookEdition, values, ["entity_id"])
     for c in doc["credits"]:
         if not c.get("edition_identity"):
@@ -310,6 +335,7 @@ async def ingest_document(db, doc, provider):
                 "scope": "edition",
             },
             ["work_id", "provider", "source_key"],
+            preserve_missing=True,
         )
     for r in doc["releases"]:
         if work.kind != "game":
@@ -333,7 +359,7 @@ async def ingest_document(db, doc, provider):
             },
         }
         if old:
-            values = {k: v for k, v in values.items() if v is not None}
+            values = {k: v for k, v in values.items() if has_value(v)}
         await upsert(db, GameRelease, values, ["entity_id"])
     for r in doc["relationships"]:
         target = await upsert_entity(db, r["target"], provider)
@@ -353,6 +379,7 @@ async def ingest_document(db, doc, provider):
                 "attributes": r.get("attributes", {}),
             },
             ["source_id", "target_id", "relation", "provider"],
+            preserve_missing=True,
         )
     await db.flush()
     return work
@@ -383,6 +410,15 @@ async def link_performance(db, credit_id, appearance_id, language=""):
     )
 
 
+async def unlink_performance(db, performance_id):
+    await write_lock(db)
+    row = await db.get(CharacterPerformance, performance_id)
+    if not row:
+        return False
+    await db.delete(row)
+    return True
+
+
 def refresh_result(row, status):
     return {
         "entity_id": row.entity_id,
@@ -392,6 +428,47 @@ def refresh_result(row, status):
         "next_attempt_at": row.next_attempt_at,
         "coverage": row.coverage or {},
     }
+
+
+def cached_refresh_status(row, now):
+    if row.lease_until and row.lease_until > now:
+        return "refreshing"
+    if row.expires_at and row.expires_at > now:
+        return "cached"
+    if row.next_attempt_at and row.next_attempt_at > now:
+        return "last_good" if row.fetched_at else "retry_pending"
+    return None
+
+
+async def record_refresh_failure(db, row, token, error, base_delay):
+    # Use the same lock order as claims/publication, including after a rollback.
+    try:
+        await write_lock(db)
+        await db.refresh(row, with_for_update=True)
+        if row.lease_token != token:
+            return "refreshing", False
+        row.attempts += 1
+        row.error_code = (
+            error.code
+            if isinstance(error, ProviderError)
+            else "identity_conflict"
+            if isinstance(error, IdentityConflict)
+            else "timeout"
+            if isinstance(error, asyncio.TimeoutError)
+            else "ingestion_failed"
+        )
+        row.next_attempt_at = datetime.now(timezone.utc).replace(
+            tzinfo=None
+        ) + timedelta(
+            seconds=max(
+                getattr(error, "retry_after", 0) or 0,
+                min(86400, base_delay * 2 ** min(row.attempts, 10)),
+            )
+        )
+        return ("last_good" if row.fetched_at else "failed"), True
+    except Exception:
+        await db.rollback()
+        raise ProviderError("ingestion_failed") from None
 
 
 async def refresh_metadata(
@@ -423,17 +500,10 @@ async def refresh_metadata(
             .with_for_update()
         )
     ).scalar_one()
-    now = datetime.utcnow()
-    if row.lease_until and row.lease_until > now:
-        result = refresh_result(row, "refreshing")
-        await db.commit()
-        return result
-    if row.expires_at and row.expires_at > now:
-        result = refresh_result(row, "cached")
-        await db.commit()
-        return result
-    if row.next_attempt_at and row.next_attempt_at > now:
-        result = refresh_result(row, "last_good" if row.fetched_at else "retry_pending")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cached_status = cached_refresh_status(row, now)
+    if cached_status:
+        result = refresh_result(row, cached_status)
         await db.commit()
         return result
     row.lease_token = token
@@ -457,37 +527,26 @@ async def refresh_metadata(
             row.entity_id = entity.id
             row.payload = payload
             row.coverage = doc.get("coverage", {})
-            row.fetched_at = datetime.utcnow()
+            row.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             row.expires_at = row.fetched_at + timedelta(days=7)
             row.attempts = 0
             row.error_code = None
             row.next_attempt_at = None
         status = "updated"
     except (ProviderError, IdentityConflict, asyncio.TimeoutError) as e:
-        await db.refresh(row, with_for_update=True)
-        if row.lease_token != token:
-            result = refresh_result(row, "refreshing")
+        status, owned = await record_refresh_failure(db, row, token, e, 60)
+        if not owned:
+            result = refresh_result(row, status)
             await db.commit()
             return result
-        row.attempts += 1
-        row.error_code = (
-            e.code
-            if isinstance(e, ProviderError)
-            else "identity_conflict"
-            if isinstance(e, IdentityConflict)
-            else "timeout"
-        )
-        seconds = max(
-            getattr(e, "retry_after", 0) or 0,
-            min(86400, 60 * 2 ** min(row.attempts, 10)),
-        )
-        row.next_attempt_at = datetime.utcnow() + timedelta(seconds=seconds)
-        status = "last_good" if row.fetched_at else "failed"
-    except Exception:
-        # Do not leak exception reprs (HTTP URLs may contain keys). Allow retry
-        # after the durable lease expires; retain the entire last-good snapshot.
+    except Exception as e:
+        # Reset a failed transaction, then retain a durable, redacted retry state.
         await db.rollback()
-        raise ProviderError("ingestion_failed") from None
+        status, owned = await record_refresh_failure(db, row, token, e, 60)
+        if not owned:
+            result = refresh_result(row, status)
+            await db.commit()
+            return result
     row.lease_token = None
     row.lease_until = None
     result = refresh_result(row, status)
@@ -496,6 +555,7 @@ async def refresh_metadata(
 
 
 async def refresh_prices(db, providers, work_id, appid, country):
+    appid = validate_identity("steam.app", appid, "game")
     mapping = await resolve_identity(db, "steam.app", appid)
     work = await db.get(CatalogueEntity, work_id)
     if not mapping or mapping.entity_id != work_id or not work or work.kind != "game":
@@ -520,15 +580,10 @@ async def refresh_prices(db, providers, work_id, appid, country):
             .with_for_update()
         )
     ).scalar_one()
-    now = datetime.utcnow()
-    if (
-        (state.lease_until and state.lease_until > now)
-        or (state.expires_at and state.expires_at > now)
-        or (state.next_attempt_at and state.next_attempt_at > now)
-    ):
-        result = refresh_result(
-            state, "cached" if state.fetched_at else "retry_pending"
-        )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cached_status = cached_refresh_status(state, now)
+    if cached_status:
+        result = refresh_result(state, cached_status)
         await db.commit()
         return result
     token = uuid.uuid4().hex
@@ -565,7 +620,7 @@ async def refresh_prices(db, providers, work_id, appid, country):
                     "payload",
                 )
             }
-            if not values["historical_low"]:
+            if not values["historical_low"] or not values["historical_low_at"]:
                 values.pop("historical_low")
                 values.pop("historical_low_at")
             await upsert(
@@ -575,43 +630,32 @@ async def refresh_prices(db, providers, work_id, appid, country):
                     "work_id": work_id,
                     "steam_app_id": appid,
                     "country": country,
-                    "fetched_at": datetime.utcnow(),
+                    "fetched_at": datetime.now(timezone.utc).replace(tzinfo=None),
                     **values,
                 },
                 ["work_id", "steam_app_id", "country"],
             )
             state.entity_id = work_id
             state.payload = prices["payload"]
-            state.fetched_at = datetime.utcnow()
+            state.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             state.expires_at = state.fetched_at + timedelta(hours=6)
             state.error_code = None
             state.next_attempt_at = None
             state.attempts = 0
         status = "updated"
     except (ProviderError, IdentityConflict, asyncio.TimeoutError) as e:
-        await db.refresh(state, with_for_update=True)
-        if state.lease_token != token:
-            result = refresh_result(state, "refreshing")
+        status, owned = await record_refresh_failure(db, state, token, e, 120)
+        if not owned:
+            result = refresh_result(state, status)
             await db.commit()
             return result
-        state.attempts += 1
-        state.error_code = (
-            e.code
-            if isinstance(e, ProviderError)
-            else "identity_conflict"
-            if isinstance(e, IdentityConflict)
-            else "timeout"
-        )
-        state.next_attempt_at = datetime.utcnow() + timedelta(
-            seconds=max(
-                getattr(e, "retry_after", 0) or 0,
-                min(86400, 120 * 2 ** min(state.attempts, 10)),
-            )
-        )
-        status = "last_good" if state.fetched_at else "failed"
-    except Exception:
+    except Exception as e:
         await db.rollback()
-        raise ProviderError("ingestion_failed") from None
+        status, owned = await record_refresh_failure(db, state, token, e, 120)
+        if not owned:
+            result = refresh_result(state, status)
+            await db.commit()
+            return result
     state.lease_token = None
     state.lease_until = None
     result = refresh_result(state, status)

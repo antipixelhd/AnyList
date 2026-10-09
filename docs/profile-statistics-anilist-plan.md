@@ -504,3 +504,7 @@ Reviewed the current stats page/API, legacy statistics endpoint, tracking/watch/
 Follow-up planning incorporated the supplied genre/voice-actor screenshots, existing person media/list/Trakt support, reusable Person/Character/credit relations, and a durable approximately 24-hour statistics policy. See the companion architecture document for the revised recommended migration scope.
 
 That original planning pass made no application or database changes. The subsequent catalogue foundation implemented API/schema changes, provider verification and beta backfill as recorded in [catalogue-foundation.md](catalogue-foundation.md). Page redesign, statistics APIs/jobs and a comprehensive live user-data coverage audit remain outstanding.
+
+## Catalogue completion audit
+
+The completed foundation was audited again on 2026-10-09. Additive `mt037` strengthens Steam identity, edition/work and concurrent performer-link integrity. Partial relation data and placeholder names preserve known metadata; provider downloads/cache sizes and durable error/retry state are bounded. See [catalogue-foundation.md](catalogue-foundation.md#goal-completion-audit-2026-10-09) for tests and delivery evidence. Statistics/UI and game/book tracking remain deferred.
