@@ -292,6 +292,11 @@ async def get_trending_shows(time_window: str = "day", page: int = 1, api_key: s
     return await _get(f"{TMDB_BASE}/trending/tv/{time_window}", headers=get_headers(api_key), params=params)
 
 
+async def get_show_aggregate_credits(tmdb_id: int, api_key: str = None) -> dict:
+    """All provider aggregate performances/jobs, without a cast truncation."""
+    return await _get(f"{TMDB_BASE}/tv/{tmdb_id}/aggregate_credits", headers=get_headers(api_key))
+
+
 async def get_show_light(tmdb_id: int, api_key: str = None, language: str | None = None) -> dict:
     """Fetch base show details (includes last_episode_to_air / next_episode_to_air)."""
     params: dict = {}

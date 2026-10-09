@@ -17,7 +17,6 @@ function picker(score, onScore) {
     title: {},
     poster: {removeAttribute() {}},
     remove: {hidden: true},
-    help: {},
     confirmation: {},
     error: {},
     painted: null,

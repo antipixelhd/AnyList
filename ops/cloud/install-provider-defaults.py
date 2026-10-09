@@ -4,6 +4,7 @@
 Read a JSON object of metadata defaults on stdin. Values never enter argv/logs.
 Only the preview backend environment and units are updated; no database access.
 """
+
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,19 @@ import tempfile
 import time
 from urllib.request import urlopen
 
-KEYS = {"TMDB_API_KEY", "TVDB_API_KEY", "TVDB_SUBSCRIBER_PIN"}
+KEYS = {
+    "TMDB_API_KEY",
+    "TVDB_API_KEY",
+    "TVDB_SUBSCRIBER_PIN",
+    "IGDB_CLIENT_ID",
+    "IGDB_CLIENT_SECRET",
+    "HARDCOVER_API_KEY",
+    "RAWG_API_KEY",
+    "ITAD_API_KEY",
+    "OPENLIBRARY_CONTACT_EMAIL",
+    "HARDCOVER_DAILY_BUDGET",
+    "RAWG_MONTHLY_BUDGET",
+}
 ETC = Path("/etc/anylist-preview")
 INSTALL = Path("/opt/anylist-preview")
 UNITS = Path("/etc/systemd/system")
@@ -24,9 +37,23 @@ COMMON = "EnvironmentFile=-/etc/anylist-preview/providers.env"
 def validate(values):
     if not isinstance(values, dict) or not values or set(values) - KEYS:
         raise ValueError("Only metadata defaults are accepted")
-    for value in values.values():
-        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", value):
+    for key, value in values.items():
+        pattern = (
+            r"[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+            if key == "OPENLIBRARY_CONTACT_EMAIL"
+            else r"[0-9]+"
+            if key in {"HARDCOVER_DAILY_BUDGET", "RAWG_MONTHLY_BUDGET"}
+            else r"[A-Za-z0-9._-]+"
+        )
+        if not isinstance(value, str) or not re.fullmatch(pattern, value):
             raise ValueError("Invalid metadata credential encoding")
+    if (
+        "HARDCOVER_DAILY_BUDGET" in values
+        and int(values["HARDCOVER_DAILY_BUDGET"]) > 5000
+    ):
+        raise ValueError("Daily budget exceeds provider limit")
+    if "RAWG_MONTHLY_BUDGET" in values and int(values["RAWG_MONTHLY_BUDGET"]) > 20000:
+        raise ValueError("Monthly budget exceeds provider limit")
     return values
 
 
@@ -61,7 +88,11 @@ def main():
     if path.exists():
         if path.is_symlink() or path.stat().st_uid != 0:
             raise ValueError("Unexpected provider file ownership")
-        previous = dict(line.split("=", 1) for line in path.read_text().splitlines() if line and not line.startswith("#"))
+        previous = dict(
+            line.split("=", 1)
+            for line in path.read_text().splitlines()
+            if line and not line.startswith("#")
+        )
         values = validate({**previous, **values})
     slots = json.loads((INSTALL / "slots.json").read_text())
     prepared = []
@@ -81,7 +112,11 @@ def main():
     # Validate every destination before changing any service/configuration.
     if template.is_symlink() or template.stat().st_uid != 0:
         raise ValueError("Unexpected template ownership")
-    write_private(path, "".join(f"{key}={value}\n" for key, value in sorted(values.items())), 0o600)
+    write_private(
+        path,
+        "".join(f"{key}={value}\n" for key, value in sorted(values.items())),
+        0o600,
+    )
     write_private(template, template_text, 0o644)
     for unit, content, _ in prepared:
         write_private(unit, content, 0o644)
@@ -97,8 +132,12 @@ def main():
                 pass
             time.sleep(1)
         else:
-            raise RuntimeError("Preview backend readiness failed; inspect private journal")
-    print("Private metadata defaults installed; preview backends healthy. No databases changed.")
+            raise RuntimeError(
+                "Preview backend readiness failed; inspect private journal"
+            )
+    print(
+        "Private metadata defaults installed; preview backends healthy. No databases changed."
+    )
 
 
 if __name__ == "__main__":
@@ -106,5 +145,8 @@ if __name__ == "__main__":
         main()
     except Exception:
         # Even parser/OS errors must never accidentally echo secret input.
-        print("Provider-default installation failed; check ownership/configuration and backend health privately.", file=sys.stderr)
+        print(
+            "Provider-default installation failed; check ownership/configuration and backend health privately.",
+            file=sys.stderr,
+        )
         sys.exit(1)

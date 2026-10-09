@@ -1,0 +1,173 @@
+{
+  "id": 3328,
+  "name": "The Witcher 3: Wild Hunt",
+  "description_raw": "Sample fallback synopsis.",
+  "released": "2015-05-18",
+  "background_image": "https://media.rawg.io/media/games/618/618c2031a07bbff6b4f611f10b6bcdbc.jpg",
+  "genres": [
+    {
+      "id": 4,
+      "name": "Action",
+      "slug": "action",
+      "games_count": 192263,
+      "image_background": "https://media.rawg.io/media/games/7fa/7fa0b586293c5861ee32490e953a4996.jpg"
+    },
+    {
+      "id": 5,
+      "name": "RPG",
+      "slug": "role-playing-games-rpg",
+      "games_count": 62277,
+      "image_background": "https://media.rawg.io/media/games/d82/d82990b9c67ba0d2d09d4e6fa88885a7.jpg"
+    }
+  ],
+  "developers": [
+    {
+      "id": 9023,
+      "name": "CD PROJEKT RED",
+      "slug": "cd-projekt-red",
+      "games_count": 27,
+      "image_background": "https://media.rawg.io/media/games/062/06285b425e61623530c5430f20e5d222.jpg"
+    }
+  ],
+  "publishers": [
+    {
+      "id": 7411,
+      "name": "CD PROJEKT RED",
+      "slug": "cd-projekt-red",
+      "games_count": 30,
+      "image_background": "https://media.rawg.io/media/games/22c/22ce391b3096cd46eadae1a890624f39.jpg"
+    }
+  ],
+  "platforms": [
+    {
+      "platform": {
+        "id": 187,
+        "name": "PlayStation 5",
+        "slug": "playstation5",
+        "image": null,
+        "year_end": null,
+        "year_start": 2020,
+        "games_count": 1568,
+        "image_background": "https://media.rawg.io/media/games/2ae/2aedae90b1377a0f3e5ce54d24f8e41a.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    },
+    {
+      "platform": {
+        "id": 186,
+        "name": "Xbox Series S/X",
+        "slug": "xbox-series-x",
+        "image": null,
+        "year_end": null,
+        "year_start": 2020,
+        "games_count": 1305,
+        "image_background": "https://media.rawg.io/media/games/5eb/5eb49eb2fa0738fdb5bacea557b1bc57.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    },
+    {
+      "platform": {
+        "id": 5,
+        "name": "macOS",
+        "slug": "macos",
+        "image": null,
+        "year_end": null,
+        "year_start": null,
+        "games_count": 108311,
+        "image_background": "https://media.rawg.io/media/games/618/618c2031a07bbff6b4f611f10b6bcdbc.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    },
+    {
+      "platform": {
+        "id": 18,
+        "name": "PlayStation 4",
+        "slug": "playstation4",
+        "image": null,
+        "year_end": null,
+        "year_start": null,
+        "games_count": 7055,
+        "image_background": "https://media.rawg.io/media/games/310/3106b0e012271c5ffb16497b070be739.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    },
+    {
+      "platform": {
+        "id": 7,
+        "name": "Nintendo Switch",
+        "slug": "nintendo-switch",
+        "image": null,
+        "year_end": null,
+        "year_start": null,
+        "games_count": 5808,
+        "image_background": "https://media.rawg.io/media/games/26d/26d4437715bee60138dab4a7c8c59c92.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    },
+    {
+      "platform": {
+        "id": 4,
+        "name": "PC",
+        "slug": "pc",
+        "image": null,
+        "year_end": null,
+        "year_start": null,
+        "games_count": 562765,
+        "image_background": "https://media.rawg.io/media/games/120/1201a40e4364557b124392ee50317b99.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    },
+    {
+      "platform": {
+        "id": 1,
+        "name": "Xbox One",
+        "slug": "xbox-one",
+        "image": null,
+        "year_end": null,
+        "year_start": null,
+        "games_count": 5751,
+        "image_background": "https://media.rawg.io/media/games/942/9424d6bb763dc38d9378b488603c87fa.jpg"
+      },
+      "released_at": "2015-05-18",
+      "requirements": {}
+    }
+  ],
+  "_stores": [
+    {
+      "id": 354780,
+      "game_id": 3328,
+      "store_id": 5,
+      "url": "https://www.gog.com/game/the_witcher_3_wild_hunt"
+    },
+    {
+      "id": 3565,
+      "game_id": 3328,
+      "store_id": 3,
+      "url": "https://store.playstation.com/en-us/product/UP4497-CUSA00527_00-0000000000000002"
+    },
+    {
+      "id": 305376,
+      "game_id": 3328,
+      "store_id": 1,
+      "url": "https://store.steampowered.com/app/292030/The_Witcher_3_Wild_Hunt/"
+    },
+    {
+      "id": 312313,
+      "game_id": 3328,
+      "store_id": 2,
+      "url": "https://www.microsoft.com/en-us/p/the-witcher-3-wild-hunt/br765873cqjd"
+    },
+    {
+      "id": 676022,
+      "game_id": 3328,
+      "store_id": 6,
+      "url": "https://www.nintendo.com/games/detail/the-witcher-3-wild-hunt-switch/"
+    }
+  ]
+}

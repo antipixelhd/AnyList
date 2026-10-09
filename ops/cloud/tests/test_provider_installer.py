@@ -12,9 +12,26 @@ spec.loader.exec_module(installer)
 class ProviderInstallerTests(unittest.TestCase):
     def test_only_metadata_keys_are_accepted(self):
         installer.validate({"TMDB_API_KEY": "test.jwt-token"})
+        installer.validate({"IGDB_CLIENT_ID":"fake-id","IGDB_CLIENT_SECRET":"fake-secret",
+                            "HARDCOVER_API_KEY":"hc_pat_fake","RAWG_API_KEY":"fake","ITAD_API_KEY":"fake"})
         for values in ({}, {"DATABASE_URL": "postgresql"}, {"TMDB_API_KEY": "token\nOTHER=value"}):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 installer.validate(values)
+
+    def test_contact_and_local_budget_accept_only_safe_environment_values(self):
+        installer.validate({"OPENLIBRARY_CONTACT_EMAIL": "contact@example.org", "HARDCOVER_DAILY_BUDGET": "5000"})
+        for key,value in [("OPENLIBRARY_CONTACT_EMAIL", "contact@example.org\nOTHER=value"), ("OPENLIBRARY_CONTACT_EMAIL", "no-contact"), ("HARDCOVER_DAILY_BUDGET", "-1")]:
+            with self.assertRaises(ValueError):
+                installer.validate({key:value})
+
+    def test_provider_budgets_match_settings_bounds(self):
+        for key, maximum in [("HARDCOVER_DAILY_BUDGET", 5000), ("RAWG_MONTHLY_BUDGET", 20000)]:
+            for valid in ("0", "19000" if key == "RAWG_MONTHLY_BUDGET" else "4999", str(maximum)):
+                with self.subTest(key=key, valid=valid):
+                    self.assertEqual(installer.validate({key: valid}), {key: valid})
+            for invalid in ("-1", "1.5", "20000\nOTHER=value", str(maximum + 1), 100):
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    installer.validate({key: invalid})
 
     def test_shared_defaults_precede_slot_override_and_are_idempotent(self):
         original = "[Service]\nEnvironmentFile=/etc/anylist-preview/beta.env\n"

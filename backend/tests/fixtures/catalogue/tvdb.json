@@ -1,0 +1,116 @@
+{
+  "id": 121361,
+  "name": "Game of Thrones",
+  "overview": "Sample series synopsis.",
+  "image": "https://artworks.thetvdb.com/banners/posters/121361-4.jpg",
+  "firstAired": "2011-04-17",
+  "originalCountry": "usa",
+  "remoteIds": [
+    {
+      "id": "10.5240/C1B5-3BA1-8991-A571-8472-W",
+      "type": 13,
+      "sourceName": "EIDR"
+    },
+    {
+      "id": "tt0944947",
+      "type": 2,
+      "sourceName": "IMDB"
+    },
+    {
+      "id": "1399",
+      "type": 12,
+      "sourceName": "TheMovieDB.com"
+    },
+    {
+      "id": "82",
+      "type": 19,
+      "sourceName": "TV Maze"
+    }
+  ],
+  "companies": [
+    {
+      "id": 328,
+      "name": "HBO",
+      "slug": "hbo",
+      "nameTranslations": [
+        "eng",
+        "nld",
+        "pt",
+        "spa"
+      ],
+      "overviewTranslations": [
+        "pt",
+        "spa"
+      ],
+      "aliases": [
+        {
+          "language": "eng",
+          "name": "Home Box Office"
+        }
+      ],
+      "country": "usa",
+      "primaryCompanyType": 1,
+      "activeDate": "1972-11-08",
+      "inactiveDate": null,
+      "companyType": {
+        "companyTypeId": 1,
+        "companyTypeName": "Network"
+      },
+      "parentCompany": {
+        "id": null,
+        "name": null,
+        "relation": {
+          "id": null,
+          "typeName": null
+        }
+      },
+      "tagOptions": null
+    }
+  ],
+  "characters": [
+    {
+      "id": 63975938,
+      "name": "Catelyn Stark",
+      "peopleId": 247831,
+      "seriesId": 121361,
+      "series": null,
+      "movie": null,
+      "movieId": null,
+      "episodeId": null,
+      "type": 3,
+      "image": "https://artworks.thetvdb.com/banners/actors/120821.jpg",
+      "sort": 4,
+      "isFeatured": false,
+      "url": "https://thetvdb.com/people/247831-michelle-fairley",
+      "nameTranslations": null,
+      "overviewTranslations": null,
+      "aliases": null,
+      "peopleType": "Actor",
+      "personName": "Michelle Fairley",
+      "tagOptions": null,
+      "personImgURL": "https://artworks.thetvdb.com/banners/v4/actor/247831/photo/62742718e0819.jpg"
+    },
+    {
+      "id": 63975957,
+      "name": "Gendry",
+      "peopleId": 247836,
+      "seriesId": 121361,
+      "series": null,
+      "movie": null,
+      "movieId": null,
+      "episodeId": null,
+      "type": 3,
+      "image": "https://artworks.thetvdb.com/banners/actors/299630.jpg",
+      "sort": 32,
+      "isFeatured": true,
+      "url": "https://thetvdb.com/people/247836-joe-dempsie",
+      "nameTranslations": null,
+      "overviewTranslations": null,
+      "aliases": null,
+      "peopleType": "Actor",
+      "personName": "Joe Dempsie",
+      "tagOptions": null,
+      "personImgURL": "https://artworks.thetvdb.com/banners/v4/actor/247836/photo/6080b05a1c408.jpg"
+    }
+  ]
+}

@@ -35,6 +35,10 @@ from .tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, Track
 from .streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from .netflix_import import NetflixImportSession
 from .watch_intent import WatchIntent
+from .catalogue import (CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink,
+                        BookEdition, GameRelease, CatalogueCredit, CharacterAppearance,
+                        CharacterPerformance, CatalogueRelationship, MetadataSnapshot,
+                        MetadataProviderBudget, SteamPriceSnapshot)
 
 from .timestamps import configure_millisecond_timestamps
 configure_millisecond_timestamps(Base)
@@ -84,4 +88,8 @@ __all__ = [
     "TitleCredits", "UserCalendarCache",
     "TrackedEntry", "TrackingActivity", "TrackingDeletion", "TrackingPreferences",
     "SyncReview", "StreamBaseline",
+    "CatalogueEntity", "CatalogueIdentity", "CatalogueLegacyLink", "CatalogueShowLink",
+    "BookEdition", "GameRelease", "CatalogueCredit", "CharacterAppearance",
+    "CharacterPerformance", "CatalogueRelationship", "MetadataSnapshot",
+    "MetadataProviderBudget", "SteamPriceSnapshot",
 ]

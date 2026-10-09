@@ -12,7 +12,6 @@ import Icon from './Icon.astro';
   <div class="quick-rating-body">
     <output id="quick-rating-value" aria-live="polite">Unrated</output>
     <div id="quick-rating-stars" class="quick-rating-stars" aria-label="Choose a score from 0.5 to 10"></div>
-    <p id="quick-rating-help">Choose a half point. Your rating saves immediately.</p>
     <div class="quick-rating-confirm" id="quick-rating-confirm" hidden>
       <p>This show currently uses the average of your rated seasons. Setting this score will use a separate show rating instead.</p>
       <div><button type="button" class="button-primary" id="quick-rating-override">Use show rating</button><button type="button" class="button-quiet" id="quick-rating-cancel">Cancel</button></div>
@@ -33,14 +32,13 @@ document.addEventListener('astro:page-load', () => {
     delete (window as any).anyListQuickRate;
     return;
   }
-  type QuickRateDetail = { id?: number; title: string; poster?: string; posterSrc?: string; score?: number | null; ratingMode?: 'manual' | 'average'; help?: string; onScore?: (score: number | null) => void | Promise<void> };
+  type QuickRateDetail = { id?: number; title: string; poster?: string; posterSrc?: string; score?: number | null; ratingMode?: 'manual' | 'average'; onScore?: (score: number | null) => void | Promise<void> };
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
   const value = document.querySelector<HTMLOutputElement>('#quick-rating-value')!;
   const title = document.querySelector<HTMLElement>('#quick-rating-title')!;
   const poster = document.querySelector<HTMLImageElement>('#quick-rating-poster')!;
   const remove = document.querySelector<HTMLButtonElement>('#quick-rating-remove')!;
-  const help = document.querySelector<HTMLElement>('#quick-rating-help')!;
   const confirmation = document.querySelector<HTMLElement>('#quick-rating-confirm')!;
   const override = document.querySelector<HTMLButtonElement>('#quick-rating-override')!;
   const error = document.querySelector<HTMLElement>('#quick-rating-error')!;
@@ -85,7 +83,6 @@ document.addEventListener('astro:page-load', () => {
       pendingScore = score;
       paint(score);
       confirmation.hidden = false;
-      help.hidden = true;
       override.focus();
       return;
     }
@@ -182,9 +179,7 @@ document.addEventListener('astro:page-load', () => {
     else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
     poster.hidden = !detail.poster && !detail.posterSrc;
     remove.hidden = savedScore == null || detail.ratingMode === 'average';
-    help.textContent = detail.help ?? (detail.onScore ? 'Your rating will be saved when you import.' : 'Choose a half point. Your rating saves immediately.');
     confirmation.hidden = true;
-    help.hidden = false;
     error.hidden = true;
     paint(savedScore);
     showDialog(dialog);
@@ -227,7 +222,6 @@ document.addEventListener('astro:page-load', () => {
   document.querySelector('#quick-rating-cancel')?.addEventListener('click', () => {
     pendingScore = null;
     confirmation.hidden = true;
-    help.hidden = false;
     paint(savedScore);
   });
   dialog.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); });

@@ -867,7 +867,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
             title: item.title,
             poster: item.poster,
             posterSrc: card.querySelector<HTMLImageElement>('[data-poster]')?.currentSrc,
-            help: "Choose a score to complete this title and add it to your list.",
             score: entry?.score,
             ratingMode: entry?.rating_mode || "manual",
             onScore: async (score: number | null) => {
