@@ -33,12 +33,14 @@ ATTRIBUTION = {
     "tvdb": {"name": "TheTVDB", "url": "https://thetvdb.com"},
     "igdb": {"name": "IGDB", "url": "https://www.igdb.com"},
     "hardcover": {"name": "Hardcover", "url": "https://hardcover.app"},
+    "openlibrary": {"name": "Open Library", "url": "https://openlibrary.org"},
     "rawg": {"name": "RAWG", "url": "https://rawg.io"},
     "itad": {"name": "IsThereAnyDeal", "url": "https://isthereanydeal.com"},
 }
 INTERVALS = {
     "igdb": 0.3,
     "hardcover": 1.1,
+    "openlibrary": 0.35,
     "rawg": 1.0,
     "itad": 0.5,
     "tmdb": 0.3,
@@ -50,6 +52,7 @@ SUPPORT = {
     "igdb": {"game"},
     "rawg": {"game"},
     "hardcover": {"book"},
+    "openlibrary": {"book"},
 }
 
 
@@ -111,11 +114,16 @@ class ProviderHTTP:
 
     @asynccontextmanager
     async def lane(self, provider):
-        """Serialize provider requests across workers; retain RAWG monthly budget.
+        """Serialize provider requests across workers; retain RAWG monthly and Hardcover daily budgets.
 
         A dedicated session owns a transaction advisory lock through the HTTP
         call. Never use the caller's catalogue/history transaction for this.
         """
+        interval = (
+            1.1
+            if provider == "openlibrary" and not settings.openlibrary_contact_email
+            else INTERVALS[provider]
+        )
         if self.session_factory:
             async with self.session_factory() as db:
                 await db.execute(
@@ -155,6 +163,18 @@ class ProviderHTTP:
                     and row.request_count >= settings.rawg_monthly_budget
                 ):
                     raise ProviderError("monthly_budget")
+                if provider == "hardcover":
+                    day = now.strftime("%Y-%m-%d")
+                    if row.day != day:
+                        row.day, row.daily_request_count = day, 0
+                    if row.daily_request_count >= settings.hardcover_daily_budget:
+                        tomorrow = now.replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        ) + timedelta(days=1)
+                        raise ProviderError(
+                            "daily_budget", (tomorrow - now).total_seconds()
+                        )
+                    row.daily_request_count += 1
                 row.request_count += 1
                 # Persist request accounting even when HTTP fails.
                 try:
@@ -162,7 +182,7 @@ class ProviderHTTP:
                 finally:
                     row.next_request_at = datetime.now(timezone.utc).replace(
                         tzinfo=None
-                    ) + timedelta(seconds=INTERVALS[provider])
+                    ) + timedelta(seconds=interval)
                     await db.commit()
         else:
             lock = _local_locks.setdefault(provider, asyncio.Lock())
@@ -173,7 +193,7 @@ class ProviderHTTP:
                 try:
                     yield
                 finally:
-                    _local_next[provider] = time.monotonic() + INTERVALS[provider]
+                    _local_next[provider] = time.monotonic() + interval
 
     async def request(self, provider, method, url, *, cache=True, **kwargs):
         # Cache keys are digests, never raw credentials. Max 128 responses, 10m.
@@ -225,6 +245,12 @@ class ProviderHTTP:
                         await asyncio.sleep(max(0.1, delay))
                         continue
                     if status != 200:
+                        if (
+                            provider == "openlibrary"
+                            and status in (301, 302, 303, 307, 308)
+                            and url.startswith("https://openlibrary.org/isbn/")
+                        ):
+                            return {"_redirect": headers.get("Location", "")}
                         raise ProviderError(
                             {
                                 401: "unauthorized",
@@ -298,6 +324,7 @@ class CatalogueProviders:
             "igdb": [settings.igdb_client_id, settings.igdb_client_secret],
             "hardcover": [settings.hardcover_api_key],
             "rawg": [settings.rawg_api_key],
+            "openlibrary": [],
         }
         if not all(required[provider]):
             raise ProviderError("not_configured")
@@ -400,6 +427,10 @@ class CatalogueProviders:
         self.validate(provider, kind)
         if not 1 <= page <= 100 or not 1 <= limit <= 50 or not 1 <= len(query) <= 200:
             raise ProviderError("invalid_request")
+        if provider == "openlibrary":
+            from .openlibrary import search
+
+            return await search(self.http, query, page, limit)
         if provider == "igdb":
             rows = await self.igdb(
                 "games",
@@ -483,11 +514,25 @@ class CatalogueProviders:
 
     async def detail(self, provider, kind, external_id):
         self.validate(provider, kind)
+        if provider == "openlibrary":
+            from .openlibrary import detail
+
+            return await asyncio.wait_for(detail(self.http, external_id), timeout=120)
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
             self._detail(provider, kind, int(external_id)), timeout=120
         )
+
+    async def openlibrary_isbn(self, value):
+        from .openlibrary import lookup_isbn
+
+        return await lookup_isbn(self.http, value)
+
+    async def openlibrary_editions_page(self, external_id, page):
+        from .openlibrary import detail
+
+        return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
     async def _detail(self, provider, kind, id):
         if provider == "igdb":

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import catalogue, settings_store
 from core.catalogue_normalize import image
+from core.catalogue_normalize import PRIMARY, isbn as valid_isbn
 from core.catalogue_providers import (
     ATTRIBUTION,
     CatalogueProviders,
@@ -36,7 +37,7 @@ router = APIRouter(prefix="/catalogue", tags=["catalogue"])
 DB = Annotated[AsyncSession, Depends(get_db)]
 Caller = Annotated[User, Depends(get_current_user)]
 Admin = Annotated[User, Depends(require_admin)]
-Provider = Literal["tmdb", "tvdb", "igdb", "hardcover", "rawg"]
+Provider = Literal["tmdb", "tvdb", "igdb", "hardcover", "rawg", "openlibrary"]
 WorkKind = Literal["movie", "series", "game", "book"]
 
 
@@ -97,13 +98,14 @@ async def search(
     request: Request,
     db: DB,
     current_user: Caller,
-    provider: Provider,
     kind: WorkKind,
     q: Annotated[str, Query(min_length=1, max_length=200)],
+    provider: Provider | None = None,
     page: Annotated[int, Query(ge=1, le=100)] = 1,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict:
     try:
+        provider = provider or ("openlibrary" if kind == "book" else PRIMARY[kind])
         client = await providers(db, current_user)
         rows = await client.search(provider, kind, q, page, limit)
         return {
@@ -117,6 +119,40 @@ async def search(
         raise safe_error(e) from None
     except Exception:
         raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+
+@router.post("/books/lookup/{isbn}")
+@limiter.limit("15/minute")
+async def lookup_book(
+    request: Request,
+    isbn: Annotated[str, Path(max_length=30)],
+    db: DB,
+    current_user: Caller,
+) -> dict:
+    """Match an edition through a verified ISBN using the key-free provider."""
+    value = valid_isbn(isbn, 13) or valid_isbn(isbn, 10)
+    if not value:
+        raise HTTPException(422, detail={"code": "invalid_request"})
+    try:
+        client = await providers(db, current_user)
+        mapping = await catalogue.resolve_identity(db, f"isbn.{len(value)}", value)
+        native = None
+        if mapping:
+            native = await db.scalar(
+                select(CatalogueIdentity.external_id).where(
+                    CatalogueIdentity.entity_id == mapping.entity_id,
+                    CatalogueIdentity.namespace == "openlibrary.edition",
+                )
+            )
+        native = native or await client.openlibrary_isbn(value)
+        return {
+            "provider": "openlibrary",
+            **await catalogue.refresh_metadata(
+                db, client, "openlibrary", "book", native
+            ),
+        }
+    except (ProviderError, catalogue.IdentityConflict) as e:
+        raise safe_error(e) from None
 
 
 @router.get("/resolve")

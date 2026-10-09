@@ -325,6 +325,10 @@ class MetadataProviderBudget(Base):
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
     next_request_at: Mapped[datetime | None] = mapped_column(DateTime)
     month: Mapped[str | None] = mapped_column(String(7))
+    day: Mapped[str | None] = mapped_column(String(10))
+    daily_request_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     request_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

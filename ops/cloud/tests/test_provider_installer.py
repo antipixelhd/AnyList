@@ -18,6 +18,12 @@ class ProviderInstallerTests(unittest.TestCase):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 installer.validate(values)
 
+    def test_contact_and_local_budget_accept_only_safe_environment_values(self):
+        installer.validate({"OPENLIBRARY_CONTACT_EMAIL": "contact@example.org", "HARDCOVER_DAILY_BUDGET": "5000"})
+        for key,value in [("OPENLIBRARY_CONTACT_EMAIL", "contact@example.org\nOTHER=value"), ("OPENLIBRARY_CONTACT_EMAIL", "no-contact"), ("HARDCOVER_DAILY_BUDGET", "-1")]:
+            with self.assertRaises(ValueError):
+                installer.validate({key:value})
+
     def test_shared_defaults_precede_slot_override_and_are_idempotent(self):
         original = "[Service]\nEnvironmentFile=/etc/anylist-preview/beta.env\n"
         updated = installer.updated_unit(original, "beta")

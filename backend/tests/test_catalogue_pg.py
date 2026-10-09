@@ -84,6 +84,9 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module(
                     "migrations.versions.mt037_catalogue_reference_integrity"
                 ).upgrade()
+                importlib.import_module(
+                    "migrations.versions.mt038_openlibrary_identities"
+                ).upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -94,6 +97,113 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.admin.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
         await self.admin.dispose()
+
+    async def test_book_providers_share_verified_isbn_work_and_edition_in_both_orders(
+        self,
+    ):
+        from core.openlibrary import normalize
+        from test_openlibrary import sample
+        from core.catalogue_normalize import normalize_hardcover
+
+        for order in [("hardcover", "openlibrary"), ("openlibrary", "hardcover")]:
+            async with self.Session() as db:
+                documents = {
+                    "hardcover": normalize_hardcover(fixture("hardcover")),
+                    "openlibrary": normalize(sample()),
+                }
+                first = await catalogue.ingest_document(
+                    db, documents[order[0]], order[0]
+                )
+                second = await catalogue.ingest_document(
+                    db, documents[order[1]], order[1]
+                )
+                self.assertEqual(first.id, second.id)
+                isbn = await catalogue.resolve_identity(db, "isbn.13", "9783551354013")
+                native = await catalogue.resolve_identity(
+                    db, "openlibrary.edition", "OL1M"
+                )
+                self.assertEqual(isbn.entity_id, native.entity_id)
+                self.assertEqual(
+                    (await db.get(BookEdition, isbn.entity_id)).work_id, first.id
+                )
+                self.assertEqual(first.name, fixture("hardcover")["title"])
+                self.assertEqual(
+                    (await db.get(BookEdition, isbn.entity_id)).language, "de"
+                )
+                self.assertTrue(
+                    await db.scalar(
+                        select(func.count()).select_from(CharacterAppearance)
+                    )
+                )
+                await db.rollback()
+
+    async def test_book_native_work_and_isbn_conflict_do_not_silently_merge(self):
+        from core.openlibrary import normalize
+        from test_openlibrary import sample
+
+        async with self.Session() as db:
+            await catalogue.ingest_document(
+                db, normalize_hardcover(fixture("hardcover")), "hardcover"
+            )
+            other = sample()
+            other["_editions"] = []
+            await catalogue.ingest_document(db, normalize(other), "openlibrary")
+            await db.commit()
+            with self.assertRaises(catalogue.IdentityConflict):
+                async with db.begin_nested():
+                    await catalogue.ingest_document(
+                        db, normalize(sample()), "openlibrary"
+                    )
+            self.assertEqual(
+                await db.scalar(
+                    select(func.count())
+                    .select_from(CatalogueEntity)
+                    .where(CatalogueEntity.kind == "book")
+                ),
+                2,
+            )
+
+    async def test_hardcover_durable_daily_budget_counts_failed_requests_and_resets(
+        self,
+    ):
+        import httpx
+        from unittest.mock import patch
+        from core.catalogue_providers import ProviderHTTP
+        from core.config import settings
+        from models.catalogue import MetadataProviderBudget
+
+        async def handle(request):
+            return httpx.Response(400)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            http = ProviderHTTP(client, self.Session)
+            with patch.object(settings, "hardcover_daily_budget", 1):
+                with self.assertRaisesRegex(ProviderError, "bad_response"):
+                    await http.request(
+                        "hardcover",
+                        "GET",
+                        "https://api.hardcover.app/test",
+                        cache=False,
+                    )
+                with self.assertRaisesRegex(ProviderError, "daily_budget"):
+                    await http.request(
+                        "hardcover",
+                        "GET",
+                        "https://api.hardcover.app/test",
+                        cache=False,
+                    )
+                async with self.Session() as db:
+                    row = await db.get(MetadataProviderBudget, "hardcover")
+                    self.assertEqual(row.daily_request_count, 1)
+                    row.day = "1900-01-01"
+                    await db.commit()
+                with self.assertRaisesRegex(ProviderError, "bad_response"):
+                    await http.request(
+                        "hardcover",
+                        "GET",
+                        "https://api.hardcover.app/test",
+                        cache=False,
+                    )
 
     async def test_repeated_imports_namespace_collisions_and_partial_fallback(self):
         async with self.Session() as db:
@@ -582,7 +692,10 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await catalogue.unlink_performance(db, performance.id))
             await db.flush()
             self.assertFalse(await catalogue.unlink_performance(db, performance.id))
-            await db.execute(text("UPDATE catalogue_credits SET role='writer' WHERE id=:id"), {"id": credit.id})
+            await db.execute(
+                text("UPDATE catalogue_credits SET role='writer' WHERE id=:id"),
+                {"id": credit.id},
+            )
             await db.refresh(credit)
             self.assertEqual(credit.role, "writer")
             with self.assertRaises(catalogue.IdentityConflict):

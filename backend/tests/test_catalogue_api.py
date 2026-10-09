@@ -53,6 +53,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             ("GET", "/catalogue/search?provider=igdb&kind=game&q=x"),
             ("GET", "/catalogue/entities/1"),
             ("POST", "/catalogue/backfill"),
+            ("POST", "/catalogue/books/lookup/9783551354013"),
             ("DELETE", "/catalogue/performances/1"),
         ]:
             response = await self.client.request(method, path)
@@ -90,6 +91,37 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/catalogue/providers")
         self.assertEqual(set(response.json()), {"providers"})
         self.assertNotIn("api_key", response.text)
+
+    async def test_book_search_defaults_to_openlibrary(self):
+        self.login()
+        adapter = SimpleNamespace(search=AsyncMock(return_value=[]))
+        with patch.object(catalogue, "providers", AsyncMock(return_value=adapter)):
+            response = await self.client.get("/catalogue/search?kind=book&q=Sample")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["provider"], "openlibrary")
+        self.assertEqual(adapter.search.await_args.args[0], "openlibrary")
+
+    async def test_isbn_lookup_uses_openlibrary_and_validates_input(self):
+        self.login()
+        adapter = SimpleNamespace(openlibrary_isbn=AsyncMock(return_value="OL1M"))
+        with (
+            patch.object(catalogue, "providers", AsyncMock(return_value=adapter)),
+            patch.object(
+                catalogue.catalogue, "resolve_identity", AsyncMock(return_value=None)
+            ),
+            patch.object(
+                catalogue.catalogue,
+                "refresh_metadata",
+                AsyncMock(return_value={"entity_id": 1, "status": "updated"}),
+            ) as refresh,
+        ):
+            response = await self.client.post("/catalogue/books/lookup/9783551354013")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                refresh.await_args.args[2:], ("openlibrary", "book", "OL1M")
+            )
+            response = await self.client.post("/catalogue/books/lookup/9780000000000")
+            self.assertEqual(response.status_code, 422)
 
     async def test_query_bounds_and_error_redaction(self):
         self.login()

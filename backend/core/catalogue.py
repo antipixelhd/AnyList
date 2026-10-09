@@ -62,6 +62,16 @@ def validate_identity(namespace, external_id, kind=None):
         external_id = isbn(external_id, int(namespace.split(".")[1]))
         if not external_id:
             raise IdentityConflict("Invalid ISBN checksum")
+    if namespace.startswith("openlibrary."):
+        import re
+
+        suffix = {
+            "openlibrary.book": "W",
+            "openlibrary.edition": "M",
+            "openlibrary.author": "A",
+        }[namespace]
+        if not re.fullmatch(r"OL[1-9][0-9]*" + suffix, external_id):
+            raise IdentityConflict("Invalid Open Library identifier")
     return external_id
 
 
@@ -116,6 +126,8 @@ def source_rank(kind, source):
         return 100
     if source == "rawg":
         return 20
+    if source == "openlibrary":
+        return 60
     return 80
 
 
@@ -246,6 +258,36 @@ async def upsert(db, model, values, keys, preserve_missing=False):
 
 async def ingest_document(db, doc, provider):
     await write_lock(db)
+    if doc["work"]["kind"] == "book":
+        # A verified ISBN identifies an edition, whose existing parent identifies
+        # the work. Disagreeing native work/edition mappings require review.
+        roots = set()
+        evidence = []
+        for edition in doc["editions"]:
+            for x in edition["entity"]["identities"]:
+                mapping = await resolve_identity(db, x["namespace"], x["external_id"])
+                old = await db.get(BookEdition, mapping.entity_id) if mapping else None
+                if old:
+                    roots.add(old.work_id)
+                    evidence.append(x)
+        for x in doc["work"]["identities"]:
+            mapping = await resolve_identity(db, x["namespace"], x["external_id"])
+            if mapping:
+                roots.add(mapping.entity_id)
+        if len(roots) > 1:
+            raise IdentityConflict(
+                "Book edition and work mappings disagree; review before merging"
+            )
+        if roots:
+            for x in doc["work"]["identities"]:
+                await bind_identity(
+                    db,
+                    next(iter(roots)),
+                    x["namespace"],
+                    x["external_id"],
+                    provider,
+                    {"edition_cross_references": evidence},
+                )
     work = await upsert_entity(db, doc["work"], provider)
     if work.kind not in ("movie", "series", "game", "book", "person"):
         raise IdentityConflict("Invalid catalogue work kind")
@@ -309,6 +351,12 @@ async def ingest_document(db, doc, provider):
         # Partial editions may not clear previously known descriptive fields.
         if old:
             values = {k: v for k, v in values.items() if has_value(v)}
+            if provider == "openlibrary":
+                values = {
+                    k: v
+                    for k, v in values.items()
+                    if k in ("entity_id", "work_id") or not has_value(getattr(old, k))
+                }
         await upsert(db, BookEdition, values, ["entity_id"])
     for c in doc["credits"]:
         if not c.get("edition_identity"):
@@ -475,9 +523,18 @@ async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None
 ):
     providers.validate(provider, kind)
-    external_id = validate_identity(f"{provider}.{kind}", external_id, kind)
+    namespace = f"{provider}.{kind}"
+    if provider == "openlibrary" and str(external_id).endswith("M"):
+        namespace = "openlibrary.edition"
+    external_id = validate_identity(
+        namespace,
+        external_id,
+        "edition" if namespace == "openlibrary.edition" else kind,
+    )
     if edition_page is not None and (
-        provider != "hardcover" or kind != "book" or not 1 <= edition_page <= 10000
+        provider not in ("hardcover", "openlibrary")
+        or kind != "book"
+        or not 1 <= edition_page <= 10000
     ):
         raise ProviderError("invalid_request")
     snapshot_kind = "edition_page" if edition_page else kind
@@ -510,11 +567,16 @@ async def refresh_metadata(
     row.lease_until = now + timedelta(minutes=3)
     await db.commit()
     try:
-        doc, payload = (
-            await providers.book_editions_page(int(external_id), edition_page)
-            if edition_page
-            else await providers.detail(provider, kind, external_id)
-        )
+        if edition_page and provider == "openlibrary":
+            doc, payload = await providers.openlibrary_editions_page(
+                external_id, edition_page
+            )
+        elif edition_page:
+            doc, payload = await providers.book_editions_page(
+                int(external_id), edition_page
+            )
+        else:
+            doc, payload = await providers.detail(provider, kind, external_id)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
         await db.refresh(row, with_for_update=True)
@@ -528,7 +590,9 @@ async def refresh_metadata(
             row.payload = payload
             row.coverage = doc.get("coverage", {})
             row.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            row.expires_at = row.fetched_at + timedelta(days=7)
+            row.expires_at = row.fetched_at + timedelta(
+                days=30 if provider == "hardcover" else 7
+            )
             row.attempts = 0
             row.error_code = None
             row.next_attempt_at = None

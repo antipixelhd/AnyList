@@ -334,3 +334,5 @@ The recommended architecture is a shared normalized person/organization contribu
 ## Catalogue completion audit
 
 The completed foundation was audited again on 2026-10-09. Additive `mt037` strengthens Steam identity, edition/work and concurrent performer-link integrity. Partial relation data and placeholder names preserve known metadata; provider downloads/cache sizes and durable error/retry state are bounded. See [catalogue-foundation.md](catalogue-foundation.md#goal-completion-audit-2026-10-09) for tests and delivery evidence. Statistics/UI and game/book tracking remain deferred.
+
+Open Library now complements Hardcover in the catalogue foundation: default book search/ISBN matching, bibliographic enrichment and reading availability use Open Library; Hardcover retains structured characters, series and edition contributors. Verified edition identifiers join works; names do not. See [the integration contract](catalogue-foundation.md#open-library-integration-2026-10-09). Book tracking and statistics remain deferred.
