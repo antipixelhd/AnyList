@@ -46,6 +46,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             Base.metadata.create_all(conn, tables=wanted)
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module("migrations.versions.mt039_statistics_snapshots").upgrade()
+                importlib.import_module("migrations.versions.mt040_statistics_utc_schedule").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -120,6 +121,19 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_two_workers_cannot_claim_same_job(self):
         claims = await asyncio.gather(snapshots.claim_next(self.Session), snapshots.claim_next(self.Session))
         self.assertEqual(sum(c is not None for c in claims), 1)
+
+    async def test_non_utc_database_timezone_does_not_delay_initial_or_purge_work(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(text("SET LOCAL TIME ZONE 'Europe/Berlin'"))
+            other = User(email="timezone@example.org", username="timezone", api_key="timezone-fixture")
+            db.add(other)
+            await db.flush()
+            state = await db.get(UserStatsState, other.id)
+            self.assertLess(abs((state.next_due_at - snapshots.utcnow()).total_seconds()), 5)
+            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == self.user_id))
+            await db.commit()
+        self.assertLess(abs(((await self.state()).next_due_at - snapshots.utcnow()).total_seconds()), 5)
 
     async def test_expired_worker_cannot_publish_after_lease_reassignment(self):
         first = await snapshots.claim_next(self.Session)

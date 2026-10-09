@@ -36,8 +36,8 @@ partial progress, missing release dates/catalogues/runtimes remain incomplete.
 
 ## Refresh and retention
 
-Migration mt039 adds per-user state, owned snapshot generations, shared metadata
-revision, and database triggers. Fact invalidation participates in the writer's
+Migrations mt039–mt040 add per-user state, owned snapshot generations, shared metadata
+revision, database triggers, and explicit UTC scheduling independent of the database timezone. Fact invalidation participates in the writer's
 transaction, including bulk/import writers. Removal of facts purges cached
 generations immediately; user deletion cascades. Anime visibility changes purge
 generations. Shared metadata changes increment a revision checked at the next

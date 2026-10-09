@@ -23,7 +23,7 @@ class UserStatsSnapshot(Base):
     source_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     metadata_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.timezone("UTC", func.now()))
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
@@ -38,7 +38,7 @@ class UserStatsState(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     source_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    next_due_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), index=True)
+    next_due_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.timezone("UTC", func.now()), index=True)
     active_snapshot_id: Mapped[int | None] = mapped_column(Integer)
     lease_token: Mapped[str | None] = mapped_column(String(36))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime)
