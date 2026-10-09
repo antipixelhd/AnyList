@@ -1,0 +1,25 @@
+[
+  {
+    "id": "018d937f-1212-7232-b23f-a046f6fd4a57",
+    "lows": [
+      {
+        "shop": {
+          "id": 61,
+          "name": "Steam"
+        },
+        "price": {
+          "amount": 2.99,
+          "amountInt": 299,
+          "currency": "EUR"
+        },
+        "regular": {
+          "amount": 29.99,
+          "amountInt": 2999,
+          "currency": "EUR"
+        },
+        "cut": 90,
+        "timestamp": "2024-06-27T19:30:27+02:00"
+      }
+    ]
+  }
+]

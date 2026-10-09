@@ -1,0 +1,453 @@
+{
+  "id": 1942,
+  "artworks": [
+    {
+      "id": 303975,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar6ijr.jpg"
+    },
+    {
+      "id": 168458,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lze.jpg"
+    },
+    {
+      "id": 168459,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzf.jpg"
+    },
+    {
+      "id": 168463,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzj.jpg"
+    },
+    {
+      "id": 168460,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzg.jpg"
+    },
+    {
+      "id": 168465,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzl.jpg"
+    },
+    {
+      "id": 168461,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzh.jpg"
+    },
+    {
+      "id": 168464,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzk.jpg"
+    },
+    {
+      "id": 168457,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzd.jpg"
+    },
+    {
+      "id": 168455,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzb.jpg"
+    },
+    {
+      "id": 168466,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzm.jpg"
+    },
+    {
+      "id": 168456,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzc.jpg"
+    },
+    {
+      "id": 168467,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzn.jpg"
+    },
+    {
+      "id": 168462,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3lzi.jpg"
+    },
+    {
+      "id": 168533,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3m1h.jpg"
+    },
+    {
+      "id": 168532,
+      "url": "//images.igdb.com/igdb/image/upload/t_thumb/ar3m1g.jpg"
+    }
+  ],
+  "cover": {
+    "id": 480513,
+    "url": "//images.igdb.com/igdb/image/upload/t_thumb/coaarl.jpg"
+  },
+  "dlcs": [
+    {
+      "id": 157580,
+      "name": "The Witcher 3: Wild Hunt - New Quest 'Contract: Skellige's Most Wanted'"
+    },
+    {
+      "id": 226413,
+      "name": "The Witcher 3: Wild Hunt - New Quest: Scavenger Hunt: Wolf School Gear"
+    },
+    {
+      "id": 170449,
+      "name": "The Witcher 3: Wild Hunt - New Quest 'Where the Cat and Wolf Play...'"
+    },
+    {
+      "id": 170450,
+      "name": "The Witcher 3: Wild Hunt - New Quest 'Fool's Gold'"
+    },
+    {
+      "id": 170451,
+      "name": "The Witcher 3: Wild Hunt - New Quest 'Contract: Missing Miners'"
+    }
+  ],
+  "expansions": [
+    {
+      "id": 13166,
+      "name": "The Witcher 3: Wild Hunt - Blood and Wine"
+    },
+    {
+      "id": 12503,
+      "name": "The Witcher 3: Wild Hunt - Hearts of Stone"
+    },
+    {
+      "id": 403150,
+      "name": "The Witcher 3: Wild Hunt - Songs of the Past"
+    }
+  ],
+  "external_games": [
+    {
+      "id": 1935171,
+      "uid": "B00T3SPV36",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 189745,
+      "uid": "UCprFOIVpCqQLUMsWBNwt0PQ",
+      "url": "https://gaming.youtube.com/game/UCprFOIVpCqQLUMsWBNwt0PQ",
+      "external_game_source": {
+        "id": 10,
+        "name": "Youtube"
+      }
+    },
+    {
+      "id": 1934807,
+      "uid": "B00WTI2HV6",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 1931970,
+      "uid": "B00WTI3SGO",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 3222322,
+      "uid": "B00R119Y44",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 11306,
+      "uid": "292030",
+      "url": "https://store.steampowered.com/app/292030",
+      "external_game_source": {
+        "id": 1,
+        "name": "Steam"
+      }
+    },
+    {
+      "id": 1937739,
+      "uid": "B00KNZNVLM",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 119254,
+      "uid": "41484",
+      "url": "https://www.giantbomb.com/games/3030-41484/",
+      "external_game_source": {
+        "id": 3,
+        "name": "GiantBomb"
+      }
+    },
+    {
+      "id": 1928370,
+      "uid": "B07SH3D6HT",
+      "url": "https://amazon.com/dp/B07SH3D6HT",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 211029,
+      "uid": "BR765873CQJD",
+      "url": "https://www.xbox.com/en-us/games/store/the-witcher-3-wild-hunt/BR765873CQJD",
+      "external_game_source": {
+        "id": 11,
+        "name": "Microsoft"
+      }
+    },
+    {
+      "id": 3223128,
+      "uid": "B078JDW2XH",
+      "external_game_source": {
+        "id": 20,
+        "name": "Amazon"
+      }
+    },
+    {
+      "id": 78478,
+      "uid": "1207664663",
+      "url": "https://www.gog.com/en/game/the_witcher_3_wild_hunt",
+      "external_game_source": {
+        "id": 5,
+        "name": "GOG"
+      }
+    },
+    {
+      "id": 2067884,
+      "uid": "1207664643",
+      "url": "https://www.gog.com/en/game/the_witcher_3_wild_hunt",
+      "external_game_source": {
+        "id": 5,
+        "name": "GOG"
+      }
+    },
+    {
+      "id": 246257,
+      "uid": "115977",
+      "url": "https://www.twitch.tv/directory/game/The Witcher 3: Wild Hunt",
+      "external_game_source": {
+        "id": 14,
+        "name": "Twitch"
+      }
+    },
+    {
+      "id": 2176359,
+      "uid": "204794",
+      "url": "https://store.playstation.com/en-us/concept/204794",
+      "external_game_source": {
+        "id": 36,
+        "name": "Playstation Store US"
+      }
+    }
+  ],
+  "first_release_date": 1431993600,
+  "genres": [
+    {
+      "id": 12,
+      "name": "Role-playing (RPG)"
+    },
+    {
+      "id": 31,
+      "name": "Adventure"
+    }
+  ],
+  "involved_companies": [
+    {
+      "id": 17436,
+      "company": {
+        "id": 50,
+        "logo": {
+          "id": 6296,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/cl4uw.jpg"
+        },
+        "name": "WB Games"
+      },
+      "developer": false,
+      "porting": false,
+      "publisher": true,
+      "supporting": false
+    },
+    {
+      "id": 17769,
+      "company": {
+        "id": 3119,
+        "logo": {
+          "id": 3082,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/cl2dm.jpg"
+        },
+        "name": "cdp.pl"
+      },
+      "developer": false,
+      "porting": false,
+      "publisher": true,
+      "supporting": false
+    },
+    {
+      "id": 17771,
+      "company": {
+        "id": 1217,
+        "logo": {
+          "id": 11005,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/cl8hp.jpg"
+        },
+        "name": "Spike Chunsoft"
+      },
+      "developer": false,
+      "porting": false,
+      "publisher": true,
+      "supporting": false
+    },
+    {
+      "id": 17768,
+      "company": {
+        "id": 248,
+        "logo": {
+          "id": 26265,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/clk9l.jpg"
+        },
+        "name": "Bandai Namco Entertainment"
+      },
+      "developer": false,
+      "porting": false,
+      "publisher": true,
+      "supporting": false
+    },
+    {
+      "id": 64293,
+      "company": {
+        "id": 5696,
+        "logo": {
+          "id": 1574,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/gwy6dwd3rp0ckgj4vqpx.jpg"
+        },
+        "name": "D3T Limited"
+      },
+      "developer": false,
+      "porting": false,
+      "publisher": false,
+      "supporting": true
+    },
+    {
+      "id": 196544,
+      "company": {
+        "id": 946,
+        "logo": {
+          "id": 12202,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/cl9ey.jpg"
+        },
+        "name": "Saber Interactive"
+      },
+      "developer": false,
+      "porting": true,
+      "publisher": false,
+      "supporting": false
+    },
+    {
+      "id": 418547,
+      "company": {
+        "id": 908,
+        "logo": {
+          "id": 3080,
+          "url": "//images.igdb.com/igdb/image/upload/t_thumb/cl2dk.jpg"
+        },
+        "name": "CD Projekt RED"
+      },
+      "developer": true,
+      "porting": false,
+      "publisher": false,
+      "supporting": false
+    }
+  ],
+  "name": "The Witcher 3: Wild Hunt",
+  "release_dates": [
+    {
+      "id": 974208,
+      "date": 1431993600,
+      "platform": {
+        "id": 48,
+        "name": "PlayStation 4"
+      }
+    },
+    {
+      "id": 974209,
+      "date": 1670976000,
+      "platform": {
+        "id": 167,
+        "name": "PlayStation 5"
+      }
+    }
+  ],
+  "similar_games": [
+    {
+      "id": 119133,
+      "name": "Elden Ring"
+    },
+    {
+      "id": 1887,
+      "name": "Dragon Age: Inquisition"
+    },
+    {
+      "id": 3025,
+      "name": "Middle-earth: Shadow of Mordor"
+    },
+    {
+      "id": 9112,
+      "name": "The Book of Unwritten Tales 2"
+    },
+    {
+      "id": 27421,
+      "name": "Middle-earth: Shadow of War"
+    },
+    {
+      "id": 6142,
+      "name": "Risen 3: Titan Lords"
+    },
+    {
+      "id": 5503,
+      "name": "Batman: Arkham Knight"
+    },
+    {
+      "id": 25076,
+      "name": "Red Dead Redemption 2"
+    },
+    {
+      "id": 27384,
+      "name": "Graveyard Keeper"
+    },
+    {
+      "id": 7346,
+      "name": "The Legend of Zelda: Breath of the Wild"
+    }
+  ],
+  "summary": "Sample game synopsis.",
+  "collections": [
+    {
+      "id": 62,
+      "name": "The Witcher"
+    }
+  ],
+  "_characters": [
+    {
+      "id": 1453,
+      "mug_shot": {
+        "id": 4134,
+        "url": "//images.igdb.com/igdb/image/upload/t_thumb/cm36u.jpg"
+      },
+      "name": "Geralt of Rivia"
+    },
+    {
+      "id": 1454,
+      "name": "Zoltan"
+    },
+    {
+      "id": 1458,
+      "mug_shot": {
+        "id": 3811,
+        "url": "//images.igdb.com/igdb/image/upload/t_thumb/jec1fydhokwngsgfypix.jpg"
+      },
+      "name": "Triss Merigold"
+    }
+  ],
+  "_coverage": {
+    "characters_complete": true,
+    "release_dates": "provider_projection",
+    "contributors": "companies_only"
+  }
+}

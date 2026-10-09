@@ -1,5 +1,6 @@
 import inspect
 from core.browse import metadata_fields as browse_metadata
+from core.descriptive_metadata import retained_fields, tmdb_fields as descriptive_fields
 import logging
 
 from sqlalchemy import select
@@ -35,7 +36,12 @@ def enrich_series_from_show(media: Media, show: Show) -> None:
     media.tmdb_rating = show.tmdb_rating
     media.tagline = show.tagline
     media.status = show.status
-    media.tmdb_data = {**(show.tmdb_data or {}), **tracking_data}
+    media.tmdb_data = {
+        **(show.tmdb_data or {}),
+        **retained_fields(media.tmdb_data or {}),
+        **retained_fields(show.tmdb_data or {}),
+        **tracking_data,
+    }
     media.adult = bool((show.tmdb_data or {}).get("adult", media.adult))
     external_ids = (show.tmdb_data or {}).get("external_ids") or {}
     link_media_ids(
@@ -235,25 +241,12 @@ async def enrich_media(
             media.runtime = data.get("runtime") or media.runtime
             has_mid_credits_scene, has_post_credits_scene = tmdb.extract_credits_stingers(data)
             media.tmdb_data = {
+                **descriptive_fields(data, media.tmdb_data),
                 "runtime": data.get("runtime"),
                 "genres": [g["name"] for g in data.get("genres", [])],
                 **browse_metadata(data),
                 "original_language": data.get("original_language"),
-                "production_companies": [
-                    {
-                        "id": company.get("id"),
-                        "name": company.get("name"),
-                        "origin_country": company.get("origin_country"),
-                        "logo_path": tmdb.poster_url(company.get("logo_path"), size="w185"),
-                    }
-                    for company in data.get("production_companies", [])
-                    if company.get("name")
-                ],
                 "external_ids": data.get("external_ids", {}),
-                "cast": [
-                    {"name": c["name"], "character": c.get("character", ""), "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
-                    for c in data.get("credits", {}).get("cast", [])[:10]
-                ],
                 "tagline": data.get("tagline"),
                 "status": data.get("status"),
                 "adult": data.get("adult", False),
@@ -281,6 +274,7 @@ async def enrich_media(
                 if key.startswith("tracking_")
             }
             media.tmdb_data = {
+                **descriptive_fields(data, media.tmdb_data),
                 "genres": [g["name"] for g in data.get("genres", [])],
                 **browse_metadata(data),
                 "original_language": data.get("original_language"),
@@ -294,29 +288,13 @@ async def enrich_media(
                     for network in data.get("networks", [])
                     if network.get("name")
                 ],
-                "production_companies": [
-                    {
-                        "id": company.get("id"),
-                        "name": company.get("name"),
-                        "origin_country": company.get("origin_country"),
-                        "logo_path": tmdb.poster_url(company.get("logo_path"), size="w185"),
-                    }
-                    for company in data.get("production_companies", [])
-                    if company.get("name")
-                ],
                 "created_by": [
                     {"id": creator.get("id"), "name": creator.get("name")}
                     for creator in data.get("created_by", [])
                     if creator.get("name")
                 ],
-                "episode_run_time": data.get("episode_run_time", []),
                 "number_of_seasons": data.get("number_of_seasons"),
-                "number_of_episodes": data.get("number_of_episodes"),
                 "last_air_date": data.get("last_air_date"),
-                "cast": [
-                    {"name": c["name"], "character": c.get("character", ""), "profile_path": tmdb.poster_url(c.get("profile_path"), size="w185")}
-                    for c in data.get("credits", {}).get("cast", [])[:10]
-                ],
                 "tagline": data.get("tagline"),
                 "status": data.get("status"),
                 "adult": data.get("adult", False),

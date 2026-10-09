@@ -12,6 +12,8 @@ spec.loader.exec_module(installer)
 class ProviderInstallerTests(unittest.TestCase):
     def test_only_metadata_keys_are_accepted(self):
         installer.validate({"TMDB_API_KEY": "test.jwt-token"})
+        installer.validate({"IGDB_CLIENT_ID":"fake-id","IGDB_CLIENT_SECRET":"fake-secret",
+                            "HARDCOVER_API_KEY":"hc_pat_fake","RAWG_API_KEY":"fake","ITAD_API_KEY":"fake"})
         for values in ({}, {"DATABASE_URL": "postgresql"}, {"TMDB_API_KEY": "token\nOTHER=value"}):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 installer.validate(values)

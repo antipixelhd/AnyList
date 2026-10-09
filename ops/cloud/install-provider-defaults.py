@@ -14,7 +14,8 @@ import tempfile
 import time
 from urllib.request import urlopen
 
-KEYS = {"TMDB_API_KEY", "TVDB_API_KEY", "TVDB_SUBSCRIBER_PIN"}
+KEYS = {"TMDB_API_KEY", "TVDB_API_KEY", "TVDB_SUBSCRIBER_PIN", "IGDB_CLIENT_ID",
+        "IGDB_CLIENT_SECRET", "HARDCOVER_API_KEY", "RAWG_API_KEY", "ITAD_API_KEY"}
 ETC = Path("/etc/anylist-preview")
 INSTALL = Path("/opt/anylist-preview")
 UNITS = Path("/etc/systemd/system")

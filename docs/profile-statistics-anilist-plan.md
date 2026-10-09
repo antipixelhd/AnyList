@@ -4,7 +4,7 @@ Date: 2026-10-09
 
 Branch: `beta`
 
-Status: planning only. No application changes, migrations, or metadata backfills are part of this document.
+Status: catalogue/schema and server metadata foundation implemented on `beta` (2026-10-09). Statistics APIs, daily snapshots/jobs and frontend remain planned. See [catalogue-foundation.md](catalogue-foundation.md) for the implemented architecture, provider evidence, authenticated routes and migration delivery.
 
 Updated after the genre/voice-actor references and the requests for reusable people, organizations, fictional characters, and approximately 24-hour statistics updates. See the companion [people, organizations, characters, and daily-statistics architecture](people-characters-statistics-architecture.md) for the expanded schema and refresh design, including the lean streaming-service catalogue approach.
 
@@ -22,9 +22,9 @@ The principal work is:
 4. Expose the required grouped metrics through statistics APIs.
 5. Publish coherent, approximately 24-hour per-user statistics snapshots and build the three sections using the references' visual language.
 
-**Feasibility:** I can implement the UI, aggregation service, shared person/organization/character/credit models, scheduled statistics cache, ingestion changes, tests, and additive Alembic migrations. TMDB and TVDB API credentials are configured in this workspace. The underlying overview metrics can mostly use existing facts, but the newly requested reusable identities/relations and daily cache require migrations. Character identities/artwork and future game/book/board-game APIs still have source/access gaps. Accurate historical dates and individual dates for collapsed repeat plays cannot be recovered from metadata APIs.
+**Foundation completed:** canonical works, people, organizations, characters, credits, edition/release relations and legacy bridges now have additive migration `mt036`. TMDB/TVDB, IGDB, Hardcover, RAWG and Steam-only IsThereAnyDeal pricing were independently validated with official docs and live credentials. Game/book catalogue access does not add tracking workflows. Statistics computation/publication and UI remain phase two.
 
-**Evidence limit:** this is a source-code and configuration audit, not a read of the live beta or production database. No real-user coverage percentages, provider authentication results, or live migration readiness are asserted here.
+**Evidence boundary:** disposable PostgreSQL tests and representative live imports establish foundation behavior, not real-user coverage, complete character art or recoverable dates for collapsed repeat plays.
 
 ## 2. What the screenshots establish
 
@@ -139,17 +139,9 @@ These records remain authoritative. The requested daily cadence adds derived sta
 
 The API wrappers request rich TMDB responses, but [`enrichment.py`](../backend/core/enrichment.py) constructs selected dictionaries before saving them. [`browse.metadata_fields`](../backend/core/browse.py) adds popularity, vote count, and watch providers; it does not preserve country fields.
 
-Concrete gaps:
+The foundation fixes title country, episode total/runtime and stable cast-ID retention through shared descriptive mappings in movie/series and show writers. Copying show metadata retains known fields and tracking keys without changing TVDB episode numbering. Legacy JSON remains a cast preview; catalogue refresh imports complete supplied credits separately.
 
-- Movie and series media enrichment discards title `origin_country` / `production_countries`.
-- Media cast keeps only ten people, storing name/character/portrait but omitting the stable person ID.
-- Series media enrichment retains `number_of_episodes` and `episode_run_time`.
-- [`show_metadata.py`](../backend/core/show_metadata.py) retains seasons, genres, networks, and some freshness/airing fields, but not the same episode totals, runtimes, title countries, or cast.
-- `enrich_series_from_show()` replaces the series media snapshot with show metadata while preserving tracking-prefixed keys. Merely adding fields to one writer would therefore not fix retention consistently.
-- [`tvdb.format_series`](../backend/core/tvdb.py) provides genres, official seasons, dates, language, and cross-provider IDs, but currently does not return title country or full actor data as part of that projection.
-- `tvdb.format_cast()` returns person IDs, roles, and portraits, but caps the result at twelve and is not integrated into the shared statistics credits cache.
-
-**Required fix:** define shared descriptive metadata mappings and update every relevant writer/refresh path. Merge descriptive enrichments while preserving TVDB canonical numbering and tracking metadata. A metadata refresh must never switch a TVDB-native show to TMDB episode ordering.
+TVDB formatting now prefers `peopleId` and `personImgURL`. Catalogue snapshots retain raw metadata/provenance, explicit partial coverage, protected corrections and durable retries. Existing records require bounded backfill/refresh to gain discarded descriptive fields; metadata APIs cannot reconstruct missing history facts.
 
 ### Actor infrastructure exists, but is incomplete
 
@@ -311,7 +303,9 @@ Then run an idempotent metadata/credits backfill. JSONB supports additional keys
 
 This path leaves TVDB-only actor coverage incomplete. It is a valid smaller release only if that limitation is accepted and accurately represented.
 
-### Path B: shared people, organizations, characters, credits, and daily snapshots — recommended
+### Path B: implemented catalogue foundation; daily snapshots deferred
+
+The identity/credit/character/edition/release portion is implemented in [the catalogue model](catalogue-foundation.md#canonical-model-and-identity). Exact implemented tables supersede conceptual names. The daily snapshot and statistics reader work below remains phase two.
 
 The broader contributor/character requirement changes the recommended architecture. Use normalized Person and Organization records with namespace-qualified provider identities; Character records with their own artwork/identities; typed media credits with extensible roles; media-character appearances; and performance links connecting an acting credit to one or more characters. An organization's studio/publisher/network role belongs to its media relationship. Regional streaming availability remains separate from production credits.
 
@@ -443,26 +437,15 @@ Query only the target user's records and relevant credit keys. Do not scan the w
 
 The requested persistent snapshots must include media/visibility filters, source revisions, and contract version. Check live access before serving them. Never share a private profile's computed result through a public cache key. Metric sorting should read the stored ranking, not recalculate user facts; related artwork previews must come from the same snapshot generation.
 
-## 12. Permissions and operational feasibility
+## 12. Operational foundation and remaining scope
 
-| Action / access | Current evidence | Needed during implementation |
-| --- | --- | --- |
-| Repository edits and Git push to beta | Workspace access; original task authorized beta work and push | No new permission for the completed planning document; product implementation is intentionally deferred |
-| UI/API code and Alembic migration authoring | Existing Astro/Python/PostgreSQL project | Feasible here once implementation is requested |
-| Local migration/test execution | Isolated cloud development/test setup exists | Use disposable test DB; never point tests at beta/production |
-| TMDB metadata/credits requests | Credential configured; API host allowed in cloud network policy | No new API key indicated; verify credentials and rate/coverage behavior without logging secrets |
-| TVDB metadata/people requests | Credential configured; API host allowed | Verify full cast payload access and any subscription/PIN requirement for the needed endpoint |
-| Server-side actor portrait fetching | Existing image cache targets `image.tmdb.org` and `artworks.thetvdb.com` | Those image hosts are not in the observed cloud API allowlist; allow server-side access for local validation if blocked. Deployed-server connectivity must be checked separately |
-| Read-only live beta coverage audit | No live connection established in this task; workspace VPN not configured in observed status | A permitted DB connection/read-only role or authorized existing operational route is needed to obtain real coverage counts |
-| Applying beta migrations | Preview workflow supports beta deploys and forward Alembic upgrades with DB owner rights | Use the existing deployment workflow if its `PREVIEW_ENABLED` gate, credentials, and runner/VPS connectivity are healthy; do not assume live state from source configuration alone |
-| Production changes | Separate beta-to-main process documented | Outside this planning task; use established promotion process when explicitly requested |
-| Exact AniList format taxonomy | No AniList enrichment integration or title mapping found | Choose a reliable source, mapping and permitted API access; public read access may suffice, but matches/coverage must be validated |
+Beta catalogue edits, push, private provider defaults and forward migration are authorized by the active goal. Tests use disposable PostgreSQL. [Preview Deploy](../.github/workflows/preview-deploy.yml) backs up pending beta schema changes and runs forward Alembic migrations. Credentials pass through the reviewed provider installer over stdin; APIs expose attribution rather than keys.
 
-The repository's [`Preview Deploy`](../.github/workflows/preview-deploy.yml) triggers on beta pushes when enabled. The [`preview controller`](../ops/preview/controller.py) takes a beta backup before changed/pending migrations, then runs forward `alembic upgrade heads`. This provides a path to applying a migration without asking for a new direct database-owner login. It does not prove the deployed workflow is currently healthy.
+Official docs, live adapter evidence, quotas, attribution/licensing constraints, partial-art/credit coverage and other-provider proposals are recorded in [catalogue-foundation.md](catalogue-foundation.md). Game/book catalogue providers are no longer a general credential gap; anime-specific voice casting and board games remain unimplemented. A real-user coverage audit remains separate work. Production promotion is outside this goal.
 
-The observed cloud configuration allows the TMDB and TVDB API hosts and reports their credentials ready. I have not made provider calls or changed network configuration for this planning task. Additional host access is an environment/network permission issue, not a reason to ask you to expose API keys in chat.
+## 13. Proposed statistics delivery order (phase two)
 
-## 13. Proposed delivery order
+Catalogue schema, metadata adapters/retention and bridge/backfill support are implemented. The remaining sequence concerns metric decisions, statistics computation/publication and frontend work.
 
 1. **Review this plan:** resolve the few product choices below, then authorize implementation.
 2. **Read-only target coverage audit:** report the exact missing-data counts and confirm provider/cast access.
@@ -512,7 +495,9 @@ These do not block the planning deliverable. Recommended defaults are stated so 
 | Organization / streaming structure | Shared organizations with media-specific credits; regional service availability; existing discovery first | A corporate ownership/licensing graph would add work without being required for a service's title list |
 | Statistics updates | Coherent, staggered approximately 24-hour per-user snapshots with live access checks | Request-time recalculation adds load and makes refresh races/failures visible to visitors |
 
-## 16. Work completed in this planning pass
+## 16. Original planning pass and implementation follow-up
+
+The audit below is historical. The catalogue implementation and validation are recorded in the foundation document; statistics/UI remain deferred.
 
 Reviewed the current stats page/API, legacy statistics endpoint, tracking/watch/rating/media/show models, metadata writers, provider formatters, credits cache/import, released-episode catalogue logic, profile section navigation, and beta migration/deployment configuration. Compared each visible reference graph against retained and exposed data, identified missing fields and semantic mismatches, and separated no-DDL metadata enrichment from contributor/character and statistics-cache migrations.
 

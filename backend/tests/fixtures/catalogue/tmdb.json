@@ -1,0 +1,117 @@
+{
+  "id": 550,
+  "title": "Fight Club",
+  "overview": "Sample movie synopsis.",
+  "poster_path": "/jSziioSwPVrOy9Yow3XhWIBDjq1.jpg",
+  "release_date": "1999-10-15",
+  "runtime": 139,
+  "external_ids": {
+    "imdb_id": "tt0137523",
+    "wikidata_id": "Q190050",
+    "facebook_id": "FightClub",
+    "instagram_id": null,
+    "twitter_id": null
+  },
+  "production_countries": [
+    {
+      "iso_3166_1": "DE",
+      "name": "Germany"
+    },
+    {
+      "iso_3166_1": "US",
+      "name": "United States of America"
+    }
+  ],
+  "production_companies": [
+    {
+      "id": 711,
+      "logo_path": "/tEiIH5QesdheJmDAqQwvtN60727.png",
+      "name": "Fox 2000 Pictures",
+      "origin_country": "US"
+    },
+    {
+      "id": 508,
+      "logo_path": "/4sGWXoboEkWPphI6es6rTmqkCBh.png",
+      "name": "Regency Enterprises",
+      "origin_country": "US"
+    },
+    {
+      "id": 4700,
+      "logo_path": "/A32wmjrs9Psf4zw0uaixF0GXfxq.png",
+      "name": "Linson Entertainment",
+      "origin_country": "US"
+    },
+    {
+      "id": 25,
+      "logo_path": "/nM2MfoMqzJQRiSynsDabOtFKetD.png",
+      "name": "20th Century Fox",
+      "origin_country": "US"
+    },
+    {
+      "id": 20555,
+      "logo_path": "/hD8yEGUBlHOcfHYbujp71vD8gZp.png",
+      "name": "Taurus Film",
+      "origin_country": "DE"
+    }
+  ],
+  "credits": {
+    "cast": [
+      {
+        "adult": false,
+        "gender": 2,
+        "id": 819,
+        "known_for_department": "Acting",
+        "name": "Edward Norton",
+        "original_name": "Edward Norton",
+        "popularity": 7.4556,
+        "profile_path": "/8nytsqL59SFJTVYVrN72k6qkGgJ.jpg",
+        "cast_id": 4,
+        "character": "Narrator",
+        "credit_id": "52fe4250c3a36847f80149f3",
+        "order": 0
+      },
+      {
+        "adult": false,
+        "gender": 2,
+        "id": 287,
+        "known_for_department": "Acting",
+        "name": "Brad Pitt",
+        "original_name": "Brad Pitt",
+        "popularity": 13.5158,
+        "profile_path": "/ajNaPmXVVMJFg9GWmu6MJzTaXdV.jpg",
+        "cast_id": 5,
+        "character": "Tyler Durden",
+        "credit_id": "52fe4250c3a36847f80149f7",
+        "order": 1
+      }
+    ],
+    "crew": [
+      {
+        "adult": false,
+        "gender": 2,
+        "id": 7474,
+        "known_for_department": "Production",
+        "name": "Ross Grayson Bell",
+        "original_name": "Ross Grayson Bell",
+        "popularity": 0.4941,
+        "profile_path": null,
+        "credit_id": "52fe4250c3a36847f8014a05",
+        "department": "Production",
+        "job": "Producer"
+      },
+      {
+        "adult": false,
+        "gender": 1,
+        "id": 7475,
+        "known_for_department": "Production",
+        "name": "Ce\u00e1n Chaffin",
+        "original_name": "Ce\u00e1n Chaffin",
+        "popularity": 0.8219,
+        "profile_path": "/rk8DPo1CAMTWL0YjRsMFIy3gRmT.jpg",
+        "credit_id": "52fe4250c3a36847f8014a0b",
+        "department": "Production",
+        "job": "Producer"
+      }
+    ]
+  }
+}

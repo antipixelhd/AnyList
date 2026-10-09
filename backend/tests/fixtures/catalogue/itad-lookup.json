@@ -1,0 +1,17 @@
+{
+  "found": true,
+  "game": {
+    "id": "018d937f-1212-7232-b23f-a046f6fd4a57",
+    "slug": "the-witcher-3-wild-hunt",
+    "title": "The Witcher 3: Wild Hunt",
+    "type": "game",
+    "mature": false,
+    "assets": {
+      "boxart": "https://assets.isthereanydeal.com/018d937f-1212-7232-b23f-a046f6fd4a57/boxart.jpg?t=1790846734",
+      "banner145": "https://assets.isthereanydeal.com/018d937f-1212-7232-b23f-a046f6fd4a57/banner145.jpg?t=1790846734",
+      "banner300": "https://assets.isthereanydeal.com/018d937f-1212-7232-b23f-a046f6fd4a57/banner300.jpg?t=1790846734",
+      "banner400": "https://assets.isthereanydeal.com/018d937f-1212-7232-b23f-a046f6fd4a57/banner400.jpg?t=1790846734",
+      "banner600": "https://assets.isthereanydeal.com/018d937f-1212-7232-b23f-a046f6fd4a57/banner600.jpg?t=1790846734"
+    }
+  }
+}

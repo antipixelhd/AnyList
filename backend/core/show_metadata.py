@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from core import tmdb
+from core.descriptive_metadata import tmdb_fields as descriptive_fields
 from core.identity import coerce_id, link_show_ids, show_tvdb_id_is_free
 from models.show import Show
 
@@ -31,6 +32,7 @@ def apply_show_metadata(show: Show, data: dict) -> None:
     show.first_air_date = data.get("first_air_date")
     show.last_air_date = data.get("last_air_date")
     show.tmdb_data = {
+        **descriptive_fields(data, show.tmdb_data),
         "genres": [g["name"] for g in data.get("genres", [])],
         "external_ids": data.get("external_ids", {}),
         "original_language": data.get("original_language"),
@@ -97,6 +99,7 @@ async def find_or_create_show(db: AsyncSession, series_tmdb_id: int, api_key: st
             first_air_date=show_data.get("first_air_date"),
             last_air_date=show_data.get("last_air_date"),
             tmdb_data={
+                **descriptive_fields(show_data),
                 "genres": [g["name"] for g in show_data.get("genres", [])],
                 "external_ids": show_data.get("external_ids", {}),
                 "seasons": [

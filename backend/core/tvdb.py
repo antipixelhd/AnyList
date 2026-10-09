@@ -418,10 +418,10 @@ def format_cast(raw: dict) -> list[dict]:
     return [
         {
             "tmdb_id": None,
-            "person_id": c.get("personId"),
+            "person_id": c.get("peopleId") or c.get("personId"),
             "name": c.get("personName") or "",
             "character": c.get("name") or "",
-            "profile_path": _image_url(c.get("image")),
+            "profile_path": _image_url(c.get("personImgURL") or c.get("image")),
         }
         for c in characters[:12]
         if c.get("personName")

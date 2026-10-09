@@ -88,6 +88,8 @@ app.add_middleware(
 )
 
 from routers import tracking
+from routers import catalogue
+app.include_router(catalogue.router)
 app.include_router(tracking.router, prefix="/tracking", tags=["tracking"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(oidc.router, prefix="/auth/oidc", tags=["oidc"])

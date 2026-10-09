@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     tmdb_api_key: Optional[str] = Field(default=None, repr=False)
     tvdb_api_key: Optional[str] = Field(default=None, repr=False)
     tvdb_subscriber_pin: Optional[str] = Field(default=None, repr=False)
+    igdb_client_id: Optional[str] = Field(default=None, repr=False)
+    igdb_client_secret: Optional[str] = Field(default=None, repr=False)
+    hardcover_api_key: Optional[str] = Field(default=None, repr=False)
+    rawg_api_key: Optional[str] = Field(default=None, repr=False)
+    itad_api_key: Optional[str] = Field(default=None, repr=False)
+    # Local safety budget; the provider account's plan is still authoritative.
+    rawg_monthly_budget: int = Field(default=19000, ge=0, le=20000)
     # Public MDBList catalogues used by Browse's IMDb rating/vote rankings.
     mdblist_browse_movie_list_id: int = Field(default=64016, gt=0)
     mdblist_browse_series_list_id: int = Field(default=177610, gt=0)

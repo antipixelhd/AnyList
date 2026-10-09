@@ -1,0 +1,238 @@
+{
+  "id": 328491,
+  "title": "Harry Potter and the Philosopher's Stone",
+  "description": "Sample book synopsis.",
+  "release_date": "1997-06-26",
+  "pages": 309,
+  "cached_image": {
+    "id": 7931103,
+    "url": "https://assets.hardcover.app/external_data/4257970/a3a1bbb3dae498a7a8316be0cc9bc5e91f6c34c9.jpeg",
+    "color": "#925d1a",
+    "width": 490,
+    "height": 735,
+    "color_name": "Brown"
+  },
+  "_contributions": [
+    {
+      "id": 10035872,
+      "contribution": "Author",
+      "author": {
+        "id": 80626,
+        "name": "J.K. Rowling",
+        "cached_image": {
+          "id": 31962,
+          "url": "https://assets.hardcover.app/authors/80626/5543033-L.jpg",
+          "color": "#eed8ce",
+          "width": 468,
+          "height": 461,
+          "color_name": "Silver"
+        }
+      }
+    },
+    {
+      "id": 10035873,
+      "contribution": "Illustrator",
+      "author": {
+        "id": 255583,
+        "name": "Mary GrandPr\u00e9",
+        "cached_image": {}
+      }
+    }
+  ],
+  "_editions": [
+    {
+      "id": 58883,
+      "title": "Harry Potter und der Stein der Weisen",
+      "book_id": 328491,
+      "edition_format": "Paperback",
+      "pages": 334,
+      "release_date": "2000-01-01",
+      "isbn_10": "3551354014",
+      "isbn_13": "9783551354013",
+      "cached_image": {
+        "id": 3024036,
+        "url": "https://assets.hardcover.app/external_data/61129615/502c212792e4a25ed80a5a80c02a6923f1f6f40a.jpeg",
+        "color": "#907f55",
+        "width": 321,
+        "height": 500,
+        "color_name": "Gray"
+      },
+      "publisher": {
+        "id": 5024,
+        "name": "Carlsen Verlag"
+      },
+      "language": {
+        "code2": "de"
+      }
+    },
+    {
+      "id": 310281,
+      "title": "Harry Potter und der Gefangene von Askaban",
+      "book_id": 328491,
+      "edition_format": "Paperback",
+      "pages": 475,
+      "release_date": "1999-06-08",
+      "isbn_10": "3551354030",
+      "isbn_13": "9783551354037",
+      "cached_image": {
+        "id": 3024156,
+        "url": "https://assets.hardcover.app/edition/310281/af7cd28bdf0a6be0e5f072f9485e1c0c753ab84d.jpeg",
+        "color": "#accbb1",
+        "width": 321,
+        "height": 500,
+        "color_name": "Beige"
+      },
+      "publisher": {
+        "id": 5024,
+        "name": "Carlsen Verlag"
+      },
+      "language": {
+        "code2": "de"
+      }
+    },
+    {
+      "id": 464761,
+      "title": "Harry Potter agus an \u00d3rchloch",
+      "book_id": 328491,
+      "edition_format": "Hardcover",
+      "pages": 262,
+      "release_date": "1997-06-26",
+      "isbn_10": "074757166X",
+      "isbn_13": "9780747571667",
+      "cached_image": {
+        "id": 3024160,
+        "url": "https://assets.hardcover.app/edition/464761/99eb4dca374c9152a35ed8d43df7aafcab22354f.jpeg",
+        "color": "#a50910",
+        "width": 375,
+        "height": 500,
+        "color_name": "Purple"
+      },
+      "publisher": {
+        "id": 968,
+        "name": "Bloomsbury Publishing"
+      },
+      "language": {
+        "code2": "ga"
+      }
+    },
+    {
+      "id": 527826,
+      "title": "Harry Potter og viskusteinninn",
+      "book_id": 328491,
+      "edition_format": "Hardcover",
+      "pages": 263,
+      "release_date": "1997-06-26",
+      "isbn_10": "9979865555",
+      "isbn_13": "9789979865551",
+      "cached_image": {
+        "id": 1147466,
+        "url": "https://assets.hardcover.app/external_data/49414064/a2daa6ef44bd1546abbd9082fb2d059bd1fb21c8.jpeg",
+        "color": "#592814",
+        "width": 329,
+        "height": 500,
+        "color_name": "Brown"
+      },
+      "publisher": {
+        "id": 46206,
+        "name": "Bjartur"
+      },
+      "language": {
+        "code2": "is"
+      }
+    },
+    {
+      "id": 943405,
+      "title": "Harry Potter und der Stein der Weisen",
+      "book_id": 328491,
+      "edition_format": null,
+      "pages": null,
+      "release_date": "1997-06-26",
+      "isbn_10": "3895849596",
+      "isbn_13": "9783895849596",
+      "cached_image": {
+        "id": 3024166,
+        "url": "https://assets.hardcover.app/edition/943405/045abe489627c88087e86674bb58df488fb13613.jpeg",
+        "color": "#9b0000",
+        "width": 500,
+        "height": 499,
+        "color_name": "Brown"
+      },
+      "publisher": {
+        "id": 5170,
+        "name": "der Ho\u0308rverlag"
+      },
+      "language": {
+        "code2": "de"
+      }
+    }
+  ],
+  "_characters": [
+    {
+      "id": 158158,
+      "spoiler": false,
+      "only_mentioned": false,
+      "character": {
+        "id": 1,
+        "name": "Harry Potter",
+        "biography": null,
+        "image_id": null
+      }
+    },
+    {
+      "id": 158159,
+      "spoiler": false,
+      "only_mentioned": false,
+      "character": {
+        "id": 73,
+        "name": "Ron Weasley",
+        "biography": null,
+        "image_id": null
+      }
+    },
+    {
+      "id": 158160,
+      "spoiler": false,
+      "only_mentioned": false,
+      "character": {
+        "id": 2,
+        "name": "Hermione Granger",
+        "biography": null,
+        "image_id": null
+      }
+    },
+    {
+      "id": 158161,
+      "spoiler": false,
+      "only_mentioned": false,
+      "character": {
+        "id": 133,
+        "name": "Neville Longbottom",
+        "biography": null,
+        "image_id": null
+      }
+    },
+    {
+      "id": 158162,
+      "spoiler": false,
+      "only_mentioned": false,
+      "character": {
+        "id": 3023,
+        "name": "Rubeus Hagrid",
+        "biography": null,
+        "image_id": null
+      }
+    }
+  ],
+  "_series": [
+    {
+      "id": 210168,
+      "position": 1,
+      "compilation": false,
+      "series": {
+        "id": 1185,
+        "name": "Harry Potter",
+        "description": null
+      }
+    }
+  ]
+}

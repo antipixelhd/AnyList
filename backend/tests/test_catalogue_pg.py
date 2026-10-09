@@ -1,0 +1,487 @@
+"""Use only the explicit disposable catalogue DB, with a private schema per test."""
+
+import asyncio
+import importlib
+import os
+import unittest
+import uuid
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock
+
+os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from models import Base
+from models.catalogue import (
+    CatalogueEntity,
+    CatalogueCredit,
+    CatalogueLegacyLink,
+    MetadataSnapshot,
+    BookEdition,
+    CharacterAppearance,
+    SteamPriceSnapshot,
+)
+from models.media import Media
+from models.show import Show
+from models.base import MediaType
+from core import catalogue
+from core.catalogue_providers import ProviderError
+from core.catalogue_normalize import (
+    entity,
+    normalize_igdb,
+    normalize_rawg,
+    normalize_hardcover,
+    normalize_tvdb,
+)
+from test_catalogue_providers import fixture
+
+URL = os.getenv("CATALOGUE_TEST_DATABASE_URL")
+
+
+@unittest.skipUnless(URL, "Requires disposable catalogue PostgreSQL")
+class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        if ":55449/catalogue_test" not in URL:
+            raise RuntimeError("Refusing non-disposable catalogue DB")
+        self.schema = "catalogue_test_" + uuid.uuid4().hex
+        self.admin = create_async_engine(URL)
+        async with self.admin.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{self.schema}"'))
+        self.engine = create_async_engine(
+            URL, connect_args={"server_settings": {"search_path": self.schema}}
+        )
+        wanted = [
+            t
+            for t in Base.metadata.sorted_tables
+            if t.name
+            in (
+                "users",
+                "media",
+                "shows",
+                "title_credits",
+                "watch_events",
+                "lists",
+                "list_items",
+                "tracked_entries",
+            )
+        ]
+
+        def setup(conn):
+            Base.metadata.create_all(conn, tables=wanted)
+            with Operations.context(MigrationContext.configure(conn)):
+                importlib.import_module(
+                    "migrations.versions.mt036_catalogue_foundation"
+                ).upgrade()
+
+        async with self.engine.begin() as conn:
+            await conn.run_sync(setup)
+        self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+        async with self.admin.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
+        await self.admin.dispose()
+
+    async def test_repeated_imports_namespace_collisions_and_partial_fallback(self):
+        async with self.Session() as db:
+            primary = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            id = primary.id
+            name = primary.name
+            await db.commit()
+            again = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            fallback = await catalogue.ingest_document(
+                db, normalize_rawg(fixture("rawg")), "rawg"
+            )
+            self.assertEqual((again.id, fallback.id), (id, id))
+            self.assertEqual(fallback.name, name)
+            empty = normalize_igdb({"id": 1942, "name": name, "summary": None})
+            await catalogue.ingest_document(db, empty, "igdb")
+            self.assertEqual(primary.description, "Sample game synopsis.")
+            await db.commit()
+            credits = (
+                (
+                    await db.execute(
+                        select(CatalogueCredit).where(CatalogueCredit.work_id == id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(
+                len(credits), len({(c.provider, c.source_key) for c in credits})
+            )
+            org1 = await catalogue.upsert_entity(
+                db,
+                entity("organization", "tmdb.company", {"id": 7, "name": "Same name"}),
+                "tmdb",
+            )
+            org2 = await catalogue.upsert_entity(
+                db,
+                entity("organization", "tmdb.network", {"id": 7, "name": "Same name"}),
+                "tmdb",
+            )
+            self.assertNotEqual(org1.id, org2.id)
+            # The DB enforces kind boundaries even outside repository helpers.
+            async with db.begin_nested() as savepoint:
+                with self.assertRaises(IntegrityError):
+                    await db.execute(
+                        text(
+                            "INSERT INTO catalogue_identities(entity_id,namespace,external_id,source) VALUES (:id,'hardcover.author','777','test')"
+                        ),
+                        {"id": org1.id},
+                    )
+                await savepoint.rollback()
+
+    async def test_conflicting_mapping_rolls_back_and_manual_fields_survive(self):
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            work.name = "Corrected"
+            work.protected_fields = ["name"]
+            other = await catalogue.ingest_document(
+                db, normalize_rawg({"id": 3328, "name": "Another work"}), "rawg"
+            )
+            await db.commit()
+            async with db.begin_nested():
+                with self.assertRaises(catalogue.IdentityConflict):
+                    await catalogue.ingest_document(
+                        db, normalize_rawg(fixture("rawg")), "rawg"
+                    )
+            refreshed = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            self.assertEqual(refreshed.name, "Corrected")
+            self.assertNotEqual(work.id, other.id)
+            with self.assertRaises(catalogue.IdentityConflict):
+                await catalogue.bind_identity(
+                    db, work.id, "rawg.game", "3328", "reviewed"
+                )
+            with self.assertRaises(catalogue.IdentityConflict):
+                await catalogue.bind_identity(
+                    db, work.id, "isbn.13", "9780747532699", "reviewed"
+                )
+
+    async def test_editions_do_not_duplicate_works_and_isbn_collision_stops_import(
+        self,
+    ):
+        async with self.Session() as db:
+            doc = normalize_hardcover(fixture("hardcover"))
+            work = await catalogue.ingest_document(db, doc, "hardcover")
+            await catalogue.ingest_document(db, doc, "hardcover")
+            count = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(CatalogueEntity)
+                    .where(CatalogueEntity.kind == "book")
+                )
+            ).scalar_one()
+            self.assertEqual(count, 1)
+            editions = (
+                (
+                    await db.execute(
+                        select(BookEdition).where(BookEdition.work_id == work.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(editions), len(doc["editions"]))
+            edition_id = editions[0].entity_id
+            await catalogue.bind_identity(
+                db, edition_id, "isbn.13", "9780747532699", "reviewed"
+            )
+            other = entity(
+                "edition", "hardcover.edition", {"id": 9999999, "name": "Other"}
+            )
+            other["identities"].append(
+                {"namespace": "isbn.13", "external_id": "9780747532699"}
+            )
+            linked = await catalogue.upsert_entity(db, other, "hardcover")
+            # A trusted edition ISBN links to that edition; it never maps a work.
+            self.assertEqual(linked.id, edition_id)
+
+    async def test_refresh_cache_failure_last_good_and_single_worker_claim(self):
+        adapter = AsyncMock()
+        adapter.validate = lambda *a: None
+
+        async def details(*args):
+            await asyncio.sleep(0.1)
+            return normalize_igdb(fixture("igdb")), {"public": "payload"}
+
+        adapter.detail.side_effect = details
+
+        async def refresh():
+            async with self.Session() as db:
+                return await catalogue.refresh_metadata(
+                    db, adapter, "igdb", "game", "1942"
+                )
+
+        results = await asyncio.gather(refresh(), refresh())
+        self.assertEqual(adapter.detail.await_count, 1)
+        self.assertIn("updated", [r["status"] for r in results])
+        self.assertEqual((await refresh())["status"], "cached")
+        async with self.Session() as db:
+            state = (await db.execute(select(MetadataSnapshot))).scalar_one()
+            state.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+        adapter.detail.side_effect = ProviderError("unavailable")
+        result = await refresh()
+        self.assertEqual(result["status"], "last_good")
+        async with self.Session() as db:
+            state = (await db.execute(select(MetadataSnapshot))).scalar_one()
+            self.assertEqual(state.payload, {"public": "payload"})
+            self.assertIsNone(state.lease_token)
+            self.assertIsNotNone(state.next_attempt_at)
+        self.assertEqual((await refresh())["status"], "last_good")
+
+    async def test_performance_cross_work_foreign_keys_and_restrict_deletion(self):
+        async with self.Session() as db:
+            doc = normalize_tvdb(fixture("tvdb"))
+            first = await catalogue.ingest_document(db, doc, "tvdb")
+            other = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            credit = (
+                (
+                    await db.execute(
+                        select(CatalogueCredit).where(
+                            CatalogueCredit.work_id == first.id
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            character = await catalogue.upsert_entity(
+                db,
+                entity("character", "igdb.character", {"id": 444, "name": "Character"}),
+                "igdb",
+            )
+            appearance = await catalogue.upsert(
+                db,
+                CharacterAppearance,
+                {
+                    "work_id": first.id,
+                    "character_id": character.id,
+                    "provider": "reviewed",
+                },
+                ["work_id", "character_id", "provider"],
+            )
+            performance = await catalogue.link_performance(
+                db, credit.id, appearance.id, "en"
+            )
+            self.assertEqual(performance.work_id, first.id)
+            foreign = await catalogue.upsert(
+                db,
+                CharacterAppearance,
+                {"work_id": other.id, "character_id": character.id, "provider": "igdb"},
+                ["work_id", "character_id", "provider"],
+            )
+            with self.assertRaises(catalogue.IdentityConflict):
+                await catalogue.link_performance(db, credit.id, foreign.id)
+            async with db.begin_nested() as savepoint:
+                with self.assertRaises(IntegrityError):
+                    await db.execute(
+                        text("DELETE FROM catalogue_entities WHERE id=:id"),
+                        {"id": first.id},
+                    )
+                await savepoint.rollback()
+
+    async def test_prices_verified_identity_cache_no_offer_and_last_good_low(self):
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(
+                db, normalize_igdb(fixture("igdb")), "igdb"
+            )
+            await db.commit()
+            client = AsyncMock()
+            client.steam_prices.return_value = {
+                "itad_id": "018d937f-1212-7232-b23f-a046f6fd4a57",
+                "current": {"amountInt": 4999, "currency": "EUR"},
+                "historical_low": {"amountInt": 299, "currency": "EUR"},
+                "historical_low_at": "2024-06-27",
+                "url": "https://itad.link/example",
+                "payload": {},
+            }
+            with self.assertRaises(catalogue.IdentityConflict):
+                await catalogue.refresh_prices(db, client, work.id, "111", "DE")
+            result = await catalogue.refresh_prices(db, client, work.id, "292030", "DE")
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual(
+                (await catalogue.refresh_prices(db, client, work.id, "292030", "DE"))[
+                    "status"
+                ],
+                "cached",
+            )
+            state = (
+                await db.execute(
+                    select(MetadataSnapshot).where(MetadataSnapshot.provider == "itad")
+                )
+            ).scalar_one()
+            state.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            await db.commit()
+            client.steam_prices.return_value = {
+                **client.steam_prices.return_value,
+                "current": None,
+                "historical_low": None,
+                "historical_low_at": None,
+                "url": None,
+            }
+            await catalogue.refresh_prices(db, client, work.id, "292030", "DE")
+            row = (await db.execute(select(SteamPriceSnapshot))).scalar_one()
+            await db.refresh(row)
+            self.assertIsNone(row.current)
+            self.assertEqual(row.historical_low["amountInt"], 299)
+
+    async def test_legacy_backfill_preserves_media_ids_and_person_links(self):
+        from models.users import User
+        from models.events import WatchEvent
+        from models.lists import List, ListItem
+        from models.tracking import TrackedEntry
+
+        async with self.Session() as db:
+            db.add(
+                User(
+                    id=1,
+                    email="test@example.com",
+                    username="test",
+                    api_key="disposable-key",
+                )
+            )
+            await db.flush()
+            movie = Media(id=40, tmdb_id=550, media_type=MediaType.movie, title="Movie")
+            person = Media(
+                id=41, tmdb_id=7, media_type=MediaType.person, title="Person"
+            )
+            show = Show(id=42, tvdb_id=121361, title="Show", canonical_source="tvdb")
+            db.add_all([movie, person, show])
+            await db.commit()
+            db.add(List(id=1, user_id=1, name="People"))
+            await db.flush()
+            db.add_all(
+                [
+                    ListItem(id=1, list_id=1, media_id=41),
+                    WatchEvent(
+                        id=1,
+                        user_id=1,
+                        media_id=40,
+                        completed=True,
+                        play_count=2,
+                        watched_at=datetime(2020, 1, 1),
+                    ),
+                    TrackedEntry(
+                        id=1,
+                        user_id=1,
+                        media_id=40,
+                        status="completed",
+                        manual_score=8.5,
+                        progress=12,
+                    ),
+                ]
+            )
+            await db.commit()
+            result = await catalogue.backfill_legacy(db, limit=1)
+            self.assertEqual(result["media_cursor"], 40)
+            self.assertTrue(result["has_more"])
+            result = await catalogue.backfill_legacy(
+                db, result["media_cursor"], result["show_cursor"], 1
+            )
+            self.assertEqual(result["media_cursor"], 41)
+            await catalogue.backfill_legacy(db)
+            links = (
+                (
+                    await db.execute(
+                        select(CatalogueLegacyLink).order_by(
+                            CatalogueLegacyLink.media_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual([r.media_id for r in links], [40, 41])
+            self.assertEqual((await db.get(Show, 42)).canonical_source, "tvdb")
+            self.assertEqual((await db.get(Media, 41)).media_type, MediaType.person)
+            self.assertEqual((await db.get(ListItem, 1)).media_id, 41)
+            self.assertEqual((await db.get(WatchEvent, 1)).play_count, 2)
+            self.assertEqual(
+                (await db.get(WatchEvent, 1)).watched_at, datetime(2020, 1, 1)
+            )
+            self.assertEqual((await db.get(TrackedEntry, 1)).manual_score, 8.5)
+            self.assertEqual((await db.get(TrackedEntry, 1)).progress, 12)
+
+
+@unittest.skipUnless(URL, "Requires disposable catalogue PostgreSQL")
+class MigrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_additive_upgrade_existing_rows_and_empty_parents(self):
+        if ":55449/catalogue_test" not in URL:
+            raise RuntimeError("Refusing non-disposable catalogue DB")
+        engine = create_async_engine(URL)
+        try:
+            for populated in (False, True):
+                schema = "catalogue_migration_" + uuid.uuid4().hex
+                async with engine.connect() as conn:
+                    tx = await conn.begin()
+                    await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+                    await conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    await conn.execute(
+                        text("CREATE TABLE media (id integer PRIMARY KEY, title text)")
+                    )
+                    await conn.execute(
+                        text(
+                            "CREATE TABLE shows (id integer PRIMARY KEY, canonical_source text)"
+                        )
+                    )
+                    if populated:
+                        await conn.execute(
+                            text("INSERT INTO media VALUES (17,'Legacy person')")
+                        )
+                        await conn.execute(text("INSERT INTO shows VALUES (8,'tvdb')"))
+
+                    def upgrade(sync_conn):
+                        with Operations.context(MigrationContext.configure(sync_conn)):
+                            importlib.import_module(
+                                "migrations.versions.mt036_catalogue_foundation"
+                            ).upgrade()
+
+                    await conn.run_sync(upgrade)
+                    self.assertEqual(
+                        (
+                            await conn.execute(
+                                text("SELECT count(*) FROM catalogue_entities")
+                            )
+                        ).scalar_one(),
+                        0,
+                    )
+                    if populated:
+                        self.assertEqual(
+                            (
+                                await conn.execute(text("SELECT id,title FROM media"))
+                            ).one(),
+                            (17, "Legacy person"),
+                        )
+                        self.assertEqual(
+                            (
+                                await conn.execute(
+                                    text("SELECT canonical_source FROM shows")
+                                )
+                            ).scalar_one(),
+                            "tvdb",
+                        )
+                    await tx.rollback()
+        finally:
+            await engine.dispose()
+
+
+if __name__ == "__main__":
+    unittest.main()

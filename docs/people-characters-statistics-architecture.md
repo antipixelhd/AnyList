@@ -4,7 +4,7 @@ Date: 2026-10-09
 
 Branch: `beta`
 
-Status: architecture and planning only. Supplements the [statistics redesign plan](profile-statistics-anilist-plan.md). No schema or application changes have been applied.
+Status: catalogue/schema and server metadata foundation implemented on `beta` (2026-10-09). Statistics APIs, daily jobs/snapshots, frontend redesign, game/book tracking and board games remain deferred. The [implemented catalogue contract](catalogue-foundation.md) is authoritative for exact tables, routes, migration, provider verification, limits and terms; this document retains the future statistics design.
 
 ## 1. Recommended direction
 
@@ -14,7 +14,7 @@ The same person can act in a movie, voice a game character, write a book, or des
 
 The relations are necessary for the requested behavior. They also make querying efficient: indexed joins and shared identity records replace repeated scans of duplicated cast JSON. PostgreSQL is sufficient for this scope; neither a graph database nor Redis is required.
 
-Keep the initial implementation focused on movie/series data we can obtain. Design the relational boundaries for future games/books/board games, but do not add imaginary provider data, playtime, reading duration, or character art.
+The foundation includes movie/series, game and book catalogue records with verified TMDB/TVDB, IGDB, Hardcover and RAWG adapters. IsThereAnyDeal is limited to Steam current prices and dated Steam store lows. Catalogue membership does not create watch, reading or play history. Missing character art remains null.
 
 ## 2. What the new screenshots add
 
@@ -44,30 +44,29 @@ This is not yet a reusable normalized person/credit model. Do not immediately re
 
 Existing [`TitleCredits`](../backend/models/title_credits.py) and media cast JSON are useful migration inputs and provider snapshots. After cutover, the canonical people/credit relations become the statistics read source. Do not maintain two independent competing actor identity systems.
 
-## 4. Proposed domain model
+## 4. Implemented domain model
 
 ```mermaid
 erDiagram
-    PEOPLE ||--o{ PERSON_EXTERNAL_IDS : has
-    MEDIA ||--o{ MEDIA_CREDITS : credits
-    PEOPLE ||--o{ MEDIA_CREDITS : contributes
-    CREDIT_ROLES ||--o{ MEDIA_CREDITS : classifies
-    MEDIA_CREDITS ||--o{ CREDIT_CHARACTERS : performs
-    MEDIA_CHARACTERS ||--o{ CREDIT_CHARACTERS : portrayed_as
-    MEDIA ||--o{ MEDIA_CHARACTERS : includes
-    CHARACTERS ||--o{ MEDIA_CHARACTERS : appears_in
-    CHARACTERS ||--o{ CHARACTER_EXTERNAL_IDS : has
-    MEDIA ||--o| LEGACY_PERSON_MEDIA_LINKS : bridges
-    PEOPLE ||--o{ LEGACY_PERSON_MEDIA_LINKS : preserves
-    ORGANIZATIONS ||--o{ ORGANIZATION_EXTERNAL_IDS : has
-    ORGANIZATIONS ||--o{ MEDIA_ORGANIZATION_CREDITS : contributes
-    MEDIA ||--o{ MEDIA_ORGANIZATION_CREDITS : credits
-    ORGANIZATIONS |o--o{ DISTRIBUTION_SERVICES : optionally_operates
-    DISTRIBUTION_SERVICES ||--o{ MEDIA_AVAILABILITY : offers
-    MEDIA ||--o{ MEDIA_AVAILABILITY : available_on
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_IDENTITIES : identifies
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_CREDITS : work_or_contributor
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_CHARACTER_APPEARANCES : work_or_character
+    CATALOGUE_CREDITS ||--o{ CATALOGUE_CHARACTER_PERFORMANCES : performs
+    CATALOGUE_CHARACTER_APPEARANCES ||--o{ CATALOGUE_CHARACTER_PERFORMANCES : portrayed_as
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_RELATIONSHIPS : source_or_target
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_BOOK_EDITIONS : work_or_edition
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_GAME_RELEASES : work_or_release
+    MEDIA ||--o| CATALOGUE_LEGACY_LINKS : preserves
+    SHOWS ||--o| CATALOGUE_SHOW_LINKS : preserves
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_LEGACY_LINKS : bridges
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_SHOW_LINKS : bridges
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_METADATA_SNAPSHOTS : cached_source
+    CATALOGUE_ENTITIES ||--o{ CATALOGUE_STEAM_PRICES : verified_steam_game
 ```
 
-This is a conceptual design, not executable migration DDL. Table names can follow repository conventions during implementation. The normalized distribution-service/availability tables are an optional later phase: the existing remote browse filter can support a streaming-service catalogue first.
+Migration `mt036` creates 13 additive tables, including provider request budgets. A checked, immutable root kind distinguishes works, people, organizations, characters, editions and releases. Namespace-qualified identities are unique and FK-backed. PostgreSQL validates contributor/character kinds, edition parents, same-work performance links, typed relationships and verified Steam prices. ISBNs identify editions; platform variants are releases; DLC/expansions/remakes are linked distinct works.
+
+The earlier conceptual names below describe domain semantics; the executable model is the shared `catalogue_entities` root and tables above. Distribution services/availability and daily statistics storage remain future work. Existing regional browse filters remain the streaming catalogue path.
 
 ### People and identity
 
@@ -177,24 +176,11 @@ Shared metadata writers must preserve watch-provider fields across show/series r
 
 **Recommended scope:** plan Organization identities and production/publishing/network credits as part of the reusable contributor schema. Reuse the existing regional provider-discovery path for service lists first. Add normalized service/availability tables when we need efficient local/offline catalogue queries, richer organization/service pages, or reliable shared availability caching. This avoids importing an entire streaming catalogue solely to render a paginated service list.
 
-## 5. Connecting to media now and later
+## 5. Connecting catalogue works to existing tracking
 
-Use actual `media_id` foreign keys rather than unrestricted `(entity_type, entity_id)` pointers. Real FKs prevent dangling relations and support straightforward indexed joins.
+Credits reference canonical work and contributor IDs with real FKs. Existing `Media`/`Show` rows connect through `catalogue_legacy_links`/`catalogue_show_links`; their IDs, person lists, watch history, ratings, progress and TVDB episode numbering stay intact. Resumable admin backfills use verified provider IDs and cached credits; names never establish identity.
 
-For the current application:
-
-- Movie credits attach to the movie `Media` row.
-- Series credits attach to the canonical whole-series `Media` row.
-- Episode-scoped credits, if deliberately fetched later, attach to episode `Media` rows and declare their scope.
-- Episode history still follows `Media.show_id → Show`; map it to the whole-series media identity once when building title-level stats.
-
-A shared resolver must reconcile legacy duplicate series media aliases through verified provider IDs. Make the canonical whole-series selection explicit during migration; do not attach half the credits to a new duplicate media row. Missing whole-series rows may be created from their existing Show metadata without modifying episode/history identities.
-
-Future books, games, and board games can use this contributor/character design **if** their catalogue items join the same canonical media registry. Their domain-specific fields should live in dedicated detail models, rather than filling movie runtime or TMDB columns with unrelated values. Provider title identities should eventually use a general mapping table when those integrations are introduced.
-
-The current `MediaType` and tracking flows are movie/series oriented. Adding a Person/Character schema does not itself implement game/book catalogue types, editions/releases, progress, reading sessions, play sessions, or their APIs. Those need a separately scoped migration and domain contract. The current plan establishes reusable credit relations without pretending future media support is already solved.
-
-For books, distinguish work-level characters/contributors from edition-level translators and narrators when that domain is added. Games can have release-specific credits and voice casts. Choose the correct media scope rather than globally assigning all adaptation/edition credits to every version.
+Future statistics join tracked IDs through these bridges and deduplicate contributor/work pairs. `MediaType` remains unchanged. Game/book search, metadata, editions and releases are catalogue data; reading/play sessions, progress, scoring and tracking routes require a later domain contract. Translators/narrators can retain an edition FK; work contributors remain work-scoped.
 
 ## 6. Efficient queries and indexes
 
@@ -300,30 +286,17 @@ Shared people, organizations, credits, countries, availability, and artwork are 
 
 The existing [`scheduler.py`](../backend/core/scheduler.py) already registers background jobs and contains a daily show metadata sweep. It is an integration point, not evidence that a durable statistics scheduler or normalized person cache already exists. Add explicit multi-worker coordination for the new tasks.
 
-## 10. What our current providers can and cannot supply
+## 10. Verified provider coverage
 
-| Required information | Existing foundation | Remaining work / limitation |
-| --- | --- | --- |
-| Person IDs/names | TMDB cast/crew IDs; TVDB person IDs in cast formatter | Normalize people/external identities; verified cross-provider links |
-| Portraits | Media detail cast fields and provider portrait paths | Retain with stable person identity; broaden cast scope and image-host access |
-| Contributor jobs | TMDB crew job strings and basic cast | Normalize role vocabulary; retain source labels; avoid actor/staff misclassification |
-| Production companies/networks | IDs/names/logos in media/show metadata and shared title-credit snapshots | Normalize organizations/namespace-qualified IDs/credit roles; verify cross-source links |
-| Streaming membership | Retained regional watch-provider data and existing local/remote browse filters | Explicit offer-type selection, retention/freshness audit; optional normalized availability later |
-| Future publishers/development studios | No book/game/board-game integration established here | Organization schema can support their roles; provider data and identifiers still needed |
-| Actor → title | Existing title credits and provider title IDs | Relational backfill; canonical media resolution; complete cast fetching |
-| Actor → role name | TMDB `character` text; TVDB character name | Preserve on credit; distinguish labels from trusted fictional identities |
-| Fictional character ID | No established cross-media character model | Verify provider entity meaning; do not reuse TMDB credit IDs as character IDs |
-| Character artwork | Not established by the current actor cache | Source/API support or curated art; current cast portraits do not satisfy this |
-| Actor → canonical character | Role text and some provider association records | Normalize verified/local scoped appearances; multi-role/language links |
-| All series guest actors | Current basic series credits are insufficient | Broader aggregate/season/episode source and explicit scope |
-| Game/book/board-game credits, art and characters | No integration established in this task | Future provider access, identifiers, taxonomy, catalogue details and licensing |
-| Gameplay/reading duration | Current watch events/runtimes only | New domain-specific session/progress evidence; do not convert movies' watch-time formulas blindly |
+The [provider evidence table](catalogue-foundation.md#provider-evidence-and-limitations) records current official documentation, independently checked live responses and terms. TMDB movie and TV aggregate credits preserve supplied roles/jobs and people; TVDB retains `peopleId`, portraits and association labels. Their credit association IDs are not global fictional character IDs.
 
-Do not automatically show AniList's Characters tab as complete with current role strings. Show it when meaningful character data is available, or explicitly present its unavailable/partial state. A true character-based mean score should deduplicate the related watched media set for that person/character cohort; it is not a personal character rating unless the application later adds such ratings.
+IGDB supplies game works, companies, releases, collections/related-game links, Steam mappings and independent characters/art when available. Hardcover supplies works, canonical aliases, editions/ISBNs/publishers, work/edition contributors, series and characters; sample character image IDs were null. RAWG is lower-priority fallback, with distinct developer/publisher namespaces and exact Steam links. ITAD stores only Steam shop 61 current and dated store-low results, explicit country and unchanged provider URLs.
 
-The screenshots show anime-specific voice-actor information. Exact Japanese voice casting and fictional-character artwork may require a provider such as AniList or another domain source; current provider credentials alone do not establish that coverage. No new external integration is authorized or assumed merely by planning its schema.
+No adapter establishes complete language-specific voice casting, game staff, anime character coverage, reading/gameplay duration or board games. Statistics character cohorts require actual identified appearances and deduplicated works; role text and actor portraits cannot substitute for character identity/art.
 
-## 11. Migration and delivery sequence
+## 11. Statistics delivery sequence (remaining phase two)
+
+The catalogue migration, adapters, authenticated endpoints and resumable legacy bridge are implemented. The original roadmap below is retained: steps 3–5 are now foundation capabilities, while statistics readers, jobs and frontend remain outstanding. See the foundation document for delivery evidence.
 
 1. Confirm the semantic boundaries in this document: real people, separate characters, contribution roles, title-level actor hours, and scheduled statistics.
 2. Audit live data for person media rows, title aliases, existing credits, stable external identities, role labels, portraits, and usable character identities/artwork. This is still a required read-only operational step.
@@ -337,11 +310,11 @@ The screenshots show anime-specific voice-actor information. Exact Japanese voic
 
 For approximately twenty users, start with bounded jobs and PostgreSQL indexing. Measure job duration, rows scanned, ranking latency, snapshot size, due-work backlog, provider request volume, and coverage. More infrastructure is justified by those measurements, not by speculative scale.
 
-## 12. Permissions and decisions still outstanding
+## 12. Remaining scope and operational boundaries
 
-The schema, migrations, backend jobs, and UI can be authored and tested in this workspace. Applying them is deferred because the active request remains planning. The established beta workflow can apply forward migrations when healthy; direct live database connectivity has not been verified.
+The goal authorizes beta catalogue implementation, push, private provider defaults and forward migration via Preview Deploy. Defaults use the reviewed bootstrap helper and server environment, never database seeds or browser responses. Live local provider checks have succeeded; the foundation document records deployment validation.
 
-Movie/series provider API credentials remain configured. Full payload access, person cross-links, and character-art coverage still need verification. Future game/book/board-game API credentials and permitted hosts are not available through this task. Planning nullable image/provenance fields requires no extra credentials; populating them reliably does.
+Statistics APIs/jobs/frontend, game/book tracking, board games and production promotion are outside this phase. Live user-data coverage auditing remains separate from representative provider checks.
 
 No need to request broad database privileges for daily statistics readers. Deployment uses the existing migration role; application workers need the ordinary read/write rights for their own new tables. A coverage audit should use permitted read-only access. Image-host/network grants are separate from metadata API credentials.
 
