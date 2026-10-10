@@ -10,6 +10,7 @@ from core.countries import country_codes
 from core.statistics_genres import genre_groups, poster
 from core.statistics_actors import load_actors, actor_groups
 from core.statistics_studios import load_studios, studio_groups
+from core.statistics_staff import load_staff, staff_groups
 from core.tracking_rules import effective_score
 from models.base import MediaType
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink
@@ -133,6 +134,7 @@ async def load_facts(db, user_id):
                                  show_anime=bool(settings and settings.show_anime))
     await load_actors(db, facts)
     await load_studios(db, facts)
+    await load_staff(db, facts)
     return facts, coverage
 
 
@@ -355,6 +357,7 @@ def aggregate_scope(facts, coverage, scope):
         "genres": genre_groups(watched),
         "actors": actor_groups(listed),
         "studios": studio_groups(watched),
+        "staff": staff_groups(listed),
         "coverage": {**coverage, "runtime_known_plays": runtime_known, "runtime_estimated_plays": runtime_estimated,
                      "runtime_missing_plays": sum(t["runtime_missing"] for t in watched),
                      "authoritative_dated_plays": sum(t["authoritative_plays"] for t in watched),

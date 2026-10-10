@@ -140,6 +140,66 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((response.json()['name'], response.json()['countries']), ('Legacy Studio', ['JP']))
         self.assertEqual(response.json()['image'], 'https://image.tmdb.org/t/p/w185/logo.png')
 
+    async def test_staff_deduplicates_jobs_and_person_page_uses_saved_metadata_and_identity_links(self):
+        async with self.Session() as db:
+            work_id = await db.scalar(select(CatalogueLegacyLink.entity_id).where(CatalogueLegacyLink.media_id == self.media_id))
+            person = CatalogueEntity(kind='person', name='Fixture Director', description='Saved biography.', attributes={'birthday': '1970-01-01', 'place_of_birth': 'Berlin'})
+            db.add(person)
+            await db.flush()
+            db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='123', source='tmdb'))
+            for job, role in [('Director', 'director'), ('Screenplay', 'writer')]:
+                db.add(CatalogueCredit(work_id=work_id, contributor_id=person.id, provider='tmdb', source_key=job, role=role, role_label=job))
+            second = Media(title='Other work', media_type=MediaType.movie, tmdb_id=987, release_date='2022-01-01')
+            entity = CatalogueEntity(kind='movie', name='Other work', attributes={})
+            db.add_all([second, entity])
+            await db.flush()
+            db.add(CatalogueIdentity(entity_id=entity.id, namespace='tmdb.movie', external_id='987', source='tmdb'))
+            db.add(CatalogueCredit(work_id=entity.id, contributor_id=person.id, provider='tmdb', source_key='Other director', role='director', role_label='Director'))
+            await db.commit()
+            person_id = person.id
+        await self.build()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        groups = response.json()['overview']['staff']
+        self.assertEqual(len(groups), 1)
+        self.assertEqual((groups[0]['titles'], groups[0]['mean_score'], groups[0]['minutes']), (1, 8, 100))
+        self.assertEqual(groups[0]['top_titles'][0]['roles'], ['Director', 'Screenplay'])
+        detail = await self.client.get(f'/tracking/staff/catalogue%3A{person_id}')
+        self.assertEqual(detail.status_code, 200, detail.text)
+        data = detail.json()
+        self.assertEqual((data['biography'], data['birthday'], data['place_of_birth']), ('Saved biography.', '1970-01-01', 'Berlin'))
+        self.assertEqual([w['title'] for w in data['works']], ['Other work', 'Fixture movie'])
+        self.assertNotIn('mean_score', data)
+        self.assertEqual((await self.client.get('/tracking/staff/tmdb:123')).json()['name'], 'Fixture Director')
+        self.assertEqual((await self.client.get(f'/tracking/staff/catalogue:{self.studio_id}')).status_code, 404)
+        self.assertEqual((await self.client.get('/tracking/staff/tmdb:9999')).status_code, 404)
+        self.assertEqual((await self.client.get('/tracking/staff/catalogue:9999999999')).status_code, 422)
+        async with self.Session() as db:
+            await db.execute(update(Media).where(Media.id == second.id).values(tmdb_data={'genres': ['Animation'], 'origin_country': ['JP']}))
+            await db.execute(update(GlobalSettings).values(show_anime=False))
+            await db.commit()
+        detail = await self.client.get(f'/tracking/staff/catalogue:{person_id}')
+        self.assertEqual([w['title'] for w in detail.json()['works']], ['Fixture movie'])
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        self.assertEqual((await self.client.get(f'/tracking/staff/catalogue:{person_id}')).status_code, 401)
+
+    async def test_legacy_creator_has_a_person_page_without_person_or_credit_projection(self):
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.tmdb_id = 42
+            movie.tmdb_data = {'created_by': [{'id': 456, 'name': 'Legacy Creator', 'profile_path': '/creator.jpg'}]}
+            await db.commit()
+        detail = await self.client.get('/tracking/staff/tmdb:456')
+        self.assertEqual(detail.status_code, 200, detail.text)
+        data = detail.json()
+        self.assertEqual(data['name'], 'Legacy Creator')
+        self.assertEqual(data['roles'], ['Creator'])
+        self.assertEqual(data['works'][0]['href'], f'/title/{self.media_id}')
+        await self.build()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        self.assertEqual(response.json()['overview']['staff'][0]['label'], 'Legacy Creator')
+
     async def force_due(self):
         async with self.Session() as db:
             await db.execute(update(UserStatsState).where(UserStatsState.user_id == self.user_id).values(next_due_at=snapshots.utcnow() - timedelta(seconds=1)))

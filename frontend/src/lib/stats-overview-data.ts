@@ -24,6 +24,10 @@ export interface ActorTitle extends Omit<GenreTitle, 'score'> { score: number | 
 export interface ActorGroup extends MetricGroup {
   image: string | null; href: string; top_titles: ActorTitle[]; runtime_missing_plays: number;
 }
+export interface StaffTitle extends Omit<GenreTitle, 'score'> { score: number | null; roles: string[]; }
+export interface StaffGroup extends MetricGroup {
+  image: string | null; href: string; roles: string[]; prominence: number; top_titles: StaffTitle[]; runtime_missing_plays: number;
+}
 export interface Overview {
   media_type: MediaScope;
   totals: {
@@ -42,6 +46,7 @@ export interface Overview {
   genres?: GenreGroup[];
   actors?: ActorGroup[];
   studios?: StudioGroup[];
+  staff?: StaffGroup[];
 }
 export interface OverviewResponse {
   profile: ProfileStats['profile'];

@@ -68,6 +68,40 @@ class ActorGroup(MetricGroup):
     runtime_missing_plays: int = 0
 
 
+class StaffTitle(GenreTitle):
+    score: float | None
+    roles: list[str]
+
+
+class StaffGroup(MetricGroup):
+    image: str | None
+    href: str
+    roles: list[str]
+    prominence: int
+    top_titles: list[StaffTitle]
+    runtime_missing_plays: int = 0
+
+
+class PersonWork(BaseModel):
+    title: str
+    poster: str | None
+    href: str
+    release_date: str | None
+    roles: list[str]
+
+
+class PersonDetail(BaseModel):
+    key: str
+    name: str
+    image: str | None
+    biography: str | None
+    birthday: str | None
+    deathday: str | None
+    place_of_birth: str | None
+    roles: list[str]
+    works: list[PersonWork]
+
+
 class OverviewTotals(BaseModel):
     listed_titles: int
     watched_titles: int
@@ -96,6 +130,7 @@ class Overview(BaseModel):
     genres: list[GenreGroup] = Field(default_factory=list)
     actors: list[ActorGroup] = Field(default_factory=list)
     studios: list[StudioGroup] = Field(default_factory=list)
+    staff: list[StaffGroup] = Field(default_factory=list)
 
 
 class OverviewResponse(BaseModel):

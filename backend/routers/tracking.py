@@ -21,7 +21,7 @@ from models import Media, User, UserSettings, UserProfileData, GlobalSettings, F
 from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
-from schemas_statistics import MediaScope, OverviewResponse, StudioDetail
+from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail
 
 router = APIRouter()
 
@@ -842,6 +842,22 @@ async def studio_metadata(
     if not result:
         raise HTTPException(404, 'Studio not found')
     return StudioDetail.model_validate(result)
+
+
+@router.get('/staff/{person_key}')
+async def staff_metadata(
+    person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+) -> PersonDetail:
+    from core.statistics_staff import person_detail
+    await catalog_access(db, viewer)
+    if int(person_key.split(':', 1)[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid person identifier')
+    result = await person_detail(db, person_key, show_anime=await anime_is_visible(db))
+    if not result:
+        raise HTTPException(404, 'Person not found')
+    return PersonDetail.model_validate(result)
 
 
 async def profile_access(db, username, viewer):

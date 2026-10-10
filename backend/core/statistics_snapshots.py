@@ -12,7 +12,7 @@ from core.statistics_facts import build_overviews, load_facts
 from db import AsyncSessionLocal
 from models.statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
 
-CONTRACT_VERSION = 4
+CONTRACT_VERSION = 5
 LEASE_TIME = timedelta(minutes=10)
 REFRESH_TIME = timedelta(hours=24)
 log = logging.getLogger(__name__)

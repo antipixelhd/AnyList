@@ -182,6 +182,8 @@ def normalize_tmdb(raw, kind):
                 artwork="https://image.tmdb.org/t/p/original" + p["profile_path"]
                 if p.get("profile_path")
                 else None,
+                description=p.get("biography"),
+                attributes={k: p[k] for k in ("birthday", "deathday", "place_of_birth", "known_for_department") if p.get(k)},
             )
             roles = p.get("roles") if group == "cast" else p.get("jobs")
             for r in roles or [p]:
@@ -215,6 +217,11 @@ def normalize_tmdb(raw, kind):
                         "position": p.get("order"),
                     }
                 )
+    for p in raw.get("created_by") or []:
+        if p.get("id"):
+            doc["credits"].append({"contributor": entity("person", "tmdb.person", p,
+                artwork="https://image.tmdb.org/t/p/original" + p["profile_path"] if p.get("profile_path") else None),
+                "role": "writer", "role_label": "Creator", "source_key": f"created_by:{p['id']}"})
     for field, namespace, role in [
         ("production_companies", "tmdb.company", "producer"),
         ("networks", "tmdb.network", "broadcaster"),
