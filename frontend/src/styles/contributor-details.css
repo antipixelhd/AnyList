@@ -53,7 +53,10 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-page[data-view=timeline] .browse-card-body { display:grid; grid-template-columns:100px minmax(0,1fr); gap:24px; align-items:center; }
 .contributor-page[data-view=timeline] .browse-card-title h2 { font-size:19px; }
 .contributor-page[data-view=timeline] .browse-card-meta { justify-content:start; gap:18px; margin-top:10px; }
+.contributor-page[data-view=timeline] [data-year] { display:none; }
+.contributor-page[data-view=timeline] .browse-card-meta:not(:has([data-user-score]:not([hidden]))) { display:none; }
 .browse-credit { color:var(--muted); line-height:1.55; font-size:13px; margin:10px 0 0; white-space:normal; }
+.contributor-page[data-view=timeline] .browse-credit { color:var(--text); font-size:14px; font-weight:500; }
 .browse-credit:empty { display:none; }
 .browse-work-date { display:block; font-size:12px; color:var(--muted); margin-top:8px; }
 .contributor-page[data-view=grid] :is(.contributor-year,.contributor-year-works) { display:contents; }
