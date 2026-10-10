@@ -3,12 +3,15 @@ import Tracker from '../../layouts/Tracker.astro';
 import Icon from '../../components/Icon.astro';
 import { tracker, artwork } from '../../lib/tracker';
 import { countryLabel } from '../../lib/stats-overview-data';
-const id = Astro.params.id || '';
-const key = /^\d+$/.test(id) ? `tmdb:${id}` : id;
+import { studioKey } from '../../lib/stats-studios-data';
+const key = studioKey(Astro.params.id);
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 let studio: {name: string; image: string | null; description: string | null; countries: string[]} | null = null;
 let error = '';
-try { studio = await tracker(`studios/${encodeURIComponent(key)}`, Astro.locals.token); }
+try {
+  if (!key) throw new Error('Not found.');
+  studio = await tracker(`studios/${encodeURIComponent(key)}`, Astro.locals.token);
+}
 catch (cause) { error = (cause as Error).message; Astro.response.status = error === 'Not found.' ? 404 : 503; }
 const logo = artwork(studio?.image || null, 'w500');
 ---
