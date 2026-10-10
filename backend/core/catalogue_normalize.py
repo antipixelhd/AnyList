@@ -250,6 +250,9 @@ def normalize_tmdb(raw, kind):
 
 
 def normalize_tvdb(raw, kind="series"):
+    release = raw.get("firstAired") or raw.get("first_release") or raw.get("releaseDate")
+    if isinstance(release, dict):
+        release = release.get("date")
     doc = document(
         entity(
             kind,
@@ -258,7 +261,7 @@ def normalize_tvdb(raw, kind="series"):
             description=raw.get("overview"),
             artwork=raw.get("image"),
             attributes={
-                "release_date": raw.get("firstAired") or raw.get("first_release") or raw.get("releaseDate"),
+                "release_date": release,
                 "origin_countries": country_codes(raw.get("originalCountry")),
                 **screen_countries({"origin_country": country_codes(raw.get("originalCountry"))}),
                 "original_language": raw.get("originalLanguage"),
@@ -303,7 +306,12 @@ def normalize_tvdb(raw, kind="series"):
         )
         # TVDB Character records are title/performer associations, not global
         # fictional identities. Role artwork belongs to this credit.
-    for p in raw.get("companies") or []:
+    companies = raw.get("companies") or []
+    if isinstance(companies, dict):
+        labels = {"studio": "Studio", "network": "Network", "production": "Production Company", "distributor": "Distributor"}
+        companies = [{**p, "companyType": p.get("companyType") or {"companyTypeName": labels.get(group, group)}}
+                     for group, rows in companies.items() for p in rows or [] if isinstance(p, dict)]
+    for p in companies:
         label = (p.get("companyType") or {}).get("companyTypeName", "")
         role = {
             "Network": "broadcaster",

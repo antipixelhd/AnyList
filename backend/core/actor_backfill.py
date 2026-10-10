@@ -16,11 +16,14 @@ VERSION = 1
 BATCH_SIZE = 25
 
 
-async def backfill_actors(db, providers, *, limit=BATCH_SIZE, force=False):
+async def backfill_actors(db, providers, *, limit=BATCH_SIZE, force=False, user_id=None):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     attrs = Media.tmdb_data
+    membership = select(TrackedEntry.id).where(TrackedEntry.media_id == Media.id)
+    if user_id is not None:
+        membership = membership.where(TrackedEntry.user_id == user_id)
     query = select(Media).where(Media.media_type.in_([MediaType.movie, MediaType.series]),
-        exists(select(TrackedEntry.id).where(TrackedEntry.media_id == Media.id)),
+        exists(membership),
         or_(Media.tmdb_id.is_not(None), Media.tvdb_id.is_not(None)))
     if not force:
         query = query.where(or_(attrs["actor_backfill_attempted_at"].astext.is_(None),
