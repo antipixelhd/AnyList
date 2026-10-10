@@ -33,3 +33,12 @@ export function contributorYear(work: Pick<ContributorWork, 'release_date' | 'ye
 export function workHref(work: BrowseItem & {href?:string|null}) {
   return work.id ? `/title/${work.id}` : work.tmdb_id ? `/discover-title?type=${work.type}&id=${work.tmdb_id}` : work.href || null;
 }
+
+export function biographyPreview(value: string | null | undefined, limit = 60) {
+  const full = (value || '').trim();
+  const first = full.split(/[\r\n]+/)[0] || '';
+  const words = first.split(/\s+/).filter(Boolean);
+  const shortened = words.length > limit;
+  const preview = words.slice(0, limit).join(' ') + (shortened ? '…' : '');
+  return {preview, full, expandable:shortened || full.replace(/\s+/g, ' ') !== preview};
+}

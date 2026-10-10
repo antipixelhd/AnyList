@@ -6,7 +6,7 @@ import { tracker, artwork, statuses } from '../lib/tracker';
 import { metadataKey } from '../lib/catalogue-key';
 import { personAge, personDate } from '../lib/person-page-data';
 import { countryLabel } from '../lib/stats-overview-data';
-import { contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
+import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import '../styles/browse.css';
 import '../styles/contributor-details.css';
 interface Props { kind: 'actor' | 'staff' | 'studio' }
@@ -23,6 +23,7 @@ try {
   data = await tracker(`${endpoint}?${params}`, Astro.locals.token);
 } catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load this page.'; Astro.response.status = error === 'Not found.' ? 404 : 503; }
 const age = data ? personAge(data.birthday, data.deathday) : null;
+const biography = biographyPreview(data?.description);
 const facts = data ? [
   ['Born', personDate(data.birthday)], ['Died', personDate(data.deathday)],
   [data.deathday ? 'Age at death' : 'Age', age === null ? null : String(age)],
@@ -54,7 +55,12 @@ if (data) {
           {data.roles.length > 0 && <p class="contributor-roles">{data.roles.slice(0,4).join(' / ')}</p>}
           {signedIn && <a class="contributor-list-link" href={`${Astro.url.pathname}?list_scope=in&view=${view}`}><Icon name="list" /><span><strong data-contributor-list-count>{data.list_count || 0}</strong> in your list</span></a>}
         </header>
-        {data.description && <section class="contributor-biography" aria-labelledby="contributor-about-heading"><h2 id="contributor-about-heading">{kind === 'studio' ? 'About' : 'Biography'}</h2><p>{data.description}</p></section>}
+        {data.description && <section class="contributor-biography" aria-labelledby="contributor-about-heading"><h2 id="contributor-about-heading">{kind === 'studio' ? 'About' : 'Biography'}</h2>
+          {kind === 'studio' ? <p>{data.description}</p> : <>
+            <p class="contributor-biography-preview">{biography.preview}</p>
+            {biography.expandable && <details class="contributor-biography-details"><summary><span class="biography-read-more">Read more</span><span class="biography-read-less">Read less</span></summary><p>{biography.full}</p></details>}
+          </>}
+        </section>}
         {data.aliases.length > 0 && <details class="contributor-aliases"><summary>Also known as</summary><p>{data.aliases.join(' · ')}</p></details>}
         <section class="contributor-works" aria-labelledby="contributor-works-heading">
           <header class="contributor-works-heading"><h2 id="contributor-works-heading">Works</h2>
