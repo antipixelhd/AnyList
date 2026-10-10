@@ -128,7 +128,10 @@ async def load_facts(db, user_id):
         identities = {(i.namespace, i.external_id): i.entity_id for i in await db.scalars(select(CatalogueIdentity).where(or_(*identity_terms)))}
     entity_ids = set(links.values()) | set(show_links.values()) | set(identities.values())
     entities = {e.id: e for e in await db.scalars(select(CatalogueEntity).where(CatalogueEntity.id.in_(entity_ids), CatalogueEntity.kind.in_(["movie", "series"])))}
-    episodes = list((await db.scalars(select(Media).where(Media.show_id.in_(show_ids), Media.media_type == MediaType.episode))).all())
+    planning = [m for entry, m in entries if entry.status == "planning" and m.media_type == MediaType.series]
+    planning_show_ids = {s.id for s in shows if any(
+        (m.tmdb_id and m.tmdb_id == s.tmdb_id) or (m.tvdb_id and m.tvdb_id == s.tvdb_id) for m in planning)}
+    episodes = list((await db.scalars(select(Media).where(Media.show_id.in_(planning_show_ids), Media.media_type == MediaType.episode))).all())
     settings = await db.get(GlobalSettings, 1)
     facts, coverage = title_facts(entries, events, shows, list(title_rows.values()), episodes, links, show_links, identities, entities,
                                  show_anime=bool(settings and settings.show_anime))
@@ -208,6 +211,24 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
         by_media[row.id] = key
     hidden = {key for key, value in facts.items() if not show_anime and anime(value["data"])}
     coverage["hidden_title_count"] = len(hidden)
+    # A verified provider ID establishes episode identity. Episode numbers alone
+    # cannot join providers whose season ordering may differ.
+    episode_rows = {e.id: e for e in episodes}
+    episode_rows.update({row.id: row for _, row in events if row.media_type == MediaType.episode})
+    parents, aliases = {id: id for id in episode_rows}, {}
+    def episode_root(id):
+        while parents[id] != id:
+            parents[id] = parents[parents[id]]
+            id = parents[id]
+        return id
+    for row in episode_rows.values():
+        for provider in ("tmdb", "tvdb"):
+            native = getattr(row, provider + "_id")
+            if native and row.show_id in by_show:
+                identity = (by_show[row.show_id], provider, native)
+                if identity in aliases:
+                    parents[episode_root(row.id)] = episode_root(aliases[identity])
+                aliases[identity] = row.id
     for entry, row in entries:
         target = facts[by_media[row.id]]
         order = (entry.updated_at or datetime.min, entry.id or 0)
@@ -234,7 +255,7 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
         target["runtime_" + quality] += plays
         if row.media_type == MediaType.episode:
             target["episode_plays"] += plays
-            target["episodes"].add(row.id)
+            target["episodes"].add(episode_root(row.id))
         dated = bool(event.watched_at and not (event.date_inferred or event.date_shared or event.provisional))
         if dated:
             # A collapsed repeat row establishes one play's date, never all repeats.
@@ -275,12 +296,15 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
             retained = [e for s in linked_shows for e in episodes_by_show[s.id] if (e.season_number or 0) > 0 and getattr(e, provider + "_id") in ids]
             complete = complete and ids <= {getattr(e, provider + "_id") for e in retained}
             for e in retained:
-                if e.id in target["episodes"]:
+                if episode_root(e.id) in target["episodes"]:
                     continue
                 known_release = year_of(e.release_date) is not None
                 imported_released = (e.tmdb_data or {}).get("tracking_import_released") is True
                 if imported_released or (known_release and e.release_date[:10] <= today):
-                    remaining[e.id] = e
+                    identity = episode_root(e.id)
+                    previous = remaining.get(identity)
+                    if previous is None or positive_number(e.runtime) and not positive_number(previous.runtime):
+                        remaining[identity] = e
                 elif not known_release:
                     complete = False
         target["planned_partial"] = not complete
@@ -354,9 +378,9 @@ def aggregate_scope(facts, coverage, scope):
         "statuses": statuses, "formats": formats,
         "countries": [{"key": k, "label": k, **v} for k, v in sorted(countries.items(), key=lambda kv: (-kv[1]["share"], kv[0]))],
         "release_years": yearly(watched), "watch_years": yearly(watched, watched=True),
-        "genres": genre_groups(watched),
+        "genres": genre_groups(listed),
         "actors": actor_groups(listed),
-        "studios": studio_groups(watched),
+        "studios": studio_groups(listed),
         "staff": staff_groups(listed),
         "coverage": {**coverage, "runtime_known_plays": runtime_known, "runtime_estimated_plays": runtime_estimated,
                      "runtime_missing_plays": sum(t["runtime_missing"] for t in watched),
@@ -366,7 +390,12 @@ def aggregate_scope(facts, coverage, scope):
                      "planned_unknown_episodes": sum(t["planned_unknown_episodes"] for t in planned),
                      "planned_known_episodes": sum(t["planned_known_episodes"] for t in planned),
                      "unwatched_listed_titles": sum(not t["plays"] for t in listed),
-                     "uncatalogued_titles": sum(t["entity_id"] is None for t in titles)},
+                     "uncatalogued_titles": sum(t["entity_id"] is None for t in titles),
+                     "listed_missing_genres": sum(not t["data"].get("genres") for t in listed),
+                     "listed_missing_countries": sum(not countries_of(t["data"], t["kind"]) for t in listed),
+                     "listed_missing_cast": sum(not t.get("actors") for t in listed),
+                     "listed_missing_staff": sum(not t.get("staff") for t in listed),
+                     "listed_missing_studios": sum(not t.get("studios") for t in listed)},
     }
 
 

@@ -14,7 +14,7 @@ FILTERS = dict(start=None, end=None, status="", provider=None, region="US", sort
 
 
 class GenreTests(unittest.TestCase):
-    def test_canonical_watched_cohort_repeat_time_and_personal_ratings(self):
+    def test_canonical_listed_cohort_repeat_time_and_personal_ratings(self):
         one = media(1, "movie", tmdb_id=10, title="A", runtime=90, tmdb_data={"genres": ["Drama", {"name": "Drama"}], "vote_average": 10})
         alias = media(2, "movie", tmdb_id=10, title="A", runtime=90, tmdb_data={"genres": ["Drama"]})
         planned = media(3, "movie", title="Planned", tmdb_data={"genres": ["Drama"]})
@@ -22,8 +22,9 @@ class GenreTests(unittest.TestCase):
         result = fixtures.StatisticsFactsTests().build([(entry(1, 6), one), (entry(2, 9), alias), (entry(3, 10, status="planning"), planned)],
                                             [(event(plays=3), one), (event(), unrated)])
         genre = result["all"]["genres"][0]
-        self.assertEqual((genre["titles"], genre["minutes"], genre["rated_titles"], genre["mean_score"]), (2, 330, 1, 9))
-        self.assertEqual(genre["top_titles"], [{"key": "tmdb.movie:10", "title": "A", "poster": None, "href": "/title/2", "score": 9}])
+        self.assertEqual((genre["titles"], genre["minutes"], genre["rated_titles"], genre["mean_score"]), (2, 270, 2, 9.5))
+        self.assertEqual([t['score'] for t in genre['top_titles']], [10,9])
+        self.assertEqual(genre["top_titles"][1], {"key": "tmdb.movie:10", "title": "A", "poster": None, "href": "/title/2", "score": 9})
         self.assertEqual(result["series"]["genres"], [])
 
     def test_top_twelve_use_personal_scores_and_deterministic_ties(self):

@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from models.catalogue import (
@@ -315,6 +315,12 @@ async def ingest_document(db, doc, provider):
             ["work_id", "provider", "source_key"],
             preserve_missing=True,
         )
+    # A complete authoritative screen-credit response replaces obsolete rows.
+    # Partial payloads and other providers retain their last successful credits.
+    if provider == "tmdb" and work.kind in ("movie", "series") and doc.get("coverage", {}).get("credits_complete"):
+        keys = {str(c["source_key"])[:200] for c in doc["credits"] if not c.get("edition_identity")}
+        await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id == work.id,
+            CatalogueCredit.provider == provider, CatalogueCredit.source_key.not_in(keys)))
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
         if character.kind != "character":

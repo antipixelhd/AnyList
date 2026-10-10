@@ -11,7 +11,7 @@ export interface MetricGroup {
   rated_titles: number;
 }
 export interface Distribution { key: string; label: string; titles: number; }
-export interface GenreTitle { key: string; title: string; poster: string | null; href: string; score: number; }
+export interface GenreTitle { key: string; title: string; poster: string | null; href: string; score: number | null; }
 export interface MediaGroup extends MetricGroup {
   top_titles: GenreTitle[];
   runtime_missing_plays: number;

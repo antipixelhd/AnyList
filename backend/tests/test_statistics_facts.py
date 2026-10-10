@@ -142,3 +142,23 @@ class StatisticsFactsTests(unittest.TestCase):
     def test_partial_local_episode_rows_never_establish_total_length(self):
         self.assertIsNone(regular_total({"number_of_episodes": 12}))
         self.assertEqual(regular_total({"seasons": [{"season_number": 0, "episode_count": 8}, {"season_number": 1, "episode_count": 12}]}), 12)
+
+    def test_verified_episode_aliases_count_distinct_once_and_do_not_inflate_planning(self):
+        series = media(1,'series',tmdb_id=10,tmdb_data={'tracking_episode_ids':[11,12], 'tracking_catalogue_refreshed_at':'2026-01-01'})
+        show = Row(id=7,tmdb_id=10,tvdb_id=None,first_air_date=None,tmdb_data={})
+        one = media(11,'episode',show_id=7,tmdb_id=11,season_number=1,runtime=20,release_date='2020-01-01')
+        alias = media(21,'episode',show_id=7,tmdb_id=11,season_number=1,runtime=20,release_date='2020-01-01')
+        remaining = media(12,'episode',show_id=7,tmdb_id=12,season_number=1,runtime=30,release_date='2020-01-01')
+        other = media(22,'episode',show_id=7,tmdb_id=12,season_number=1,runtime=30,release_date='2020-01-01')
+        data = self.build([(entry(1,status='planning'),series)], [(event(),one),(event(),alias)], [show], episodes=[one,alias,remaining,other])['all']
+        self.assertEqual(data['totals']['distinct_episodes'],1)
+        self.assertEqual(data['totals']['episode_plays'],2)
+        self.assertEqual(data['totals']['watch_minutes'],40)
+        self.assertEqual(data['totals']['planned_minutes'],30)
+
+    def test_episode_position_does_not_join_unverified_provider_identities(self):
+        show = Row(id=7,tmdb_id=10,tvdb_id=None,first_air_date=None,tmdb_data={})
+        one = media(11,'episode',show_id=7,tmdb_id=11,season_number=1,runtime=20)
+        other = media(21,'episode',show_id=7,tvdb_id=21,season_number=1,runtime=20)
+        data = self.build([],[(event(),one),(event(),other)],[show])['all']
+        self.assertEqual(data['totals']['distinct_episodes'],2)

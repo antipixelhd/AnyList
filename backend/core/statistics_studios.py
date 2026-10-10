@@ -1,4 +1,4 @@
-"""Production-company statistics from the canonical watched-title cohort."""
+"""Production-company statistics from the canonical listed-title cohort."""
 from collections import defaultdict
 from urllib.parse import quote
 
@@ -17,8 +17,8 @@ def company_metadata(raw):
 
 
 async def load_studios(db, facts):
-    watched = [t for t in facts if t["plays"]]
-    ids = {t["entity_id"] for t in watched if t["entity_id"]}
+    listed = [t for t in facts if t["listed"]]
+    ids = {t["entity_id"] for t in listed if t["entity_id"]}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(
         CatalogueEntity, CatalogueEntity.id == CatalogueCredit.contributor_id).where(
         CatalogueCredit.work_id.in_(ids), CatalogueCredit.role == "producer", CatalogueEntity.kind == "organization"))).all()
@@ -28,15 +28,15 @@ async def load_studios(db, facts):
     # Older imports retain verified TMDB company IDs in local metadata/credits.
     # Names do not establish identity, and secondary providers do not duplicate
     # an authoritative production-company list for the same work.
-    native_ids = {m.tmdb_id for t in watched for m in t["media"] if m.tmdb_id}
+    native_ids = {m.tmdb_id for t in listed for m in t["media"] if m.tmdb_id}
     cache = {(r.media_type, r.tmdb_id): r.studios or [] for r in await db.scalars(
         select(TitleCredits).where(TitleCredits.tmdb_id.in_(native_ids)))} if native_ids else {}
-    company_ids = {str(p["id"]) for t in watched for p in t["data"].get("production_companies") or []
+    company_ids = {str(p["id"]) for t in listed for p in t["data"].get("production_companies") or []
                    if isinstance(p, dict) and p.get("id")}
     company_ids.update(str(p["id"]) for rows in cache.values() for p in rows if isinstance(p, dict) and p.get("id"))
     aliases = {i.external_id: i.entity_id for i in await db.scalars(select(CatalogueIdentity).where(
         CatalogueIdentity.namespace == "tmdb.company", CatalogueIdentity.external_id.in_(company_ids)))} if company_ids else {}
-    for title in watched:
+    for title in listed:
         rows = by_work.get(title["entity_id"], [])
         primary = [r for r in rows if r["provider"] == "tmdb"]
         raw = title["data"].get("production_companies") or []
@@ -49,9 +49,9 @@ async def load_studios(db, facts):
         title["studios"] = primary or fallback or legacy or rows
 
 
-def studio_groups(watched):
+def studio_groups(listed):
     companies, buckets = {}, defaultdict(dict)
-    for title in watched:
+    for title in listed:
         for company in title.get("studios", []):
             companies.setdefault(company["key"], company)
             buckets[company["key"]][title["key"]] = title
@@ -59,8 +59,8 @@ def studio_groups(watched):
     for key, works in buckets.items():
         titles = list(works.values())
         rated = [t for t in titles if t["score"] is not None]
-        best = sorted((t for t in rated if t["detail_media_id"] is not None), key=lambda t: (
-            -t["score"], t["name"].casefold(), t["key"]))[:12]
+        best = sorted((t for t in titles if t["detail_media_id"] is not None), key=lambda t: (
+            -(t["score"] if t["score"] is not None else -1), t["name"].casefold(), t["key"]))[:12]
         result.append({"key": key, "label": companies[key]["label"], "href": f"/studio/{quote(key, safe='')}",
             "titles": len(titles), "minutes": sum(t["minutes"] for t in titles), "rated_titles": len(rated),
             "mean_score": sum(t["score"] for t in rated) / len(rated) if rated else None,

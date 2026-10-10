@@ -1,4 +1,4 @@
-"""Genre breakdowns from the same canonical watched-title cohort as Overview."""
+"""Genre cards count canonical listed titles; time comes from completed plays."""
 
 from collections import defaultdict
 from core.browse import GENRES, MOVIE_GENRES, TV_GENRES
@@ -34,15 +34,16 @@ def poster(value):
     return image(value) or ("https://image.tmdb.org/t/p/w185" + value if value.startswith("/") and not value.startswith("//") else None)
 
 
-def genre_groups(watched):
+def genre_groups(listed):
     buckets = defaultdict(list)
-    for title in watched:
+    for title in listed:
         for name in genre_names(title["data"]):
             buckets[name].append(title)
     result = []
     for name, titles in sorted(buckets.items()):
         rated = [t for t in titles if t["score"] is not None]
-        best = sorted(rated, key=lambda t: (-t["score"], t["name"].casefold(), t["key"]))[:12]
+        best = sorted((t for t in titles if t["detail_media_id"] is not None), key=lambda t: (
+            -(t["score"] if t["score"] is not None else -1), t["name"].casefold(), t["key"]))[:12]
         result.append({"key": name.casefold(), "label": name, "titles": len(titles),
                        "minutes": sum(t["minutes"] for t in titles),
                        "rated_titles": len(rated),

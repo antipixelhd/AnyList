@@ -15,7 +15,7 @@ import httpx
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi import FastAPI
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -235,6 +235,58 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(after["metadata_revision"], before["metadata_revision"])
         self.assertEqual(after["payload"]["all"]["coverage"]["runtime_missing_plays"], 0)
         self.assertEqual(after["payload"]["all"]["totals"]["watch_minutes"], 480)
+
+    async def test_planned_runtimes_are_backfilled_without_creating_watch_events(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        from models.show import Show
+        async with self.Session() as db:
+            planned = Media(title='Planned film',media_type=MediaType.movie,tmdb_id=22)
+            series = Media(title='Planned show',media_type=MediaType.series,tmdb_id=33)
+            show = Show(title='Planned show',tmdb_id=33)
+            db.add_all([planned,series,show])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user_id,media_id=planned.id,status='planning'),
+                        TrackedEntry(user_id=self.user_id,media_id=series.id,status='planning')])
+            released = Media(title='Released',media_type=MediaType.episode,tmdb_id=44,show_id=show.id,season_number=1,release_date='2020-01-01')
+            future = Media(title='Future',media_type=MediaType.episode,tmdb_id=45,show_id=show.id,season_number=1,release_date='2199-01-01')
+            db.add_all([released,future])
+            await db.commit()
+            watched_before = await db.scalar(select(func.count()).select_from(WatchEvent))
+            with patch('core.runtime_backfill.tmdb.get_movie',AsyncMock(return_value={'id':22,'runtime':90})), patch(
+                'core.runtime_backfill.tmdb.get_season',AsyncMock(return_value={'episodes':[{'id':44,'runtime':30},{'id':45,'runtime':40}]})):
+                result = await backfill_history_runtimes(db,'key')
+            self.assertEqual(result['recovered'],2)
+            self.assertEqual(released.runtime,30)
+            self.assertIsNone(future.runtime)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)),watched_before)
+
+    async def test_complete_credit_refresh_removes_obsolete_people_but_partial_preserves_them(self):
+        from core.catalogue import ingest_document
+        from core.catalogue_normalize import normalize_tmdb
+        async with self.Session() as db:
+            raw={'id':1234,'title':'Credit film','production_companies':[],
+                 'credits':{'cast':[{'id':777,'name':'Old actor','credit_id':'old'}],'crew':[{'id':778,'name':'Director','job':'Director','credit_id':'director'}]}}
+            work=await ingest_document(db,normalize_tmdb(raw,'movie'),'tmdb')
+            await ingest_document(db,normalize_tmdb({'id':1234,'title':'Credit film','credits':{'cast':[]}},'movie'),'tmdb')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit).where(CatalogueCredit.work_id==work.id)),2)
+            await ingest_document(db,normalize_tmdb({**raw,'credits':{'cast':[],'crew':raw['credits']['crew']}},'movie'),'tmdb')
+            roles=list(await db.scalars(select(CatalogueCredit.role).where(CatalogueCredit.work_id==work.id)))
+            self.assertEqual(roles,['director'])
+
+    async def test_movie_runtime_recovers_through_verified_tvdb_catalogue_identity(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        async with self.Session() as db:
+            movie=await db.get(Media,self.media_id)
+            movie.tmdb_id=999;movie.runtime=None
+            work_id=await db.scalar(select(CatalogueLegacyLink.entity_id).where(CatalogueLegacyLink.media_id==movie.id))
+            db.add_all([CatalogueIdentity(entity_id=work_id,namespace='tmdb.movie',external_id='999',source='tmdb'),
+                        CatalogueIdentity(entity_id=work_id,namespace='tvdb.movie',external_id='1099',source='tvdb')])
+            await db.commit()
+            with patch('core.runtime_backfill.tmdb.get_movie',AsyncMock(return_value={'id':999,'runtime':0})), patch(
+                'core.runtime_backfill.tvdb.get_movie',AsyncMock(return_value={'id':1099,'runtime':110})) as fetch:
+                result=await backfill_history_runtimes(db,'tmdb',tvdb_api_key='tvdb')
+            fetch.assert_awaited_once_with(1099,'tvdb')
+            self.assertEqual((result['recovered'],movie.runtime),(1,110))
 
     async def test_first_request_is_pending_and_worker_publishes_all_scopes_together(self):
         response = await self.client.get("/tracking/profile/statistics-fixture/stats/overview")

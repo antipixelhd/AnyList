@@ -32,7 +32,7 @@ class GenreTitle(BaseModel):
     title: str
     poster: str | None
     href: str
-    score: float
+    score: float | None
 
 
 class GenreGroup(MetricGroup):

@@ -20,7 +20,8 @@ class StudioTests(unittest.TestCase):
         group = studio_groups([one, title(2, score=None, minutes=60)])[0]
         self.assertEqual((group["titles"], group["minutes"], group["rated_titles"], group["mean_score"]), (2, 330, 1, 8))
         self.assertEqual(group["href"], "/studio/catalogue%3A1")
-        self.assertEqual(len(group["top_titles"]), 1)
+        self.assertEqual(len(group["top_titles"]), 2)
+        self.assertIsNone(group['top_titles'][1]['score'])
 
     def test_twelve_best_rated_titles_and_missing_details(self):
         rows = [title(i, score=i / 2) for i in range(1, 21)]
@@ -39,7 +40,7 @@ class StudioTests(unittest.TestCase):
         self.assertLessEqual(len(groups), 54)
         self.assertTrue({str(i) for i in range(83, 101)} <= {r["key"] for r in groups})
 
-    def test_planning_is_excluded_and_history_only_watched_is_included(self):
+    def test_planning_is_included_and_history_only_is_excluded_from_cards(self):
         planned = fixtures.media(1, "movie", title="Planning")
         watched = fixtures.media(2, "movie", title="History", runtime=90)
         facts, coverage = fixtures.title_facts([(fixtures.entry(1, 10, status="planning"), planned)], [(fixtures.event(plays=2), watched)],
@@ -47,8 +48,8 @@ class StudioTests(unittest.TestCase):
         for row in facts:
             row["studios"] = [{"key": "catalogue:1", "label": "Studio"}]
         data = fixtures.build_overviews(facts, coverage)
-        self.assertEqual((data["all"]["studios"][0]["titles"], data["all"]["studios"][0]["minutes"]), (1, 180))
-        self.assertIsNone(data["all"]["studios"][0]["mean_score"])
+        self.assertEqual((data["all"]["studios"][0]["titles"], data["all"]["studios"][0]["minutes"]), (1, 0))
+        self.assertEqual(data["all"]["studios"][0]["mean_score"], 10)
         self.assertEqual(data["series"]["studios"], [])
 
     def test_company_logo_and_country_are_projected_without_networks_becoming_producers(self):
@@ -69,7 +70,7 @@ class StudioLoadingTests(unittest.IsolatedAsyncioTestCase):
                                    (Row(work_id=10, provider="tvdb"), Row(id=2, name="Studio"))]
         db.execute.return_value = result
         db.scalars.return_value = []
-        fact = title(1, entity_id=10, plays=1, kind="movie", media=[], data={})
+        fact = title(1, entity_id=10, listed=True, plays=0, kind="movie", media=[], data={})
         await load_studios(db, [fact])
         self.assertEqual([r["key"] for r in fact["studios"]], ["catalogue:1"])
 
@@ -78,6 +79,6 @@ class StudioLoadingTests(unittest.IsolatedAsyncioTestCase):
         result = MagicMock(); result.all.return_value = []
         db.execute.return_value = result
         db.scalars.return_value = [Row(external_id="2", entity_id=20)]
-        fact = title(1, entity_id=None, plays=1, kind="movie", media=[], data={"production_companies": [{"id": 2, "name": "Studio"}, {"id": 3, "name": "Studio"}]})
+        fact = title(1, entity_id=None, listed=True, plays=0, kind="movie", media=[], data={"production_companies": [{"id": 2, "name": "Studio"}, {"id": 3, "name": "Studio"}]})
         await load_studios(db, [fact])
         self.assertEqual({r["key"] for r in fact["studios"]}, {"catalogue:20", "tmdb:3"})

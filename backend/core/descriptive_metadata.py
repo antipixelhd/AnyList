@@ -9,6 +9,7 @@ FIELDS = (
     "number_of_episodes",
     "episode_run_time",
     "production_companies",
+    "created_by",
     "cast",
 )
 
@@ -33,6 +34,7 @@ def tmdb_fields(data, previous=None):
         "production_countries",
         "number_of_episodes",
         "episode_run_time",
+        "created_by",
     ):
         if data.get(key):
             fields[key] = data[key]
