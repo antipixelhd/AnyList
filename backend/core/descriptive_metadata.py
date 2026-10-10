@@ -3,6 +3,7 @@
 from core import tmdb
 
 FIELDS = (
+    "original_language",
     "origin_country",
     "production_countries",
     "number_of_episodes",
@@ -27,6 +28,7 @@ def tvdb_fields(data, previous=None):
 def tmdb_fields(data, previous=None):
     fields = retained_fields(previous or {})
     for key in (
+        "original_language",
         "origin_country",
         "production_countries",
         "number_of_episodes",

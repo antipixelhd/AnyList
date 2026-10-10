@@ -96,6 +96,14 @@ class StatisticsFactsTests(unittest.TestCase):
         self.assertEqual(data["totals"]["watch_minutes"], 0)
         self.assertEqual(data["countries"], [])
 
+    def test_refresh_preserves_original_language_for_anime_visibility(self):
+        from core.descriptive_metadata import tmdb_fields
+        retained = tmdb_fields({"original_language": "ja", "origin_country": ["US"]})
+        data = {**tmdb_fields({}, retained), "genres": ["Animation"]}
+        hidden = media(1, "movie", runtime=80, tmdb_data=data)
+        result = self.build([(entry(1, 8), hidden)], [(event(), hidden)], show_anime=False)["all"]
+        self.assertEqual(result["totals"]["watched_titles"], 0)
+
     def test_planning_uses_complete_regular_catalogue_and_unique_completed_membership(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [11, 12, 13], "tracking_catalogue_refreshed_at": "2026-01-01"})
         show = Row(id=7, tmdb_id=10, tvdb_id=None, first_air_date=None, tmdb_data={})
