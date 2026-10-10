@@ -5,6 +5,7 @@ const {
   item = { title: "", type: "movie" },
   signedIn = false,
   template = false,
+  credits = false,
 } = Astro.props;
 const image = responsiveArtwork(item.poster, {
   size: "w342",
@@ -21,7 +22,7 @@ const labels: Record<string, string> = {
 };
 const href = item.id
   ? `/title/${item.id}`
-  : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
+  : item.tmdb_id ? `/discover-title?type=${item.type}&id=${item.tmdb_id}` : item.href || undefined;
 ---
 
 <article
@@ -29,6 +30,7 @@ const href = item.id
   data-browse-card
   data-key={`${item.type}:${item.tmdb_id || item.id}`}
   data-state={state || undefined}
+  data-work-key={item.key || undefined}
 >
   <div class="browse-card-body">
   <div class="browse-cover">
@@ -77,7 +79,7 @@ const href = item.id
         ),
       )}
     </span>
-    {signedIn && (
+    {signedIn && (template || item.id || item.tmdb_id) && (
       <div class="browse-actions" data-motion-static>
         <button
           type="button"
@@ -127,6 +129,8 @@ const href = item.id
       <span data-score>{Number(item.score || 0).toFixed(1)}</span>
     </span>
   </div>
+  {credits && <p class="browse-credit" data-work-credit>{[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}</p>}
+  {credits && <time class="browse-work-date" datetime={item.release_date} data-work-date hidden={!item.release_date}>{item.release_date}</time>}
   </div>
   </div>
 </article>

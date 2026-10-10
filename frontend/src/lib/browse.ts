@@ -1,3 +1,4 @@
+import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import {
   isCategoryView,
   hasBrowseFilters,
@@ -16,20 +17,7 @@ import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
 
-type Item = {
-  id: number | null;
-  tmdb_id: number | null;
-  type: string;
-  title: string;
-  poster?: string;
-  year?: string;
-  list_status?: string;
-  score?: number | null;
-  rating_mode?: string;
-  backdrop?: string;
-  entry?: Record<string, any> | null;
-  editor_library?: EditorTitle['editor_library'];
-};
+type Item = BrowseItem;
 type Payload = {
   results: Item[];
   has_more: boolean;
@@ -44,14 +32,6 @@ type Section = {
 };
 type SectionsPayload = { sections: Section[]; notice?: string };
 type Facet = { id: number | string; name: string };
-const statusLabels: Record<string, string> = {
-  watching: "Watching",
-  completed: "Completed",
-  planning: "Plan to Watch",
-  paused: "Paused",
-  dropped: "Dropped",
-};
-
 export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.enhanced = "";
   root.dataset.browseScripted = "";
@@ -167,36 +147,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       );
     return body;
   };
-  const paintState = (card: HTMLElement, item: Item) => {
-    card.querySelectorAll<HTMLElement>('[data-editor-icon]').forEach(icon => {
-      icon.hidden = icon.dataset.editorIcon === 'edit' ? !item.list_status : !!item.list_status;
-    });
-    const watch = card.querySelector<HTMLButtonElement>('[data-browse-action=watch]');
-    if (watch) watch.hidden = item.list_status === 'watching';
-    card.dataset.state = item.list_status || "";
-    const rating = card.querySelector<HTMLElement>("[data-user-score]")!;
-    rating.hidden = !(item.score != null && item.score > 0);
-    const score = Number(item.score || 0).toFixed(1);
-    rating.setAttribute("aria-label", `Your rating: ${score} out of 10`);
-    rating.querySelector("[data-score]")!.textContent = score;
-    const state = card.querySelector<HTMLElement>("[data-list-state]")!;
-    state.hidden = !item.list_status;
-    state.title = statusLabels[item.list_status || ""] || "";
-    state.setAttribute("aria-label", state.title);
-    state
-      .querySelectorAll<HTMLElement>("[data-state-icon]")
-      .forEach(
-        (icon) => (icon.hidden = icon.dataset.stateIcon !== item.list_status),
-      );
-    const plan = card.querySelector<HTMLButtonElement>(
-      "[data-browse-action=plan]",
-    );
-    const rate = card.querySelector<HTMLButtonElement>(
-      "[data-browse-action=rate]",
-    );
-    if (plan) plan.hidden = !!item.list_status;
-    if (rate) rate.hidden = item.score != null && item.score > 0;
-  };
+  const paintState = paintBrowseCardState;
   const initialItems = new Map<string, Item>(
     [
       ...payload.results,
@@ -634,49 +585,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { signal },
   );
-  let touchPoster = false;
-  region.addEventListener(
-    "pointerdown",
-    (event) => {
-      touchPoster = event.pointerType === "touch";
-    },
-    { signal },
-  );
-  region.addEventListener(
-    "click",
-    (event) => {
-      if (!touchPoster) return;
-      const poster = (event.target as Element).closest<HTMLAnchorElement>(
-        ".browse-poster-link",
-      );
-      const card = poster?.closest<HTMLElement>("[data-browse-card]");
-      if (
-        !card?.querySelector(".browse-actions") ||
-        card.classList.contains("is-touch-active")
-      )
-        return;
-      event.preventDefault();
-      root
-        .querySelectorAll(".is-touch-active")
-        .forEach((other) => other.classList.remove("is-touch-active"));
-      card.classList.add("is-touch-active");
-    },
-    { signal },
-  );
-  document.addEventListener(
-    "pointerdown",
-    (event) => {
-      for (const card of root.querySelectorAll<HTMLElement>(
-        ".is-touch-active",
-      )) {
-        if (card.contains(event.target as Node)) continue;
-        card.classList.remove("is-touch-active");
-        if (card.contains(document.activeElement))
-          (document.activeElement as HTMLElement)?.blur();
-      }
-    },
-    { signal },
-  );
+  bindBrowseCardTouch(region, signal);
   sort.addEventListener("change", changed, { signal });
   root
     .querySelectorAll<HTMLAnchorElement>("[data-browse-type]")
@@ -814,79 +723,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       autoLoadMore();
     });
   }, { passive: true, signal });
-  const editorTitle = (item: Item) => editorStore.get({...item, entry:item.entry ?? null});
-  const warmEditor = (event: Event) => {
-    const card = (event.target as Element).closest<HTMLElement>('[data-browse-card]');
-    const item = card && items.get(card);
-    if (!item || !card?.querySelector('[data-browse-action]')) return;
-    const image = card.querySelector<HTMLImageElement>('[data-poster]');
-    editorStore.warmArtwork(editorTitle(item), image?.currentSrc || image?.src);
-  };
-  region.addEventListener('pointerover', warmEditor, {signal});
-  region.addEventListener('focusin', warmEditor, {signal});
-  document.addEventListener('anylist:editor-state', event => {
-    const title = (event as CustomEvent<EditorTitle>).detail;
-    let updated: Item = {...title, tmdb_id:title.tmdb_id ?? null,
-      poster:title.poster ?? undefined, backdrop:title.backdrop ?? undefined, list_status:title.entry?.status,
-      score:title.entry?.score, rating_mode:title.entry?.rating_mode};
-    for (const item of items.values()) {
-      if (!(title.id && item.id === title.id) && !(title.tmdb_id && item.tmdb_id === title.tmdb_id && item.type === title.type)) continue;
-      updated = {...item, id:title.id, entry:title.entry, list_status:title.entry?.status,
-        score:title.entry?.score, rating_mode:title.entry?.rating_mode};
-      break;
-    }
-    syncItem(updated);
-  }, {signal});
-  // Read snapshots immediately. Import and save only after an explicit write.
-  region.addEventListener(
-    "click",
-    async (event) => {
-      const button = (event.target as Element).closest<HTMLButtonElement>(
-        "[data-browse-action]",
-      );
-      const card = button?.closest<HTMLElement>("[data-browse-card]");
-      if (!button || !card) return;
-      const item = items.get(card);
-      if (!item || button.disabled) return;
-      const title = editorTitle(item);
-      try {
-        if (button.dataset.browseAction === "edit")
-          document.dispatchEvent(
-            new CustomEvent("anylist:open-editor", {
-              detail: { mediaId: item.id, opener: button, title },
-            }),
-          );
-        else if (button.dataset.browseAction === "plan" || button.dataset.browseAction === "watch") {
-          const saved = await editorStore.write(title, {status:button.dataset.browseAction === 'watch' ? 'watching' : 'planning'});
-          if (signal.aborted) return;
-          document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:saved}));
-        } else {
-          // The existing picker handles season-average override confirmation.
-          const entry = title.entry;
-          (window as any).anyListQuickRate?.({
-            title: item.title,
-            poster: item.poster,
-            posterSrc: card.querySelector<HTMLImageElement>('[data-poster]')?.currentSrc,
-            score: entry?.score,
-            ratingMode: entry?.rating_mode || "manual",
-            onScore: async (score: number | null) => {
-              const saved = await editorStore.write(title, {
-                  manual_score: score ?? 0,
-                  ...(score != null
-                    ? { status: "completed", rating_mode: "manual" }
-                    : {}),
-              });
-              if (signal.aborted) return;
-              document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:saved}));
-            },
-          });
-        }
-      } catch (cause) {
-        notice.textContent = (cause as Error).message;
-      }
-    },
-    { signal },
-  );
+  bindBrowseCardActions(region, items, signal, syncItem, message => { notice.textContent = message; notice.hidden = false; });
   paintChips();
   updateFooter();
   if (error.hidden === false) suspended = true;

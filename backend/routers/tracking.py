@@ -22,6 +22,7 @@ from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
+from schemas_contributors import ContributorKind, ContributorPage, ListScope
 
 router = APIRouter()
 
@@ -826,6 +827,41 @@ async def catalog_access(db, viewer):
     settings = await db.get(GlobalSettings, 1)
     if not settings or not settings.enable_logged_out_navigation:
         raise HTTPException(401, "Sign in to browse")
+
+
+@router.get('/contributors/{kind}/{contributor_key}')
+async def contributor_details(
+    kind: ContributorKind,
+    contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+    media_type: MediaScope = 'all',
+    list_scope: ListScope = 'all',
+    status: Literal['', 'watching', 'completed', 'planning', 'paused', 'dropped'] = '',
+    page: Annotated[int, Query(ge=1, le=500)] = 1,
+    cursor: Annotated[str | None, Query(max_length=400)] = None,
+    source: Literal['', 'local', 'provider'] = '',
+) -> ContributorPage:
+    from core.contributor_details import contributor_page
+
+    await catalog_access(db, viewer)
+    if int(contributor_key.split(':')[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid contributor identifier')
+    if not viewer and (list_scope != 'all' or status):
+        raise HTTPException(401, 'Sign in to filter your list')
+    response.headers['Cache-Control'] = 'private, no-store'
+    try:
+        result = await contributor_page(db, viewer, kind=kind, key=contributor_key,
+                                        media_type=media_type, list_scope=list_scope, status=status,
+                                        page=page, cursor=cursor, source=source)
+    except ValueError:
+        raise HTTPException(422, 'Invalid timeline cursor') from None
+    except RuntimeError:
+        raise HTTPException(502, 'Unable to load more works. Try again.') from None
+    if result is None:
+        raise HTTPException(404, 'Contributor not found')
+    return ContributorPage.model_validate(result)
 
 
 @router.get('/studios/{studio_key}')

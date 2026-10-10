@@ -1,6 +1,4 @@
 ---
-import Tracker from '../../layouts/Tracker.astro';
-const name = (Astro.url.searchParams.get('name') || 'Actor').slice(0, 200);
+import ContributorPage from '../../components/ContributorPage.astro';
 ---
-<Tracker title={name}><div class="page-width actor-placeholder-page"><h1>{name}</h1><p>Actor details are coming soon.</p></div></Tracker>
-<style>.actor-placeholder-page { padding-top:40px; } h1 { color:var(--bright); } p { color:var(--muted); }</style>
+<ContributorPage kind="actor" />
