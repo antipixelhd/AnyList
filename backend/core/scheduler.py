@@ -601,6 +601,14 @@ async def _show_metadata_refresher():
                 from core.runtime_backfill import backfill_history_runtimes
                 runtime_coverage = await backfill_history_runtimes(db, api_key, tvdb_api_key=tvdb_key)
                 log.info("Historical runtime backfill: %s", runtime_coverage)
+                from core.country_backfill import backfill_legacy_countries, backfill_catalogue_countries
+                from core.catalogue_providers import CatalogueProviders, ProviderHTTP
+                country_coverage = await backfill_legacy_countries(db, api_key, tvdb_api_key=tvdb_key)
+                log.info("Country metadata backfill: %s", country_coverage)
+                catalogue_countries = await backfill_catalogue_countries(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
+                ))
+                log.info("Catalogue country backfill: %s", catalogue_countries)
                 if not settings_store.check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     # Cached confirmed dates can still reach their premiere

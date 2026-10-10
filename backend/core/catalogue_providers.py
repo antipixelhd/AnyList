@@ -292,7 +292,7 @@ class ProviderHTTP:
 
 
 IGDB_FIELDS = (
-    "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,"
+    "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,"
     + ",".join(
         f"{field}.{projection}"
         for field in (

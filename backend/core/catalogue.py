@@ -430,7 +430,21 @@ async def ingest_document(db, doc, provider):
             preserve_missing=True,
         )
     await db.flush()
+    if work.kind == "book":
+        await rollup_book_countries(db, work)
     return work
+
+
+async def rollup_book_countries(db, work):
+    """Work-level countries cover ingested editions; editions keep their own."""
+    from core.countries import country_codes
+    attrs = await db.scalars(select(CatalogueEntity.attributes).join(
+        BookEdition, BookEdition.entity_id == CatalogueEntity.id,
+    ).where(BookEdition.work_id == work.id))
+    countries = sorted({code for data in attrs for code in country_codes(data.get("publication_countries"))})
+    if countries:
+        merge_fields(work, {"attributes": {"countries": countries, "publication_countries": countries,
+                                          "country_basis": "publication"}}, "openlibrary")
 
 
 async def link_performance(db, credit_id, appearance_id, language=""):

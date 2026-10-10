@@ -53,7 +53,7 @@ def anime(data):
 def countries_of(data, kind):
     origin = country_codes(data.get("origin_countries") or data.get("origin_country"))
     production = country_codes([v.get("iso_3166_1") if isinstance(v, dict) else v for v in data.get("production_countries", [])])
-    return (production or origin) if kind == "movie" else (origin or production)
+    return origin or production
 
 
 def regular_total(data):

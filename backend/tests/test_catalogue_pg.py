@@ -98,6 +98,81 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
         await self.admin.dispose()
 
+    async def test_country_backfill_game_fetch_book_isbn_and_protected_origin(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from core.country_backfill import backfill_catalogue_countries
+        from models.catalogue import CatalogueIdentity
+
+        async with self.Session() as db:
+            game_raw = {"id": 1, "name": "Game", "involved_companies": [
+                {"id": 1, "developer": True, "company": {"id": 10, "name": "Canadian studio"}},
+                {"id": 2, "publisher": True, "company": {"id": 11, "name": "French publisher"}},
+            ]}
+            game = await catalogue.ingest_document(db, normalize_igdb(game_raw), "igdb")
+            book = await catalogue.ingest_document(db, normalize_hardcover({
+                "id": 1, "title": "Book", "_editions": [{"id": 1, "isbn_13": "9783551354013"}],
+            }), "hardcover")
+            movie = await catalogue.ingest_document(db, normalize_tmdb({"id": 7, "title": "Movie"}, "movie"), "tmdb")
+            movie.attributes = {"origin_countries": ["GB"]}
+            movie.protected_fields = ["attributes.origin_countries"]
+            db.add(MetadataSnapshot(provider="tmdb", kind="movie", external_id="7", entity_id=movie.id,
+                                    payload={"id": 7, "title": "Movie", "origin_country": ["US"]}))
+            await db.commit()
+            game_raw["involved_companies"][0]["company"]["country"] = 124
+            game_raw["involved_companies"][1]["company"]["country"] = 250
+            providers = SimpleNamespace(http=None, validate=lambda *_: None, igdb=AsyncMock(return_value=[game_raw]),
+                                        openlibrary_isbn=AsyncMock(return_value="OL1M"),
+                                        detail=AsyncMock())
+            with patch("core.openlibrary.get", AsyncMock(return_value={
+                "key": "/books/OL1M", "isbn_13": ["9783551354013"], "publish_country": "gw",
+            })):
+                result = await backfill_catalogue_countries(db, providers)
+            self.assertEqual(result["failed"], 0)
+            self.assertEqual(game.attributes["countries"], ["CA"])
+            self.assertEqual(game.attributes["publisher_countries"], ["FR"])
+            self.assertEqual(book.attributes["countries"], ["DE"])
+            self.assertEqual(movie.attributes["countries"], ["GB"])
+            self.assertEqual(movie.attributes["origin_countries"], ["GB"])
+            providers.openlibrary_isbn.assert_awaited_once_with("9783551354013")
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueIdentity).where(
+                CatalogueIdentity.namespace == "openlibrary.book")), 0)
+            self.assertEqual((await backfill_catalogue_countries(db, providers))["examined"], 0)
+
+    async def test_country_rollup_retains_countries_from_all_ingested_edition_pages(self):
+        from core.openlibrary import normalize
+        async with self.Session() as db:
+            for id, country in ((1, "nyu"), (2, "gw")):
+                doc = normalize({"key": "/works/OL1W", "title": "Book", "_editions": [
+                    {"key": f"/books/OL{id}M", "works": [{"key": "/works/OL1W"}], "publish_country": country},
+                ]})
+                work = await catalogue.ingest_document(db, doc, "openlibrary")
+            self.assertEqual(work.attributes["countries"], ["DE", "US"])
+            editions = list(await db.scalars(select(CatalogueEntity).where(CatalogueEntity.kind == "edition")))
+            self.assertEqual([e.attributes["countries"] for e in editions], [["US"], ["DE"]])
+
+    async def test_legacy_country_sweep_selects_missing_rows_and_retries_weekly(self):
+        from unittest.mock import patch
+        from core import country_backfill
+        async with self.Session() as db:
+            missing = Media(media_type=MediaType.movie, title="Missing", tmdb_id=1, tmdb_data={"runtime": 80})
+            known = Media(media_type=MediaType.movie, title="Known", tmdb_id=2, tmdb_data={"origin_country": ["GB"]})
+            unresolved = Media(media_type=MediaType.movie, title="Unresolved", tmdb_id=3)
+            show = Show(title="Series", tmdb_id=10, tmdb_data={})
+            db.add_all([missing, known, unresolved, show])
+            await db.commit()
+            with patch.object(country_backfill.tmdb, "get_movie", AsyncMock(side_effect=[
+                {"id": 1, "origin_country": ["US"]}, {"id": 3},
+            ])) as movies, patch.object(country_backfill.tmdb, "get_show", AsyncMock(return_value={"id": 10, "origin_country": ["JP"]})) as shows:
+                result = await country_backfill.backfill_legacy_countries(db, "key")
+                self.assertEqual((result["examined"], result["recovered"]), (3, 2))
+                self.assertEqual(missing.tmdb_data["runtime"], 80)
+                self.assertEqual(known.tmdb_data["origin_country"], ["GB"])
+                self.assertEqual(show.tmdb_data["origin_country"], ["JP"])
+                self.assertEqual((await country_backfill.backfill_legacy_countries(db, "key"))["examined"], 0)
+                self.assertEqual(movies.await_count, 2)
+                shows.assert_awaited_once()
+
     async def test_book_providers_share_verified_isbn_work_and_edition_in_both_orders(
         self,
     ):

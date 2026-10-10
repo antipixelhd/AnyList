@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from .config import settings
 from .catalogue_normalize import document, entity, identity, isbn
 from .catalogue_providers import ProviderError
+from .countries import publication_countries
 
 BASE = "https://openlibrary.org"
 EDITION_LIMIT = 20
@@ -248,6 +249,7 @@ def normalize(raw):
                 for key in (
                     "publishers",
                     "publish_places",
+                    "publish_country",
                     "publish_date",
                     "languages",
                     "edition_name",
@@ -266,6 +268,9 @@ def normalize(raw):
                 )
             },
         )
+        countries = publication_countries(row)
+        edition["attributes"].update(publication_countries=countries, countries=countries,
+                                     country_basis="publication" if countries else None)
         for length in (10, 13):
             for value in row.get(f"isbn_{length}", []):
                 value = isbn(value, length)
@@ -288,5 +293,8 @@ def normalize(raw):
                 else None,
             }
         )
+    countries = sorted({c for e in doc["editions"] for c in e["entity"]["attributes"]["publication_countries"]})
+    doc["work"]["attributes"].update(publication_countries=countries, countries=countries,
+                                      country_basis="publication" if countries else None)
     doc["coverage"] = raw.get("_coverage", {})
     return doc

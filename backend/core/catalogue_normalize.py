@@ -3,7 +3,7 @@
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from core.countries import country_codes
+from core.countries import country_codes, game_countries, numeric_country, screen_countries
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -158,6 +158,7 @@ def normalize_tmdb(raw, kind):
                 "episode_run_time": raw.get("episode_run_time"),
                 "original_language": raw.get("original_language"),
                 "regular_episode_count": regular_episode_count(raw.get("seasons")),
+                **screen_countries(raw),
             },
         )
     )
@@ -258,6 +259,7 @@ def normalize_tvdb(raw):
             attributes={
                 "release_date": raw.get("firstAired"),
                 "origin_countries": country_codes(raw.get("originalCountry")),
+                **screen_countries({"origin_country": country_codes(raw.get("originalCountry"))}),
                 "original_language": raw.get("originalLanguage"),
                 "genres": raw.get("genres"),
             },
@@ -325,6 +327,7 @@ def normalize_igdb(raw):
                 "release_date": date(raw.get("first_release_date")),
                 "genres": raw.get("genres"),
                 "artwork": [image(a) for a in raw.get("artworks") or []],
+                **game_countries(raw),
             },
         )
     )
@@ -347,6 +350,7 @@ def normalize_igdb(raw):
                             c,
                             description=c.get("description"),
                             artwork=c.get("logo"),
+                            attributes={"countries": [code] if (code := numeric_country(c.get("country"))) else []},
                         ),
                         "role": role,
                         "source_key": f"{p['id']}:{role}",
