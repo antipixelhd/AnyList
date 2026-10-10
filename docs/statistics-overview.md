@@ -23,8 +23,9 @@ Scores retain fractional season means and use 20 half-point intervals `(lower,
 upper]`; deviation is population deviation. Country shares divide a title equally
 among its normalized ISO countries, while counts may overlap. Movies prefer
 production countries; series prefer origin countries. Missing countries and
-release years are explicit Unknown groups. Unknown years are separated from the
-chronological line. Empty years have zero count/time and null unrated means.
+release years remain explicit Unknown groups in the API but are omitted from
+visible breakdowns. Visible pie percentages use the represented known categories.
+Empty years have zero count/time and null unrated means.
 
 Watch Year uses authoritative UTC dates only. A collapsed repeat event attributes
 one play to its timestamp; remaining repeats and inferred/shared/provisional or
@@ -66,8 +67,10 @@ refreshes preserve known runtimes when a provider omits or reports zero minutes.
 ## Frontend and validation
 
 The page has per-chart Titles/Hours/Mean controls (Scores has Titles/Hours),
-Movies/Series/All navigation, and a Watch Year-only range. Server-rendered tables
-provide the numerical fallback. Requests cancel superseded filters and clear
+Movies/Series/All navigation, and a Watch Year-only range. Numeric tables remain
+available to screen readers; Data dropdowns and About the data are removed.
+Data updates morph existing datasets over 900 ms with ease-in-out cubic easing;
+controls and hover states use subtle shorter transitions. Requests cancel superseded filters and clear
 rendered values on denied access; client navigation cleans up charts/listeners.
 Legend controls support pointer, keyboard, and touch activation. Charts honor
 reduced motion and redraw on theme changes.

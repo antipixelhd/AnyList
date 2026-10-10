@@ -1,17 +1,11 @@
 import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
-import { displayNumber, distributionRows, headlineValues, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
+import { displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
 import { createOverviewLoader } from './stats-overview-request';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
-const coverageLabels: Record<string, string> = {
-  runtime_known_plays: 'Plays with known runtime', runtime_estimated_plays: 'Plays with estimated episode runtime', runtime_missing_plays: 'Plays missing runtime',
-  authoritative_dated_plays: 'Plays with authoritative dates', unattributed_date_plays: 'Plays excluded from annual chronology',
-  planned_unknown_titles: 'Planning titles with incomplete workload', planned_unknown_episodes: 'Planning episodes missing runtime',
-  orphan_episode_plays: 'Episode plays without a resolved series', uncatalogued_titles: 'Titles using retained local metadata',
-};
 
 function mount(root: HTMLElement) {
   if (mounted.has(root)) return;
@@ -23,7 +17,10 @@ function mount(root: HTMLElement) {
   let stopped = false;
   const events = new AbortController();
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const motion = (initial: boolean) => reducedMotion.matches || initial ? false as const : { duration: 900, easing: 'easeInOutCubic' as const };
+  const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 160 } } });
   const charts = new Map<string, Chart<'bar' | 'line'>>();
+  const labelColors = new Map<string, string>();
   const pies = new Map<string, Chart<'pie'>>();
   const metrics = new Map<string, ChartMetric>(chartKeys.map(key => [key, 'titles']));
   const from = node<HTMLSelectElement>('[data-watch-from]'), through = node<HTMLSelectElement>('[data-watch-through]');
@@ -41,7 +38,8 @@ function mount(root: HTMLElement) {
     return fixed[key] || palette[([...key].reduce((sum, letter) => sum * 31 + letter.charCodeAt(0), 0) >>> 0) % palette.length];
   };
   function dataRows(data: Overview, key: typeof chartKeys[number]): MetricGroup[] {
-    return key === 'watch_years' ? watchYearRows(data[key], from.value, through.value) : data[key];
+    const rows = knownRows(data[key]);
+    return key === 'watch_years' ? watchYearRows(rows, from.value, through.value) : rows;
   }
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
@@ -57,12 +55,11 @@ function mount(root: HTMLElement) {
   }
   function drawMetric(data: Overview, key: typeof chartKeys[number], initial = false) {
     const rows = dataRows(data, key), metric = metrics.get(key)!;
-    const plotted: (MetricGroup | null)[] = [...rows];
-    const unknownIndex = plotted.findIndex(row => row?.key === 'Unknown');
-    if (key === 'release_years' && unknownIndex > 0) plotted.splice(unknownIndex, 0, null);
+    const plotted = rows;
     const canvas = node<HTMLCanvasElement>(`[data-overview-chart="${key}"]`);
     const isLine = key.includes('years');
     const cyan = color('--stats-cyan'), muted = color('--muted'), bright = color('--bright'), panel = color('--panel');
+    labelColors.set(key, bright);
     const empty = rows.every(row => row.titles === 0 || (metric === 'mean_score' && row.mean_score === null));
     const message = node(`[data-chart-empty="${key}"]`);
     message.hidden = !empty;
@@ -70,7 +67,7 @@ function mount(root: HTMLElement) {
     canvas.setAttribute('aria-label', `${node(`[data-chart-section="${key}"] h3`).textContent}: ${metricLabels[metric]}`);
     const options: ChartOptions<'bar' | 'line'> = {
       responsive: true, maintainAspectRatio: false,
-      animation: reducedMotion.matches || initial ? false : { duration: 200 },
+      animation: motion(initial), transitions: activeMotion(),
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: false }, tooltip: {
         backgroundColor: panel, titleColor: bright, bodyColor: bright, borderColor: muted, borderWidth: 1,
@@ -87,20 +84,20 @@ function mount(root: HTMLElement) {
     const existing = charts.get(key);
     if (existing) {
       existing.data.labels = plotted.map(row => row?.label || '');
-      existing.data.datasets = [dataset];
+      Object.assign(existing.data.datasets[0], dataset);
       existing.options = options;
       existing.update(initial || reducedMotion.matches ? 'none' : undefined);
     } else {
       charts.set(key, new Chart<'bar' | 'line'>(canvas, { type: isLine ? 'line' : 'bar', data: { labels: plotted.map(row => row?.label || ''), datasets: [dataset] }, options,
         plugins: [{ id: 'overview-values', afterDatasetsDraw(chart) {
           const ctx = chart.ctx;
-          ctx.save(); ctx.fillStyle = color('--bright'); ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+          ctx.save(); ctx.fillStyle = labelColors.get(key)!; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
           let lastRight = -Infinity;
           chart.getDatasetMeta(0).data.forEach((element, index) => {
             const value = chart.data.datasets[0].data[index];
             if (typeof value !== 'number' || value <= 0) return;
             const label = displayNumber(value, chart.data.datasets[0].label === metricLabels.mean_score ? 2 : chart.data.datasets[0].label === metricLabels.hours ? 1 : 0);
-            const { x, y } = element.tooltipPosition(true), half = ctx.measureText(label).width / 2;
+            const { x, y } = element.tooltipPosition(false), half = ctx.measureText(label).width / 2;
             if (x === null || y === null) return;
             if (x - half > lastRight + 4 && x + half < chart.width) { ctx.fillText(label, x, Math.max(y - 8, 12)); lastRight = x + half; }
           });
@@ -113,16 +110,16 @@ function mount(root: HTMLElement) {
   function drawDistribution(data: Overview, key: 'statuses' | 'formats' | 'countries', initial = false) {
     const rows = distributionRows(data, key);
     const labels = rows.map(row => row.label);
-    const values = rows.map(row => 'share' in row ? row.share : row.titles);
+    const values = rows.map(row => row.share ?? row.titles);
     const colors = rows.map(row => categoryColor(row.key));
     const canvas = node<HTMLCanvasElement>(`[data-overview-distribution="${key}"]`);
     node(`[data-distribution-empty="${key}"]`).hidden = values.some(value => value > 0);
     const options: ChartOptions<'pie'> = { responsive: true, maintainAspectRatio: false,
-      animation: initial || reducedMotion.matches ? false : { duration: 200 },
+      animation: motion(initial), transitions: activeMotion(),
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: item => `${labels[item.dataIndex]}: ${displayNumber(rows[item.dataIndex].percent, 1)}%` } } } };
     let pie = pies.get(key);
     if (!pie) { pie = new Chart<'pie'>(canvas, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] }, options }); pies.set(key, pie); }
-    else { pie.data.labels = labels; pie.data.datasets = [{ data: values, backgroundColor: colors, borderWidth: 0 }]; pie.options = options; pie.update(initial || reducedMotion.matches ? 'none' : undefined); }
+    else { pie.data.labels = labels; Object.assign(pie.data.datasets[0], { data: values, backgroundColor: colors, borderWidth: 0 }); pie.options = options; pie.update(initial || reducedMotion.matches ? 'none' : undefined); }
     node(`[data-distribution-rows="${key}"]`).replaceChildren(...rows.map((row, index) => {
       const wrapper = document.createElement('div'), dt = document.createElement('dt'), button = document.createElement('button'), swatch = document.createElement('i');
       button.type = 'button';
@@ -164,12 +161,6 @@ function mount(root: HTMLElement) {
     }
     chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
     (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
-    const time = node<HTMLTimeElement>('[data-computed-at]');
-    time.dateTime = next.computed_at || '';
-    time.textContent = next.computed_at ? new Date(next.computed_at + (/[Z+-]\d?/.test(next.computed_at.slice(10)) ? '' : 'Z')).toLocaleString('en', { timeZone: 'UTC' }) + ' UTC' : '—';
-    node('[data-overview-coverage]').replaceChildren(...Object.entries(coverageLabels).map(([key, label]) => {
-      const div = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = displayNumber(data.coverage[key] || 0); div.append(dt, dd); return div;
-    }));
     node('[data-overview-announcement]').textContent = `${data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
   }
   const loader = createOverviewLoader(root.dataset.username!, { render,
@@ -182,7 +173,7 @@ function mount(root: HTMLElement) {
         node('.overview-results').hidden = true;
         node('.overview-pending').hidden = true;
         root.removeAttribute('data-initial');
-        root.querySelectorAll('[data-chart-table],[data-distribution-rows],[data-overview-coverage]').forEach(element => element.replaceChildren());
+        root.querySelectorAll('[data-chart-table],[data-distribution-rows]').forEach(element => element.replaceChildren());
         root.querySelectorAll('[data-headline-value]').forEach(element => element.textContent = '—');
         charts.forEach(chart => chart.destroy()); charts.clear(); pies.forEach(chart => chart.destroy()); pies.clear();
       }
@@ -209,7 +200,7 @@ function mount(root: HTMLElement) {
     else if (target.dataset.pie && response.overview) {
       const key = target.dataset.pie as 'statuses' | 'formats' | 'countries';
       const index = distributionRows(response.overview, key).findIndex(row => row.key === target.dataset.category);
-      const chart = pies.get(key); chart?.setActiveElements([{ datasetIndex: 0, index }]); chart?.update('none');
+      const chart = pies.get(key); chart?.setActiveElements([{ datasetIndex: 0, index }]); chart?.render();
     }
   }, { signal: events.signal });
   function highlightLegend(event: Event) {
@@ -218,11 +209,11 @@ function mount(root: HTMLElement) {
     const key = target.dataset.pie as 'statuses' | 'formats' | 'countries';
     const index = distributionRows(response.overview, key).findIndex(row => row.key === target.dataset.category);
     const chart = pies.get(key);
-    chart?.setActiveElements([{ datasetIndex: 0, index }]); chart?.update('none');
+    chart?.setActiveElements([{ datasetIndex: 0, index }]); chart?.render();
   }
   root.addEventListener('focusin', highlightLegend, { signal: events.signal });
   root.addEventListener('pointerover', highlightLegend, { signal: events.signal });
-  function clearHighlight() { pies.forEach(chart => { chart.setActiveElements([]); chart.update('none'); }); }
+  function clearHighlight() { pies.forEach(chart => { chart.setActiveElements([]); chart.render(); }); }
   root.addEventListener('focusout', clearHighlight, { signal: events.signal });
   root.addEventListener('pointerout', clearHighlight, { signal: events.signal });
   for (const select of [from, through]) select.addEventListener('change', () => {

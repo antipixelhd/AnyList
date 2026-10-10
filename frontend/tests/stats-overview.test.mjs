@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { headlineValues, distributionRows, metricValue, watchYearRows } from '../src/lib/stats-overview-data.ts';
+import { headlineValues, distributionRows, knownRows, metricValue, watchYearRows } from '../src/lib/stats-overview-data.ts';
 import { createOverviewLoader } from '../src/lib/stats-overview-request.ts';
 
 test('incomplete runtime is a lower bound and unavailable means remain absent', () => {
@@ -16,6 +16,15 @@ test('incomplete runtime is a lower bound and unavailable means remain absent', 
 test('country percentages use fractional title shares while exposing overlapping counts', () => {
   const rows = distributionRows({ countries: [{ key: 'US', titles: 2, share: 1.5 }, { key: 'GB', titles: 1, share: .5 }] }, 'countries');
   assert.deepEqual(rows.map(row => [row.titles, row.percent]), [[2, 75], [1, 25]]);
+});
+
+test('visible breakdowns omit unknown metadata without changing stored rows or totals', () => {
+  const countries = [{key:'US', titles:2, share:1.5}, {key:'GB', titles:1, share:.5}, {key:'Unknown', titles:3, share:3}];
+  const rows = distributionRows({countries}, 'countries');
+  assert.deepEqual(rows.map(row => [row.key, row.percent]), [['US',75],['GB',25]]);
+  assert.equal(countries.length, 3);
+  assert.deepEqual(knownRows([{key:'2020'}, {key:'Unknown'}]), [{key:'2020'}]);
+  assert.deepEqual(distributionRows({countries:[{key:'Unknown',titles:1,share:1}]}, 'countries'), []);
 });
 
 test('watch-year range leaves lifetime rows untouched', () => {

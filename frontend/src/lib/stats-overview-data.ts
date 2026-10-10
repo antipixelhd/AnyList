@@ -64,10 +64,14 @@ export function headlineValues(data: Overview): { label: string; value: string; 
   ];
 }
 export function distributionRows(data: Overview, kind: 'statuses' | 'formats' | 'countries') {
-  const rows = data[kind];
-  const denominator = rows.reduce((sum, row) => sum + ('share' in row ? row.share : row.titles), 0);
+  const rows = knownRows<Distribution & { share?: number }>(data[kind]);
+  const denominator = rows.reduce((sum, row) => sum + (row.share ?? row.titles), 0);
   return rows.map(row => ({ ...row, label: kind === 'countries' ? countryLabel(row.key) : kind === 'statuses' ? statusLabels[row.key] || row.label : row.label,
-    percent: denominator ? ('share' in row ? row.share : row.titles) / denominator * 100 : 0 }));
+    percent: denominator ? (row.share ?? row.titles) / denominator * 100 : 0 }));
+}
+/** Incomplete metadata remains in the payload, outside the visible breakdown. */
+export function knownRows<T extends { key: string }>(rows: T[]): T[] {
+  return rows.filter(row => row.key !== 'Unknown');
 }
 /** Range selection belongs only to Watch Year; lifetime graphs never change. */
 export function watchYearRows(rows: MetricGroup[], from: string, through: string): MetricGroup[] {

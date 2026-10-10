@@ -6,7 +6,7 @@ import StatsDistribution from '../../../components/StatsDistribution.astro';
 import '../../../styles/stats-overview.css';
 import { tracker } from '../../../lib/tracker';
 import type { OverviewResponse, Overview, MediaScope } from '../../../lib/stats-overview-data';
-import { headlineValues, displayNumber } from '../../../lib/stats-overview-data';
+import { headlineValues } from '../../../lib/stats-overview-data';
 
 const { username } = Astro.params;
 Astro.response.headers.set('Cache-Control', 'private, no-store');
@@ -21,12 +21,6 @@ const overview: Overview = data?.overview || {
   scores: [], episode_counts: [], statuses: [], formats: [], countries: [], release_years: [], watch_years: [], coverage: {},
 };
 const highlights = headlineValues(overview);
-const coverageLabels: Record<string, string> = {
-  runtime_known_plays: 'Plays with known runtime', runtime_estimated_plays: 'Plays with estimated episode runtime', runtime_missing_plays: 'Plays missing runtime',
-  authoritative_dated_plays: 'Plays with authoritative dates', unattributed_date_plays: 'Plays excluded from annual chronology',
-  planned_unknown_titles: 'Planning titles with incomplete workload', planned_unknown_episodes: 'Planning episodes missing runtime',
-  orphan_episode_plays: 'Episode plays without a resolved series', uncatalogued_titles: 'Titles using retained local metadata',
-};
 ---
 <Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
   {data ? <>
@@ -43,12 +37,6 @@ const coverageLabels: Record<string, string> = {
         <div class="overview-chart-grid"><StatsMetricChart id="scores" title="Scores" rows={overview.scores} score /><StatsMetricChart id="episode_counts" title="Episode count" rows={overview.episode_counts} hidden={media === 'movie'} /></div>
         <div class="overview-distribution-grid"><StatsDistribution id="statuses" title="List status" data={overview} /><StatsDistribution id="formats" title="Format" data={overview} /><StatsDistribution id="countries" title="Country" data={overview} /></div>
         <div class="overview-chart-grid overview-years"><StatsMetricChart id="release_years" title="Release year" rows={overview.release_years} /><StatsMetricChart id="watch_years" title="Watch year" rows={overview.watch_years} /></div>
-        <details class="overview-about"><summary>About the data</summary>
-          <p>Updated <time data-computed-at datetime={data.computed_at || undefined}>{data.computed_at ? new Date(data.computed_at).toLocaleString('en', { timeZone: 'UTC' }) + ' UTC' : '—'}</time>.</p>
-          <p>List status uses current entries. Other charts use titles with completed watch evidence and their current scores. Watch time is estimated from runtimes. Countries share a title equally when several apply.</p>
-          <p>Annual history uses authoritative UTC dates. Inferred dates and repeats with no separate timestamp stay in lifetime totals. Planning includes remaining released regular episodes, with incomplete workload shown as a lower bound or unavailable.</p>
-          <dl data-overview-coverage>{Object.entries(coverageLabels).map(([key, label]) => <div><dt>{label}</dt><dd>{displayNumber(overview.coverage[key] || 0)}</dd></div>)}</dl>
-        </details>
       </div>
     </section>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
