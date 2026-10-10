@@ -31,7 +31,10 @@ from models.catalogue import (
     GameRelease,
     SteamPriceSnapshot,
     MetadataSnapshot,
+    ScreenCharacter,
 )
+from schemas_characters import ScreenCharacterDetail, ScreenCharacterList
+from core.screen_characters import character_detail
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -230,6 +233,32 @@ async def detail(entity_id: int, db: DB, current_user: Caller):
     return out
 
 
+@router.get("/characters", response_model=ScreenCharacterList)
+async def screen_characters(db: DB, current_user: Caller,
+    actor_id: Annotated[int | None, Query(gt=0)] = None,
+    work_id: Annotated[int | None, Query(gt=0)] = None,
+    page: Annotated[int, Query(ge=1, le=10000)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 30):
+    if actor_id is None and work_id is None:
+        raise HTTPException(422, "Select an actor or media")
+    query = select(ScreenCharacter.id)
+    if actor_id is not None:
+        query = query.where(ScreenCharacter.actor_id == actor_id)
+    if work_id is not None:
+        query = query.where(select(CatalogueCredit.id).where(CatalogueCredit.work_id == work_id,
+            CatalogueCredit.screen_character_id == ScreenCharacter.id).exists())
+    ids = list(await db.scalars(query.order_by(ScreenCharacter.id).offset((page-1)*limit).limit(limit)))
+    return {'page': page, 'limit': limit, 'results': [await character_detail(db, id) for id in ids]}
+
+
+@router.get("/characters/{character_id}", response_model=ScreenCharacterDetail)
+async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, current_user: Caller):
+    result = await character_detail(db, character_id)
+    if result is None:
+        raise HTTPException(404, "Character not found")
+    return result
+
+
 @router.get("/entities/{entity_id}/{section}")
 async def related(
     entity_id: int,
@@ -268,6 +297,7 @@ async def related(
                 "role_label",
                 "character_label",
                 "character_image_url",
+                "screen_character_id",
                 "provider",
                 "scope",
                 "position",

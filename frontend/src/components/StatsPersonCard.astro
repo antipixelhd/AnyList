@@ -16,14 +16,14 @@ const portrait = responsiveArtwork(actor.image, { size: 'w185', sizes: '(max-wid
     <dl><div><dt>Count</dt><dd {...{[`data-${prefix}-count`]: ""}}>{displayNumber(actor.titles)}</dd></div><div><dt>Mean Score</dt><dd {...{[`data-${prefix}-score`]: ""}}>{displayNumber(actor.mean_score, 2)}</dd></div><div><dt>Time Watched</dt><dd {...{[`data-${prefix}-time`]: ""}}>{genreTime(actor)}</dd></div></dl>
   </div>
   <a class="stats-actor-portrait" {...{[`data-${prefix}-portrait`]: ""}} href={actor.href} aria-label={actor.label}>
-    {portrait ? <img {...portrait} alt="" loading="lazy" /> : <span class="stats-actor-placeholder" aria-hidden="true">{actor.label.slice(0, 1)}</span>}
+    {portrait ? <img {...portrait} data-artwork-fallback="true" alt="" loading="lazy" /> : <span class="stats-actor-placeholder" aria-hidden="true">{actor.label.slice(0, 1)}</span>}
   </a>
   <div class="stats-genre-posters">
     <div class="stats-genre-track" data-genre-track tabindex="0" role="group" aria-label={`Highest-rated ${actor.label} titles`}>
       {actor.top_titles.map(title => {
         const artwork = responsiveArtwork('roles' in title ? title.poster : actorTitleImage(title, mode), { size: 'w185', sizes: '(max-width:650px) 15vw, 70px', route: 'direct' });
         return <a class="stats-genre-poster" href={title.href} aria-label={personTitleLabel(title)} draggable="false" {...{[`data-${prefix}-title-key`]: title.key}}>
-          {artwork ? <img {...artwork} alt="" loading="lazy" draggable="false" /> : <span class="stats-genre-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</span>}
+          {artwork ? <img {...artwork} data-artwork-fallback="true" alt="" loading="lazy" draggable="false" /> : <span class="stats-genre-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</span>}
           <span class="stats-genre-tooltip" aria-hidden="true">{personTitleLabel(title)}</span>
         </a>;
       })}

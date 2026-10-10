@@ -88,6 +88,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     "migrations.versions.mt038_openlibrary_identities"
                 ).upgrade()
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
+                importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -98,6 +99,114 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.admin.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
         await self.admin.dispose()
+
+    async def test_character_fallback_from_unlisted_sequel_preserves_actor_and_title_priority(self):
+        from core.statistics_actors import load_actors, actor_groups
+        from core.screen_characters import character_detail
+        from models.catalogue import ScreenCharacter
+        async with self.Session() as db:
+            works = []
+            for id, person, role in ((1, 123, 'Tony Stark'), (2, 123, 'Tony Stark (voice)'),
+                                     (3, 456, 'Tony Stark'), (4, 123, 'Sherlock Holmes')):
+                works.append(await catalogue.ingest_document(db, normalize_tmdb({'id': id, 'title': f'Film {id}',
+                    'credits': {'cast': [{'id': person, 'name': f'Actor {person}', 'character': role, 'credit_id': str(id)}]}}, 'movie'), 'tmdb'))
+            credits = list(await db.scalars(select(CatalogueCredit).order_by(CatalogueCredit.id)))
+            self.assertEqual(credits[0].screen_character_id, credits[1].screen_character_id)
+            self.assertNotEqual(credits[0].screen_character_id, credits[2].screen_character_id)
+            self.assertNotEqual(credits[0].screen_character_id, credits[3].screen_character_id)
+            credits[1].character_image_url = 'https://example.test/sequel.jpg'
+            credits[2].character_image_url = 'https://example.test/wrong-actor.jpg'
+            credits[3].character_image_url = 'https://example.test/wrong-role.jpg'
+            await db.flush()
+            fact = {'key': 'one', 'name': 'Film 1', 'poster': 'https://example.test/poster.jpg', 'detail_media_id': 1,
+                    'listed': True, 'entity_id': works[0].id, 'kind': 'movie', 'media': [], 'score': 8, 'minutes': 100, 'runtime_missing': 0}
+            await load_actors(db, [fact])
+            groups = actor_groups([fact])
+            self.assertEqual(groups[0]['titles'], 1)
+            self.assertEqual(groups[0]['top_titles'][0]['character_images'], ['https://example.test/sequel.jpg'])
+            credits[0].character_image_url = 'https://example.test/local.jpg'
+            await db.flush()
+            await load_actors(db, [fact])
+            self.assertEqual(actor_groups([fact])[0]['top_titles'][0]['character_images'],
+                             ['https://example.test/local.jpg', 'https://example.test/sequel.jpg'])
+            detail = await character_detail(db, credits[0].screen_character_id)
+            self.assertEqual(len(detail['media']), 2)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ScreenCharacter)), 3)
+
+    async def test_character_projection_aliases_generic_roles_and_reclassified_credit(self):
+        from core.screen_characters import project_characters
+        async with self.Session() as db:
+            works = []
+            for id, role in ((1, 'Tony Stark / Iron Man'), (2, 'Iron Man'), (3, 'Self'), (4, 'Self')):
+                works.append(await catalogue.ingest_document(db, normalize_tmdb({'id': id, 'title': f'Film {id}',
+                    'credits': {'cast': [{'id': 123, 'name': 'Actor', 'character': role, 'credit_id': str(id)}]}}, 'movie'), 'tmdb'))
+            first = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id == works[0].id))
+            db.add(CatalogueCredit(work_id=works[0].id, contributor_id=first.contributor_id, provider='tvdb', source_key='role',
+                                  role='actor', character_label='Iron Man'))
+            await db.flush()
+            await project_characters(db, works[0].id)
+            await project_characters(db, works[1].id)
+            await db.flush()
+            credits = list(await db.scalars(select(CatalogueCredit).order_by(CatalogueCredit.id)))
+            self.assertEqual(first.screen_character_id, credits[-1].screen_character_id)
+            # An existing exact role remains separate when a compound role is ambiguous.
+            self.assertNotEqual(credits[2].screen_character_id, credits[3].screen_character_id)
+            document = normalize_tmdb({'id': 1, 'title': 'Film', 'credits': {'crew': [
+                {'id': 123, 'name': 'Actor', 'job': 'Director', 'department': 'Directing', 'credit_id': '1'}]}}, 'movie')
+            await catalogue.ingest_document(db, document, 'tmdb')
+            await db.refresh(first)
+            self.assertEqual(first.role, 'director')
+            self.assertIsNone(first.screen_character_id)
+
+    async def test_character_database_rejects_wrong_actor_kind_role_and_work(self):
+        from models.catalogue import ScreenCharacter
+        async with self.Session() as db:
+            person = CatalogueEntity(kind='person', name='Actor', attributes={})
+            other = CatalogueEntity(kind='person', name='Other', attributes={})
+            org = CatalogueEntity(kind='organization', name='Company', attributes={})
+            game = CatalogueEntity(kind='game', name='Game', attributes={})
+            movie = CatalogueEntity(kind='movie', name='Movie', attributes={})
+            db.add_all([person, other, org, game, movie]); await db.flush()
+            role = ScreenCharacter(actor_id=person.id, role_key='alice', name='Alice', aliases=['alice'])
+            db.add(role); await db.flush()
+            for work, actor, job in ((movie, other, 'actor'), (movie, person, 'director'), (game, person, 'actor')):
+                with self.assertRaises(IntegrityError):
+                    async with db.begin_nested():
+                        db.add(CatalogueCredit(work_id=work.id, contributor_id=actor.id, provider='reviewed', source_key=job,
+                                              role=job, screen_character_id=role.id))
+                        await db.flush()
+            with self.assertRaises(IntegrityError):
+                async with db.begin_nested():
+                    db.add(ScreenCharacter(actor_id=org.id, role_key='alice', name='Alice', aliases=[]))
+                    await db.flush()
+
+    async def test_tvmaze_backfill_is_bounded_retains_good_art_and_marks_retry(self):
+        from types import SimpleNamespace
+        from core.character_backfill import backfill_tvmaze_images, backfill_screen_characters
+        from models.users import User
+        from models.tracking import TrackedEntry
+        from test_character_backfill import member
+        async with self.Session() as db:
+            await catalogue.ingest_document(db, normalize_tmdb({'id': 42, 'name': 'Show', 'imdb_id': 'tt123',
+                'credits': {'cast': [{'id': 123, 'name': 'Actor', 'character': 'Alice', 'credit_id': '1'}]}}, 'series'), 'tmdb')
+            user = User(email='character@example.test', username='character-test', api_key='fixture-only')
+            media = Media(media_type=MediaType.series, title='Show', tmdb_id=42)
+            db.add_all([user, media]); await db.flush()
+            db.add(TrackedEntry(user_id=user.id, media_id=media.id, status='planning'))
+            await db.commit()
+            adapter = SimpleNamespace(http=SimpleNamespace(request=AsyncMock(side_effect=[
+                {'id': 99, 'externals': {'imdb': 'tt123'}}, [member()]])))
+            result = await backfill_tvmaze_images(db, adapter, limit=1)
+            self.assertEqual(result, {'examined': 1, 'images': 1, 'failed': 0, 'unmatched': 0})
+            enriched = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.provider == 'tvmaze'))
+            self.assertIsNotNone(enriched.screen_character_id)
+            self.assertEqual((await backfill_tvmaze_images(db, adapter))['examined'], 0)
+            adapter.http.request = AsyncMock(side_effect=ProviderError('unavailable'))
+            self.assertEqual((await backfill_tvmaze_images(db, adapter, force=True))['failed'], 1)
+            await db.refresh(enriched)
+            self.assertEqual(enriched.character_image_url, 'https://example.test/role.jpg')
+            self.assertEqual((await backfill_screen_characters(db))['examined'], 1)
+            self.assertEqual((await backfill_screen_characters(db))['examined'], 0)
 
     async def test_tvdb_movie_role_artwork_and_verified_person_identity(self):
         from core.catalogue_normalize import normalize_tmdb, normalize_tvdb

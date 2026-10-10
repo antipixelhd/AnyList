@@ -168,9 +168,28 @@ class GameRelease(Base):
     )
 
 
+class ScreenCharacter(Base):
+    """An actor's named screen role; not a global fictional-character identity."""
+    __tablename__ = "catalogue_screen_characters"
+    __table_args__ = (
+        UniqueConstraint("actor_id", "role_key", name="uq_screen_character_actor_role"),
+        UniqueConstraint("id", "actor_id", name="uq_screen_character_actor"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("catalogue_entities.id", ondelete="RESTRICT"), nullable=False)
+    role_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    aliases: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+
+
 class CatalogueCredit(Base):
     __tablename__ = "catalogue_credits"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["screen_character_id", "contributor_id"],
+            ["catalogue_screen_characters.id", "catalogue_screen_characters.actor_id"],
+            name="fk_credit_screen_character_actor", ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["edition_id", "work_id"],
             ["catalogue_book_editions.entity_id", "catalogue_book_editions.work_id"],
@@ -199,6 +218,7 @@ class CatalogueCredit(Base):
     role_label: Mapped[str | None] = mapped_column(String(200))
     character_label: Mapped[str | None] = mapped_column(String(500))
     character_image_url: Mapped[str | None] = mapped_column(String(2048))
+    screen_character_id: Mapped[int | None] = mapped_column(Integer, index=True)
     provider: Mapped[str] = mapped_column(String(80), nullable=False)
     source_key: Mapped[str] = mapped_column(String(200), nullable=False)
     scope: Mapped[str] = mapped_column(

@@ -31,6 +31,7 @@ ATTRIBUTION = {
         "notice": "This product uses the TMDB API but is not endorsed or certified by TMDB.",
     },
     "tvdb": {"name": "TheTVDB", "url": "https://thetvdb.com"},
+    "tvmaze": {"name": "TVmaze", "url": "https://www.tvmaze.com", "notice": "TVmaze data: CC BY-SA"},
     "igdb": {"name": "IGDB", "url": "https://www.igdb.com"},
     "hardcover": {"name": "Hardcover", "url": "https://hardcover.app"},
     "openlibrary": {"name": "Open Library", "url": "https://openlibrary.org"},
@@ -45,6 +46,7 @@ INTERVALS = {
     "itad": 0.5,
     "tmdb": 0.3,
     "tvdb": 0.5,
+    "tvmaze": 0.5,
 }
 SUPPORT = {
     "tmdb": {"movie", "series"},
@@ -246,9 +248,10 @@ class ProviderHTTP:
                         continue
                     if status != 200:
                         if (
-                            provider == "openlibrary"
+                            provider in ("openlibrary", "tvmaze")
                             and status in (301, 302, 303, 307, 308)
-                            and url.startswith("https://openlibrary.org/isbn/")
+                            and (provider == "openlibrary" and url.startswith("https://openlibrary.org/isbn/")
+                                 or provider == "tvmaze" and url == "https://api.tvmaze.com/lookup/shows")
                         ):
                             return {"_redirect": headers.get("Location", "")}
                         raise ProviderError(

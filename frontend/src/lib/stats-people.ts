@@ -1,14 +1,14 @@
 import type { ActorGroup, ActorTitle, StaffGroup, StaffTitle, Overview } from './stats-overview-data';
 import { displayNumber } from './stats-overview-data';
 import { genreSort, genreTime } from './stats-genres-data';
-import { actorArtwork, actorTitleImage, hasCharacterImages, rankedActors } from './stats-actors-data';
+import { actorArtwork, actorTitleImages, hasCharacterImages, rankedActors } from './stats-actors-data';
 import { personTitleLabel, rankedStaff } from './stats-staff-data';
 import { carousel } from './stats-carousel';
 import { responsiveArtwork } from './responsive-artwork';
 
 export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
   const prefix = section === 'staff' ? 'staff' : 'actor';
-  const titleImage = (title: ActorTitle | StaffTitle, mode: 'media' | 'characters') => 'roles' in title ? title.poster : actorTitleImage(title, mode);
+  const titleImage = (title: ActorTitle | StaffTitle, mode: 'media' | 'characters') => 'roles' in title ? title.poster : actorTitleImages(title, mode);
   const grid = root.querySelector<HTMLElement>(`[data-${section}-grid]`)!;
   const template = root.querySelector<HTMLTemplateElement>(`[data-${prefix}-card-template]`)!;
   const posterTemplate = root.querySelector<HTMLTemplateElement>('[data-genre-poster-template]')!;
@@ -16,22 +16,36 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
   const carousels = new Map<HTMLElement, ReturnType<typeof carousel>>(), animations = new Map<HTMLElement, Animation>();
   let overview: Overview | null = null;
   const query = <T extends HTMLElement = HTMLElement>(card: HTMLElement, selector: string) => card.querySelector<T>(selector)!;
-  function setArtwork(link: HTMLElement, url: string | null, label: string, portrait = false) {
-    const art = responsiveArtwork(url, { size: 'w185', sizes: portrait ? '(max-width:650px) 72px, 110px' : '(max-width:650px) 15vw, 70px', route: 'direct' });
+  function setArtwork(link: HTMLElement, url: string | string[] | null, label: string, portrait = false) {
+    const options = { size: 'w185', sizes: portrait ? '(max-width:650px) 72px, 110px' : '(max-width:650px) 15vw, 70px', route: 'direct' } as const;
+    const sources = (Array.isArray(url) ? url : [url]).map(source => responsiveArtwork(source, options)).filter(source => source !== null);
+    const signature = JSON.stringify(sources);
+    if (link.dataset.artworkSources === signature) return;
+    link.dataset.artworkSources = signature;
     let img = link.querySelector('img'), placeholder = link.querySelector<HTMLElement>(portrait ? '.stats-actor-placeholder' : '.stats-genre-placeholder');
-    if (art) {
+    let index = 0;
+    function next() {
+      const art = sources[index++];
+      if (art) {
       if (!img) { img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.draggable = false; link.prepend(img); }
+      img.dataset.artworkFallback = 'true';
+      img.style.removeProperty('display');
+      img.onerror = next;
       const changed = img.getAttribute('src') !== art.src;
-      img.src = art.src;
       if (changed && !portrait && !reduced.matches) img.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
       if (art.srcset) img.srcset = art.srcset; else img.removeAttribute('srcset');
       if (art.sizes) img.sizes = art.sizes; else img.removeAttribute('sizes');
+      img.src = art.src;
       placeholder?.remove();
-    } else {
+      placeholder = null;
+      } else {
+      if (img) img.onerror = null;
       img?.remove();
       if (!placeholder) { placeholder = document.createElement('span'); placeholder.className = portrait ? 'stats-actor-placeholder' : 'stats-genre-placeholder'; placeholder.setAttribute('aria-hidden', 'true'); link.prepend(placeholder); }
       placeholder.textContent = label.slice(0, 1);
+      }
     }
+    next();
   }
   function createCard(row: ActorGroup | StaffGroup) {
     const card = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
@@ -65,6 +79,7 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
     const cards = rows.map((row, index) => {
       let card = existing.get(row.key);
       if (!card || card.dataset[`${prefix}Signature`] !== JSON.stringify(row)) card = createCard(row);
+      setArtwork(query(card, `[data-${prefix}-portrait]`), row.image, row.label, true);
       const rank = query(card, `[data-${prefix}-rank]`); rank.textContent = String(index + 1); rank.setAttribute('aria-label', `Rank ${index + 1}`);
       row.top_titles.forEach((title, i) => setArtwork(query(card!, '[data-genre-track]').children[i] as HTMLElement, titleImage(title, mode), title.title));
       return card;

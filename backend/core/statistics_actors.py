@@ -7,19 +7,30 @@ from sqlalchemy import or_, select
 from core.statistics_genres import poster
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 from models.title_credits import TitleCredits
+from core.screen_characters import character_images
 
 
-async def load_actors(db, facts):
+async def load_actors(db, facts, *, show_anime=True):
     titles = [t for t in facts if t["listed"]]
     entity_ids = {t["entity_id"] for t in titles if t["entity_id"]}
     credits = list((await db.execute(select(CatalogueCredit, CatalogueEntity).join(
         CatalogueEntity, CatalogueEntity.id == CatalogueCredit.contributor_id).where(
         CatalogueCredit.work_id.in_(entity_ids), CatalogueCredit.role == "actor", CatalogueEntity.kind == "person"))).all())
     by_work = defaultdict(list)
+    images = await character_images(db, {c.screen_character_id for c, _ in credits if getattr(c, 'screen_character_id', None)})
     for credit, person in credits:
+        character_id = getattr(credit, 'screen_character_id', None)
+        candidates = images.get(character_id, [])
+        if not show_anime:
+            from core.statistics_facts import anime
+            candidates = [i for i in candidates if not anime(i['attributes'])]
+        current = poster(credit.character_image_url)
+        alternatives = list(dict.fromkeys(([current] if current else []) + [i['url'] for i in candidates if i['work_id'] == credit.work_id]
+            + [i['url'] for i in candidates if i['work_id'] != credit.work_id]))[:4]
         by_work[credit.work_id].append({"key": f"catalogue:{person.id}", "label": person.name,
             "image": poster(person.image_url), "character": credit.character_label,
-            "character_image": poster(credit.character_image_url), "provider": credit.provider, "position": credit.position})
+            "character_image": current, "character_images": alternatives, "character_id": character_id,
+            "provider": credit.provider, "position": credit.position})
     tmdb = {(t["kind"], m.tmdb_id) for t in titles for m in t["media"] if m.tmdb_id}
     cache = {}
     if tmdb:
@@ -72,10 +83,13 @@ def actor_groups(listed):
             # Keep all role labels, but one poster per actor/title. Prefer actual
             # character artwork; an actor portrait never substitutes for it.
             names = sorted({r["character"].strip() for r in roles if r.get("character") and r["character"].strip()})
-            art = next((r["character_image"] for r in roles if r.get("character_image")), None)
+            local = [r["character_image"] for r in roles if r.get("character_image")]
+            alternatives = list(dict.fromkeys(local + [url for r in roles for url in r.get('character_images', [])]))[:4]
+            art = alternatives[0] if alternatives else None
             top_titles.append({"key": title["key"], "title": title["name"], "poster": title["poster"],
                 "href": f"/title/{title['detail_media_id']}", "score": title["score"], "character": " / ".join(names) or None,
-                "character_image": art})
+                "character_image": art, "character_images": alternatives,
+                "character_ids": sorted({r['character_id'] for r in roles if r.get('character_id')})})
         result.append({"key": key, "label": person["label"], "image": person.get("image"),
             "href": f"/actors/{quote(key, safe='')}?{urlencode({'name': person['label']})}",
             "titles": len(titles), "minutes": sum(t["minutes"] for t in titles),

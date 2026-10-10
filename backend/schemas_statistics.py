@@ -45,6 +45,8 @@ class ActorTitle(GenreTitle):
     score: float | None
     character: str | None
     character_image: str | None
+    character_images: list[str] = Field(default_factory=list)
+    character_ids: list[int] = Field(default_factory=list)
 
 
 class StudioGroup(MetricGroup):

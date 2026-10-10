@@ -232,7 +232,8 @@ def has_value(value):
 
 async def upsert(db, model, values, keys, preserve_missing=False):
     if preserve_missing:
-        values = {k: v for k, v in values.items() if k in keys or has_value(v)}
+        values = {k: v for k, v in values.items() if k in keys or has_value(v)
+                  or (model is CatalogueCredit and k == "screen_character_id")}
         if "attributes" in values:
             values["attributes"] = {
                 k: v for k, v in values["attributes"].items() if has_value(v)
@@ -309,6 +310,8 @@ async def ingest_document(db, doc, provider):
                 "role_label": c.get("role_label"),
                 "character_label": c.get("character_label"),
                 "character_image_url": c.get("character_image_url"),
+                # This derived link is rebuilt below after role/performer changes.
+                "screen_character_id": None,
                 "scope": c.get("scope", "title"),
                 "position": c.get("position"),
             },
@@ -321,6 +324,9 @@ async def ingest_document(db, doc, provider):
         keys = {str(c["source_key"])[:200] for c in doc["credits"] if not c.get("edition_identity")}
         await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id == work.id,
             CatalogueCredit.provider == provider, CatalogueCredit.source_key.not_in(keys)))
+    if work.kind in ("movie", "series"):
+        from core.screen_characters import project_characters
+        await project_characters(db, work.id)
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
         if character.kind != "character":

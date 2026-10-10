@@ -47,10 +47,13 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name != "stats_metadata_revision"]
             Base.metadata.create_all(conn, tables=wanted)
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
+            conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
+            conn.execute(text("DROP TABLE catalogue_screen_characters"))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module("migrations.versions.mt039_statistics_snapshots").upgrade()
                 importlib.import_module("migrations.versions.mt040_statistics_utc_schedule").upgrade()
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
+                importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)

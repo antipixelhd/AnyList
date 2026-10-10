@@ -135,7 +135,7 @@ async def load_facts(db, user_id):
     settings = await db.get(GlobalSettings, 1)
     facts, coverage = title_facts(entries, events, shows, list(title_rows.values()), episodes, links, show_links, identities, entities,
                                  show_anime=bool(settings and settings.show_anime))
-    await load_actors(db, facts)
+    await load_actors(db, facts, show_anime=bool(settings and settings.show_anime))
     await load_studios(db, facts)
     await load_staff(db, facts)
     return facts, coverage

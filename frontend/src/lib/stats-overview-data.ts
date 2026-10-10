@@ -20,7 +20,7 @@ export interface GenreGroup extends MediaGroup {
   browse_filters: { movie: string; series: string };
 }
 export interface StudioGroup extends MediaGroup { href: string; }
-export interface ActorTitle extends Omit<GenreTitle, 'score'> { score: number | null; character: string | null; character_image: string | null; }
+export interface ActorTitle extends Omit<GenreTitle, 'score'> { score: number | null; character: string | null; character_image: string | null; character_images?: string[]; character_ids?: number[]; }
 export interface ActorGroup extends MetricGroup {
   image: string | null; href: string; top_titles: ActorTitle[]; runtime_missing_plays: number;
 }

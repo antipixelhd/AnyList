@@ -8,5 +8,8 @@ export function rankedActors(rows: ActorGroup[], sort: GenreSort) {
   return [...rows].sort((a, b) => value(b) - value(a) || b.titles - a.titles || a.label.localeCompare(b.label) || a.key.localeCompare(b.key)).slice(0, 30);
 }
 export function actorTitleLabel(title: ActorTitle) { return title.character ? `${title.title} – ${title.character}` : title.title; }
-export function actorTitleImage(title: ActorTitle, mode: ActorArtwork) { return mode === 'characters' ? title.character_image || title.poster : title.poster; }
-export function hasCharacterImages(rows: ActorGroup[]) { return rows.some(row => row.top_titles.some(title => !!title.character_image)); }
+export function actorTitleImages(title: ActorTitle, mode: ActorArtwork) {
+  return [...new Set((mode === 'characters' ? [title.character_image, ...(title.character_images || []), title.poster] : [title.poster]).filter((url): url is string => !!url))];
+}
+export function actorTitleImage(title: ActorTitle, mode: ActorArtwork) { return actorTitleImages(title, mode)[0] || null; }
+export function hasCharacterImages(rows: ActorGroup[]) { return rows.some(row => row.top_titles.some(title => !!title.character_image || !!title.character_images?.length)); }

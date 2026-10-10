@@ -12,6 +12,7 @@ const creditGroups: { label: string; services: { name: string; type: string; url
     services: [
       { name: "TMDB", type: "themoviedatabase", url: "https://www.themoviedb.org" },
       { name: "TheTVDB", type: "tvdb", url: "https://thetvdb.com" },
+      { name: "TVmaze", type: "tvmaze", url: "https://www.tvmaze.com" },
       { name: "MDBList", type: "mdblist", url: "https://mdblist.com" },
     ],
   },
@@ -101,7 +102,7 @@ const currentVersion = process.env.APP_VERSION ?? "development";
         <p>Built with Astro, FastAPI, PostgreSQL, Tailwind CSS, and Font Awesome.</p>
         <p>
           This product uses the TMDB API but is not endorsed or certified by TMDB. Metadata may
-          also be provided by TheTVDB. All service names, logos, and trademarks belong to their
+          also be provided by TheTVDB. Character metadata from <a href="https://www.tvmaze.com">TVmaze</a> is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a>. All service names, logos, and trademarks belong to their
           respective owners and identify interoperability only.
         </p>
       </footer>

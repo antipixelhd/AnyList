@@ -614,6 +614,11 @@ async def _show_metadata_refresher():
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
                 ))
                 log.info("Actor metadata backfill: %s", actor_coverage)
+                from core.character_backfill import backfill_screen_characters, backfill_tvmaze_images
+                character_coverage = await backfill_screen_characters(db)
+                character_images = await backfill_tvmaze_images(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key))
+                log.info("Character metadata backfill: %s; TVmaze images: %s", character_coverage, character_images)
                 if not settings_store.check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     # Cached confirmed dates can still reach their premiere
