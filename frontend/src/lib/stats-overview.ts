@@ -10,6 +10,9 @@ import { mountActors, mountStaff } from './stats-actors';
 import { mountStatisticsNavigation } from './stats-navigation';
 import { createMetricTooltip } from './stats-metric-tooltip';
 import { chartMinimumWidth } from './stats-chart-density';
+import { createContentTransition } from './content-motion';
+import { initializeScrollMotion } from './scroll-motion';
+import { cancelUiMotion, reveal } from './ui-motion';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -23,6 +26,15 @@ function mount(root: HTMLElement) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   const events = new AbortController();
+  const switchPanel = createContentTransition(node('.overview-results'), events.signal);
+  initializeScrollMotion(root, events.signal, '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {animateInitial:false, downwardOnly:true, once:true});
+  events.signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
+  root.addEventListener('load', event => {
+    const image = event.target;
+    if (image instanceof HTMLImageElement && image.matches('.stats-genre-poster img') && !image.hasAttribute('data-artwork-managed')) {
+      image.setAttribute('data-motion-fade',''); reveal(image);
+    }
+  }, {capture:true, signal:events.signal});
   mountStatisticsNavigation(root, events.signal);
   const genres = mountGenres(root);
   const actors = mountActors(root);
@@ -153,6 +165,7 @@ function mount(root: HTMLElement) {
     root.dataset.initial = JSON.stringify(next);
     node('.overview-error').hidden = true;
     const ready = next.status === 'ready' && next.overview !== null;
+    const wasPending = node('.overview-results').hidden;
     node('.overview-results').hidden = !ready;
     node('.overview-pending').hidden = ready;
     if (!ready) {
@@ -166,7 +179,9 @@ function mount(root: HTMLElement) {
     root.dataset.media = data.media_type;
     headlineValues(data).forEach((metric, index) => {
       const value = node(`[data-headline-value="${index}"]`);
+      const changed = value.textContent !== metric.value;
       value.textContent = metric.value;
+      if (changed && !initial && section === 'overview') { value.setAttribute('data-motion-fade',''); reveal(value); }
       value.parentElement!.title = metric.detail;
       node(`[data-headline-label="${index}"]`).textContent = metric.label;
     });
@@ -180,17 +195,26 @@ function mount(root: HTMLElement) {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
     }
-    genres.render(data);
-    actors.render(data);
-    studios.render(data);
-    staff.render(data);
+    genres.render(data, !initial);
+    actors.render(data, !initial);
+    studios.render(data, !initial);
+    staff.render(data, !initial);
+    if (wasPending && !initial) reveal(node('.overview-results'));
     syncLinks();
     node('[data-overview-announcement]').textContent = `${data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
   }
-  const loader = createOverviewLoader(root.dataset.username!, { render,
+  const loader = createOverviewLoader(root.dataset.username!, {
+    render: next => {
+      const changedScope = next.overview && next.overview.media_type !== response.overview?.media_type;
+      if (changedScope && section !== 'overview') void switchPanel(() => {
+        if (next.overview?.media_type === media) render(next, true);
+      });
+      else render(next);
+    },
     onBusy: busy => root.setAttribute('aria-busy', String(busy)),
     onError: (message, denied) => {
       const error = node('.overview-error'); error.textContent = message; error.hidden = false;
+      error.setAttribute('data-motion-fade',''); reveal(error);
       if (denied) {
         clearTimeout(timer);
         response.overview = null;
@@ -220,15 +244,19 @@ function mount(root: HTMLElement) {
   function selectSection(next: string, push: boolean) {
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
+    const previous = section;
     section = next === 'genres' || next === 'actors' || next === 'studios' || next === 'staff' ? next : 'overview'; root.dataset.section = section;
     node('[data-stats-heading]').textContent = section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
-    root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
     root.querySelectorAll<HTMLButtonElement>('.profile-section-selector__option').forEach(button => {
       const selected = button.dataset.section === section; button.classList.toggle('is-selected', selected); button.setAttribute('aria-pressed', String(selected));
     });
     if (push) { const url = new URL(location.href); url.searchParams.set('section', section); history.pushState({}, '', url); }
     syncLinks();
-    if (response.overview) render(response, true);
+    const update = () => {
+      root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
+      if (response.overview) render(response, true);
+    };
+    if (previous !== section) void switchPanel(update); else update();
   }
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
@@ -283,7 +311,7 @@ function mount(root: HTMLElement) {
     root.dataset.actorArtwork = actorArtwork(params.get('artwork')); selectSection(params.get('section') || 'overview', false);
     navigate(value === 'movie' || value === 'series' ? value : 'all', false);
   }, { signal: events.signal });
-  reducedMotion.addEventListener('change', () => { if (response.overview) render(response, true); }, { signal: events.signal });
+  reducedMotion.addEventListener('change', () => { cancelUiMotion(root); if (response.overview) render(response, true); }, { signal: events.signal });
   const observer = new MutationObserver(() => { if (response.overview) render(response, true); });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });

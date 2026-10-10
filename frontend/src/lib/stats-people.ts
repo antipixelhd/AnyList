@@ -14,6 +14,10 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
   const posterTemplate = root.querySelector<HTMLTemplateElement>('[data-genre-poster-template]')!;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)'), events = new AbortController();
   const carousels = new Map<HTMLElement, ReturnType<typeof carousel>>(), animations = new Map<HTMLElement, Animation>();
+  const artworkAnimations = new Set<Animation>();
+  reduced.addEventListener('change', () => {
+    animations.forEach(a => a.cancel()); animations.clear(); artworkAnimations.forEach(a => a.cancel());
+  }, {signal:events.signal});
   let overview: Overview | null = null;
   const query = <T extends HTMLElement = HTMLElement>(card: HTMLElement, selector: string) => card.querySelector<T>(selector)!;
   function setArtwork(link: HTMLElement, url: string | string[] | null, label: string, portrait = false) {
@@ -22,22 +26,45 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
     const signature = JSON.stringify(sources);
     if (link.dataset.artworkSources === signature) return;
     link.dataset.artworkSources = signature;
-    let img = link.querySelector('img'), placeholder = link.querySelector<HTMLElement>(portrait ? '.stats-actor-placeholder' : '.stats-genre-placeholder');
+    link.querySelectorAll('[data-artwork-pending]').forEach(pending => pending.remove());
+    let img = link.querySelector<HTMLImageElement>('img:not([data-artwork-retiring]):not([data-artwork-pending])');
+    if (img && !img.getAttribute('src')) { img.remove(); img = null; }
+    let placeholder = link.querySelector<HTMLElement>(portrait ? '.stats-actor-placeholder' : '.stats-genre-placeholder');
     let index = 0;
     function next() {
       const art = sources[index++];
       if (art) {
-      if (!img) { img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.draggable = false; link.prepend(img); }
-      img.dataset.artworkFallback = 'true';
-      img.style.removeProperty('display');
-      img.onerror = next;
-      const changed = img.getAttribute('src') !== art.src;
-      if (changed && !portrait && !reduced.matches) img.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
-      if (art.srcset) img.srcset = art.srcset; else img.removeAttribute('srcset');
-      if (art.sizes) img.sizes = art.sizes; else img.removeAttribute('sizes');
-      img.src = art.src;
-      placeholder?.remove();
-      placeholder = null;
+      if (img?.getAttribute('src') === art.src && (!img.complete || img.naturalWidth > 0)) {
+        img.onerror = () => { if (link.dataset.artworkSources === signature && !events.signal.aborted) next(); };
+        return;
+      }
+      const candidate = document.createElement('img');
+      candidate.alt = ''; candidate.draggable = false; candidate.loading = 'lazy'; candidate.dataset.artworkManaged = ''; candidate.dataset.artworkPending = '';
+      candidate.style.position = 'absolute'; candidate.style.inset = '0'; candidate.style.opacity = '0';
+      const cleanup = () => { candidate.onload = null; candidate.onerror = null; events.signal.removeEventListener('abort',cleanup); if (events.signal.aborted) candidate.remove(); };
+      events.signal.addEventListener('abort',cleanup,{once:true});
+      candidate.onerror = () => { cleanup(); candidate.remove(); if (link.dataset.artworkSources === signature && !events.signal.aborted) next(); };
+      candidate.onload = () => {
+        cleanup();
+        if (link.dataset.artworkSources !== signature || events.signal.aborted || !link.isConnected) { candidate.remove(); return; }
+        link.querySelectorAll('[data-artwork-retiring]').forEach(old => old.remove());
+        const old = img;
+        delete candidate.dataset.artworkPending; candidate.style.removeProperty('position'); candidate.style.removeProperty('inset'); candidate.style.removeProperty('opacity');
+        link.prepend(candidate); placeholder?.remove(); placeholder = null; img = candidate;
+        if (!portrait && !reduced.matches) {
+          if (old) { old.dataset.artworkRetiring = ''; old.style.position = 'absolute'; old.style.inset = '0'; }
+          const fade = (target: HTMLImageElement, frames: Keyframe[], retire = false) => {
+            const animation = target.animate(frames,{duration:240,easing:'ease-out'}); artworkAnimations.add(animation);
+            animation.finished.catch(() => {}).then(() => { artworkAnimations.delete(animation); if (retire) target.remove(); });
+          };
+          fade(candidate,[{opacity:0},{opacity:1}]);
+          if (old) fade(old,[{opacity:1},{opacity:0}],true);
+        } else old?.remove();
+      };
+      if (art.srcset) candidate.srcset = art.srcset;
+      if (art.sizes) candidate.sizes = art.sizes;
+      candidate.src = art.src;
+      link.prepend(candidate);
       } else {
       if (img) img.onerror = null;
       img?.remove();
@@ -112,5 +139,5 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
       history.pushState({}, '', url); root.dispatchEvent(new CustomEvent('statistics-url-change')); render(overview, !!button.dataset[`${prefix}Sort`]);
     } else carousels.get(button.closest<HTMLElement>('.stats-actor-card')!)?.scroll(Number(button.dataset[`${prefix}Scroll`]));
   }, { signal: events.signal });
-  return { render, stop() { events.abort(); animations.forEach(a => a.cancel()); carousels.forEach(c => c.stop()); carousels.clear(); } };
+  return { render, stop() { events.abort(); animations.forEach(a => a.cancel()); artworkAnimations.forEach(a => a.cancel()); carousels.forEach(c => c.stop()); carousels.clear(); } };
 }

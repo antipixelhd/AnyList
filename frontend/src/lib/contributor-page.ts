@@ -4,11 +4,26 @@ import { editorStore } from './editor-store';
 import { applyResponsiveArtwork } from './responsive-artwork';
 import { prepareBrowsePoster } from './browse-loading';
 import { mountContributorBiography } from './contributor-biography';
+import { createContentTransition, mountDetailsMotion } from './content-motion';
+import { initializeScrollMotion } from './scroll-motion';
+import { cancelUiMotion, reveal } from './ui-motion';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
+  const switchView = createContentTransition(region, signal);
+  let requestedView = root.dataset.view;
+  const aliases = root.querySelector<HTMLDetailsElement>('.contributor-aliases');
+  if (aliases) mountDetailsMotion(aliases, signal);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!signal.aborted && root.isConnected) initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
+      animateInitial:!root.hasAttribute('data-contributor-arrivals-ready'), downwardOnly:true, scaleEntrance:true, once:true,
+      appearedAttribute:'data-browse-appeared',
+    });
+    root.setAttribute('data-contributor-arrivals-ready','');
+  }));
+  signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
   const form = root.querySelector<HTMLFormElement>('[data-contributor-filters]')!;
   const template = root.querySelector<HTMLTemplateElement>('[data-contributor-template]')!;
   const more = root.querySelector<HTMLButtonElement>('[data-contributor-more]')!;
@@ -39,15 +54,19 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]').forEach(button => {
     button.addEventListener('click', () => {
       const view = button.dataset.contributorView!;
-      root.dataset.view = view;
-      region.classList.toggle('browse-grid', view === 'grid');
+      if (requestedView === view) return;
+      requestedView = view;
+      void switchView(() => {
+        root.dataset.view = view;
+        region.classList.toggle('browse-grid', view === 'grid');
+      });
       (form.elements.namedItem('view') as HTMLInputElement).value = view;
       root.querySelectorAll('[data-contributor-view]').forEach(other => other.setAttribute('aria-pressed', String((other as HTMLElement).dataset.contributorView === view)));
       const url = new URL(location.href); url.searchParams.set('view', view);
       history.replaceState(history.state, '', url);
     }, {signal});
   });
-  const showError = (message: string) => { error.textContent = message; error.hidden = false; };
+  const showError = (message: string) => { error.textContent = message; error.hidden = false; error.setAttribute('data-motion-fade',''); reveal(error); };
   const visible = (item: ContributorWork) =>
     (params.get('list_scope') !== 'in' || !!item.list_status) &&
     (params.get('list_scope') !== 'out' || !item.list_status) &&

@@ -13,10 +13,13 @@ import Icon from '../Icon.astro';
   .stats-refresh-button:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
   .stats-refresh-status { margin:12px 0 0; color:var(--muted); font-size:14px; }
   .stats-refresh-status[data-error=true] { color:var(--danger, #e57474); }
-  @media(prefers-reduced-motion:reduce) { .stats-refresh-button { transition:none; } }
+  [aria-busy=true] .stats-refresh-button :global(.ui-icon) { animation:stats-refresh-spin 1.2s linear infinite; }
+  @keyframes stats-refresh-spin { to { transform:rotate(360deg); } }
+  @media(prefers-reduced-motion:reduce) { .stats-refresh-button { transition:none; } .stats-refresh-button :global(.ui-icon) { animation:none!important; } }
 </style>
 <script>
   import { refreshStatistics } from '../../lib/statistics-refresh-request';
+  import { cancelUiMotion, reveal } from '../../lib/ui-motion';
   let controller: AbortController | undefined;
   function setup() {
     controller?.abort();
@@ -24,6 +27,7 @@ import Icon from '../Icon.astro';
     if (!root) return;
     controller = new AbortController();
     const { signal } = controller;
+    signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
     const button = root.querySelector<HTMLButtonElement>('[data-refresh-statistics]')!;
     const label = button.querySelector('span:last-child')!;
     const status = root.querySelector<HTMLElement>('[data-refresh-status]')!;
@@ -51,6 +55,7 @@ import Icon from '../Icon.astro';
           label.textContent = 'Refresh statistics';
           root.removeAttribute('aria-busy');
           status.hidden = false;
+          status.setAttribute('data-motion-fade',''); reveal(status);
         }
       }
     }, { signal });

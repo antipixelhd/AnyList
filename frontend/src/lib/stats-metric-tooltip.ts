@@ -1,6 +1,7 @@
 import type { Chart, Plugin } from 'chart.js';
 import type { ChartMetric, MetricGroup } from './stats-overview-data';
 import { displayNumber } from './stats-overview-data.ts';
+import { cancelUiMotion, reveal } from './ui-motion.ts';
 
 export function metricTooltipData(key: string, row: MetricGroup) {
   const title = key === 'scores' ? `Score >${Number(row.key) - .5}–${row.key}`
@@ -21,6 +22,7 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
   const description = canvas.getAttribute('aria-describedby') || '';
   const tooltip = document.createElement('div');
   tooltip.className = 'overview-chart-tooltip'; tooltip.hidden = true;
+  tooltip.setAttribute('data-motion-fade','');
   tooltip.id = `${key}-tooltip`; tooltip.setAttribute('role', 'tooltip');
   const heading = document.createElement('strong'), values = document.createElement('dl');
   tooltip.append(heading, values); plot.append(tooltip);
@@ -30,9 +32,10 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
   let chart: Chart<'bar' | 'line'> | undefined;
   let pointerInput = false, keyboardInput = false, dragging = false, suppressClick = false;
   let drag: {id: number; x: number; scroll: number} | undefined;
-  const hide = () => { tooltip.hidden = true; index = -1; };
+  const hide = () => { cancelUiMotion(tooltip); tooltip.hidden = true; index = -1; };
   const show = (next: number, pointerY?: number) => {
     if (!chart || !rows[next]) { hide(); return; }
+    const entering = tooltip.hidden;
     if (next !== index || tooltip.hidden) {
       const data = metricTooltipData(key, rows[next]); heading.textContent = data.title;
       values.replaceChildren(...data.values.map(value => {
@@ -42,6 +45,7 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
       }));
     }
     index = next; tooltip.hidden = false;
+    if (entering) reveal(tooltip);
     const canvasRect = canvas.getBoundingClientRect(), plotRect = plot.getBoundingClientRect();
     const x = chart.scales.x.getPixelForValue(next) + canvasRect.left - plotRect.left;
     const width = tooltip.offsetWidth, height = tooltip.offsetHeight;

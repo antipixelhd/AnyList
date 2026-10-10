@@ -19,6 +19,7 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
   const carousels = new Map<HTMLElement, ReturnType<typeof carousel>>();
   let overview: Overview | null = null;
   const animations = new Map<HTMLElement, Animation>();
+  reduced.addEventListener('change', () => { animations.forEach(a => a.cancel()); animations.clear(); }, {signal:events.signal});
   const query = <T extends HTMLElement = HTMLElement>(card: HTMLElement, selector: string) => card.querySelector<T>(selector)!;
   function createCard(row: T) {
     const card = cardTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;

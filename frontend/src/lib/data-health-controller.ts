@@ -1,5 +1,7 @@
 import { healthJobMessage, healthSummary, isHealthJobActive } from './data-health';
 import type { DataHealth, HealthAction, HealthJob } from './data-health';
+import { createContentTransition, mountDetailsMotion } from './content-motion';
+import { cancelUiMotion, reveal } from './ui-motion';
 
 let dispose: (() => void) | undefined;
 
@@ -9,6 +11,8 @@ export function mountDataHealth() {
   if (!root) return;
   const controller = new AbortController();
   const { signal } = controller;
+  const transitionChecks = createContentTransition(root.querySelector<HTMLElement>('#health-checks')!,signal);
+  root.querySelectorAll<HTMLDetailsElement>('.health-check').forEach(details => mountDetailsMotion(details, signal));
   let timer: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
   let job: HealthJob | null = null;
@@ -16,7 +20,7 @@ export function mountDataHealth() {
   const showClear = root.querySelector<HTMLInputElement>('#health-show-clear')!;
   const error = root.querySelector<HTMLElement>('#health-error')!;
   const write = (id: string, value: string) => { root.querySelector<HTMLElement>(`#${id}`)!.textContent = value; };
-  const fail = (message: string) => { error.textContent = message; error.hidden = false; };
+  const fail = (message: string) => { error.textContent = message; error.hidden = false; error.setAttribute('data-motion-fade',''); reveal(error); };
 
   function controls() {
     root!.querySelectorAll<HTMLButtonElement>('[data-health-action]').forEach(button => {
@@ -25,6 +29,8 @@ export function mountDataHealth() {
     recheck.disabled = busy;
   }
   function renderJob(value: HealthJob | null) {
+    const appearing = !job && !!value;
+    const completed = isHealthJobActive(job) && !isHealthJobActive(value);
     job = value;
     root!.querySelector<HTMLElement>('#health-job')!.hidden = !job;
     if (job) {
@@ -37,6 +43,7 @@ export function mountDataHealth() {
       ).join(' / '));
     }
     controls();
+    if (appearing || completed) { const state = root!.querySelector<HTMLElement>('#health-job')!; state.setAttribute('data-motion-fade',''); reveal(state); }
   }
   function filter() {
     root!.querySelectorAll<HTMLElement>('.health-check').forEach(check => {
@@ -80,7 +87,7 @@ export function mountDataHealth() {
       }
       if (check.examples.length) body.append(list);
       if (check.count > check.examples.length) body.append(element('p', `Showing ${check.examples.length} of ${check.count.toLocaleString()} ${check.unit}`, 'health-sample-note'));
-      detail.append(body); checks.append(detail);
+      detail.append(body); checks.append(detail); mountDetailsMotion(detail,signal);
     }
     root!.querySelector<HTMLElement>('#health-all-clear')!.hidden = data.checks.some(check => check.count > 0);
     filter(); renderJob(data.job);
@@ -113,7 +120,7 @@ export function mountDataHealth() {
     }, 2500);
   }
   recheck.addEventListener('click', async () => { await refresh(); schedule(); }, { signal });
-  showClear.addEventListener('change', filter, { signal });
+  showClear.addEventListener('change', () => { void transitionChecks(filter); }, { signal });
   root.querySelectorAll<HTMLButtonElement>('[data-health-action]').forEach(button => {
     button.addEventListener('click', async () => {
       if (busy || isHealthJobActive(job)) return;
@@ -125,6 +132,6 @@ export function mountDataHealth() {
   });
   try { const initial = JSON.parse(root.dataset.initial || 'null') as DataHealth | null; if (initial) renderJob(initial.job); } catch { /* Recheck recovers malformed initial state. */ }
   schedule();
-  dispose = () => { controller.abort(); clearTimeout(timer); };
+  dispose = () => { controller.abort(); clearTimeout(timer); cancelUiMotion(root!); };
   document.addEventListener('astro:before-swap', dispose, { once: true, signal });
 }

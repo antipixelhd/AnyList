@@ -25,7 +25,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-facts dt { color:var(--muted); font-size:12px; margin-bottom:5px; }
 .contributor-facts dd { margin:0; line-height:1.55; font-size:14px; overflow-wrap:anywhere; }
 .contributor-links { display:grid; gap:14px; margin-top:28px; }
-.contributor-links a { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--muted); font-size:13px; }
+.contributor-links a { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--muted); font-size:13px; transition:color 180ms ease; }
 .contributor-links a:hover { color:var(--blue); }
 .contributor-page h2 { color:var(--bright); }
 .contributor-biography { max-width:850px; margin-bottom:24px; }
@@ -45,7 +45,8 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-filters label { display:grid; gap:7px; min-width:150px; flex:1; max-width:230px; }
 .contributor-filters label>span { color:var(--muted); font-size:12px; }
 .contributor-filters select { width:100%; min-height:42px; border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--text); padding:8px 12px; font-size:14px; }
-.contributor-apply,.contributor-pagination button,.contributor-pagination>a { border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--text); padding:10px 18px; min-height:42px; cursor:pointer; }
+.contributor-apply,.contributor-pagination button,.contributor-pagination>a { border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--text); padding:10px 18px; min-height:42px; cursor:pointer; transition:background-color 180ms ease,border-color 180ms ease,opacity 180ms ease; }
+.contributor-pagination :is(button,a):hover { background:var(--surface-raised,var(--panel)); border-color:var(--blue); }
 .contributor-page[data-enhanced] .contributor-apply { display:none; }
 .contributor-page[data-view=timeline] .contributor-works-grid { display:grid; gap:30px; }
 .contributor-year { display:grid; grid-template-columns:65px minmax(0,1fr); gap:22px; min-width:0; }
