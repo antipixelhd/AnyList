@@ -30,10 +30,13 @@
 .overview-metrics button[aria-pressed=true] { background:var(--stats-cyan); color:#071725; }
 .overview-plot { height:230px; position:relative; min-width:0; background:var(--stats-plot); padding:12px 8px 6px; border-radius:6px; }
 .overview-plot canvas { max-width:100%; }
+.overview-chart-scroll { height:100%; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scrollbar-width:thin; scrollbar-color:var(--muted) transparent; cursor:grab; }
+.overview-chart-scroll.is-dragging { cursor:grabbing; user-select:none; }
+.overview-chart-canvas { position:relative; height:100%; min-width:var(--chart-min-width); }
 .overview-plot-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; color:var(--muted); font-size:13px; pointer-events:none; }
-.overview-chart-tooltip { position:absolute; z-index:2; pointer-events:none; width:240px; max-width:calc(100% - 16px); padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--panel); box-shadow:0 8px 28px #0003; color:var(--bright); font-size:13px; }
-.overview-chart-tooltip>strong { display:block; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid var(--border); font-size:14px; }
-.overview-chart-tooltip dl { display:grid; gap:10px; margin:0; }
+.overview-chart-tooltip { position:absolute; z-index:2; pointer-events:none; width:190px; max-width:calc(100% - 16px); padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--panel); box-shadow:0 8px 28px #0003; color:var(--bright); font-size:12px; }
+.overview-chart-tooltip>strong { display:block; margin-bottom:8px; font-size:13px; }
+.overview-chart-tooltip dl { display:grid; gap:6px; margin:0; }
 .overview-chart-tooltip dl>div { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .overview-chart-tooltip dt { color:var(--muted); }
 .overview-chart-tooltip dd { margin:0; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }

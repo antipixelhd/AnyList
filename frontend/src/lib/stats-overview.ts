@@ -9,6 +9,7 @@ import { actorArtwork } from './stats-actors-data';
 import { mountActors, mountStaff } from './stats-actors';
 import { mountStatisticsNavigation } from './stats-navigation';
 import { createMetricTooltip } from './stats-metric-tooltip';
+import { chartMinimumWidth } from './stats-chart-density';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -57,7 +58,7 @@ function mount(root: HTMLElement) {
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
       const tr = document.createElement('tr');
-      [key === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label, displayNumber(row.titles), displayNumber(row.minutes / 60, 1), displayNumber(row.mean_score, 2), displayNumber(row.rated_titles)].forEach((value, index) => {
+      [key === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label, displayNumber(row.titles), displayNumber(row.minutes / 60, 1), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
         const cell = document.createElement(index ? 'td' : 'th');
         if (cell instanceof HTMLTableCellElement && !index) cell.scope = 'row';
         cell.textContent = value;
@@ -70,6 +71,7 @@ function mount(root: HTMLElement) {
     const rows = dataRows(data, key), metric = metrics.get(key)!;
     const plotted = rows;
     const canvas = node<HTMLCanvasElement>(`[data-overview-chart="${key}"]`);
+    canvas.parentElement!.style.setProperty('--chart-min-width', `${chartMinimumWidth(rows.length)}px`);
     const tooltip = tooltips.get(key) || createMetricTooltip(canvas, key, events.signal);
     tooltips.set(key, tooltip); tooltip.update(plotted, metric);
     const isLine = key.includes('years');
@@ -82,10 +84,12 @@ function mount(root: HTMLElement) {
     canvas.setAttribute('aria-label', `${node(`[data-chart-section="${key}"] h3`).textContent}: ${metricLabels[metric]}`);
     const options: ChartOptions<'bar' | 'line'> = {
       responsive: true, maintainAspectRatio: false,
+      // Touch scrolling uses native panning; a tap produces a click after release.
+      events: ['mousemove', 'mouseout', 'click'],
       animation: motion(initial), transitions: activeMotion(),
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: false }, tooltip: { enabled:false } },
-      scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: muted, maxRotation: 0, autoSkip: true, maxTicksLimit: key === 'scores' ? 10 : 12, font: { size: 11 } } },
+      scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: muted, maxRotation: 0, autoSkip: true, maxTicksLimit: Math.max(1, rows.length), font: { size: 11 } } },
         y: { beginAtZero: true, grace: '15%', max: metric === 'mean_score' ? 10 : undefined, display: false } },
       layout: { padding: { top: 10 } },
     };
@@ -125,11 +129,14 @@ function mount(root: HTMLElement) {
     const canvas = node<HTMLCanvasElement>(`[data-overview-distribution="${key}"]`);
     node(`[data-distribution-empty="${key}"]`).hidden = values.some(value => value > 0);
     const options: ChartOptions<'pie'> = { responsive: true, maintainAspectRatio: false,
+      events: ['mousemove', 'mouseout', 'click'],
       animation: motion(initial), transitions: activeMotion(),
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: item => `${labels[item.dataIndex]}: ${displayNumber(rows[item.dataIndex].percent, 1)}%` } } } };
     let pie = pies.get(key);
-    if (!pie) { pie = new Chart<'pie'>(canvas, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] }, options }); pies.set(key, pie); }
-    else { pie.data.labels = labels; Object.assign(pie.data.datasets[0], { data: values, backgroundColor: colors, borderWidth: 0 }); pie.options = options; pie.update(initial || reducedMotion.matches ? 'none' : undefined); }
+    if (!pie) { pie = new Chart<'pie'>(canvas, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] }, options,
+      plugins:[{id:'overview-distribution-interaction', beforeEvent(_chart, args) { if (args.replay) return false; }}],
+    }); pies.set(key, pie); }
+    else { pie.tooltip?.setActiveElements([], {x:0,y:0}); pie.setActiveElements([]); pie.data.labels = labels; Object.assign(pie.data.datasets[0], { data: values, backgroundColor: colors, borderWidth: 0 }); pie.options = options; pie.update(initial || reducedMotion.matches ? 'none' : undefined); }
     node(`[data-distribution-rows="${key}"]`).replaceChildren(...rows.map((row, index) => {
       const wrapper = document.createElement('div'), dt = document.createElement('dt'), button = document.createElement('button'), swatch = document.createElement('i');
       button.type = 'button';
@@ -211,6 +218,8 @@ function mount(root: HTMLElement) {
     });
   }
   function selectSection(next: string, push: boolean) {
+    tooltips.forEach(tooltip => tooltip.dismiss());
+    pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     section = next === 'genres' || next === 'actors' || next === 'studios' || next === 'staff' ? next : 'overview'; root.dataset.section = section;
     node('[data-stats-heading]').textContent = section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
     root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
@@ -224,6 +233,8 @@ function mount(root: HTMLElement) {
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
+    tooltips.forEach(tooltip => tooltip.dismiss());
+    pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     media = next;
     clearTimeout(timer);
     if (push) { const url = new URL(location.href); url.searchParams.set('media', media); history.pushState({}, '', url); }

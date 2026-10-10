@@ -1,6 +1,7 @@
 ---
 import type { MetricGroup } from '../lib/stats-overview-data';
 import { displayNumber, knownRows } from '../lib/stats-overview-data';
+import { chartMinimumWidth } from '../lib/stats-chart-density';
 interface Props { id: string; title: string; rows: MetricGroup[]; score?: boolean; hidden?: boolean; }
 const { id, title, rows: allRows, score = false, hidden = false } = Astro.props;
 const rows = knownRows(allRows);
@@ -17,12 +18,12 @@ const rows = knownRows(allRows);
     <label>From <select data-watch-from aria-label="Watch year from"><option value="">First year</option>{rows.map(row => <option value={row.key}>{row.label}</option>)}</select></label>
     <label>Through <select data-watch-through aria-label="Watch year through"><option value="">Latest year</option>{rows.map(row => <option value={row.key}>{row.label}</option>)}</select></label>
   </div>}
-  <div class="overview-plot"><canvas data-overview-chart={id} role="img" aria-label={`${title}: titles watched`} aria-describedby={`${id}-data`}></canvas>
+  <div class="overview-plot"><div class="overview-chart-scroll"><div class="overview-chart-canvas" style={`--chart-min-width:${chartMinimumWidth(rows.length)}px`}><canvas data-overview-chart={id} role="img" aria-label={`${title}: titles watched`} aria-describedby={`${id}-data`}></canvas></div></div>
     <p class="overview-plot-empty" data-chart-empty={id} hidden={rows.some(row => row.titles)}>No watched titles.</p>
   </div>
   <div class="overview-sr-only" id={`${id}-data`}>
-    <div class="overview-table-scroll"><table><caption>{title}</caption><thead><tr><th scope="col">{id === 'scores' ? 'Score interval' : id.includes('years') ? 'Year' : 'Episode count'}</th><th scope="col">Titles</th><th scope="col">Hours</th><th scope="col">Mean score</th><th scope="col">Rated titles</th></tr></thead>
-      <tbody data-chart-table={id}>{rows.map(row => <tr><th scope="row">{id === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label}</th><td>{displayNumber(row.titles)}</td><td>{displayNumber(row.minutes / 60, 1)}</td><td>{displayNumber(row.mean_score, 2)}</td><td>{displayNumber(row.rated_titles)}</td></tr>)}</tbody>
+    <div class="overview-table-scroll"><table><caption>{title}</caption><thead><tr><th scope="col">{id === 'scores' ? 'Score interval' : id.includes('years') ? 'Year' : 'Episode count'}</th><th scope="col">Titles</th><th scope="col">Hours</th>{!score && <th scope="col">Mean score</th>}</tr></thead>
+      <tbody data-chart-table={id}>{rows.map(row => <tr><th scope="row">{id === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label}</th><td>{displayNumber(row.titles)}</td><td>{displayNumber(row.minutes / 60, 1)}</td>{!score && <td>{displayNumber(row.mean_score, 2)}</td>}</tr>)}</tbody>
     </table></div>
   </div>
 </section>
