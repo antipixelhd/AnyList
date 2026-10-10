@@ -65,7 +65,9 @@ html.light .overview-metrics button[aria-pressed=true] { color:#fff; }
 }
 @media(max-width:760px) {
   .stats-overview-page { grid-template-columns:minmax(0,1fr); gap:24px; }
-  .overview-menu-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:48px; padding:8px 0; border:0; background:transparent; color:var(--bright); font-size:var(--type-panel-size); cursor:pointer; }
+  .overview-menu-toggle { display:flex; align-items:center; justify-content:space-between; gap:16px; width:100%; min-height:56px; padding:12px 0; border:0; background:transparent; color:var(--bright); font-family:var(--font-navigation); font-size:2rem; font-weight:500; line-height:1.4; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .overview-menu-toggle .ui-icon { display:grid; place-items:center; flex-shrink:0; width:44px; height:44px; color:var(--blue); }
+  .overview-menu-toggle svg { width:23px; height:23px; }
   .overview-sidebar #statistics-sections { display:none; }
   .overview-sidebar[data-menu-open=true] #statistics-sections { display:block; margin-top:12px; animation:stats-menu-reveal 180ms ease-out; }
   .overview-sidebar .profile-section-selector__heading { display:none; }
