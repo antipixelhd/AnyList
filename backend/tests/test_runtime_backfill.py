@@ -83,3 +83,20 @@ class RuntimeBackfillTests(unittest.IsolatedAsyncioTestCase):
             result = await backfill.backfill_history_runtimes(session([(row, None)]), "key")
         fetch.assert_not_awaited()
         self.assertEqual(result["examined"], 0)
+
+    async def test_unmatched_episode_uses_show_estimate_without_inventing_exact_runtime(self):
+        rows = [episode(None), episode(None)]
+        show = SimpleNamespace(tmdb_id=20, tvdb_id=30, tmdb_data={"tracking_keep": True})
+        with patch.object(backfill.tvdb, "get_series", AsyncMock(return_value={"id": 30, "averageRuntime": 45})) as fetch:
+            result = await backfill.backfill_history_runtimes(session([(r, show) for r in rows]), tvdb_api_key="key")
+        fetch.assert_awaited_once()
+        self.assertEqual(show.tmdb_data["episode_run_time"], [45])
+        self.assertTrue(show.tmdb_data["tracking_keep"])
+        self.assertTrue(all(r.runtime is None for r in rows))
+        self.assertEqual(result["estimated_shows"], 1)
+
+    async def test_force_can_retry_recent_attempt_with_improved_provider_configuration(self):
+        row = movie(tmdb_data={"runtime_backfill_attempted_at": datetime.now(timezone.utc).isoformat()})
+        with patch.object(backfill.tmdb, "get_movie", AsyncMock(return_value={"id": 10, "runtime": 100})):
+            result = await backfill.backfill_history_runtimes(session([(row, None)]), "key", force=True)
+        self.assertEqual(result["recovered"], 1)

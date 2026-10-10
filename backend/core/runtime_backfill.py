@@ -23,7 +23,7 @@ def due(data, now):
         return True
 
 
-async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limit=BATCH_SIZE):
+async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limit=BATCH_SIZE, force=False):
     """Only fill absent durations; never rewrite history or infer exact runtimes.
 
     Season responses are shared within a batch. Episode IDs must match before
@@ -42,14 +42,15 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
             select(WatchEvent.id).where(
                 WatchEvent.media_id == Media.id, WatchEvent.completed.is_(True),
             ).exists(),
-            or_(attempted.is_(None), attempted <= cutoff),
+            True if force else or_(attempted.is_(None), attempted <= cutoff),
         ).order_by(attempted.asc().nullsfirst(), Media.id).limit(limit)
     )).all()
-    result = {"examined": 0, "recovered": 0, "unresolved": 0, "failed": 0}
+    result = {"examined": 0, "recovered": 0, "unresolved": 0, "failed": 0, "estimated_shows": 0}
     seasons = {}
     tvdb_shows = {}
+    estimated_shows = set()
     for media, show in rows:
-        if not due(media.tmdb_data, now):
+        if not force and not due(media.tmdb_data, now):
             continue
         result["examined"] += 1
         data = dict(media.tmdb_data or {})
@@ -77,6 +78,19 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
                 episode = next((e for e in tvdb_shows[show.tvdb_id]
                                 if e.get("id") == media.tvdb_id), {})
                 runtime = positive_number(episode.get("runtime"))
+            if not runtime and tvdb_api_key and show and show.tvdb_id and show.tvdb_id not in estimated_shows:
+                estimated_shows.add(show.tvdb_id)
+                show_data = dict(getattr(show, "tmdb_data", None) or {})
+                values = show_data.get("episode_run_time") or []
+                if not isinstance(values, list):
+                    values = [values]
+                if not any(positive_number(v) for v in values):
+                    summary = await tvdb.get_series(show.tvdb_id, tvdb_api_key, cache_ttl=None)
+                    average = positive_number(summary.get("averageRuntime"))
+                    if summary.get("id") == show.tvdb_id and average:
+                        show.tmdb_data = {**show_data, "episode_run_time": [average],
+                                          "episode_run_time_source": "tvdb_average"}
+                        result["estimated_shows"] += 1
         except Exception:
             # Do not log provider exceptions: URLs may contain credentials.
             result["failed"] += 1

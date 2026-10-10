@@ -57,6 +57,9 @@ history, at most 100 shared media records per daily sweep. Cached runtime values
 are reused first, then TMDB movie/season and TheTVDB episode data are fetched.
 Episode durations require a matching provider episode ID. Missing or failed
 results retain an attempt timestamp and become eligible again after seven days.
+TVDB show averages can fill an absent typical duration; these stay explicitly
+estimated and never populate an episode's exact runtime. Operators can force a
+bounded retry after provider configuration or backfill improvements.
 Watch history stays intact, unresolved durations remain explicit, and catalogue
 refreshes preserve known runtimes when a provider omits or reports zero minutes.
 
