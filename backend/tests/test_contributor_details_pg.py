@@ -111,6 +111,29 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         data = (await self.request()).json()
         self.assertEqual([w['title'] for w in data['works']], ['Fixture movie'])
 
+    async def test_profile_backfill_only_fills_missing_fields_and_resumes_without_refetching(self):
+        from core.contributor_backfill import backfill_contributors
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            person.attributes = {'birthday':'', 'place_of_birth':'My edit'}
+            person.protected_fields = ['attributes.birthday']
+            db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='77', source='tmdb'))
+            await db.commit()
+        with patch('core.contributor_backfill.tmdb.get_person_profile', AsyncMock(return_value={'id':77,'biography':'Saved biography','birthday':'1970-01-01','place_of_birth':'Provider location','homepage':'javascript:bad'})) as people, \
+             patch('core.contributor_backfill.tmdb.get_company', AsyncMock(return_value={'id':99,'description':'Studio biography','headquarters':'HQ'})) as companies:
+            async with self.Session() as db:
+                first = await backfill_contributors(db, 'fixture')
+                person = await db.get(CatalogueEntity, self.person_id)
+                self.assertEqual(person.description, 'Saved biography')
+                self.assertEqual(person.attributes['birthday'], '')
+                self.assertEqual(person.attributes['place_of_birth'], 'My edit')
+                self.assertNotIn('homepage', person.attributes)
+                self.assertEqual(first['examined'], 2)
+                self.assertEqual((await backfill_contributors(db, 'fixture'))['examined'], 0)
+                people.assert_awaited_once(); companies.assert_awaited_once()
+        with patch('core.contributor_details.tmdb.get_person', AsyncMock(side_effect=RuntimeError('offline'))):
+            self.assertEqual((await self.request()).json()['description'], 'Saved biography')
+
     async def test_provider_metadata_identity_and_same_number_movie_series_remain_distinct(self):
         self.key_mock.return_value = 'fixture'
         profile = {'id': 77, 'name': 'Real Person', 'birthday': '1970-01-01', 'biography': 'Biography.',

@@ -262,7 +262,11 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             notice = "Online metadata is temporarily unavailable. Showing saved information."
     if not entity and not legacy and not profile.get("name") and not local:
         return None
-    attrs = {**profile, **attrs}
+    # Empty cached fields must not hide a real provider value. Explicitly
+    # protected empty fields are intentional edits and remain authoritative.
+    protected = set(entity.protected_fields or []) if entity else set()
+    attrs = {**profile, **{field:value for field,value in attrs.items()
+        if value not in (None, '', [], {}) or 'attributes.' + field in protected}}
     name = entity.name if entity else legacy.title if legacy else profile.get("name")
     # Cached company records and people credits supply names even without API keys.
     if not entity and not legacy and not profile.get("name") and native:
@@ -322,9 +326,9 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         links.append({"label": "IMDb", "href": f"https://www.imdb.com/name/{imdb_id}/"})
     if homepage := public_url(attrs.get("homepage")):
         links.append({"label": "Official website", "href": homepage})
-    description = entity.description if entity and entity.description else legacy.overview if legacy and legacy.overview else attrs.get("biography") or attrs.get("description")
+    description = entity.description if entity and (entity.description or 'description' in protected) else legacy.overview if legacy and legacy.overview else attrs.get("biography") or attrs.get("description")
     return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
-        "image": poster(entity.image_url if entity and entity.image_url else legacy.poster_path if legacy and legacy.poster_path else attrs.get("profile_path") or attrs.get("logo_path") or attrs.get("image_url")),
+        "image": poster(entity.image_url if entity and (entity.image_url or 'image_url' in protected) else legacy.poster_path if legacy and legacy.poster_path else attrs.get("profile_path") or attrs.get("logo_path") or attrs.get("image_url")),
         "description": description, "birthday": attrs.get("birthday"), "deathday": attrs.get("deathday"),
         "place_of_birth": attrs.get("place_of_birth"), "department": attrs.get("known_for_department"),
         "aliases": [n for n in attrs.get("also_known_as") or [] if isinstance(n, str) and n != name],

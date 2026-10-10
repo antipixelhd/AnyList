@@ -554,6 +554,11 @@ async def get_company(company_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/company/{company_id}", headers=get_headers(api_key))
 
 
+async def get_person_profile(person_id: int, api_key: str = None) -> dict:
+    """Basic biography without downloading the entire filmography for backfills."""
+    return await _get(f"{TMDB_BASE}/person/{person_id}", headers=get_headers(api_key))
+
+
 async def get_movie_videos(tmdb_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/movie/{tmdb_id}/videos", headers=get_headers(api_key))
 
