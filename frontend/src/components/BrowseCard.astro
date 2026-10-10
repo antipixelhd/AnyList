@@ -129,7 +129,7 @@ const href = item.id
       <span data-score>{Number(item.score || 0).toFixed(1)}</span>
     </span>
   </div>
-  {credits && <p class="browse-credit" data-work-credit>{[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}</p>}
+  {credits && <p class="browse-credit" data-work-credit title={[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}>{[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}</p>}
   {credits && <time class="browse-work-date" datetime={item.release_date} data-work-date hidden={!item.release_date}>{item.release_date}</time>}
   </div>
   </div>

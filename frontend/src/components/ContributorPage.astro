@@ -66,7 +66,7 @@ if (data) {
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>
-          <div class="contributor-works-grid" data-contributor-works>
+          <div class:list={['contributor-works-grid', {'browse-grid':view === 'grid'}]} data-contributor-works>
             {years.map(year => <section class="contributor-year" data-contributor-year={year} aria-label={year}><h3>{year}</h3><div class="contributor-year-works">{data!.works.filter(work => contributorYear(work) === year).map(work => <BrowseCard item={work} signedIn={signedIn} credits />)}</div></section>)}
           </div>
           <p class="contributor-empty" data-contributor-empty hidden={data.works.length > 0}>No works match these filters.</p>

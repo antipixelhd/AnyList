@@ -27,6 +27,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     button.addEventListener('click', () => {
       const view = button.dataset.contributorView!;
       root.dataset.view = view;
+      region.classList.toggle('browse-grid', view === 'grid');
       (form.elements.namedItem('view') as HTMLInputElement).value = view;
       root.querySelectorAll('[data-contributor-view]').forEach(other => other.setAttribute('aria-pressed', String((other as HTMLElement).dataset.contributorView === view)));
       const url = new URL(location.href); url.searchParams.set('view', view);
