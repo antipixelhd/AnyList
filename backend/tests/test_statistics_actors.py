@@ -60,9 +60,10 @@ class ActorTests(unittest.TestCase):
 
     def test_tvdb_movie_projects_movie_identities_and_empty_role_image_stays_absent(self):
         doc = normalize_tvdb({"id": 42, "name": "Film", "first_release": {"date": "2020-01-01"},
-            "companies": {"studio": [{"id": 7, "name": "Studio"}], "production": [], "distributor": []},
+            "companies": {"studio": [{"id": 7, "name": "Studio", "companyType": 3}], "production": [], "distributor": []},
             "remoteIds": [{"sourceName": "TheMovieDB.com", "id": "123"}],
-            "characters": [{"id": 1, "type": 3, "peopleId": 2, "personName": "Actor", "image": "", "personImgURL": "https://example.test/person.jpg"}]}, "movie")
+            "characters": [{"id": 1, "type": 3, "peopleId": 2, "personName": "Actor", "image": "", "personImgURL": "https://example.test/person.jpg"}],
+            "_people": {"2": {"remoteIds": None}}}, "movie")
         self.assertEqual(doc["work"]["kind"], "movie")
         self.assertEqual(doc["work"]["attributes"]["release_date"], "2020-01-01")
         self.assertEqual(doc["credits"][1]["role"], "producer")

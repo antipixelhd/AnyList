@@ -12,7 +12,7 @@ from models.media import Media
 from models.tracking import TrackedEntry
 from models.show import Show
 
-VERSION = 1
+VERSION = 2
 BATCH_SIZE = 25
 
 

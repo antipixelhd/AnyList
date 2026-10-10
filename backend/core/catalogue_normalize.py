@@ -285,7 +285,7 @@ def normalize_tvdb(raw, kind="series"):
             {"id": pid, "name": p.get("personName")},
             artwork=p.get("personImgURL"),
         )
-        for external in (raw.get("_people") or {}).get(str(pid), {}).get("remoteIds", []):
+        for external in (raw.get("_people") or {}).get(str(pid), {}).get("remoteIds") or []:
             if external.get("sourceName") == "TheMovieDB.com" and str(external.get("id", "")).isdecimal():
                 person["identities"].append(identity("tmdb.person", external["id"]))
         doc["credits"].append(
@@ -309,10 +309,11 @@ def normalize_tvdb(raw, kind="series"):
     companies = raw.get("companies") or []
     if isinstance(companies, dict):
         labels = {"studio": "Studio", "network": "Network", "production": "Production Company", "distributor": "Distributor"}
-        companies = [{**p, "companyType": p.get("companyType") or {"companyTypeName": labels.get(group, group)}}
+        companies = [{**p, "companyType": p.get("companyType") if isinstance(p.get("companyType"), dict) else {"companyTypeName": labels.get(group, group)}}
                      for group, rows in companies.items() for p in rows or [] if isinstance(p, dict)]
     for p in companies:
-        label = (p.get("companyType") or {}).get("companyTypeName", "")
+        company_type = p.get("companyType")
+        label = company_type.get("companyTypeName", "") if isinstance(company_type, dict) else ""
         role = {
             "Network": "broadcaster",
             "Production Company": "producer",

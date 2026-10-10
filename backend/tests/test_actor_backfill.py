@@ -26,7 +26,7 @@ class ActorBackfillTests(unittest.IsolatedAsyncioTestCase):
         match.assert_awaited_once_with("tt123", "private")
         self.assertEqual([call.args[2:5] for call in refresh.await_args_list], [("tmdb", "movie", "10"), ("tvdb", "movie", "42")])
         self.assertEqual(result, {"examined": 1, "updated": 1, "failed": 0})
-        self.assertEqual(row.tmdb_data["actor_metadata_version"], 1)
+        self.assertEqual(row.tmdb_data["actor_metadata_version"], 2)
         self.assertEqual(db.scalars.await_args.args[0]._limit_clause.value, 3)
 
     async def test_tvdb_detail_preserves_all_credits_but_bounds_people_enrichment(self):
