@@ -38,6 +38,7 @@ class ContributorPage(BaseModel):
     key: str
     name: str
     image: str | None = None
+    banner: str | None = None
     description: str | None = None
     birthday: str | None = None
     deathday: str | None = None

@@ -327,8 +327,13 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     if homepage := public_url(attrs.get("homepage")):
         links.append({"label": "Official website", "href": homepage})
     description = entity.description if entity and (entity.description or 'description' in protected) else legacy.overview if legacy and legacy.overview else attrs.get("biography") or attrs.get("description")
+    profile_image = poster(entity.image_url if entity and (entity.image_url or 'image_url' in protected) else legacy.poster_path if legacy and legacy.poster_path else attrs.get("profile_path") or attrs.get("logo_path") or attrs.get("image_url"))
+    banner = public_url(attrs.get('studio_banner')) if kind == 'studio' else None
+    if kind == 'studio' and not banner and 'attributes.studio_banner' not in protected:
+        banner = profile_image
     return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
-        "image": poster(entity.image_url if entity and (entity.image_url or 'image_url' in protected) else legacy.poster_path if legacy and legacy.poster_path else attrs.get("profile_path") or attrs.get("logo_path") or attrs.get("image_url")),
+        "banner": banner,
+        "image": profile_image,
         "description": description, "birthday": attrs.get("birthday"), "deathday": attrs.get("deathday"),
         "place_of_birth": attrs.get("place_of_birth"), "department": attrs.get("known_for_department"),
         "aliases": [n for n in attrs.get("also_known_as") or [] if isinstance(n, str) and n != name],

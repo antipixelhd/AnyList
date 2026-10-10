@@ -111,6 +111,36 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         data = (await self.request()).json()
         self.assertEqual([w['title'] for w in data['works']], ['Fixture movie'])
 
+    async def test_studio_logo_backfill_is_cached_and_preserves_protected_artwork(self):
+        from core.studio_artwork import backfill_studio_artwork
+        logo = {'id':99,'logos':[{'file_path':'/banner.png','width':1200,'height':400}]}
+        with patch('core.studio_artwork.tmdb.get_company_images', AsyncMock(return_value=logo)) as fetch:
+            async with self.Session() as db:
+                self.assertEqual((await backfill_studio_artwork(db,'fixture'))['updated'],1)
+                self.assertEqual((await backfill_studio_artwork(db,'fixture'))['examined'],0)
+                fetch.assert_awaited_once()
+                studio = await db.get(CatalogueEntity,self.studio_id)
+                self.assertEqual(studio.image_url,'https://example.test/logo.png')
+                studio.protected_fields = ['attributes.studio_banner']
+                await db.commit()
+                fetch.return_value = {'id':99,'logos':[{'file_path':'/new.png','width':1200,'height':400}]}
+                self.assertEqual((await backfill_studio_artwork(db,'fixture',force=True))['protected'],1)
+                self.assertEqual(studio.attributes['studio_banner'],'https://image.tmdb.org/t/p/original/banner.png')
+        data = (await self.request('studio',f'catalogue:{self.studio_id}')).json()
+        self.assertEqual(data['banner'],'https://image.tmdb.org/t/p/original/banner.png')
+        self.assertIsNone((await self.request()).json()['banner'])
+
+    async def test_studio_logo_mismatch_retains_last_good_image_and_retry_eligibility(self):
+        from core.studio_artwork import backfill_studio_artwork
+        async with self.Session() as db:
+            studio = await db.get(CatalogueEntity,self.studio_id)
+            studio.attributes = {'studio_banner':'https://example.test/saved.png'}
+            await db.commit()
+            with patch('core.studio_artwork.tmdb.get_company_images', AsyncMock(return_value={'id':100,'logos':[]})):
+                result = await backfill_studio_artwork(db,'fixture')
+            self.assertEqual(result['failed'],1)
+            self.assertEqual(studio.attributes,{'studio_banner':'https://example.test/saved.png'})
+
     async def test_profile_backfill_only_fills_missing_fields_and_resumes_without_refetching(self):
         from core.contributor_backfill import backfill_contributors
         async with self.Session() as db:

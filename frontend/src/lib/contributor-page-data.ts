@@ -6,6 +6,7 @@ export interface ContributorWork extends BrowseItem {
 }
 export interface ContributorPage {
   kind: 'actor' | 'staff' | 'studio'; key: string; name: string; image: string | null; description: string | null;
+  banner?: string | null;
   birthday: string | null; deathday: string | null; place_of_birth: string | null; department: string | null;
   aliases: string[]; countries: string[]; headquarters: string | null; links: {label:string;href:string}[];
   roles: string[]; works: ContributorWork[]; known_works: number; list_count: number | null;

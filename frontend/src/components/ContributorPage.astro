@@ -32,6 +32,7 @@ const facts = data ? [
 const years = [...new Set(data?.works.map(contributorYear) || [])];
 const portrait = artwork(data?.image || null, 'w342');
 const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280');
+const banner = kind === 'studio' ? data?.banner : null;
 const next = new URL(Astro.url);
 if (data) {
   next.searchParams.set('page', String(data.page + 1));
@@ -41,7 +42,7 @@ if (data) {
 ---
 <Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')}>
   {data ? <article class="contributor-page" data-contributor-page data-view={view} data-endpoint={endpoint}>
-    <div class="contributor-banner" aria-hidden="true">{backdrop && <img src={backdrop} alt="" fetchpriority="high" />}</div>
+    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
         <div class="contributor-portrait">{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></div>

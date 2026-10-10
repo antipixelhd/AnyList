@@ -14,6 +14,17 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const items = new Map<HTMLElement, ContributorWork>();
   const ready = new Set<string>();
   const params = contributorParams(new URLSearchParams(location.search), data.list_count !== null);
+  const banner = root.querySelector<HTMLImageElement>('[data-contributor-banner]');
+  const missingBanner = () => {
+    if (!banner) return;
+    banner.closest('.contributor-banner')?.classList.remove('is-logo');
+    const fallback = banner.dataset.bannerFallback;
+    delete banner.dataset.bannerFallback;
+    if (fallback && fallback !== banner.getAttribute('src')) banner.src = fallback;
+    else banner.hidden = true;
+  };
+  banner?.addEventListener('error', missingBanner, {signal});
+  if (banner?.complete && !banner.naturalWidth) missingBanner();
   const portrait = root.querySelector<HTMLImageElement>('.contributor-portrait img');
   const missingPortrait = () => {
     if (portrait) portrait.hidden = true;
