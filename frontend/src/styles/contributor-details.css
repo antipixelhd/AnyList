@@ -2,7 +2,8 @@
 .contributor-page [hidden] { display:none!important; }
 .contributor-banner { height:300px; overflow:hidden; position:relative; background:linear-gradient(120deg,var(--panel),var(--bg)); }
 .contributor-banner img { width:100%; height:100%; object-fit:cover; object-position:center 35%; opacity:.5; }
-.contributor-banner.is-logo img { object-fit:contain; object-position:center; padding:36px 18%; opacity:.65; }
+.contributor-banner.is-logo img { object-fit:contain; object-position:center; padding:36px 18%; opacity:.65; filter:brightness(0) invert(1); }
+html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-banner::after { content:''; position:absolute; inset:0; background:linear-gradient(0deg,var(--bg),transparent 90%),linear-gradient(90deg,var(--bg),transparent 70%); }
 .contributor-layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:var(--list-column-gap,40px); align-items:start; }
 .contributor-sidebar { margin-top:-130px; position:relative; }
