@@ -8,6 +8,7 @@ import { genreSort } from './stats-genres-data';
 import { actorArtwork } from './stats-actors-data';
 import { mountActors, mountStaff } from './stats-actors';
 import { mountStatisticsNavigation } from './stats-navigation';
+import { createMetricTooltip } from './stats-metric-tooltip';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -31,6 +32,7 @@ function mount(root: HTMLElement) {
   const motion = (initial: boolean) => reducedMotion.matches || initial ? false as const : { duration: 900, easing: 'easeInOutCubic' as const };
   const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 160 } } });
   const charts = new Map<string, Chart<'bar' | 'line'>>();
+  const tooltips = new Map<string, ReturnType<typeof createMetricTooltip>>();
   const labelColors = new Map<string, string>();
   const pies = new Map<string, Chart<'pie'>>();
   const metrics = new Map<string, ChartMetric>(chartKeys.map(key => [key, 'titles']));
@@ -68,8 +70,10 @@ function mount(root: HTMLElement) {
     const rows = dataRows(data, key), metric = metrics.get(key)!;
     const plotted = rows;
     const canvas = node<HTMLCanvasElement>(`[data-overview-chart="${key}"]`);
+    const tooltip = tooltips.get(key) || createMetricTooltip(canvas, key, events.signal);
+    tooltips.set(key, tooltip); tooltip.update(plotted, metric);
     const isLine = key.includes('years');
-    const cyan = color('--stats-cyan'), muted = color('--muted'), bright = color('--bright'), panel = color('--panel');
+    const cyan = color('--stats-cyan'), muted = color('--muted'), bright = color('--bright');
     labelColors.set(key, bright);
     const empty = rows.every(row => row.titles === 0 || (metric === 'mean_score' && row.mean_score === null));
     const message = node(`[data-chart-empty="${key}"]`);
@@ -80,12 +84,7 @@ function mount(root: HTMLElement) {
       responsive: true, maintainAspectRatio: false,
       animation: motion(initial), transitions: activeMotion(),
       interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { display: false }, tooltip: {
-        backgroundColor: panel, titleColor: bright, bodyColor: bright, borderColor: muted, borderWidth: 1,
-        callbacks: { title: items => key === 'scores' ? `Score (${Number(plotted[items[0].dataIndex]!.key) - .5}, ${plotted[items[0].dataIndex]!.key}]` : items[0].label,
-          label: item => `${metricLabels[metric]}: ${displayNumber(item.parsed.y, metric === 'titles' ? 0 : 2)}`,
-          afterLabel: item => metric === 'mean_score' ? `${displayNumber(plotted[item.dataIndex]!.rated_titles)} rated titles` : '', },
-      } },
+      plugins: { legend: { display: false }, tooltip: { enabled:false } },
       scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: muted, maxRotation: 0, autoSkip: true, maxTicksLimit: key === 'scores' ? 10 : 12, font: { size: 11 } } },
         y: { beginAtZero: true, grace: '15%', max: metric === 'mean_score' ? 10 : undefined, display: false } },
       layout: { padding: { top: 10 } },
@@ -100,7 +99,7 @@ function mount(root: HTMLElement) {
       existing.update(initial || reducedMotion.matches ? 'none' : undefined);
     } else {
       charts.set(key, new Chart<'bar' | 'line'>(canvas, { type: isLine ? 'line' : 'bar', data: { labels: plotted.map(row => row?.label || ''), datasets: [dataset] }, options,
-        plugins: [{ id: 'overview-values', afterDatasetsDraw(chart) {
+        plugins: [tooltip.plugin, { id: 'overview-values', afterDatasetsDraw(chart) {
           const ctx = chart.ctx;
           ctx.save(); ctx.fillStyle = labelColors.get(key)!; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
           let lastRight = -Infinity;
@@ -193,7 +192,7 @@ function mount(root: HTMLElement) {
         root.removeAttribute('data-initial');
         root.querySelectorAll('[data-chart-table],[data-distribution-rows]').forEach(element => element.replaceChildren());
         root.querySelectorAll('[data-headline-value]').forEach(element => element.textContent = '—');
-        charts.forEach(chart => chart.destroy()); charts.clear(); pies.forEach(chart => chart.destroy()); pies.clear();
+        charts.forEach(chart => chart.destroy()); charts.clear(); tooltips.clear(); pies.forEach(chart => chart.destroy()); pies.clear();
         genres.render(null);
         actors.render(null);
         studios.render(null);

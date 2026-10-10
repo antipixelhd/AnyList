@@ -9,7 +9,7 @@
 .overview-media a { padding:8px 15px; min-height:40px; color:var(--muted); text-decoration:none; border-bottom:2px solid transparent; transition:color 240ms ease,border-color 240ms ease; }
 .overview-media a[aria-current=page] { color:var(--stats-cyan); border-color:var(--stats-cyan); }
 .overview-media a:hover { color:var(--bright); }
-.stats-overview-page :is(button,a,select,summary):focus-visible { outline:2px solid var(--stats-cyan); outline-offset:3px; }
+.stats-overview-page :is(button,a,select,summary,canvas):focus-visible { outline:2px solid var(--stats-cyan); outline-offset:3px; }
 .overview-results { transition:opacity 240ms ease; }
 .stats-overview-page[aria-busy=true] .overview-results { opacity:.85; }
 .overview-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:38px 24px; margin:0 0 48px; text-align:left; }
@@ -31,6 +31,13 @@
 .overview-plot { height:230px; position:relative; min-width:0; background:var(--stats-plot); padding:12px 8px 6px; border-radius:6px; }
 .overview-plot canvas { max-width:100%; }
 .overview-plot-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; color:var(--muted); font-size:13px; pointer-events:none; }
+.overview-chart-tooltip { position:absolute; z-index:2; pointer-events:none; width:240px; max-width:calc(100% - 16px); padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--panel); box-shadow:0 8px 28px #0003; color:var(--bright); font-size:13px; }
+.overview-chart-tooltip>strong { display:block; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid var(--border); font-size:14px; }
+.overview-chart-tooltip dl { display:grid; gap:10px; margin:0; }
+.overview-chart-tooltip dl>div { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.overview-chart-tooltip dt { color:var(--muted); }
+.overview-chart-tooltip dd { margin:0; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.overview-chart-tooltip .is-active :is(dt,dd) { color:var(--stats-cyan); }
 .overview-distribution-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:32px; margin-bottom:42px; }
 .overview-distribution { min-width:0; }
 .overview-distribution h3 { margin-bottom:20px; }
