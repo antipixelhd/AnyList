@@ -24,6 +24,7 @@ from db import get_db
 from dependencies import get_optional_user
 from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
+from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink
 from models.statistics import UserStatsSnapshot, UserStatsState
 from models.tracking import TrackedEntry
 from routers.tracking import router
@@ -45,9 +46,11 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         def setup(conn):
             wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name != "stats_metadata_revision"]
             Base.metadata.create_all(conn, tables=wanted)
+            conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module("migrations.versions.mt039_statistics_snapshots").upgrade()
                 importlib.import_module("migrations.versions.mt040_statistics_utc_schedule").upgrade()
+                importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -63,6 +66,13 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             movie = Media(title="Fixture movie", media_type=MediaType.movie, runtime=100, release_date="2020-01-01", tmdb_data={"genres": ["Drama"]})
             db.add(movie)
             await db.flush()
+            work = CatalogueEntity(kind="movie", name="Fixture movie", attributes={})
+            person = CatalogueEntity(kind="person", name="Fixture Actor", attributes={})
+            db.add_all([work, person])
+            await db.flush()
+            db.add(CatalogueLegacyLink(media_id=movie.id, entity_id=work.id))
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id, provider="tvdb", source_key="fixture-role",
+                role="actor", character_label="Fixture Character", character_image_url="https://artworks.thetvdb.com/role.jpg"))
             db.add(TrackedEntry(user_id=user.id, media_id=movie.id, status="completed", rating_mode="manual", manual_score=8))
             db.add(WatchEvent(user_id=user.id, media_id=movie.id, completed=True, watched_at=datetime(2026, 1, 1)))
             await db.commit()
@@ -148,8 +158,13 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(genres[0]["label"], "Drama")
                 self.assertEqual(genres[0]["top_titles"][0]["score"], 8)
                 self.assertTrue(genres[0]["top_titles"][0]["href"].startswith("/title/"))
+                actor = data["overview"]["actors"][0]
+                self.assertEqual((actor["label"], actor["titles"], actor["mean_score"], actor["minutes"]), ("Fixture Actor", 1, 8, 100))
+                self.assertEqual(actor["top_titles"][0]["character"], "Fixture Character")
+                self.assertEqual(actor["top_titles"][0]["character_image"], "https://artworks.thetvdb.com/role.jpg")
             else:
                 self.assertEqual(genres, [])
+                self.assertEqual(data["overview"]["actors"], [])
         self.assertEqual(len(generations), 1)
         self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview", params={"media_type": "game"})).status_code, 422)
 

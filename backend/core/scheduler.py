@@ -609,6 +609,11 @@ async def _show_metadata_refresher():
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
                 ))
                 log.info("Catalogue country backfill: %s", catalogue_countries)
+                from core.actor_backfill import backfill_actors
+                actor_coverage = await backfill_actors(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
+                ))
+                log.info("Actor metadata backfill: %s", actor_coverage)
                 if not settings_store.check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     # Cached confirmed dates can still reach their premiere

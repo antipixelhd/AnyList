@@ -308,6 +308,7 @@ async def ingest_document(db, doc, provider):
                 "role": c["role"],
                 "role_label": c.get("role_label"),
                 "character_label": c.get("character_label"),
+                "character_image_url": c.get("character_image_url"),
                 "scope": c.get("scope", "title"),
                 "position": c.get("position"),
             },

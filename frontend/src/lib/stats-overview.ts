@@ -5,6 +5,8 @@ import { displayNumber, distributionRows, headlineValues, knownRows, metricLabel
 import { createOverviewLoader } from './stats-overview-request';
 import { mountGenres } from './stats-genres';
 import { genreSort } from './stats-genres-data';
+import { actorArtwork } from './stats-actors-data';
+import { mountActors } from './stats-actors';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -19,7 +21,8 @@ function mount(root: HTMLElement) {
   let stopped = false;
   const events = new AbortController();
   const genres = mountGenres(root);
-  let section = root.dataset.section === 'genres' ? 'genres' : 'overview';
+  const actors = mountActors(root);
+  let section = root.dataset.section === 'genres' || root.dataset.section === 'actors' ? root.dataset.section : 'overview';
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const motion = (initial: boolean) => reducedMotion.matches || initial ? false as const : { duration: 900, easing: 'easeInOutCubic' as const };
   const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 160 } } });
@@ -168,6 +171,7 @@ function mount(root: HTMLElement) {
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
     }
     genres.render(data);
+    actors.render(data);
     syncLinks();
     node('[data-overview-announcement]').textContent = `${data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
   }
@@ -185,6 +189,7 @@ function mount(root: HTMLElement) {
         root.querySelectorAll('[data-headline-value]').forEach(element => element.textContent = '—');
         charts.forEach(chart => chart.destroy()); charts.clear(); pies.forEach(chart => chart.destroy()); pies.clear();
         genres.render(null);
+        actors.render(null);
       }
     },
   });
@@ -192,12 +197,13 @@ function mount(root: HTMLElement) {
     root.querySelectorAll<HTMLAnchorElement>('[data-overview-media]').forEach(link => {
       const url = new URL(location.href); url.searchParams.set('media', link.dataset.overviewMedia!);
       url.searchParams.set('section', section); url.searchParams.set('sort', root.dataset.genreSort || 'count');
+      url.searchParams.set('actor_sort', root.dataset.actorSort || 'count'); url.searchParams.set('artwork', root.dataset.actorArtwork || 'media');
       link.href = url.pathname + url.search;
     });
   }
   function selectSection(next: string, push: boolean) {
-    section = next === 'genres' ? 'genres' : 'overview'; root.dataset.section = section;
-    node('[data-stats-heading]').textContent = section === 'genres' ? 'Genres' : 'Overview';
+    section = next === 'genres' || next === 'actors' ? next : 'overview'; root.dataset.section = section;
+    node('[data-stats-heading]').textContent = section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
     root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
     root.querySelectorAll<HTMLButtonElement>('.profile-section-selector__option').forEach(button => {
       const selected = button.dataset.section === section; button.classList.toggle('is-selected', selected); button.setAttribute('aria-pressed', String(selected));
@@ -251,13 +257,14 @@ function mount(root: HTMLElement) {
   }, { signal: events.signal });
   window.addEventListener('popstate', () => {
     const params = new URL(location.href).searchParams, value = params.get('media');
-    root.dataset.genreSort = genreSort(params.get('sort')); selectSection(params.get('section') || 'overview', false);
+    root.dataset.genreSort = genreSort(params.get('sort')); root.dataset.actorSort = genreSort(params.get('actor_sort'));
+    root.dataset.actorArtwork = actorArtwork(params.get('artwork')); selectSection(params.get('section') || 'overview', false);
     navigate(value === 'movie' || value === 'series' ? value : 'all', false);
   }, { signal: events.signal });
   reducedMotion.addEventListener('change', () => { if (response.overview) render(response, true); }, { signal: events.signal });
   const observer = new MutationObserver(() => { if (response.overview) render(response, true); });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-  document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
+  document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
   render(response, true);
 }
 function setup() { const root = document.querySelector<HTMLElement>('#statistics-overview'); if (root) mount(root); }

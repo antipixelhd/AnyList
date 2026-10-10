@@ -198,6 +198,7 @@ class CatalogueCredit(Base):
     role: Mapped[str] = mapped_column(String(80), nullable=False)
     role_label: Mapped[str | None] = mapped_column(String(200))
     character_label: Mapped[str | None] = mapped_column(String(500))
+    character_image_url: Mapped[str | None] = mapped_column(String(2048))
     provider: Mapped[str] = mapped_column(String(80), nullable=False)
     source_key: Mapped[str] = mapped_column(String(200), nullable=False)
     scope: Mapped[str] = mapped_column(

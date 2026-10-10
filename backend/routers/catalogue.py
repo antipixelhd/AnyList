@@ -267,6 +267,7 @@ async def related(
                 "role",
                 "role_label",
                 "character_label",
+                "character_image_url",
                 "provider",
                 "scope",
                 "position",

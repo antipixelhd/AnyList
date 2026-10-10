@@ -8,6 +8,7 @@ from sqlalchemy import or_, select
 
 from core.countries import country_codes
 from core.statistics_genres import genre_groups, poster
+from core.statistics_actors import load_actors, actor_groups
 from core.tracking_rules import effective_score
 from models.base import MediaType
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink
@@ -127,8 +128,10 @@ async def load_facts(db, user_id):
     entities = {e.id: e for e in await db.scalars(select(CatalogueEntity).where(CatalogueEntity.id.in_(entity_ids), CatalogueEntity.kind.in_(["movie", "series"])))}
     episodes = list((await db.scalars(select(Media).where(Media.show_id.in_(show_ids), Media.media_type == MediaType.episode))).all())
     settings = await db.get(GlobalSettings, 1)
-    return title_facts(entries, events, shows, list(title_rows.values()), episodes, links, show_links, identities, entities,
-                       show_anime=bool(settings and settings.show_anime))
+    facts, coverage = title_facts(entries, events, shows, list(title_rows.values()), episodes, links, show_links, identities, entities,
+                                 show_anime=bool(settings and settings.show_anime))
+    await load_actors(db, facts)
+    return facts, coverage
 
 
 def title_facts(entries, events, shows, media, episodes, links, show_links, identities, entities, *, show_anime):
@@ -348,6 +351,7 @@ def aggregate_scope(facts, coverage, scope):
         "countries": [{"key": k, "label": k, **v} for k, v in sorted(countries.items(), key=lambda kv: (-kv[1]["share"], kv[0]))],
         "release_years": yearly(watched), "watch_years": yearly(watched, watched=True),
         "genres": genre_groups(watched),
+        "actors": actor_groups(listed),
         "coverage": {**coverage, "runtime_known_plays": runtime_known, "runtime_estimated_plays": runtime_estimated,
                      "runtime_missing_plays": sum(t["runtime_missing"] for t in watched),
                      "authoritative_dated_plays": sum(t["authoritative_plays"] for t in watched),

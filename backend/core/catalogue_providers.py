@@ -48,7 +48,7 @@ INTERVALS = {
 }
 SUPPORT = {
     "tmdb": {"movie", "series"},
-    "tvdb": {"series"},
+    "tvdb": {"movie", "series"},
     "igdb": {"game"},
     "rawg": {"game"},
     "hardcover": {"book"},
@@ -502,7 +502,7 @@ class CatalogueProviders:
         from core import tvdb
 
         async with self.http.lane("tvdb"):
-            rows = await tvdb.search_series(query, self.tvdb_key)
+            rows = await (tvdb.search_movies(query, self.tvdb_key) if kind == "movie" else tvdb.search_series(query, self.tvdb_key))
         return [
             {
                 "external_id": str(r["tvdb_id"]),
@@ -723,8 +723,23 @@ class CatalogueProviders:
         from core import tvdb
 
         async with self.http.lane("tvdb"):
-            raw = await tvdb.get_series(id, self.tvdb_key)
-        return normalize_tvdb(raw), raw
+            raw = await (tvdb.get_movie(id, self.tvdb_key) if kind == "movie" else tvdb.get_series(id, self.tvdb_key))
+        # Verify cross-provider people by authoritative IDs, never by names.
+        # Bound the fan-out to twelve principal cast members per title.
+        people = {}
+        for member in sorted(raw.get("characters") or [], key=lambda p: p.get("sort") or 0):
+            pid = member.get("peopleId") or member.get("personId")
+            if not pid or str(pid) in people or member.get("type") != 3:
+                continue
+            if len(people) >= 12:
+                break
+            try:
+                async with self.http.lane("tvdb"):
+                    people[str(pid)] = await tvdb.get_person(int(pid), self.tvdb_key)
+            except Exception:
+                people[str(pid)] = {}  # Retain title credits when optional people enrichment fails.
+        raw = {**raw, "_people": people}
+        return normalize_tvdb(raw, kind), raw
 
     async def book_editions_page(self, id, page):
         """Resume a book with more editions than the ordinary detail bound."""

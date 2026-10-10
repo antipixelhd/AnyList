@@ -87,6 +87,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module(
                     "migrations.versions.mt038_openlibrary_identities"
                 ).upgrade()
+                importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -97,6 +98,32 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.admin.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
         await self.admin.dispose()
+
+    async def test_tvdb_movie_role_artwork_and_verified_person_identity(self):
+        from core.catalogue_normalize import normalize_tmdb, normalize_tvdb
+        from core.statistics_actors import load_actors, actor_groups
+        from models.catalogue import CatalogueCredit
+        first = normalize_tmdb({"id": 42, "title": "Film", "credits": {"cast": [{"id": 123, "name": "Actor", "character": "Alice", "credit_id": "tmdb-role"}]}}, "movie")
+        raw = {"id": 84, "name": "Film", "remoteIds": [{"sourceName": "TheMovieDB.com", "id": "42"}],
+            "characters": [{"id": 1, "peopleId": 9, "personName": "Actor", "name": "Alice", "type": 3, "image": "https://artworks.thetvdb.com/role.jpg"}],
+            "_people": {"9": {"remoteIds": [{"sourceName": "TheMovieDB.com", "id": "123"}]}}}
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db, first, "tmdb")
+            enriched = await catalogue.ingest_document(db, normalize_tvdb(raw, "movie"), "tvdb")
+            self.assertEqual(work.id, enriched.id)
+            self.assertEqual((await catalogue.resolve_identity(db, "tvdb.movie", "84")).entity_id, work.id)
+            raw["characters"][0]["image"] = None
+            await catalogue.ingest_document(db, normalize_tvdb(raw, "movie"), "tvdb")
+            await db.flush()
+            credits = list((await db.scalars(select(CatalogueCredit).where(CatalogueCredit.work_id == work.id))).all())
+            self.assertEqual(len({c.contributor_id for c in credits}), 1)
+            self.assertEqual(next(c for c in credits if c.provider == "tvdb").character_image_url, "https://artworks.thetvdb.com/role.jpg")
+            fact = {"key": "catalogue:42", "name": "Film", "poster": None, "detail_media_id": 42, "listed": True,
+                    "entity_id": work.id, "kind": "movie", "media": [], "score": 8, "minutes": 100, "runtime_missing": 0}
+            await load_actors(db, [fact])
+            actors = actor_groups([fact])
+            self.assertEqual((len(actors), actors[0]["titles"]), (1, 1))
+            self.assertEqual(actors[0]["top_titles"][0]["character_image"], "https://artworks.thetvdb.com/role.jpg")
 
     async def test_country_backfill_game_fetch_book_isbn_and_protected_origin(self):
         from types import SimpleNamespace

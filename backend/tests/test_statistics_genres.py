@@ -26,12 +26,12 @@ class GenreTests(unittest.TestCase):
         self.assertEqual(genre["top_titles"], [{"key": "tmdb.movie:10", "title": "A", "poster": None, "href": "/title/2", "score": 9}])
         self.assertEqual(result["series"]["genres"], [])
 
-    def test_top_ten_use_personal_scores_and_deterministic_ties(self):
+    def test_top_twelve_use_personal_scores_and_deterministic_ties(self):
         facts = [{"data": {"genres": ["Sci-Fi", "Science Fiction"]}, "score": i, "name": f"Film {i:02}", "key": str(i),
                   "minutes": 10, "runtime_missing": 0, "poster": None, "detail_media_id": i} for i in range(1, 13)]
         genre = genre_groups(facts)[0]
         self.assertEqual(genre["titles"], 12)
-        self.assertEqual([t["score"] for t in genre["top_titles"]], list(range(12, 2, -1)))
+        self.assertEqual([t["score"] for t in genre["top_titles"]], list(range(12, 0, -1)))
         self.assertEqual(genre["browse_filters"], {"movie": "878", "series": "10765"})
         self.assertEqual(genre_names({"genres": [" drama ", {"name": "Drama"}, None]}), {"Drama"})
 

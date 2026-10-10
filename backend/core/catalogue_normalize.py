@@ -22,6 +22,7 @@ NAMESPACE_KINDS = {
     "tmdb.movie": {"movie"},
     "tmdb.series": {"series"},
     "tvdb.series": {"series"},
+    "tvdb.movie": {"movie"},
     "imdb.title": {"movie", "series"},
     "tmdb.person": {"person"},
     "tvdb.person": {"person"},
@@ -248,16 +249,16 @@ def normalize_tmdb(raw, kind):
     return doc
 
 
-def normalize_tvdb(raw):
+def normalize_tvdb(raw, kind="series"):
     doc = document(
         entity(
-            "series",
-            "tvdb.series",
+            kind,
+            f"tvdb.{kind}",
             raw,
             description=raw.get("overview"),
             artwork=raw.get("image"),
             attributes={
-                "release_date": raw.get("firstAired"),
+                "release_date": raw.get("firstAired") or raw.get("first_release") or raw.get("releaseDate"),
                 "origin_countries": country_codes(raw.get("originalCountry")),
                 **screen_countries({"origin_country": country_codes(raw.get("originalCountry"))}),
                 "original_language": raw.get("originalLanguage"),
@@ -266,7 +267,7 @@ def normalize_tvdb(raw):
         )
     )
     for x in raw.get("remoteIds") or []:
-        ns = {"TheMovieDB.com": "tmdb.series", "IMDB": "imdb.title"}.get(
+        ns = {"TheMovieDB.com": f"tmdb.{kind}", "IMDB": "imdb.title"}.get(
             x.get("sourceName")
         )
         if ns and x.get("id"):
@@ -281,6 +282,9 @@ def normalize_tvdb(raw):
             {"id": pid, "name": p.get("personName")},
             artwork=p.get("personImgURL"),
         )
+        for external in (raw.get("_people") or {}).get(str(pid), {}).get("remoteIds", []):
+            if external.get("sourceName") == "TheMovieDB.com" and str(external.get("id", "")).isdecimal():
+                person["identities"].append(identity("tmdb.person", external["id"]))
         doc["credits"].append(
             {
                 "contributor": person,
@@ -289,12 +293,16 @@ def normalize_tvdb(raw):
                 else None,
                 "role_label": p.get("peopleType"),
                 "character_label": p.get("name"),
+                "character_image_url": image(p.get("image")) or (
+                    "https://artworks.thetvdb.com/" + p["image"].lstrip("/")
+                    if isinstance(p.get("image"), str) and p["image"] and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", p["image"]) else None
+                ),
                 "source_key": str(p["id"]),
                 "position": p.get("sort"),
             }
         )
         # TVDB Character records are title/performer associations, not global
-        # fictional identities. Artwork stays in the source snapshot.
+        # fictional identities. Role artwork belongs to this credit.
     for p in raw.get("companies") or []:
         label = (p.get("companyType") or {}).get("companyTypeName", "")
         role = {

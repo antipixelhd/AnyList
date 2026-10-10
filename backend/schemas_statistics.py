@@ -41,6 +41,19 @@ class GenreGroup(MetricGroup):
     runtime_missing_plays: int = 0
 
 
+class ActorTitle(GenreTitle):
+    score: float | None
+    character: str | None
+    character_image: str | None
+
+
+class ActorGroup(MetricGroup):
+    image: str | None
+    href: str
+    top_titles: list[ActorTitle]
+    runtime_missing_plays: int = 0
+
+
 class OverviewTotals(BaseModel):
     listed_titles: int
     watched_titles: int
@@ -67,6 +80,7 @@ class Overview(BaseModel):
     watch_years: list[MetricGroup]
     coverage: dict[str, int]
     genres: list[GenreGroup] = Field(default_factory=list)
+    actors: list[ActorGroup] = Field(default_factory=list)
 
 
 class OverviewResponse(BaseModel):

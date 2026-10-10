@@ -42,7 +42,7 @@ def genre_groups(watched):
     result = []
     for name, titles in sorted(buckets.items()):
         rated = [t for t in titles if t["score"] is not None]
-        best = sorted(rated, key=lambda t: (-t["score"], t["name"].casefold(), t["key"]))[:10]
+        best = sorted(rated, key=lambda t: (-t["score"], t["name"].casefold(), t["key"]))[:12]
         result.append({"key": name.casefold(), "label": name, "titles": len(titles),
                        "minutes": sum(t["minutes"] for t in titles),
                        "rated_titles": len(rated),
