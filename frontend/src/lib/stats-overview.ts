@@ -112,7 +112,10 @@ function mount(root: HTMLElement) {
       existing.data.labels = plotted.map(row => row?.label || '');
       Object.assign(existing.data.datasets[0], dataset);
       existing.options = options;
-      existing.update(initial || reducedMotion.matches ? 'none' : undefined);
+      // animation:false makes this immediate while still refreshing Chart.js's
+      // shared element colors (the 'none' mode can retain their old accent).
+      if (initial || reducedMotion.matches) existing.stop();
+      existing.update();
     } else {
       charts.set(key, new Chart<'bar' | 'line'>(canvas, { type: isLine ? 'line' : 'bar', data: { labels: plotted.map(row => row?.label || ''), datasets: [dataset] }, options,
         plugins: [tooltip.plugin, { id: 'overview-values', afterDatasetsDraw(chart) {
@@ -148,7 +151,7 @@ function mount(root: HTMLElement) {
     if (!pie) { pie = new Chart<'pie'>(canvas, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] }, options,
       plugins:[{id:'overview-distribution-interaction', beforeEvent(_chart, args) { if (args.replay) return false; }}],
     }); pies.set(key, pie); }
-    else { pie.tooltip?.setActiveElements([], {x:0,y:0}); pie.setActiveElements([]); pie.data.labels = labels; Object.assign(pie.data.datasets[0], { data: values, backgroundColor: colors, borderWidth: 0 }); pie.options = options; pie.update(initial || reducedMotion.matches ? 'none' : undefined); }
+    else { pie.tooltip?.setActiveElements([], {x:0,y:0}); pie.setActiveElements([]); pie.data.labels = labels; Object.assign(pie.data.datasets[0], { data: values, backgroundColor: colors, borderWidth: 0 }); pie.options = options; if (initial || reducedMotion.matches) pie.stop(); pie.update(); }
     node(`[data-distribution-rows="${key}"]`).replaceChildren(...rows.map((row, index) => {
       const wrapper = document.createElement('div'), dt = document.createElement('dt'), button = document.createElement('button'), swatch = document.createElement('i');
       button.type = 'button';
@@ -314,6 +317,9 @@ function mount(root: HTMLElement) {
   reducedMotion.addEventListener('change', () => { cancelUiMotion(root); if (response.overview) render(response, true); }, { signal: events.signal });
   const observer = new MutationObserver(() => { if (response.overview) render(response, true); });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  // The profile runtime applies the owner/viewer accent on body, including
+  // saved choices restored during client-side navigation. Repaint canvases too.
+  observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
   render(response, true);
 }

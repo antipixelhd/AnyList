@@ -1,4 +1,4 @@
-.stats-overview-page { --stats-cyan:#3db4f2; --stats-plot:color-mix(in srgb,var(--panel) 72%,transparent); min-width:0; padding-bottom:40px; }
+.stats-overview-page { --stats-cyan:var(--blue); --stats-plot:color-mix(in srgb,var(--panel) 72%,transparent); min-width:0; padding-bottom:40px; }
 .stats-overview-page { display:grid; grid-template-columns:var(--list-sidebar-width) minmax(0,1fr); gap:var(--list-column-gap); align-items:start; }
 .stats-overview-content { min-width:0; }
 .overview-sidebar { min-width:0; }
@@ -59,7 +59,7 @@
 .overview-error { margin-bottom:20px; }
 .overview-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
 .stats-overview-page [hidden] { display:none!important; }
-html.light .stats-overview-page { --stats-cyan:#0877b2; --bg:#f7f9fc; --panel:#e9eef5; --bright:#172c43; --text:#243d56; --muted:#526b84; --border:#c5d1df; color:var(--text); color-scheme:light; }
+html.light .stats-overview-page { --bg:#f7f9fc; --panel:#e9eef5; --bright:#172c43; --text:#243d56; --muted:#526b84; --border:#c5d1df; color:var(--text); color-scheme:light; }
 html.light body.tracker:has(#statistics-overview) { background:#f7f9fc; }
 html.light .overview-metrics button[aria-pressed=true] { color:#fff; }
 @media(min-width:1400px) {
