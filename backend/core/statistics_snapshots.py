@@ -26,11 +26,12 @@ async def ensure_state(db, user_id):
     await db.execute(insert(UserStatsState).values(user_id=user_id).on_conflict_do_nothing())
 
 
-async def claim_next(factory=AsyncSessionLocal, now=None):
+async def claim_next(factory=AsyncSessionLocal, now=None, *, user_ids=None):
     now = now or utcnow()
     async with factory() as db, db.begin():
         state = await db.scalar(select(UserStatsState).where(
             UserStatsState.next_due_at <= now,
+            True if user_ids is None else UserStatsState.user_id.in_(user_ids),
             or_(UserStatsState.lease_token.is_(None), UserStatsState.lease_until <= now),
         ).order_by(UserStatsState.next_due_at, UserStatsState.user_id).with_for_update(skip_locked=True).limit(1))
         if state is None:
@@ -102,10 +103,10 @@ async def record_failure(claim, factory=AsyncSessionLocal, now=None):
         state.next_due_at = now + timedelta(minutes=min(60, 2 ** min(state.attempts, 6)))
 
 
-async def run_due(factory=AsyncSessionLocal, limit=4):
+async def run_due(factory=AsyncSessionLocal, limit=4, *, user_ids=None):
     completed = 0
     for _ in range(limit):
-        claim = await claim_next(factory)
+        claim = await claim_next(factory) if user_ids is None else await claim_next(factory, user_ids=user_ids)
         if claim is None:
             break
         if claim["skipped"]:

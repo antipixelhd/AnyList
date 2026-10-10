@@ -118,7 +118,7 @@ async def apply_document_countries(db, doc, source):
             catalogue.merge_fields(row, {"attributes": attrs}, source)
 
 
-async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force=False):
+async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force=False, missing_only=False):
     """Reproject cached metadata first; fetch missing game/edition countries.
 
     ISBN fallback identifies an edition, never an author's nationality or a
@@ -128,6 +128,8 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
     attempted = CatalogueEntity.attributes["country_backfill_attempted_at"].astext
     rows = list(await db.scalars(select(CatalogueEntity).where(
         CatalogueEntity.kind.in_(["movie", "series", "game", "book", "edition"]),
+        True if not missing_only else or_(CatalogueEntity.attributes['countries'].astext.is_(None),
+                                         CatalogueEntity.attributes['countries'].astext == '[]'),
         True if force else or_(attempted.is_(None), attempted <= (now - RETRY_AFTER).isoformat()),
         True if force else or_(CatalogueEntity.attributes["country_metadata_version"].astext.is_(None),
                               CatalogueEntity.attributes["country_metadata_version"].astext != str(VERSION),

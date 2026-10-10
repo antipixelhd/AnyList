@@ -1,0 +1,95 @@
+---
+import TrackerSettings from '../../layouts/TrackerSettings.astro';
+import { api } from '../../lib/api';
+import { healthActions, healthSummary, healthJobMessage, isHealthJobActive } from '../../lib/data-health';
+import type { DataHealth } from '../../lib/data-health';
+
+const { token, user } = Astro.locals;
+if (!user?.is_admin) return Astro.redirect('/');
+Astro.response.headers.set('Cache-Control', 'no-store');
+let data: DataHealth | null = null;
+try { data = await api.admin.getDataHealth(token!); } catch { /* Recheck remains available. */ }
+const summary = healthSummary(data?.checks || []);
+---
+<TrackerSettings title="Data health">
+  <div id="data-health" data-initial={JSON.stringify(data)}>
+    <div class="health-toolbar">
+      <p id="health-time">{data ? `Checked ${new Date(data.checked_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Health check unavailable'}</p>
+      <button id="health-recheck" type="button" class="health-button">Recheck</button>
+    </div>
+    <div class="health-summary">
+      <div><strong id="health-tracked">{data?.tracked_titles.toLocaleString() ?? '—'}</strong><span>Tracked titles</span></div>
+      <div><strong id="health-records">{data?.catalogue_records.toLocaleString() ?? '—'}</strong><span>Catalogue records</span></div>
+      <div><strong id="health-attention">{data ? summary.attention : '—'}</strong><span>Checks needing attention</span></div>
+      <div><strong id="health-clear">{data ? summary.clear : '—'}</strong><span>Checks clear</span></div>
+    </div>
+    <section class="health-repairs" aria-labelledby="health-repairs-title">
+      <h3 id="health-repairs-title">Safe repairs</h3>
+      <p>Existing records and watch history are preserved. Duplicate candidates require review.</p>
+      <div class="health-operations">
+        {healthActions.map(item => <div><div><h4>{item.label}</h4><p>{item.description}</p></div><button class="health-button" type="button" aria-label={`Run ${item.label.toLowerCase()}`} data-health-action={item.action} disabled={isHealthJobActive(data?.job ?? null)}>Run</button></div>)}
+      </div>
+    </section>
+    <div id="health-job" class="health-job" hidden={!data?.job} role="status" aria-live="polite">
+      <p id="health-job-message">{data?.job ? healthJobMessage(data.job) : ''}</p>
+      <progress id="health-job-progress" value={data?.job?.completed_steps ?? 0} max={data?.job?.total_steps || 1} aria-label="Repair progress" hidden={!isHealthJobActive(data?.job ?? null)} />
+      <div id="health-job-results"></div>
+    </div>
+    <p id="health-error" class="health-error" role="alert" hidden={!!data}>{!data ? 'Could not load data health. Recheck to try again.' : ''}</p>
+    <section aria-labelledby="health-checks-title">
+      <div class="health-checks-heading"><h3 id="health-checks-title">Checks</h3><label><input id="health-show-clear" type="checkbox" /> Show clear checks</label></div>
+      <div id="health-checks">
+        {data?.checks.map(check => <details class:list={['health-check', { 'is-clear': check.count === 0 }]} data-check={check.code} hidden={check.count === 0}>
+          <summary><span>{check.label}</span><span class:list={['health-count', { 'is-warning': check.count > 0 && check.severity === 'warning' }]}>{check.count.toLocaleString()} {check.unit}</span></summary>
+          <div class="health-check-body"><p>{check.description}</p>{check.examples.length > 0 && <ul>{check.examples.map(example => <li>{example.href ? <a href={example.href}>{example.name}</a> : <span>{example.name}</span>}{example.detail && <small>{example.detail}</small>}</li>)}</ul>}{check.count > check.examples.length && <p class="health-sample-note">Showing {check.examples.length} of {check.count.toLocaleString()} {check.unit}</p>}</div>
+        </details>)}
+      </div>
+      <p id="health-all-clear" hidden={!data || data.checks.some(check => check.count > 0)}>All checks are clear.</p>
+    </section>
+  </div>
+</TrackerSettings>
+
+<script>
+  import { mountDataHealth } from '../../lib/data-health-controller';
+  document.addEventListener('astro:page-load', () => mountDataHealth());
+</script>
+
+<style>
+  #data-health { max-width: 960px; font-size:14px; }
+  .health-toolbar, .health-checks-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.5rem; }
+  .health-toolbar p, .health-repairs p, .health-check-body p, .health-checks-heading label { color:var(--text-muted, #9aadc0); font-size:14px; }
+  .health-button { border:1px solid var(--border, #334557); background:var(--bg-secondary, #192b3e); color:var(--text-primary, #edf5ff); border-radius:8px; padding:9px 14px; cursor:pointer; font-weight:600; transition:background 180ms ease; }
+  .health-button:hover { background:var(--bg-hover, #263e57); }
+  .health-button:disabled { opacity:.5; cursor:wait; }
+  .health-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; margin-bottom:2.5rem; }
+  .health-summary div { display:flex; flex-direction:column; gap:.45rem; padding:18px; background:var(--bg-secondary, #192b3e); border-radius:10px; }
+  .health-summary strong { font-size:28px; color:var(--blue, #5bb8ff); font-variant-numeric:tabular-nums; }
+  .health-summary span { font-size:13px; color:var(--text-muted, #9aadc0); }
+  h3 { font-size:20px; font-weight:700; }
+  .health-repairs > p { margin:.5rem 0 1rem; }
+  .health-operations { border:1px solid var(--border, #334557); border-radius:10px; overflow:hidden; margin-bottom:2rem; }
+  .health-operations > div { display:flex; align-items:center; justify-content:space-between; gap:1.5rem; padding:18px; }
+  .health-operations > div + div { border-top:1px solid var(--border, #334557); }
+  .health-operations h4 { font-weight:600; margin-bottom:.4rem; }
+  .health-operations p { max-width:650px; line-height:1.5; }
+  .health-job { padding:18px; margin-bottom:2rem; border-radius:10px; background:var(--bg-secondary, #192b3e); }
+  progress { display:block; width:100%; height:.4rem; margin-top:1rem; accent-color:var(--blue, #5bb8ff); }
+  #health-job-results { font-size:13px; color:var(--text-muted, #9aadc0); line-height:1.6; margin-top:.5rem; }
+  .health-error { color:#ffadad; margin-bottom:1.5rem; }
+  .health-check { border-bottom:1px solid var(--border, #334557); }
+  .health-check summary { display:flex; align-items:center; justify-content:space-between; gap:1rem; cursor:pointer; list-style:none; padding:1rem 0; font-weight:600; }
+  .health-check summary::after { content:'+'; color:var(--blue, #5bb8ff); }
+  .health-check[open] summary::after { content:'−'; }
+  .health-check summary::-webkit-details-marker { display:none; }
+  .health-count { margin-left:auto; color:var(--text-muted, #9aadc0); font-size:13px; font-weight:400; text-align:right; }
+  .health-count.is-warning { color:#efbd7d; }
+  .health-check-body { padding:0 0 1.25rem; }
+  .health-check-body ul { margin-top:1rem; display:grid; gap:.75rem; }
+  .health-check-body li { display:flex; flex-direction:column; gap:.2rem; overflow-wrap:anywhere; }
+  .health-check-body a { color:var(--blue, #5bb8ff); }
+  .health-check-body small { color:var(--text-muted, #9aadc0); }
+  .health-sample-note { margin-top:1rem; }
+  [hidden] { display:none !important; }
+  @media (max-width:760px) { .health-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .health-operations > div { gap:.8rem; } }
+  @media (prefers-reduced-motion:reduce) { .health-button { transition:none; } }
+</style>
