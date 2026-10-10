@@ -2,7 +2,7 @@
 
 import math
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy import or_, select
 
@@ -229,7 +229,7 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
     episodes_by_show = defaultdict(list)
     for episode in episodes:
         episodes_by_show[episode.show_id].append(episode)
-    today = date.today().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
     for key, target in facts.items():
         if target["status"] != "planning" or key in hidden:
             continue
