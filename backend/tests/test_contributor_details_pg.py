@@ -154,6 +154,20 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(person.attributes['place_of_birth'],'Berlin')
                 self.assertNotIn('deathday',person.attributes)
 
+    async def test_online_fields_replace_empty_cache_but_preserve_protected_empty_edits(self):
+        self.key_mock.return_value = 'fixture'
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity,self.person_id)
+            person.attributes = {'birthday':''}
+            person.protected_fields = ['description','image_url']
+            db.add(CatalogueIdentity(entity_id=person.id,namespace='tmdb.person',external_id='77',source='tmdb'))
+            await db.commit()
+        with patch('core.contributor_details.tmdb.get_person', AsyncMock(return_value={'id':77,'birthday':'1970-01-01','biography':'Online biography','profile_path':'/profile.jpg'})):
+            data = (await self.request()).json()
+            self.assertEqual(data['birthday'],'1970-01-01')
+            self.assertIsNone(data['description'])
+            self.assertIsNone(data['image'])
+
     async def test_provider_metadata_identity_and_same_number_movie_series_remain_distinct(self):
         self.key_mock.return_value = 'fixture'
         profile = {'id': 77, 'name': 'Real Person', 'birthday': '1970-01-01', 'biography': 'Biography.',
