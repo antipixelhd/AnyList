@@ -52,6 +52,14 @@ No provider requests occur in statistics GETs or calculations. Existing shared
 metadata refresh jobs retain the country/language/runtime/season fields needed
 for subsequent snapshots. Incomplete provider coverage remains explicit.
 
+The metadata sweep also backfills missing durations on completed movie/episode
+history, at most 100 shared media records per daily sweep. Cached runtime values
+are reused first, then TMDB movie/season and TheTVDB episode data are fetched.
+Episode durations require a matching provider episode ID. Missing or failed
+results retain an attempt timestamp and become eligible again after seven days.
+Watch history stays intact, unresolved durations remain explicit, and catalogue
+refreshes preserve known runtimes when a provider omits or reports zero minutes.
+
 ## Frontend and validation
 
 The page has per-chart Titles/Hours/Mean controls (Scores has Titles/Hours),

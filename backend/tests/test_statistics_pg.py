@@ -5,6 +5,7 @@ import importlib
 import os
 import unittest
 import uuid
+from unittest.mock import AsyncMock, patch
 from datetime import datetime, timedelta
 
 os.environ.setdefault("SECRET_KEY", "statistics-test-only")
@@ -100,6 +101,33 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def state(self):
         async with self.Session() as db:
             return await db.get(UserStatsState, self.user_id)
+
+    async def test_runtime_backfill_deduplicates_history_and_refreshes_statistics(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.runtime, movie.tmdb_id = None, 10
+            db.add(WatchEvent(user_id=self.user_id, media_id=movie.id, completed=True, play_count=3))
+            unwatched = Media(title="Incomplete watch", media_type=MediaType.movie, tmdb_id=11)
+            db.add(unwatched)
+            await db.flush()
+            db.add(WatchEvent(user_id=self.user_id, media_id=unwatched.id, completed=False))
+            await db.commit()
+        _, before = await self.build()
+        self.assertEqual(before["payload"]["all"]["coverage"]["runtime_missing_plays"], 4)
+        async with self.Session() as db:
+            with patch("core.runtime_backfill.tmdb.get_movie", AsyncMock(return_value={"id": 10, "runtime": 120})) as fetch:
+                result = await backfill_history_runtimes(db, "fixture-key", limit=1)
+            fetch.assert_awaited_once()
+            self.assertEqual(result["recovered"], 1)
+            self.assertIsNone((await db.get(Media, unwatched.id)).runtime)
+            events = (await db.scalars(select(WatchEvent).where(WatchEvent.media_id == self.media_id))).all()
+            self.assertEqual(sum(e.play_count for e in events), 4)
+        await self.force_due()
+        _, after = await self.build()
+        self.assertGreater(after["metadata_revision"], before["metadata_revision"])
+        self.assertEqual(after["payload"]["all"]["coverage"]["runtime_missing_plays"], 0)
+        self.assertEqual(after["payload"]["all"]["totals"]["watch_minutes"], 480)
 
     async def test_first_request_is_pending_and_worker_publishes_all_scopes_together(self):
         response = await self.client.get("/tracking/profile/statistics-fixture/stats/overview")

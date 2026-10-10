@@ -13,6 +13,13 @@ from models.tracking import TrackedEntry
 FINAL_SHOW_STATUSES = {"Ended", "Canceled"}
 
 
+def retain_episode_runtime(episode, data):
+    """An incomplete catalogue response must not erase a recovered duration."""
+    value = data.get('runtime')
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        episode.runtime = value
+
+
 async def released_episodes(db, media):
     """Read the same regular-episode catalogue for edits and reconciliation."""
     if media.media_type == MediaType.movie:
@@ -116,7 +123,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
                 episode.tvdb_id = episode.tvdb_id or data['tvdb_id']
             episode.release_date = data.get('air_date')
             episode.title = data.get('name') or episode.title
-            episode.runtime = data.get('runtime')
+            retain_episode_runtime(episode, data)
         air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
         media.status = details.get('status') or media.status
         media.tmdb_data = {**(media.tmdb_data or {}), **tvdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': details.get('seasons', []),
@@ -157,7 +164,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
             raise ValueError('Episode numbering changed; existing watch history was preserved')
         episode.release_date = data.get('air_date')
         episode.title = data.get('name') or episode.title
-        episode.runtime = data.get('runtime')
+        retain_episode_runtime(episode, data)
     air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
     media.status = details.get('status') or media.status
     media.tmdb_data = {**(media.tmdb_data or {}), **tmdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': seasons,

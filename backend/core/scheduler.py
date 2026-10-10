@@ -598,6 +598,9 @@ async def _show_metadata_refresher():
                 if tvdb_key:
                     from core import tvdb as tvdb_client
                     tvdb_client.set_subscriber_pin(tvdb_key, tvdb_pin)
+                from core.runtime_backfill import backfill_history_runtimes
+                runtime_coverage = await backfill_history_runtimes(db, api_key, tvdb_api_key=tvdb_key)
+                log.info("Historical runtime backfill: %s", runtime_coverage)
                 if not settings_store.check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     # Cached confirmed dates can still reach their premiere
