@@ -46,6 +46,12 @@ class StaffTests(unittest.TestCase):
         self.assertEqual(director["contributor"]["description"], "Biography")
         self.assertEqual(director["contributor"]["attributes"]["birthday"], "1970-01-01")
 
+    def test_regular_series_credits_cannot_replace_a_complete_aggregate(self):
+        raw={'id':1,'name':'Series','production_companies':[],'created_by':[],
+             'credits':{'cast':[],'crew':[]}}
+        self.assertFalse(normalize_tmdb(raw,'series')['coverage']['credits_complete'])
+        self.assertTrue(normalize_tmdb({**raw,'aggregate_credits':{'cast':[],'crew':[]}},'series')['coverage']['credits_complete'])
+
 
 class StaffLoadingTests(unittest.IsolatedAsyncioTestCase):
     async def test_acting_labels_excluded_verified_ids_merge_creators_and_primary_crew(self):

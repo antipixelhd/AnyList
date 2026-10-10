@@ -246,7 +246,7 @@ def normalize_tmdb(raw, kind):
         "credits": "series_aggregate" if raw.get("aggregate_credits") else "title",
         "credits_complete": all(isinstance(credits.get(group), list) for group in ("cast", "crew"))
             and isinstance(raw.get("production_companies"), list)
-            and (kind == "movie" or isinstance(raw.get("created_by"), list)),
+            and (kind == "movie" or (isinstance(raw.get("created_by"), list) and bool(raw.get("aggregate_credits")))),
         "characters": "role_labels_only",
     }
     for r in (raw.get("recommendations") or {}).get("results", []):
