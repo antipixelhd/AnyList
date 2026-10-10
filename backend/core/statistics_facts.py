@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import or_, select
 
 from core.countries import country_codes
+from core.statistics_genres import genre_groups, poster
 from core.tracking_rules import effective_score
 from models.base import MediaType
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink
@@ -156,7 +157,14 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
                           "authoritative_plays": 0, "unattributed_plays": 0, "entry_order": None,
                           "planned_minutes": 0.0, "planned_unknown_episodes": 0, "planned_partial": False,
                           "planned_known_episodes": 0, "media": [], "shows": [], "progress": 0}
+            facts[key].update(name=getattr(entity, "name", None) or getattr(row, "title", None) or key,
+                              poster=poster(getattr(entity, "image_url", None) or getattr(row, "poster_path", None)),
+                              detail_media_id=None)
         target = facts[key]
+        if target["name"] == key and getattr(row, "title", None):
+            target["name"] = row.title
+        if not target["poster"]:
+            target["poster"] = poster(getattr(row, "poster_path", None))
         # Canonical fields win; retained local metadata fills missing fields.
         target["data"].update({k: v for k, v in data.items() if v is not None and v != [] and v != ""})
         entity = entities.get(target["entity_id"])
@@ -188,6 +196,8 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
         if kind == "movie" and row.runtime:
             data["runtime"] = row.runtime
         fact(key, kind, row, data)["media"].append(row)
+        if facts[key]["detail_media_id"] is None:
+            facts[key]["detail_media_id"] = row.id
         by_media[row.id] = key
     hidden = {key for key, value in facts.items() if not show_anime and anime(value["data"])}
     coverage["hidden_title_count"] = len(hidden)
@@ -201,7 +211,7 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
         except (ValueError, TypeError, ArithmeticError):
             score = None
         target.update(listed=True, status=entry.status, score=score if score and score <= 10 else None,
-                      progress=max(entry.progress or 0, 0), entry_order=order)
+                      progress=max(entry.progress or 0, 0), entry_order=order, detail_media_id=row.id)
     for event, row in events:
         key = by_media.get(row.id) if row.media_type == MediaType.movie else by_show.get(row.show_id)
         plays = max(event.play_count or 1, 1)
@@ -337,6 +347,7 @@ def aggregate_scope(facts, coverage, scope):
         "statuses": statuses, "formats": formats,
         "countries": [{"key": k, "label": k, **v} for k, v in sorted(countries.items(), key=lambda kv: (-kv[1]["share"], kv[0]))],
         "release_years": yearly(watched), "watch_years": yearly(watched, watched=True),
+        "genres": genre_groups(watched),
         "coverage": {**coverage, "runtime_known_plays": runtime_known, "runtime_estimated_plays": runtime_estimated,
                      "runtime_missing_plays": sum(t["runtime_missing"] for t in watched),
                      "authoritative_dated_plays": sum(t["authoritative_plays"] for t in watched),

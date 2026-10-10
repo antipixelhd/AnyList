@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 MediaScope = Literal["all", "movie", "series"]
 
@@ -25,6 +25,20 @@ class Distribution(BaseModel):
 
 class CountryDistribution(Distribution):
     share: float
+
+
+class GenreTitle(BaseModel):
+    key: str
+    title: str
+    poster: str | None
+    href: str
+    score: float
+
+
+class GenreGroup(MetricGroup):
+    browse_filters: dict[Literal["movie", "series"], str]
+    top_titles: list[GenreTitle]
+    runtime_missing_plays: int = 0
 
 
 class OverviewTotals(BaseModel):
@@ -52,6 +66,7 @@ class Overview(BaseModel):
     release_years: list[MetricGroup]
     watch_years: list[MetricGroup]
     coverage: dict[str, int]
+    genres: list[GenreGroup] = Field(default_factory=list)
 
 
 class OverviewResponse(BaseModel):

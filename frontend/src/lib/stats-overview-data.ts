@@ -11,6 +11,12 @@ export interface MetricGroup {
   rated_titles: number;
 }
 export interface Distribution { key: string; label: string; titles: number; }
+export interface GenreTitle { key: string; title: string; poster: string | null; href: string; score: number; }
+export interface GenreGroup extends MetricGroup {
+  browse_filters: { movie: string; series: string };
+  top_titles: GenreTitle[];
+  runtime_missing_plays: number;
+}
 export interface Overview {
   media_type: MediaScope;
   totals: {
@@ -26,6 +32,7 @@ export interface Overview {
   release_years: MetricGroup[];
   watch_years: MetricGroup[];
   coverage: Record<string, number>;
+  genres?: GenreGroup[];
 }
 export interface OverviewResponse {
   profile: ProfileStats['profile'];

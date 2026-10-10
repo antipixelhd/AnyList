@@ -5,15 +5,20 @@ import ProfileSectionSelector from '../../../components/ProfileSectionSelector.a
 import Icon from '../../../components/Icon.astro';
 import StatsMetricChart from '../../../components/StatsMetricChart.astro';
 import StatsDistribution from '../../../components/StatsDistribution.astro';
+import StatsGenreCard from '../../../components/StatsGenreCard.astro';
 import '../../../styles/stats-overview.css';
+import '../../../styles/stats-genres.css';
 import { tracker } from '../../../lib/tracker';
 import type { OverviewResponse, Overview, MediaScope } from '../../../lib/stats-overview-data';
 import { headlineValues } from '../../../lib/stats-overview-data';
+import { genreSort, rankedGenres } from '../../../lib/stats-genres-data';
 
 const { username } = Astro.params;
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 const requested = Astro.url.searchParams.get('media') || 'all';
 const media: MediaScope = requested === 'movie' || requested === 'series' ? requested : 'all';
+const section = Astro.url.searchParams.get('section') === 'genres' ? 'genres' : 'overview';
+const sort = genreSort(Astro.url.searchParams.get('sort'));
 let data: OverviewResponse | null = null, error = '';
 try { data = await tracker(`profile/${encodeURIComponent(username!)}/stats/overview?media_type=${media}`, Astro.locals.token); }
 catch (cause) { error = (cause as Error).message; }
@@ -24,24 +29,36 @@ const overview: Overview = data?.overview || {
 };
 const highlights = headlineValues(overview);
 const headlineIcons = ['display', 'play', 'calendar', 'hourglass', 'percent', 'divide'];
+const genreTemplate = { key: '', label: '', titles: 0, minutes: 0, mean_score: null, rated_titles: 0, runtime_missing_plays: 0, browse_filters: { movie: '', series: '' }, top_titles: [] };
 ---
 <Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
   {data ? <>
     <ProfileHeader profile={{ ...data.profile, owner: data.owner, following: data.following, follows_you: data.follows_you, combine_lists: data.combine_lists }} active="stats" />
-    <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} aria-label="Statistics overview">
-      <aside class="overview-sidebar"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}]} active="overview" width="100%" /></aside>
+    <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} data-section={section} data-genre-sort={sort} aria-label="Statistics">
+      <aside class="overview-sidebar"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}, {id: 'genres', label: 'Genres'}]} active={section} width="100%" /></aside>
       <div class="stats-overview-content">
-      <header class="overview-heading"><h2>Overview</h2><nav class="overview-media" aria-label="Statistics media type">
-        {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?media=${value}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
+      <header class="overview-heading"><h2 data-stats-heading>{section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type">
+        {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>
       <p class="overview-error error-message" role="alert" hidden></p>
       <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>Check again</button></div>
       <span class="overview-sr-only" data-overview-announcement role="status" aria-live="polite"></span>
       <div class="overview-results" hidden={!ready}>
+        <div data-stats-panel="overview" hidden={section !== 'overview'}>
         <dl class="overview-totals" aria-label="Primary statistics">{highlights.map((metric, index) => <div title={metric.detail}><dt><span class="overview-total-icon" aria-hidden="true"><Icon name={headlineIcons[index]} /></span><span data-headline-label={index}>{metric.label}</span></dt><dd data-headline-value={index}>{metric.value}</dd></div>)}</dl>
         <div class="overview-chart-grid"><StatsMetricChart id="scores" title="Scores" rows={overview.scores} score /><StatsMetricChart id="episode_counts" title="Episode count" rows={overview.episode_counts} hidden={media === 'movie'} /></div>
         <div class="overview-distribution-grid"><StatsDistribution id="statuses" title="List status" data={overview} /><StatsDistribution id="formats" title="Format" data={overview} /><StatsDistribution id="countries" title="Country" data={overview} /></div>
         <div class="overview-chart-grid overview-years"><StatsMetricChart id="release_years" title="Release year" rows={overview.release_years} /><StatsMetricChart id="watch_years" title="Watch year" rows={overview.watch_years} /></div>
+        </div>
+        <div data-stats-panel="genres" hidden={section !== 'genres'}>
+          <div class="stats-genres-toolbar"><div class="overview-metrics" role="group" aria-label="Sort genres">
+            {[['count', 'Count'], ['mean_score', 'Mean Score'], ['time', 'Time Watched']].map(([value, label]) => <button type="button" data-genre-sort={value} aria-pressed={sort === value}>{label}</button>)}
+          </div></div>
+          <div class="stats-genres-grid" data-genres-grid>{rankedGenres(overview.genres || [], sort).map((genre, index) => <StatsGenreCard genre={genre} rank={index + 1} media={media} />)}</div>
+          <p class="stats-genres-empty" data-genres-empty hidden={(overview.genres || []).length > 0}>No watched genres.</p>
+        </div>
+        <template data-genre-card-template><StatsGenreCard genre={genreTemplate} rank={0} media={media} /></template>
+        <template data-genre-poster-template><a class="stats-genre-poster" href="#" draggable="false"><img alt="" loading="lazy" draggable="false" /><span class="stats-genre-placeholder" aria-hidden="true"></span><span class="stats-genre-tooltip" aria-hidden="true"></span></a></template>
       </div>
       </div>
     </section>

@@ -1078,7 +1078,7 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
 
 
 @router.get('/browse/facets')
-async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
     await catalog_access(db, viewer)
@@ -1096,7 +1096,24 @@ async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region
     if not providers:
         providers = await local_providers(db, region)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
-    return {'genres': [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])], 'providers': providers, 'notice': notice}
+    options = [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])]
+    options.extend({'id': value, 'name': value[5:]} for value in browse_genres(genres) if isinstance(value, str))
+    return {'genres': options, 'providers': providers, 'notice': notice}
+
+
+def browse_genres(value: str) -> list[int | str]:
+    parts = value.split(',') if value else []
+    if len(parts) > 12:
+        raise HTTPException(422, 'Choose up to 12 valid filters')
+    result = []
+    for part in parts:
+        if not part:
+            raise HTTPException(422, 'Choose up to 12 valid filters')
+        if part.startswith('name:') and 0 < len(part[5:]) <= 80 and part[5:].strip() == part[5:] and not any(ord(c) < 32 for c in part):
+            result.append(part)
+        else:
+            result.extend(browse_ids(part))
+    return list(dict.fromkeys(result))
 
 
 def browse_ids(value: str) -> list[int]:
@@ -1135,9 +1152,9 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
-    genre_ids = browse_ids(genres)
+    genre_ids = browse_genres(genres)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
-    if not set(genre_ids).issubset(allowed) or (start and end and start > end):
+    if not {value for value in genre_ids if isinstance(value, int)}.issubset(allowed) or (start and end and start > end):
         raise HTTPException(422, 'Check genres and release dates')
     if (media_type == 'movie' and status not in ('', 'released', 'upcoming')) or (media_type == 'series' and status == 'released'):
         raise HTTPException(422, 'Choose a status for this media type')

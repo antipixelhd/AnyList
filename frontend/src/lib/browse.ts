@@ -43,7 +43,7 @@ type Section = {
   results: Item[];
 };
 type SectionsPayload = { sections: Section[]; notice?: string };
-type Facet = { id: number; name: string };
+type Facet = { id: number | string; name: string };
 const statusLabels: Record<string, string> = {
   watching: "Watching",
   completed: "Completed",
@@ -548,10 +548,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     facetRequest?.abort();
     const current = new AbortController();
     facetRequest = current;
-    const cacheKey = `${field('type').value}:${field('region').value}`;
+    const cacheKey = `${field('type').value}:${field('region').value}:${field('genres').value}`;
     try {
       const result = facetCache.get(cacheKey) ?? await json(
-        `browse/facets?${new URLSearchParams({ media_type: field("type").value, region: field("region").value })}`,
+        `browse/facets?${new URLSearchParams({ media_type: field("type").value, region: field("region").value, genres: field("genres").value })}`,
         { signal: current.signal },
       );
       if (current !== facetRequest || current.signal.aborted || signal.aborted) return;

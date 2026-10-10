@@ -60,7 +60,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(GlobalSettings(id=1, show_anime=True, enable_logged_out_navigation=True))
             await db.flush()
             db.add(UserProfileData(user_id=user.id, privacy_level=PrivacyLevel.public))
-            movie = Media(title="Fixture movie", media_type=MediaType.movie, runtime=100, release_date="2020-01-01")
+            movie = Media(title="Fixture movie", media_type=MediaType.movie, runtime=100, release_date="2020-01-01", tmdb_data={"genres": ["Drama"]})
             db.add(movie)
             await db.flush()
             db.add(TrackedEntry(user_id=user.id, media_id=movie.id, status="completed", rating_mode="manual", manual_score=8))
@@ -143,8 +143,25 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             data = r.json()
             generations.add(data["generation"])
             self.assertEqual(data["overview"]["totals"]["watched_titles"], titles)
+            genres = data["overview"]["genres"]
+            if titles:
+                self.assertEqual(genres[0]["label"], "Drama")
+                self.assertEqual(genres[0]["top_titles"][0]["score"], 8)
+                self.assertTrue(genres[0]["top_titles"][0]["href"].startswith("/title/"))
+            else:
+                self.assertEqual(genres, [])
         self.assertEqual(len(generations), 1)
         self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview", params={"media_type": "game"})).status_code, 422)
+
+    async def test_named_genre_matches_string_and_object_metadata_without_broadening(self):
+        from core.browse import local_query
+        async with self.Session() as db:
+            db.add_all([Media(title=title, media_type=MediaType.movie, tmdb_data={"genres": genres}) for title, genres in [
+                ("String genre", ["Suspense"]), ("Object genre", [{"name": "Suspense"}]), ("Different genre", ["Drama"])]])
+            await db.commit()
+            query = local_query("movie", term="", genres=["name:Suspense"], start=None, end=None, status="", provider=None,
+                                region="US", sort="title", show_anime=True)
+            self.assertEqual({m.title for m in (await db.scalars(query)).all()}, {"String genre", "Object genre"})
 
     async def test_two_workers_cannot_claim_same_job(self):
         claims = await asyncio.gather(snapshots.claim_next(self.Session), snapshots.claim_next(self.Session))
