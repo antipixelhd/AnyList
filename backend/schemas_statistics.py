@@ -47,6 +47,20 @@ class ActorTitle(GenreTitle):
     character_image: str | None
 
 
+class StudioGroup(MetricGroup):
+    href: str
+    top_titles: list[GenreTitle]
+    runtime_missing_plays: int = 0
+
+
+class StudioDetail(BaseModel):
+    key: str
+    name: str
+    image: str | None
+    description: str | None
+    countries: list[str]
+
+
 class ActorGroup(MetricGroup):
     image: str | None
     href: str
@@ -81,6 +95,7 @@ class Overview(BaseModel):
     coverage: dict[str, int]
     genres: list[GenreGroup] = Field(default_factory=list)
     actors: list[ActorGroup] = Field(default_factory=list)
+    studios: list[StudioGroup] = Field(default_factory=list)
 
 
 class OverviewResponse(BaseModel):

@@ -1,11 +1,11 @@
-import type { GenreGroup, MediaScope } from './stats-overview-data';
+import type { GenreGroup, MediaGroup, MediaScope } from './stats-overview-data';
 
 export type GenreSort = 'count' | 'mean_score' | 'time';
 export function genreSort(value: string | null | undefined): GenreSort {
   return value === 'mean_score' || value === 'time' ? value : 'count';
 }
-export function rankedGenres(rows: GenreGroup[], sort: GenreSort) {
-  const value = (row: GenreGroup) => sort === 'mean_score' ? row.mean_score ?? -Infinity : sort === 'time' ? row.minutes : row.titles;
+export function rankedGenres<T extends MediaGroup>(rows: T[], sort: GenreSort) {
+  const value = (row: T) => sort === 'mean_score' ? row.mean_score ?? -Infinity : sort === 'time' ? row.minutes : row.titles;
   return [...rows].sort((a, b) => value(b) - value(a) || b.titles - a.titles || a.label.localeCompare(b.label)).slice(0, 18);
 }
 export function genreBrowseHref(row: GenreGroup, media: MediaScope) {

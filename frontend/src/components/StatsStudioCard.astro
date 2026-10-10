@@ -1,0 +1,7 @@
+---
+import Card from './StatsMediaGroupCard.astro';
+import type { StudioGroup } from '../lib/stats-overview-data';
+interface Props { studio: StudioGroup; rank: number; }
+const { studio, rank } = Astro.props;
+---
+<Card group={studio} rank={rank} href={studio.href} prefix="studio" />

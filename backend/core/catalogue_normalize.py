@@ -229,6 +229,7 @@ def normalize_tmdb(raw, kind):
                         artwork="https://image.tmdb.org/t/p/original" + p["logo_path"]
                         if p.get("logo_path")
                         else None,
+                        attributes={"origin_country": p["origin_country"]} if p.get("origin_country") else None,
                     ),
                     "role": role,
                     "source_key": f"{field}:{p['id']}",

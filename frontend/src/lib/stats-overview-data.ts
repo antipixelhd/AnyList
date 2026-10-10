@@ -12,11 +12,14 @@ export interface MetricGroup {
 }
 export interface Distribution { key: string; label: string; titles: number; }
 export interface GenreTitle { key: string; title: string; poster: string | null; href: string; score: number; }
-export interface GenreGroup extends MetricGroup {
-  browse_filters: { movie: string; series: string };
+export interface MediaGroup extends MetricGroup {
   top_titles: GenreTitle[];
   runtime_missing_plays: number;
 }
+export interface GenreGroup extends MediaGroup {
+  browse_filters: { movie: string; series: string };
+}
+export interface StudioGroup extends MediaGroup { href: string; }
 export interface ActorTitle extends Omit<GenreTitle, 'score'> { score: number | null; character: string | null; character_image: string | null; }
 export interface ActorGroup extends MetricGroup {
   image: string | null; href: string; top_titles: ActorTitle[]; runtime_missing_plays: number;
@@ -38,6 +41,7 @@ export interface Overview {
   coverage: Record<string, number>;
   genres?: GenreGroup[];
   actors?: ActorGroup[];
+  studios?: StudioGroup[];
 }
 export interface OverviewResponse {
   profile: ProfileStats['profile'];

@@ -7,7 +7,7 @@ import binascii
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +21,7 @@ from models import Media, User, UserSettings, UserProfileData, GlobalSettings, F
 from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
-from schemas_statistics import MediaScope, OverviewResponse
+from schemas_statistics import MediaScope, OverviewResponse, StudioDetail
 
 router = APIRouter()
 
@@ -826,6 +826,22 @@ async def catalog_access(db, viewer):
     settings = await db.get(GlobalSettings, 1)
     if not settings or not settings.enable_logged_out_navigation:
         raise HTTPException(401, "Sign in to browse")
+
+
+@router.get('/studios/{studio_key}')
+async def studio_metadata(
+    studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+) -> StudioDetail:
+    from core.statistics_studios import studio_detail
+    await catalog_access(db, viewer)
+    if int(studio_key.split(':', 1)[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid studio identifier')
+    result = await studio_detail(db, studio_key)
+    if not result:
+        raise HTTPException(404, 'Studio not found')
+    return StudioDetail.model_validate(result)
 
 
 async def profile_access(db, username, viewer):

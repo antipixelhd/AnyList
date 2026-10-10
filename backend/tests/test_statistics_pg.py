@@ -24,7 +24,7 @@ from db import get_db
 from dependencies import get_optional_user
 from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
-from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink
+from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink, CatalogueIdentity
 from models.statistics import UserStatsSnapshot, UserStatsState
 from models.tracking import TrackedEntry
 from routers.tracking import router
@@ -73,10 +73,19 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(CatalogueLegacyLink(media_id=movie.id, entity_id=work.id))
             db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id, provider="tvdb", source_key="fixture-role",
                 role="actor", character_label="Fixture Character", character_image_url="https://artworks.thetvdb.com/role.jpg"))
+            studio = CatalogueEntity(kind="organization", name="Fixture Studio", image_url="https://example.test/logo.png", description="Independent film studio.", attributes={"origin_country": "US"})
+            network = CatalogueEntity(kind="organization", name="Fixture Network", attributes={})
+            db.add_all([studio, network])
+            await db.flush()
+            db.add(CatalogueIdentity(entity_id=studio.id, namespace="tmdb.company", external_id="99", source="tmdb"))
+            db.add_all([CatalogueCredit(work_id=work.id, contributor_id=studio.id, provider="tmdb", source_key="company", role="producer"),
+                        CatalogueCredit(work_id=work.id, contributor_id=studio.id, provider="tvdb", source_key="company", role="producer"),
+                        CatalogueCredit(work_id=work.id, contributor_id=network.id, provider="tmdb", source_key="network", role="broadcaster")])
             db.add(TrackedEntry(user_id=user.id, media_id=movie.id, status="completed", rating_mode="manual", manual_score=8))
             db.add(WatchEvent(user_id=user.id, media_id=movie.id, completed=True, watched_at=datetime(2026, 1, 1)))
             await db.commit()
             self.user_id, self.media_id = user.id, movie.id
+            self.studio_id, self.network_id = studio.id, network.id
         app = FastAPI()
         app.include_router(router, prefix="/tracking")
 
@@ -102,6 +111,34 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         result = await snapshots.compute(claim, self.Session)
         self.assertTrue(await snapshots.publish(claim, result, self.Session))
         return claim, result
+
+    async def test_studio_snapshot_and_public_metadata_do_not_expose_personal_data(self):
+        await self.build()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        group = response.json()['overview']['studios'][0]
+        self.assertEqual((group['label'], group['titles'], group['mean_score'], group['minutes']), ('Fixture Studio', 1, 8, 100))
+        self.assertEqual(len(response.json()['overview']['studios']), 1)
+        detail = await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()['countries'], ['US'])
+        self.assertEqual(set(detail.json()), {'key', 'name', 'image', 'description', 'countries'})
+        self.assertEqual((await self.client.get('/tracking/studios/tmdb:99')).json()['name'], 'Fixture Studio')
+        self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.network_id}')).status_code, 404)
+        self.assertEqual((await self.client.get('/tracking/studios/invalid:99')).status_code, 422)
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')).status_code, 401)
+
+    async def test_legacy_studio_page_uses_saved_company_metadata(self):
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.tmdb_data = {'production_companies': [{'id': 999, 'name': 'Legacy Studio', 'logo_path': '/logo.png', 'origin_country': 'JP'}]}
+            await db.commit()
+        response = await self.client.get('/tracking/studios/tmdb:999')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.json()['name'], response.json()['countries']), ('Legacy Studio', ['JP']))
+        self.assertEqual(response.json()['image'], 'https://image.tmdb.org/t/p/w185/logo.png')
 
     async def force_due(self):
         async with self.Session() as db:

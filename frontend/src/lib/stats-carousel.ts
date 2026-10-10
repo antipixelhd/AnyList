@@ -1,7 +1,7 @@
 export function carousel(track: HTMLElement, reduced: MediaQueryList) {
   const events = new AbortController(), card = track.closest<HTMLElement>('.stats-genre-card')!;
-  const previous = card.querySelector<HTMLButtonElement>('[data-genre-scroll="-1"],[data-actor-scroll="-1"]')!;
-  const next = card.querySelector<HTMLButtonElement>('[data-genre-scroll="1"],[data-actor-scroll="1"]')!;
+  const previous = card.querySelector<HTMLButtonElement>('[data-genre-scroll="-1"],[data-actor-scroll="-1"],[data-studio-scroll="-1"]')!;
+  const next = card.querySelector<HTMLButtonElement>('[data-genre-scroll="1"],[data-actor-scroll="1"],[data-studio-scroll="1"]')!;
   let frame = 0, pointer: number | null = null, startX = 0, startScroll = 0, dragging = false, suppressClickUntil = 0;
   const bounds = () => { previous.hidden = track.scrollLeft <= 1; next.hidden = track.scrollLeft >= track.scrollWidth - track.clientWidth - 1; };
   const cancel = () => { cancelAnimationFrame(frame); frame = 0; };

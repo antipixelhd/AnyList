@@ -7,6 +7,7 @@ import StatsMetricChart from '../../../components/StatsMetricChart.astro';
 import StatsDistribution from '../../../components/StatsDistribution.astro';
 import StatsGenreCard from '../../../components/StatsGenreCard.astro';
 import StatsActorCard from '../../../components/StatsActorCard.astro';
+import StatsStudioCard from '../../../components/StatsStudioCard.astro';
 import '../../../styles/stats-overview.css';
 import '../../../styles/stats-genres.css';
 import '../../../styles/stats-actors.css';
@@ -15,15 +16,17 @@ import type { OverviewResponse, Overview, MediaScope } from '../../../lib/stats-
 import { headlineValues } from '../../../lib/stats-overview-data';
 import { genreSort, rankedGenres } from '../../../lib/stats-genres-data';
 import { actorArtwork, hasCharacterImages, rankedActors } from '../../../lib/stats-actors-data';
+import { rankedStudios } from '../../../lib/stats-studios-data';
 
 const { username } = Astro.params;
 Astro.response.headers.set('Cache-Control', 'private, no-store');
 const requested = Astro.url.searchParams.get('media') || 'all';
 const media: MediaScope = requested === 'movie' || requested === 'series' ? requested : 'all';
 const selectedSection = Astro.url.searchParams.get('section');
-const section = selectedSection === 'genres' || selectedSection === 'actors' ? selectedSection : 'overview';
+const section = selectedSection === 'genres' || selectedSection === 'actors' || selectedSection === 'studios' ? selectedSection : 'overview';
 const sort = genreSort(Astro.url.searchParams.get('sort'));
 const actorSort = genreSort(Astro.url.searchParams.get('actor_sort'));
+const studioSort = genreSort(Astro.url.searchParams.get('studio_sort'));
 const artwork = actorArtwork(Astro.url.searchParams.get('artwork'));
 let data: OverviewResponse | null = null, error = '';
 try { data = await tracker(`profile/${encodeURIComponent(username!)}/stats/overview?media_type=${media}`, Astro.locals.token); }
@@ -41,11 +44,11 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
 <Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
   {data ? <>
     <ProfileHeader profile={{ ...data.profile, owner: data.owner, following: data.following, follows_you: data.follows_you, combine_lists: data.combine_lists }} active="stats" />
-    <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} data-section={section} data-genre-sort={sort} data-actor-sort={actorSort} data-actor-artwork={artwork} aria-label="Statistics">
-      <aside class="overview-sidebar"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}, {id: 'genres', label: 'Genres'}, {id: 'actors', label: 'Actors'}]} active={section} width="100%" /></aside>
+    <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} data-section={section} data-genre-sort={sort} data-studio-sort={studioSort} data-actor-sort={actorSort} data-actor-artwork={artwork} aria-label="Statistics">
+      <aside class="overview-sidebar"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}, {id: 'genres', label: 'Genres'}, {id: 'actors', label: 'Actors'}, {id: 'studios', label: 'Studios'}]} active={section} width="100%" /></aside>
       <div class="stats-overview-content">
-      <header class="overview-heading"><h2 data-stats-heading>{section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type">
-        {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
+      <header class="overview-heading"><h2 data-stats-heading>{section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type">
+        {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, studio_sort: studioSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>
       <p class="overview-error error-message" role="alert" hidden></p>
       <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>Check again</button></div>
@@ -78,6 +81,14 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
           <p class="stats-actors-empty" data-actors-empty hidden={(overview.actors || []).length > 0}>No actors yet.</p>
         </div>
         <template data-actor-card-template><StatsActorCard actor={actorTemplate} rank={0} mode={artwork} /></template>
+        <div data-stats-panel="studios" hidden={section !== 'studios'}>
+          <div class="stats-genres-toolbar"><div class="overview-metrics" role="group" aria-label="Sort studios">
+            {[['count', 'Count'], ['mean_score', 'Mean Score'], ['time', 'Time Watched']].map(([value, label]) => <button type="button" data-studio-sort={value} aria-pressed={studioSort === value}>{label}</button>)}
+          </div></div>
+          <div class="stats-genres-grid" data-studios-grid>{rankedStudios(overview.studios || [], studioSort).map((studio, index) => <StatsStudioCard studio={studio} rank={index + 1} />)}</div>
+          <p class="stats-genres-empty" data-studios-empty hidden={(overview.studios || []).length > 0}>No watched studios.</p>
+        </div>
+        <template data-studio-card-template><StatsStudioCard studio={{...actorTemplate, top_titles: []}} rank={0} /></template>
         <template data-genre-poster-template><a class="stats-genre-poster" href="#" draggable="false"><img alt="" loading="lazy" draggable="false" /><span class="stats-genre-placeholder" aria-hidden="true"></span><span class="stats-genre-tooltip" aria-hidden="true"></span></a></template>
       </div>
       </div>
