@@ -21,7 +21,7 @@ from models import Media, User, UserSettings, UserProfileData, GlobalSettings, F
 from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
-from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail
+from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
 
 router = APIRouter()
 
@@ -1018,6 +1018,28 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "entries": entries,
     }
+
+
+@router.post("/stats/refresh")
+async def refresh_my_statistics(
+    response: Response,
+    viewer: Annotated[User, Depends(get_current_user)],
+) -> StatisticsRefresh:
+    from core.statistics_refresh import refresh_account
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await refresh_account(viewer.id)
+
+
+@router.get("/stats/refresh")
+async def my_statistics_refresh_status(
+    response: Response,
+    viewer: Annotated[User, Depends(get_current_user)],
+) -> StatisticsRefresh:
+    from core.statistics_refresh import refresh_status
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await refresh_status(viewer.id)
 
 
 @router.get("/profile/{username}/stats/overview")

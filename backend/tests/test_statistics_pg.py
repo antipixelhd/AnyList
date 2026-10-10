@@ -21,13 +21,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from core import statistics_snapshots as snapshots
 from db import get_db
-from dependencies import get_optional_user
+from dependencies import get_current_user, get_optional_user
 from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink, CatalogueIdentity
 from models.statistics import UserStatsSnapshot, UserStatsState
 from models.tracking import TrackedEntry
 from routers.tracking import router
+from core.statistics_refresh import refresh_account, refresh_status
 
 URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATABASE_URL")
 
@@ -90,6 +91,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.user_id, self.media_id = user.id, movie.id
             self.studio_id, self.network_id = studio.id, network.id
         app = FastAPI()
+        self.app = app
         app.include_router(router, prefix="/tracking")
 
         async def db_override():
@@ -114,6 +116,129 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         result = await snapshots.compute(claim, self.Session)
         self.assertTrue(await snapshots.publish(claim, result, self.Session))
         return claim, result
+
+    async def test_manual_refresh_publishes_immediately_before_daily_due(self):
+        await self.build()
+        previous = await self.state()
+        self.assertGreater(previous.next_due_at, snapshots.utcnow())
+        async with self.Session() as db:
+            await db.execute(update(TrackedEntry).where(TrackedEntry.user_id == self.user_id).values(manual_score=9))
+            await db.commit()
+        result = await refresh_account(self.user_id, self.Session)
+        self.assertEqual(result.status, 'ready')
+        self.assertNotEqual(result.generation, previous.active_snapshot_id)
+        state = await self.state()
+        self.assertFalse(state.dirty)
+        self.assertGreater(state.next_due_at, snapshots.utcnow() + timedelta(hours=23))
+        async with self.Session() as db:
+            payload = (await db.get(UserStatsSnapshot, result.generation)).payload
+            self.assertEqual(payload['all']['totals']['mean_score'], 9)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)), 1)
+
+    async def test_manual_refresh_and_scheduler_share_one_lease(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        original = snapshots.compute
+
+        async def paused_compute(claim, factory):
+            started.set()
+            await release.wait()
+            return await original(claim, factory)
+
+        with patch.object(snapshots, 'compute', side_effect=paused_compute) as compute:
+            task = asyncio.create_task(refresh_account(self.user_id, self.Session))
+            try:
+                await asyncio.wait_for(started.wait(), 5)
+                self.assertEqual((await refresh_account(self.user_id, self.Session)).status, 'refreshing')
+                self.assertEqual((await refresh_status(self.user_id, self.Session)).status, 'refreshing')
+                self.assertIsNone(await snapshots.claim_next(self.Session))
+                self.assertEqual(compute.call_count, 1)
+            finally:
+                release.set()
+            self.assertEqual((await task).status, 'ready')
+
+    async def test_manual_refresh_failure_retains_last_good_snapshot_and_retries(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        with patch.object(snapshots, 'compute', side_effect=RuntimeError('private detail')):
+            result = await refresh_account(self.user_id, self.Session)
+        self.assertEqual((result.status, result.generation), ('error', previous))
+        state = await self.state()
+        self.assertIsNone(state.lease_token)
+        self.assertGreater(state.next_due_at, snapshots.utcnow())
+        self.assertEqual((await refresh_account(self.user_id, self.Session)).status, 'ready')
+
+    async def test_manual_refresh_retries_changed_source_before_publication(self):
+        original = snapshots.compute
+        calls = 0
+
+        async def change_once(claim, factory):
+            nonlocal calls
+            result = await original(claim, factory)
+            calls += 1
+            if calls == 1:
+                async with self.Session() as db:
+                    await db.execute(update(TrackedEntry).values(manual_score=9))
+                    await db.commit()
+            return result
+
+        with patch.object(snapshots, 'compute', side_effect=change_once):
+            result = await refresh_account(self.user_id, self.Session)
+        self.assertEqual((calls, result.status), (2, 'ready'))
+        async with self.Session() as db:
+            self.assertEqual((await db.get(UserStatsSnapshot, result.generation)).payload['all']['totals']['mean_score'], 9)
+
+    async def test_cancelled_manual_refresh_releases_lease_without_losing_snapshot(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        started = asyncio.Event()
+
+        async def pause(claim, factory):
+            started.set()
+            await asyncio.Event().wait()
+
+        with patch.object(snapshots, 'compute', side_effect=pause):
+            task = asyncio.create_task(refresh_account(self.user_id, self.Session))
+            await asyncio.wait_for(started.wait(), 5)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        state = await self.state()
+        self.assertIsNone(state.lease_token)
+        self.assertEqual(state.active_snapshot_id, previous)
+        self.assertEqual(state.error_code, 'calculation_failed')
+
+    async def test_manual_refresh_recovers_expired_lease(self):
+        async with self.Session() as db:
+            await db.execute(update(UserStatsState).where(UserStatsState.user_id == self.user_id).values(
+                lease_token=str(uuid.uuid4()), lease_until=snapshots.utcnow() - timedelta(minutes=1)))
+            await db.commit()
+        self.assertEqual((await refresh_account(self.user_id, self.Session)).status, 'ready')
+
+    async def test_refresh_api_requires_session_and_only_changes_authenticated_account(self):
+        self.assertEqual((await self.client.post('/tracking/stats/refresh')).status_code, 401)
+        self.assertEqual((await self.client.get('/tracking/stats/refresh')).status_code, 401)
+        async with self.Session() as db:
+            other = User(email='refresh-other@example.org', username='refresh-other', api_key='refresh-other-key')
+            db.add(other)
+            await db.commit()
+            other_before = await db.get(UserStatsState, other.id)
+            before_due = other_before.next_due_at
+            viewer = await db.get(User, self.user_id)
+        self.app.dependency_overrides[get_current_user] = lambda: viewer
+        with patch.object(snapshots, 'AsyncSessionLocal', self.Session):
+            response = await self.client.post(f'/tracking/stats/refresh?user_id={other.id}', json={'user_id': other.id})
+            status = await self.client.get('/tracking/stats/refresh')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual(response.json()['status'], 'ready')
+        self.assertEqual(status.json(), response.json())
+        self.assertEqual(set(response.json()), {'status', 'generation', 'computed_at'})
+        async with self.Session() as db:
+            other_after = await db.get(UserStatsState, other.id)
+            self.assertEqual(other_after.next_due_at, before_due)
+            self.assertIsNone(other_after.active_snapshot_id)
+            self.assertIsNone(other_after.lease_token)
+            self.assertEqual((await db.get(UserStatsSnapshot, response.json()['generation'])).user_id, self.user_id)
 
     async def test_studio_snapshot_and_public_metadata_do_not_expose_personal_data(self):
         await self.build()

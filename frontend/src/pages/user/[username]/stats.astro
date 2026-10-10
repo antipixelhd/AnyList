@@ -48,7 +48,10 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
   {data ? <>
     <ProfileHeader profile={{ ...data.profile, owner: data.owner, following: data.following, follows_you: data.follows_you, combine_lists: data.combine_lists }} active="stats" />
     <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} data-section={section} data-genre-sort={sort} data-studio-sort={studioSort} data-staff-sort={staffSort} data-actor-sort={actorSort} data-actor-artwork={artwork} aria-label="Statistics">
-      <aside class="overview-sidebar"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}, {id: 'genres', label: 'Genres'}, {id: 'actors', label: 'Actors'}, {id: 'studios', label: 'Studios'}, {id: 'staff', label: 'Staff'}]} active={section} width="100%" /></aside>
+      <aside class="overview-sidebar">
+        <button type="button" class="overview-menu-toggle" data-stats-menu-toggle aria-label="Show statistics sections" aria-expanded="false" aria-controls="statistics-sections"><span>Statistics</span><Icon name="ellipsis" /></button>
+        <div id="statistics-sections"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}, {id: 'genres', label: 'Genres'}, {id: 'actors', label: 'Actors'}, {id: 'studios', label: 'Studios'}, {id: 'staff', label: 'Staff'}]} active={section} width="100%" /></div>
+      </aside>
       <div class="stats-overview-content">
       <header class="overview-heading"><h2 data-stats-heading>{section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type">
         {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, studio_sort: studioSort, staff_sort: staffSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}

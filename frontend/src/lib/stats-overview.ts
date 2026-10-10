@@ -7,6 +7,7 @@ import { mountGenres, mountStudios } from './stats-genres';
 import { genreSort } from './stats-genres-data';
 import { actorArtwork } from './stats-actors-data';
 import { mountActors, mountStaff } from './stats-actors';
+import { mountStatisticsNavigation } from './stats-navigation';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -20,6 +21,7 @@ function mount(root: HTMLElement) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   const events = new AbortController();
+  mountStatisticsNavigation(root, events.signal);
   const genres = mountGenres(root);
   const actors = mountActors(root);
   const studios = mountStudios(root);

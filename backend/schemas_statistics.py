@@ -135,6 +135,12 @@ class Overview(BaseModel):
     staff: list[StaffGroup] = Field(default_factory=list)
 
 
+class StatisticsRefresh(BaseModel):
+    status: Literal["pending", "ready", "refreshing", "error"]
+    generation: int | None = None
+    computed_at: datetime | None = None
+
+
 class OverviewResponse(BaseModel):
     profile: dict
     owner: bool

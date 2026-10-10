@@ -1,5 +1,6 @@
 ---
 import RatingPosterSettings from "./RatingPosterSettings.astro";
+import StatisticsRefresh from "./StatisticsRefresh.astro";
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
@@ -262,6 +263,7 @@ const COUNTRIES = [
 
       </div>}
       {category === "media" && <div class="settings-stack">
+      <StatisticsRefresh />
       <!-- Localization -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">

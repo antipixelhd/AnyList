@@ -1,0 +1,60 @@
+---
+import Icon from '../Icon.astro';
+---
+<section data-statistics-refresh aria-labelledby="statistics-refresh-heading">
+  <div class="mb-4 border-b border-zinc-800 pb-2"><h2 id="statistics-refresh-heading" class="section-headline">Statistics</h2></div>
+  <button type="button" class="stats-refresh-button" data-refresh-statistics><Icon name="arrows-rotate" /><span>Refresh statistics</span></button>
+  <p class="stats-refresh-status" data-refresh-status role="status" aria-live="polite" hidden></p>
+</section>
+<style>
+  .stats-refresh-button { display:inline-flex; align-items:center; gap:10px; min-height:44px; padding:10px 16px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--bright); cursor:pointer; transition:background-color 180ms ease; }
+  .stats-refresh-button:hover { background:var(--surface-raised); }
+  .stats-refresh-button:disabled { opacity:.6; cursor:wait; }
+  .stats-refresh-button:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+  .stats-refresh-status { margin:12px 0 0; color:var(--muted); font-size:14px; }
+  .stats-refresh-status[data-error=true] { color:var(--danger, #e57474); }
+  @media(prefers-reduced-motion:reduce) { .stats-refresh-button { transition:none; } }
+</style>
+<script>
+  import { refreshStatistics } from '../../lib/statistics-refresh-request';
+  let controller: AbortController | undefined;
+  function setup() {
+    controller?.abort();
+    const root = document.querySelector<HTMLElement>('[data-statistics-refresh]');
+    if (!root) return;
+    controller = new AbortController();
+    const { signal } = controller;
+    const button = root.querySelector<HTMLButtonElement>('[data-refresh-statistics]')!;
+    const label = button.querySelector('span:last-child')!;
+    const status = root.querySelector<HTMLElement>('[data-refresh-status]')!;
+    button.disabled = false;
+    label.textContent = 'Refresh statistics';
+    root.removeAttribute('aria-busy');
+    status.hidden = true;
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      root.setAttribute('aria-busy', 'true');
+      label.textContent = 'Refreshing…';
+      status.hidden = true;
+      status.dataset.error = 'false';
+      try {
+        await refreshStatistics(signal);
+        status.textContent = 'Statistics refreshed.';
+      } catch (error) {
+        if (signal.aborted) return;
+        status.dataset.error = 'true';
+        status.textContent = error instanceof Error ? error.message : 'Could not refresh statistics. Try again.';
+      } finally {
+        if (!signal.aborted) {
+          button.disabled = false;
+          label.textContent = 'Refresh statistics';
+          root.removeAttribute('aria-busy');
+          status.hidden = false;
+        }
+      }
+    }, { signal });
+  }
+  document.addEventListener('astro:before-swap', () => controller?.abort());
+  document.addEventListener('astro:page-load', setup);
+</script>
