@@ -31,11 +31,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-biography { max-width:850px; margin-bottom:24px; }
 .contributor-biography h2,.contributor-works-heading h2 { font-size:22px; margin:0 0 18px; }
 .contributor-biography p { white-space:pre-line; line-height:1.85; font-size:15px; margin:0; }
-.contributor-biography:has(.contributor-biography-details[open]) .contributor-biography-preview { display:none; }
-.contributor-biography-details summary { width:fit-content; padding:8px 0; color:var(--blue); font-size:13px; cursor:pointer; list-style:none; }
-.contributor-biography-details summary::-webkit-details-marker { display:none; }
-.contributor-biography-details .biography-read-less,.contributor-biography-details[open] .biography-read-more { display:none; }
-.contributor-biography-details[open] .biography-read-less { display:inline; }
+.contributor-biography-toggle { display:block; width:fit-content; padding:8px 0; border:0; background:none; color:var(--blue); font:inherit; font-size:13px; cursor:pointer; }
 .contributor-aliases { color:var(--muted); font-size:13px; margin-bottom:32px; }
 .contributor-aliases summary { cursor:pointer; }
 .contributor-aliases p { line-height:1.7; }

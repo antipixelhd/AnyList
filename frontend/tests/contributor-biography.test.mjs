@@ -4,7 +4,12 @@ import { biographyPreview } from '../src/lib/contributor-page-data.ts';
 
 test('biography preview stops after the first paragraph and retains the complete biography', () => {
   const text = '  First paragraph.\n\nSecond paragraph.  ';
-  assert.deepEqual(biographyPreview(text),{preview:'First paragraph.',full:text.trim(),expandable:true});
+  const result = biographyPreview(text);
+  assert.equal(result.lead,'First paragraph.');
+  assert.equal(result.rest,'\n\nSecond paragraph.');
+  assert.equal(result.lead + result.rest,text.trim());
+  assert.equal(result.expandable,true);
+  assert.equal(result.shortened,false);
 });
 
 test('long single paragraphs are word-limited without losing the full text', () => {
@@ -13,10 +18,19 @@ test('long single paragraphs are word-limited without losing the full text', () 
   assert.equal(result.preview.split(' ').length,60);
   assert.ok(result.preview.endsWith('word59…'));
   assert.equal(result.full,full);
+  assert.equal(result.lead + result.rest,full);
   assert.equal(result.expandable,true);
 });
 
 test('short and empty biographies need no expansion control', () => {
-  assert.deepEqual(biographyPreview('Short  biography.'),{preview:'Short biography.',full:'Short  biography.',expandable:false});
-  assert.deepEqual(biographyPreview(null),{preview:'',full:'',expandable:false});
+  assert.equal(biographyPreview('Short  biography.').expandable,false);
+  assert.equal(biographyPreview(null).expandable,false);
+});
+
+test('expansion preserves whitespace and the exact text at the word boundary', () => {
+  const full = 'One   two\tthree four.\n\nAnother paragraph.';
+  const result = biographyPreview(full,3);
+  assert.equal(result.lead,'One   two\tthree');
+  assert.equal(result.rest,' four.\n\nAnother paragraph.');
+  assert.equal(result.lead + result.rest,full);
 });

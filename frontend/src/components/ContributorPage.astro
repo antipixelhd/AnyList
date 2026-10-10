@@ -57,8 +57,9 @@ if (data) {
         </header>
         {data.description && <section class="contributor-biography" aria-labelledby="contributor-about-heading"><h2 id="contributor-about-heading">{kind === 'studio' ? 'About' : 'Biography'}</h2>
           {kind === 'studio' ? <p>{data.description}</p> : <>
-            <p class="contributor-biography-preview">{biography.preview}</p>
-            {biography.expandable && <details class="contributor-biography-details"><summary><span class="biography-read-more">Read more</span><span class="biography-read-less">Read less</span></summary><p>{biography.full}</p></details>}
+            <p id="contributor-biography-text" data-biography-text><span>{biography.lead}</span><span data-biography-rest hidden>{biography.rest}</span><span data-biography-ellipsis hidden={!biography.shortened}>…</span></p>
+            {biography.expandable && <button type="button" class="contributor-biography-toggle" data-biography-toggle aria-expanded="false" aria-controls="contributor-biography-text">Read more</button>}
+            <noscript><style>{`.contributor-page [data-biography-rest][hidden] { display:inline!important; } .contributor-biography-toggle, [data-biography-ellipsis] { display:none!important; }`}</style></noscript>
           </>}
         </section>}
         {data.aliases.length > 0 && <details class="contributor-aliases"><summary>Also known as</summary><p>{data.aliases.join(' · ')}</p></details>}

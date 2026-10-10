@@ -40,5 +40,8 @@ export function biographyPreview(value: string | null | undefined, limit = 60) {
   const words = first.split(/\s+/).filter(Boolean);
   const shortened = words.length > limit;
   const preview = words.slice(0, limit).join(' ') + (shortened ? '…' : '');
-  return {preview, full, expandable:shortened || full.replace(/\s+/g, ' ') !== preview};
+  const boundary = shortened ? [...first.matchAll(/\S+/g)][limit - 1] : null;
+  const end = boundary ? boundary.index! + boundary[0].length : first.length;
+  const lead = full.slice(0, end), rest = full.slice(end);
+  return {preview, full, lead, rest, shortened, expandable:rest.trim().length > 0};
 }

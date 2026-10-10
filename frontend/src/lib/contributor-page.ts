@@ -3,8 +3,10 @@ import { contributorParams, contributorYear, workHref, type ContributorPage, typ
 import { editorStore } from './editor-store';
 import { applyResponsiveArtwork } from './responsive-artwork';
 import { prepareBrowsePoster } from './browse-loading';
+import { mountContributorBiography } from './contributor-biography';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
+  mountContributorBiography(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
   const form = root.querySelector<HTMLFormElement>('[data-contributor-filters]')!;
