@@ -1,6 +1,8 @@
 ---
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
+import ProfileSectionSelector from '../../../components/ProfileSectionSelector.astro';
+import Icon from '../../../components/Icon.astro';
 import StatsMetricChart from '../../../components/StatsMetricChart.astro';
 import StatsDistribution from '../../../components/StatsDistribution.astro';
 import '../../../styles/stats-overview.css';
@@ -21,11 +23,14 @@ const overview: Overview = data?.overview || {
   scores: [], episode_counts: [], statuses: [], formats: [], countries: [], release_years: [], watch_years: [], coverage: {},
 };
 const highlights = headlineValues(overview);
+const headlineIcons = ['display', 'play', 'calendar', 'hourglass', 'percent', 'divide'];
 ---
 <Tracker title={`${username}'s Statistics`} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
   {data ? <>
     <ProfileHeader profile={{ ...data.profile, owner: data.owner, following: data.following, follows_you: data.follows_you, combine_lists: data.combine_lists }} active="stats" />
     <section class="page-width stats-overview-page" id="statistics-overview" data-username={username} data-initial={JSON.stringify(data)} data-media={media} aria-label="Statistics overview">
+      <aside class="overview-sidebar"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}]} active="overview" width="100%" /></aside>
+      <div class="stats-overview-content">
       <header class="overview-heading"><h2>Overview</h2><nav class="overview-media" aria-label="Statistics media type">
         {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?media=${value}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>
@@ -33,10 +38,11 @@ const highlights = headlineValues(overview);
       <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>Check again</button></div>
       <span class="overview-sr-only" data-overview-announcement role="status" aria-live="polite"></span>
       <div class="overview-results" hidden={!ready}>
-        <dl class="overview-totals" aria-label="Primary statistics">{highlights.map((metric, index) => <div title={metric.detail}><dt data-headline-label={index}>{metric.label}</dt><dd data-headline-value={index}>{metric.value}</dd></div>)}</dl>
+        <dl class="overview-totals" aria-label="Primary statistics">{highlights.map((metric, index) => <div title={metric.detail}><dt><span class="overview-total-icon" aria-hidden="true"><Icon name={headlineIcons[index]} /></span><span data-headline-label={index}>{metric.label}</span></dt><dd data-headline-value={index}>{metric.value}</dd></div>)}</dl>
         <div class="overview-chart-grid"><StatsMetricChart id="scores" title="Scores" rows={overview.scores} score /><StatsMetricChart id="episode_counts" title="Episode count" rows={overview.episode_counts} hidden={media === 'movie'} /></div>
         <div class="overview-distribution-grid"><StatsDistribution id="statuses" title="List status" data={overview} /><StatsDistribution id="formats" title="Format" data={overview} /><StatsDistribution id="countries" title="Country" data={overview} /></div>
         <div class="overview-chart-grid overview-years"><StatsMetricChart id="release_years" title="Release year" rows={overview.release_years} /><StatsMetricChart id="watch_years" title="Watch year" rows={overview.watch_years} /></div>
+      </div>
       </div>
     </section>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}

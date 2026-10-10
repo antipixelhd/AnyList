@@ -215,8 +215,8 @@
 }
 @media(min-width:651px) {
   .list-shell {
-    grid-template-columns:clamp(180px,20vw,190px) minmax(0,1fr);
-    gap:clamp(24px,3vw,40px)
+    grid-template-columns:var(--list-sidebar-width) minmax(0,1fr);
+    gap:var(--list-column-gap)
   }
 }
 @media(max-width:650px) {

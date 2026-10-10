@@ -4,4 +4,6 @@
   --page-gutter:32px;
   --page-max-width:calc(var(--content-max-width) + 2 * var(--page-gutter));
   --content-column-gap:40px;
+  --list-sidebar-width:clamp(180px,20vw,190px);
+  --list-column-gap:clamp(24px,3vw,40px);
 }
