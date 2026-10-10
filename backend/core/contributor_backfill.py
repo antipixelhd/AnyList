@@ -1,10 +1,10 @@
 """Fill missing contributor profiles through verified IDs; never change credits."""
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import exists, or_, select
 
-from core import catalogue, tmdb
+from core import catalogue, tmdb, tvdb
 from core.contributor_details import positive_id, public_url
 from core.statistics_genres import poster
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink
@@ -27,19 +27,42 @@ def missing_values(row, raw):
     return values
 
 
-async def backfill_contributors(db, api_key, *, limit=100):
+def tvdb_profile(raw):
+    biographies = [b for b in raw.get('biographies') or [] if isinstance(b, dict) and b.get('biography')]
+    preferred = next((b for b in biographies if b.get('language') in ('eng','en')), None)
+    image = raw.get('image')
+    if isinstance(image, str) and image and not image.startswith(('https://','http://')):
+        image = 'https://artworks.thetvdb.com/' + image.lstrip('/')
+    result = {'id':raw.get('id'), 'biography':(preferred or (biographies[0] if biographies else {})).get('biography'),
+              'profile_path':image, 'place_of_birth':raw.get('birthPlace'),
+              'also_known_as':[alias['name'] for alias in raw.get('aliases') or [] if isinstance(alias,dict) and alias.get('name')]}
+    for source,target in [('birth','birthday'),('death','deathday')]:
+        try:
+            value = str(raw.get(source) or '')[:10]
+            result[target] = date.fromisoformat(value).isoformat()
+        except ValueError:
+            pass
+    return result
+
+
+async def backfill_contributors(db, api_key, *, limit=100, provider='tmdb'):
+    if provider not in ('tmdb','tvdb'):
+        raise ValueError('Unsupported contributor provider')
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     attrs = CatalogueEntity.attributes
+    version_key = 'contributor_profile_version' if provider == 'tmdb' else 'contributor_tvdb_profile_version'
+    attempted_key = 'contributor_profile_attempted_at' if provider == 'tmdb' else 'contributor_tvdb_profile_attempted_at'
+    namespaces = ((CatalogueEntity.kind == 'person') & (CatalogueIdentity.namespace == 'tvdb.person')) if provider == 'tvdb' else or_(
+        (CatalogueEntity.kind == 'person') & (CatalogueIdentity.namespace == 'tmdb.person'),
+        (CatalogueEntity.kind == 'organization') & (CatalogueIdentity.namespace == 'tmdb.company'))
     query = select(CatalogueEntity, CatalogueIdentity).join(CatalogueIdentity,
         CatalogueIdentity.entity_id == CatalogueEntity.id).where(
-        or_((CatalogueEntity.kind == 'person') & (CatalogueIdentity.namespace == 'tmdb.person'),
-            (CatalogueEntity.kind == 'organization') & (CatalogueIdentity.namespace == 'tmdb.company')),
+        namespaces,
         exists(select(CatalogueCredit.id).join(CatalogueLegacyLink, CatalogueLegacyLink.entity_id == CatalogueCredit.work_id)
             .join(TrackedEntry, TrackedEntry.media_id == CatalogueLegacyLink.media_id)
             .where(CatalogueCredit.contributor_id == CatalogueEntity.id)),
-        or_(attrs['contributor_profile_version'].astext.is_(None), attrs['contributor_profile_version'].astext != str(VERSION)),
-        or_(attrs['contributor_profile_attempted_at'].astext.is_(None),
-            attrs['contributor_profile_attempted_at'].astext < (now-timedelta(days=7)).isoformat()),
+        or_(attrs[version_key].astext.is_(None), attrs[version_key].astext != str(VERSION)),
+        or_(attrs[attempted_key].astext.is_(None), attrs[attempted_key].astext < (now-timedelta(days=7)).isoformat()),
     ).order_by(CatalogueEntity.id).limit(limit)
     rows = list((await db.execute(query)).all()) if api_key else []
     result = {'examined':len(rows),'updated':0,'failed':0,'unavailable_fields':0}
@@ -52,10 +75,11 @@ async def backfill_contributors(db, api_key, *, limit=100):
                 if not native:
                     raise ValueError('Invalid identity')
                 async with asyncio.timeout(20):
-                    raw = await (tmdb.get_person_profile(native, api_key=api_key) if row.kind == 'person' else tmdb.get_company(native, api_key=api_key))
+                    raw = await tvdb.get_person(native, api_key) if provider == 'tvdb' else await (
+                        tmdb.get_person_profile(native, api_key=api_key) if row.kind == 'person' else tmdb.get_company(native, api_key=api_key))
                 if positive_id(raw.get('id')) != native:
                     raise ValueError('Provider identity mismatch')
-                return raw
+                return tvdb_profile(raw) if provider == 'tvdb' else raw
             except Exception:
                 return None
 
@@ -67,7 +91,7 @@ async def backfill_contributors(db, api_key, *, limit=100):
         if identity.entity_id != row.id or (raw and positive_id(raw.get('id')) != positive_id(identity.external_id)):
             result['failed'] += 1
             continue
-        row.attributes = {**(row.attributes or {}), 'contributor_profile_attempted_at':now.isoformat()}
+        row.attributes = {**(row.attributes or {}), attempted_key:now.isoformat()}
         if raw is None:
             result['failed'] += 1
             continue
@@ -75,11 +99,11 @@ async def backfill_contributors(db, api_key, *, limit=100):
         values = missing_values(row, raw)
         row.attributes = {key:value for key,value in row.attributes.items()
             if catalogue.has_value(value) or key not in values['attributes'] or 'attributes.'+key in (row.protected_fields or [])}
-        catalogue.merge_fields(row, values, 'tmdb')
+        catalogue.merge_fields(row, values, provider)
         if before != (row.description, row.image_url, row.attributes):
             result['updated'] += 1
         if not raw.get('biography') and not raw.get('description'):
             result['unavailable_fields'] += 1
-        row.attributes = {**row.attributes, 'contributor_profile_version':VERSION}
+        row.attributes = {**row.attributes, version_key:VERSION}
     await db.commit()
     return result

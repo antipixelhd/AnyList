@@ -134,6 +134,26 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.contributor_details.tmdb.get_person', AsyncMock(side_effect=RuntimeError('offline'))):
             self.assertEqual((await self.request()).json()['description'], 'Saved biography')
 
+    async def test_tvdb_profile_backfill_uses_verified_id_and_preserves_tmdb_fields(self):
+        from core.contributor_backfill import backfill_contributors
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            person.attributes = {'birthday':'1970-01-01'}
+            db.add(CatalogueIdentity(entity_id=person.id, namespace='tvdb.person', external_id='77', source='tvdb'))
+            await db.commit()
+        raw = {'id':77,'birth':'1980-01-01','death':'unknown','birthPlace':'Berlin',
+               'biographies':[{'language':'fra','biography':'French'},{'language':'eng','biography':'English biography'}],
+               'aliases':[{'name':'Alias'}],'image':'/person/profile.jpg'}
+        with patch('core.contributor_backfill.tvdb.get_person', AsyncMock(return_value=raw)):
+            async with self.Session() as db:
+                result = await backfill_contributors(db,'fixture',provider='tvdb')
+                self.assertEqual(result['updated'],1)
+                person = await db.get(CatalogueEntity,self.person_id)
+                self.assertEqual(person.description,'English biography')
+                self.assertEqual(person.attributes['birthday'],'1970-01-01')
+                self.assertEqual(person.attributes['place_of_birth'],'Berlin')
+                self.assertNotIn('deathday',person.attributes)
+
     async def test_provider_metadata_identity_and_same_number_movie_series_remain_distinct(self):
         self.key_mock.return_value = 'fixture'
         profile = {'id': 77, 'name': 'Real Person', 'birthday': '1970-01-01', 'biography': 'Biography.',
