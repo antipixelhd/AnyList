@@ -60,4 +60,3 @@ async def fill_document(db, document, provider):
         if field in doc:
             doc[field] = []
     return await catalogue.ingest_document(db, doc, provider)
-
