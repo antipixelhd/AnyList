@@ -77,7 +77,7 @@
   .media-detail.concept-marquee .lab-hero { height:auto; background:none; }
   .media-detail.concept-marquee .lab-hero-image,.media-detail.concept-marquee .lab-hero-shade { height:210px; bottom:auto; }
   .media-detail.concept-marquee .lab-hero-content { display:grid; grid-template-columns:108px minmax(0,1fr); align-items:start; gap:20px; height:auto; padding:145px 0 0; }
-  .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:108px; height:162px; }
+  .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:108px; height:162px; align-self:start; }
   .media-detail.concept-marquee .lab-heading { margin-top:39px; padding:0; }
   .media-detail.concept-marquee .lab-heading h1 { font-size:3rem; line-height:1.12; margin:8px 0; }
   .media-detail.concept-marquee .lab-heading .lab-kicker { gap:7px; line-height:1.8; }
