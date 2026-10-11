@@ -2,14 +2,12 @@ import os
 import unittest
 from io import BytesIO
 import random
-import subprocess
-from unittest.mock import patch
 
 os.environ.setdefault('SECRET_KEY', 'test-only-secret')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
 from PIL import Image, ImageDraw
-from core.media_image_analysis import _inspect, fingerprint, same_composition, select_variants
+from core.media_image_analysis import fingerprint, same_composition, select_variants
 
 
 def fixture(seed=1, shift=0, title=False):
@@ -27,21 +25,13 @@ def fixture(seed=1, shift=0, title=False):
 
 
 class ImageAnalysisTests(unittest.TestCase):
-    def test_ocr_process_result_preserves_the_image_fingerprint(self):
-        completed = subprocess.CompletedProcess([], 0, stdout='An Apple Original', stderr='')
-        with patch('core.media_image_analysis.shutil.which', return_value='tesseract'), patch('core.media_image_analysis.subprocess.run', return_value=completed):
-            result = _inspect(fixture())
-        self.assertTrue(result['branded'])
-        self.assertTrue(result['branding_checked'])
-        self.assertEqual(len(result['gray']), 768)
-
     def test_translations_and_title_overlays_share_a_composition_but_other_scenes_do_not(self):
         original = fingerprint(fixture())
         self.assertTrue(same_composition(original, fingerprint(fixture(shift=20))))
         self.assertTrue(same_composition(original, fingerprint(fixture(title=True))))
         self.assertFalse(same_composition(original, fingerprint(fixture(seed=7))))
 
-    def test_selects_english_text_before_textless_and_prefers_clean_centered_duplicates(self):
+    def test_prefers_centered_duplicates_without_removing_branding(self):
         base = fingerprint(fixture())
         centered = {**base, 'centering':.02}
         offset = {**base, 'centering':.25}
@@ -50,7 +40,7 @@ class ImageAnalysisTests(unittest.TestCase):
                 {'url':'centered','language':None,'analysis':centered},
                 {'url':'english','language':'en','analysis':other},
                 {'url':'branded','language':'en','analysis':{**base,'branded':True}}]
-        self.assertEqual(select_variants(rows), ['english','centered'])
+        self.assertCountEqual(select_variants(rows), ['english','branded'])
         self.assertEqual(select_variants([rows[-1]]), ['branded'])
 
     def test_english_duplicate_preferred_over_its_textless_copy(self):
@@ -58,7 +48,12 @@ class ImageAnalysisTests(unittest.TestCase):
         self.assertEqual(select_variants([{'url':'textless','language':None,'analysis':analysis},
             {'url':'english','language':'en','analysis':analysis}]), ['english'])
 
-    def test_brand_ocr_tokens_do_not_treat_the_media_title_as_a_provider(self):
-        for name in ('Netflix','Apple TV+','Disney+','Prime Video','An Apple Original'):
-            self.assertTrue(fingerprint(fixture(), text=name)['branded'])
-        self.assertFalse(fingerprint(fixture(), text='Severance')['branded'])
+    def test_primary_poster_cannot_be_replaced_by_a_centered_or_higher_voted_duplicate(self):
+        base = fingerprint(fixture())
+        rows = [{'url':'primary','primary':True,'language':'en','votes':1,'analysis':{**base,'centering':.9}},
+                {'url':'alternative','language':'en','votes':100,'analysis':{**base,'centering':0}}]
+        self.assertEqual(select_variants(rows), ['primary'])
+
+    def test_each_gallery_stops_at_ten_images(self):
+        rows = [{'url':str(i),'language':'en','votes':i} for i in range(15)]
+        self.assertEqual(len(select_variants(rows)), 10)

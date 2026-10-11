@@ -10,7 +10,7 @@ export function uniqueDetailImages(values:unknown[]):string[] {
     const key=url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
     if(seen.has(key))return false;
     seen.add(key);return true;
-  });
+  }).slice(0,10);
 }
 
 export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) {
@@ -78,17 +78,20 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       galleries.artwork=uniqueDetailImages(data.artwork||[]);
       if(galleryStatus){galleryStatus.hidden=!!galleries.artwork.length;galleryStatus.textContent='No artwork available.';}
       const cover=root.querySelector<HTMLButtonElement>('.media-cover');
-      if(cover&&galleries.posters.length){
-        cover.dataset.detailImage=galleries.posters[0];
+      const primary=data.poster||galleries.posters[0];
+      if(cover&&primary){
+        cover.dataset.detailImage=primary;
         const coverImage=cover.querySelector('img');
-        if(coverImage){coverImage.removeAttribute('srcset');coverImage.src=galleries.posters[0].replace('/original/','/w500/');}
+        if(coverImage){coverImage.removeAttribute('srcset');coverImage.src=primary.replace('/original/','/w500/');}
       }
       const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
-      if(heroButton&&galleries.artwork.length){
-        const currentKey=(heroButton.dataset.detailImage||'').replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
+      const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+      if(hero)hero.hidden=!galleries.artwork.length;
+      if(heroButton)heroButton.hidden=!galleries.artwork.length;
+      if(galleries.artwork.length){
+        const currentKey=(data.backdrop||heroButton?.dataset.detailImage||'').replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
         const preferred=galleries.artwork.find(url=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1')===currentKey)||galleries.artwork[0];
-        heroButton.dataset.detailImage=preferred;
-        const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+        if(heroButton)heroButton.dataset.detailImage=preferred;
         if(hero){hero.removeAttribute('srcset');hero.src=preferred.replace('/original/','/w1280/');}
       }
       const preview=root.querySelector<HTMLButtonElement>('.lab-art-image');
@@ -129,7 +132,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       void loadImages().then(()=>{if(signal.aborted)return;if(galleries[active].length){showImage(0);showDialog(lightbox);}else showToast('No image variants available.','error');}).finally(()=>button.removeAttribute('aria-busy'));
     }
   },{signal});
-  if(new URLSearchParams(location.search).get('tab')==='artwork')void loadImages();
+  // Refresh stale policies without waiting for the visitor to open a gallery.
+  if(info.imagesAvailable)void loadImages();
   bindImageViewerDismissal(lightbox,signal);
   lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1));}},{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep)),{signal}));

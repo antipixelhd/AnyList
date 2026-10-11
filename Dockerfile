@@ -21,8 +21,6 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     gosu \
     supervisor \
     tzdata \
-    tesseract-ocr \
-    tesseract-ocr-eng \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*

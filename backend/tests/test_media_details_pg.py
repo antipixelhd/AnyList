@@ -64,13 +64,16 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_id = 99
             media.tmdb_data = {'protected_fixture': 'keep'}
             await db.commit()
-        raw = {'id':99, 'posters':[{'file_path':'/poster.jpg','aspect_ratio':.667}],
-               'backdrops':[{'file_path':'/scene.jpg','aspect_ratio':1.778}]}
+        raw = {'id':99, 'posters':[{'file_path':'/poster.jpg','iso_639_1':'en','aspect_ratio':.667}],
+               'backdrops':[{'file_path':'/scene.jpg','iso_639_1':None,'aspect_ratio':1.778},
+                            {'file_path':'/text.jpg','iso_639_1':'en','aspect_ratio':1.778}]}
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99,'poster_path':'/primary.jpg','backdrop_path':'/text.jpg'})),
               patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
               patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
             data = (await self.client.get(f'/tracking/title/{self.media_id}/images')).json()
             self.assertIn('https://image.tmdb.org/t/p/original/poster.jpg', data['posters'])
+            self.assertEqual(data['posters'][0], 'https://image.tmdb.org/t/p/original/primary.jpg')
             self.assertEqual(data['artwork'], ['https://image.tmdb.org/t/p/original/scene.jpg'])
             await self.client.get(f'/tracking/title/{self.media_id}/images')
             fetch.assert_awaited_once()
@@ -79,6 +82,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(media.tmdb_data['protected_fixture'], 'keep')
         projected = (await self.client.get(f'/tracking/title/{self.media_id}')).json()
         self.assertEqual(projected['artwork'], data['artwork'])
+        self.assertEqual(projected['poster'], data['poster'])
+        self.assertEqual(projected['backdrop'], data['artwork'][0])
 
     async def test_image_provider_failure_preserves_cache_and_cools_down(self):
         await self.login()
@@ -88,6 +93,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_data = {'_anylist_images': {'version':IMAGE_POLICY_VERSION, 'posters':['https://example.test/old.jpg']}}
             await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99})),
               patch('core.tmdb.get_title_images', AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
             for _ in range(2):
                 response = await self.client.get(f'/tracking/title/{self.media_id}/images')
@@ -107,6 +113,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         raw = {'id':99,'posters':[{'file_path':'/foreign.jpg','iso_639_1':'de'},
             {'file_path':'/english.jpg','iso_639_1':'en'}],'backdrops':[]}
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99,'poster_path':'/english.jpg'})),
               patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
               patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
             response = await self.client.get(f'/tracking/title/{self.media_id}/images')

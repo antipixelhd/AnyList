@@ -2,11 +2,7 @@
 import asyncio
 from io import BytesIO
 import json
-from pathlib import Path
 import re
-import shutil
-import subprocess
-import tempfile
 from urllib.parse import urlsplit
 import uuid
 
@@ -15,13 +11,12 @@ from PIL import Image
 
 from core.config import settings
 
-ANALYSIS_VERSION = 1
+ANALYSIS_VERSION = 2
 _downloads = asyncio.Semaphore(6)
 _processing = asyncio.Semaphore(2)
-_brands = re.compile(r'\b(?:netflix|hulu|peacock|prime\s*video|amazon\s*original|apple\s*(?:tv|original)|hbo(?:\s*max)?)\b|\b(?:paramount|disney|t\s*v)\s*\+', re.I)
 
 
-def fingerprint(content, *, text='', branding_checked=False):
+def fingerprint(content):
     with Image.open(BytesIO(content)) as source:
         if source.width * source.height > 4_000_000:
             raise ValueError('Oversized thumbnail')
@@ -34,8 +29,7 @@ def fingerprint(content, *, text='', branding_checked=False):
     center_y = sum(y * weight for _, y, weight in weights) / total / 23
     return {'version': ANALYSIS_VERSION, 'gray': list(gray.get_flattened_data()),
         'color': [round(sum(channel) / len(channel), 2) for channel in zip(*pixels.get_flattened_data())],
-        'centering': round(abs(center_x - .5) + abs(center_y - .5), 4),
-        'branded': bool(_brands.search(text)), 'branding_checked': branding_checked}
+        'centering': round(abs(center_x - .5) + abs(center_y - .5), 4)}
 
 
 def same_composition(a, b):
@@ -67,28 +61,6 @@ def same_composition(a, b):
     return False
 
 
-def _inspect(content):
-    result = fingerprint(content)
-    binary = shutil.which('tesseract')
-    text = ''
-    if binary:
-        # OCR is used solely to identify provider branding, not to store copy.
-        with tempfile.TemporaryDirectory(prefix='anylist-image-') as directory:
-            path = Path(directory) / 'thumb.jpg'
-            path.write_bytes(content)
-            try:
-                completed = subprocess.run([binary, str(path), 'stdout', '-l', 'eng', '--psm', '11'],
-                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=4, check=False)
-                text = (completed.stdout or '') if completed.returncode == 0 else ''
-                checked = completed.returncode == 0
-            except (OSError, subprocess.TimeoutExpired):
-                checked = False
-    else:
-        checked = False
-    result.update(branded=bool(_brands.search(text)), branding_checked=checked)
-    return result
-
-
 async def inspect_image(url, client):
     parsed = urlsplit(url)
     if parsed.scheme != 'https' or parsed.hostname != 'image.tmdb.org' or not re.fullmatch(r'/t/p/original/[A-Za-z0-9_.-]+\.(jpg|png|webp)', parsed.path):
@@ -101,7 +73,7 @@ async def inspect_image(url, client):
                  and isinstance(cached.get('color'), list) and len(cached['color']) == 3
                  and all(isinstance(value, (int, float)) for value in cached['color'])
                  and isinstance(cached.get('centering'), (int, float)))
-        if valid and cached.get('version') == ANALYSIS_VERSION and (cached.get('branding_checked') or not shutil.which('tesseract')):
+        if valid and cached.get('version') == ANALYSIS_VERSION:
             return cached
     except (OSError, ValueError, TypeError):
         pass
@@ -117,7 +89,7 @@ async def inspect_image(url, client):
                     if len(content) > 2_000_000:
                         return None
         async with _processing:
-            result = await asyncio.to_thread(_inspect, bytes(content))
+            result = await asyncio.to_thread(fingerprint, bytes(content))
         def save():
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = cache_path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
@@ -136,11 +108,9 @@ async def inspect_image(url, client):
 
 
 def variant_selection(rows):
-    clean = [row for row in rows if not (row.get('analysis') or {}).get('branded')]
-    rows = clean or rows  # Preserve an image when every available version is branded.
     def quality(row):
         analysis = row.get('analysis') or {}
-        return (row.get('language') != 'en', analysis.get('centering', 1),
+        return (not row.get('primary'), row.get('language') != 'en', analysis.get('centering', 1),
                 -row.get('width', 0), -row.get('votes', 0))
     selected, replacements = [], {}
     for row in sorted(rows, key=quality):
@@ -149,9 +119,8 @@ def variant_selection(rows):
             replacements[row['url']] = duplicate['url']
         else:
             selected.append(row)
-    # All text-bearing English variants precede the selected textless variants.
-    selected.sort(key=lambda row: (row.get('language') != 'en', -row.get('votes', 0), -row.get('width', 0)))
-    return {'images': [row['url'] for row in selected], 'replacements': replacements}
+    selected.sort(key=lambda row: (not row.get('primary'), row.get('language') != 'en', -row.get('votes', 0), -row.get('width', 0)))
+    return {'images': [row['url'] for row in selected][:10], 'replacements': replacements}
 
 
 def select_variants(rows):

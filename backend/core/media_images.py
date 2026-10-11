@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from core.catalogue_normalize import image
 from models import Media
 
-IMAGE_POLICY_VERSION = 3
+IMAGE_POLICY_VERSION = 4
 _fills = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,13 @@ def unique_images(values):
         if url and image_key(url) not in seen:
             seen.add(image_key(url))
             result.append(url)
-    return result[:60]
+    return result[:10]
+
+
+def tmdb_image_url(path):
+    if isinstance(path, str) and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path):
+        return 'https://image.tmdb.org/t/p/original' + path
+    return image(path)
 
 
 def image_candidates(raw, provider='tmdb'):
@@ -41,19 +47,22 @@ def image_candidates(raw, provider='tmdb'):
                 continue
             if row.get('iso_639_1') not in ('en', None):
                 continue
+            # Only an explicit null language establishes textless artwork.
+            if field == 'backdrops' and ('iso_639_1' not in row or row['iso_639_1'] is not None):
+                continue
             ratio = row.get('aspect_ratio')
             if ratio is None and all(isinstance(row.get(field), (int, float)) and row[field] > 0 for field in ('height', 'width')):
                 ratio = row['width'] / row['height']
             if isinstance(ratio, (int, float)) and (ratio >= 1 if field == 'posters' else ratio <= 1):
                 continue
             path = row.get('file_path')
-            url = ('https://image.tmdb.org/t/p/original' + path
-                   if provider == 'tmdb' and isinstance(path, str)
-                   and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path) else image(path))
+            url = tmdb_image_url(path) if provider == 'tmdb' else image(path)
             if url:
                 result[target].append({'url': url, 'language': row.get('iso_639_1'),
                     'width': row.get('width') or 0, 'votes': row.get('vote_count') or 0})
     for field, rows in result.items():
+        if field == 'posters' and any(row['language'] == 'en' for row in rows):
+            rows = [row for row in rows if row['language'] == 'en']
         seen = set()
         result[field] = [row for row in sorted(rows, key=lambda row: (row['language'] != 'en', -row['votes'], -row['width']))
             if not (image_key(row['url']) in seen or seen.add(image_key(row['url'])))][:60]
@@ -66,11 +75,19 @@ def provider_images(raw, provider='tmdb'):
 
 def screen_images(media, details):
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
+    primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
     if cache.get('version') == IMAGE_POLICY_VERSION:
-        return {'posters': unique_images(cache.get('posters') or []), 'artwork': unique_images(cache.get('artwork') or []),
+        primary = image(cache.get('primary_poster')) or primary
+        posters = unique_images([primary, *(cache.get('posters') or [])])
+        artwork = unique_images(cache.get('artwork') or [])
+        preferred = cache.get('primary_backdrop') or ''
+        backdrop = next((url for url in artwork if image_key(url) == image_key(preferred)), next(iter(artwork), None))
+        return {'poster': primary or next(iter(posters), None), 'backdrop': backdrop,
+                'posters': posters, 'artwork': artwork,
                 'image_replacements': cache.get('replacements') or {}}
     # Never paint the old unfiltered gallery while a new policy is being filled.
-    return {'posters': [], 'artwork': [], 'image_replacements': {}}
+    return {'poster': primary, 'backdrop': None, 'posters': unique_images([primary]),
+            'artwork': [], 'image_replacements': {}}
 
 
 async def fill_screen_images(db, media, api_key):
@@ -96,11 +113,22 @@ async def _fill_screen_images(db, media, api_key):
             pass
     from core import tmdb
     try:
-        raw = await tmdb.get_title_images(media.tmdb_id, media.media_type.value, api_key)
+        fetch_primary = tmdb.get_movie_light if media.media_type.value == 'movie' else tmdb.get_show_light
+        raw, defaults = await asyncio.gather(
+            tmdb.get_title_images(media.tmdb_id, media.media_type.value, api_key),
+            fetch_primary(media.tmdb_id, api_key, language='en-US'))
         if raw.get('id') != media.tmdb_id or not all(isinstance(raw.get(field), list) for field in ('posters', 'backdrops')):
             raise ValueError('Invalid image response')
+        if defaults.get('id') != media.tmdb_id:
+            raise ValueError('Invalid primary image response')
         from core.media_image_analysis import inspect_image, select_galleries
         candidates = image_candidates(raw)
+        primary = tmdb_image_url(defaults.get('poster_path'))
+        if primary:
+            primary_row = next((row for row in candidates['posters'] if image_key(row['url']) == image_key(primary)),
+                               {'url': primary, 'language': 'en', 'width': 0, 'votes': 0})
+            primary_row['primary'] = True
+            candidates['posters'] = [primary_row, *(row for row in candidates['posters'] if image_key(row['url']) != image_key(primary))]
         async with httpx.AsyncClient() as client:
             for rows in candidates.values():
                 analyses = await asyncio.gather(*(inspect_image(row['url'], client) for row in rows))
@@ -109,7 +137,8 @@ async def _fill_screen_images(db, media, api_key):
         selections = await select_galleries(candidates)
         selected = {field: selection['images'] for field, selection in selections.items()}
         selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
-        cache = {**selected, 'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
+        cache = {**selected, 'primary_poster': primary, 'primary_backdrop': tmdb_image_url(defaults.get('backdrop_path')),
+                 'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
     except Exception as error:
         logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)
         cache['retry_after'] = (now + timedelta(minutes=10)).isoformat()
