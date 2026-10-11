@@ -87,7 +87,6 @@ export function mountMediaDetail() {
 
   const favorite = root.querySelector<HTMLButtonElement>('[data-favorite-toggle]');
   const library = root.querySelector<HTMLButtonElement>('[data-library-toggle]');
-  const progress = root.querySelector<HTMLElement>('[data-detail-progress]');
   const note = root.querySelector<HTMLTextAreaElement>('#detail-note');
   const seasonInputs = [...root.querySelectorAll<HTMLInputElement>('[data-season]')];
   const dirtySeasons = new Set<string>();
@@ -105,11 +104,6 @@ export function mountMediaDetail() {
       const active = !!state.editor_library?.desired;
       library.dataset.desired=String(active); library.setAttribute('aria-pressed',String(active));
       library.title=active?'Remove from library':'Add to library'; library.setAttribute('aria-label',library.title);
-    }
-    if (progress) {
-      progress.hidden=!state.entry;
-      const value = state.entry?.progress || 0;
-      progress.querySelector('[data-detail-progress-label]')!.textContent = info.type==='movie' ? value?'Watched':'Unwatched' : `${value}${info.total ? ` / ${info.total}`:''} episodes watched`;
     }
     if (note && !noteDirty) note.value=state.entry?.notes || '';
     const hasSeasons=Object.values(state.entry?.season_scores || {}).some(Boolean);

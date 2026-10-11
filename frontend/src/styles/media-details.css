@@ -1,4 +1,4 @@
-/* Production adapters for the unchanged Marquee 2.7 composition. */
+/* Marquee 2.7 opening with the compact Marquee 2.5 right rail. */
 .media-detail { --media-radius:var(--lab-radius); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
 .media-detail .lab-hero { overflow:visible; }
@@ -21,7 +21,6 @@
 .media-detail .media-square[aria-pressed=true] svg { fill:currentColor; }
 .media-detail .media-favorite { color:#ef8db5; }
 .media-detail .media-favorite[aria-pressed=true] { color:#f08ab4; border-color:#f08ab466; background:color-mix(in srgb,#f08ab4 12%,var(--panel)); }
-.media-detail .media-progress-value { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--text); font-size:1.1rem; }
 .media-detail .lab-friend-avatar img { width:100%; height:100%; object-fit:cover; border-radius:inherit; }
 .media-detail .lab-friend h3 { overflow-wrap:anywhere; }
 .media-detail .lab-friend>div { flex:1; }
@@ -34,6 +33,9 @@
 .media-detail .media-provider-ratings strong { color:var(--bright); font-variant-numeric:tabular-nums; }
 .media-detail .lab-note-footer { justify-content:end; }
 .media-detail .media-price-low { font-size:1.1rem; color:var(--lab-muted); }
+.media-detail .lab-game-offer { display:grid; grid-template-columns:minmax(0,1fr); gap:18px; padding:22px; }
+.media-detail .lab-offer-edition { min-width:0; }
+.media-detail .lab-game-offer .lab-primary-button { justify-content:center; width:100%; }
 .media-detail .media-editions { display:grid; gap:14px; }
 .media-detail .media-editions article { display:flex; align-items:center; gap:14px; padding:14px; background:var(--panel); border-radius:var(--lab-radius); }
 .media-detail .media-editions img { width:62px; aspect-ratio:2/3; object-fit:cover; }
@@ -51,10 +53,14 @@
 .media-lightbox-close { position:absolute; right:14px; top:14px; z-index:1; }
 .media-lightbox p { grid-column:1/-1; text-align:center; font-size:1.2rem; }
 .media-scroll-reveal { translate:0 12px; opacity:.2; }
+@media (max-width:900px) {
+  .media-detail .lab-game-offer { order:2; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
+  .media-detail .lab-game-offer .lab-primary-button { grid-column:1/-1; }
+}
 @media (max-width:650px) {
-  .media-detail .media-tracking { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:15px; padding-bottom:28px; }
+  .media-detail .media-tracking { display:grid; grid-template-columns:minmax(0,1fr); gap:15px; padding-bottom:28px; }
   .media-detail.concept-marquee .media-tracking .media-action-row { grid-column:1/-1; grid-row:1; }.media-detail .media-square { width:44px; height:44px; }.media-detail .media-tracking .media-action-row .status-split .button-primary { min-height:44px; font-size:1.2rem; }.media-detail .media-tracking .media-action-row .status-split .status-arrow { width:40px; }
-  .media-detail.concept-marquee .media-tracking .media-rating-row { grid-column:1; grid-row:2; }.media-detail.concept-marquee .media-tracking .lab-progress-field { grid-column:2; grid-row:2; align-self:center; }.media-detail .media-progress-value { gap:12px; }
+  .media-detail.concept-marquee .media-tracking .media-rating-row { grid-column:1; grid-row:2; }
   .media-detail .lab-tabs { overflow-x:auto; scrollbar-width:none; justify-content:start; }.media-detail .lab-tabs button { flex-shrink:0; }
   .media-detail .lab-genres a { padding:4px 7px; font-size:.9rem; }.media-detail .lab-genres { gap:5px; }
   .lab-similar-grid .media-work-placeholder { width:100%; height:auto; aspect-ratio:2/3; }

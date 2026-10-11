@@ -7,11 +7,10 @@ import MediaDetailPerson from './MediaDetailPerson.astro';
 import MediaDetailWork from './MediaDetailWork.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
-import {prepareDetail,kindLabel,detailFacts,detailSynopsis,progressTotal,detailDate,moneyLabel} from '../lib/media-detail-data';
+import {prepareDetail,kindLabel,detailFacts,detailSynopsis,detailDate,moneyLabel} from '../lib/media-detail-data';
 import '../styles/dev-details.css';
 import '../styles/dev-marquee.css';
 import '../styles/dev-marquee-25.css';
-import '../styles/dev-marquee-27.css';
 import '../styles/media-details.css';
 const {media,library=null,libraryError='',canUseLibrary=false,error=''}=Astro.props;
 const title=media?prepareDetail(media):null;
@@ -21,7 +20,6 @@ const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:360p
 const backdrop=responsiveArtwork(title?.backdrop,{size:'w1280',sizes:'100vw',route:'direct'});
 const facts=title?detailFacts(title):[];
 const synopsis=detailSynopsis(title?.overview);
-const total=title?progressTotal(title):null;
 const people=title?[...title.people,...title.organizations]:[];
 const cast=people.filter(person=>person.kind==='actor');
 const others=people.filter(person=>person.kind!=='actor');
@@ -52,7 +50,6 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
       {trackable&&<section class="lab-tracking media-tracking" aria-label="Your tracking">
         {signedIn?<><div class="media-action-row"><StatusControl mediaId={title.id} status={title.entry?.status}/><button class="media-square media-favorite" type="button" data-favorite-toggle aria-pressed={!!title.entry?.favorite} aria-label={title.entry?.favorite?'Remove from favorites':'Add to favorites'} title={title.entry?.favorite?'Remove from favorites':'Add to favorites'}><Icon name="heart"/></button></div>
         <div class="media-rating-row"><div class="lab-rating-field"><span class="lab-field-label">{title.type==='series'?'Your show score':'Your score'}</span><button class="lab-rating-control media-personal-score" type="button" data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={poster?.src||''} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'} aria-label={`Rate ${title.title}. Current score: ${scoreLabel(title.entry?.score??null)}`}><Icon name="star"/><strong data-score-label>{scoreLabel(title.entry?.score??null)}</strong><span>/ 10</span></button></div>{canUseLibrary&&<button class="media-square media-library" type="button" data-library-toggle aria-pressed={!!library?.desired} aria-label={library?.desired?'Remove from library':'Add to library'} title={library?.desired?'Remove from library':'Add to library'} disabled={!library}><Icon name="list"/></button>}</div>
-        <div class="lab-progress-field media-progress" data-detail-progress hidden={!title.entry}><span class="lab-field-label">Progress</span><div class="media-progress-value"><span data-detail-progress-label>{title.type==='movie'?title.entry?.progress?'Watched':'Unwatched':`${title.entry?.progress||0}${total?` / ${total}`:''} episodes watched`}</span><button class="lab-text-button" type="button" data-edit-entry={title.id} aria-label="Edit progress"><Icon name="edit"/></button></div></div>
         </>:<a class="lab-primary-button" href={login}>Sign in to add to your list <Icon name="plus"/></a>}
         {libraryError&&<p class="error-message" role="alert">{libraryError}</p>}
       </section>}
@@ -66,7 +63,6 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
           <div class="lab-overview-grid">
             <div class="lab-primary-column">
               <section class="lab-story lab-module" data-detail-synopsis><div class="lab-section-title"><h2>Overview</h2></div><p data-biography-text>{synopsis.lead||'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{synopsis.expandable&&<button class="lab-text-button" type="button" data-biography-toggle aria-expanded="false">Read more</button>}</section>
-              {!!title.friends.length&&<section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
               <section class="lab-inline-facts lab-module"><h2>Information</h2><dl>{facts.map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}{title.organizations.map(person=><div><dt>{person.roles.join(', ')}</dt><dd>{person.url?<a href={person.url}>{person.name}</a>:person.name}</dd></div>)}</dl></section>
               {!!preview.length&&<section class="lab-people-preview lab-module"><div class="lab-section-title"><h2>{trackable?'Cast & crew':'Creators'}</h2><button class="lab-text-button" type="button" data-detail-open-tab="people">View all <Icon name="arrow-right"/></button></div><div class="lab-person-grid">{preview.map(person=><MediaDetailPerson person={person}/>)}</div></section>}
               {!!scenes.length&&<section class="lab-art-preview lab-module"><div class="lab-section-title"><h2>In the frame</h2></div><button class="lab-art-image" type="button" data-detail-image={scenes[0]} data-detail-caption={`${title.title} · Scene`} aria-label={`Expand ${title.title} scene`}><img src={scenes[0]} alt={`${title.title} scene`} loading="lazy"/></button></section>}
@@ -76,6 +72,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
             <div class="lab-secondary-column">
               {audience&&<section class="lab-public-score lab-module" aria-label="Ratings"><p class="lab-kicker">Audience score · {audience.name}</p><div class="lab-big-score"><Icon name="star"/><strong>{scoreLabel(audience.value)}</strong><span>/ 10</span></div><div class="media-provider-ratings">{[['IMDb',title.imdb_score],['TMDB',title.tmdb_score],['RT Critics',title.rt_critic_score],['RT Audience',title.rt_audience_score]].filter(([name,value])=>value!=null&&name!==audience.name).map(([name,value])=><p><span>{name}</span><strong>{String(name).startsWith('RT')?`${Math.round(Number(value))}%`:scoreLabel(Number(value))}</strong></p>)}</div></section>}
               {price&&<section class="lab-game-offer lab-module"><div class="lab-offer-edition"><h2>Steam · {price.country}</h2><p>Updated {detailDate(price.fetched_at)}</p></div><div class="lab-offer-pricing"><strong>{moneyLabel(price.current)}</strong></div>{moneyLabel(price.historical_low)&&<p class="media-price-low">Lowest {moneyLabel(price.historical_low)}{price.historical_low_at&&` · ${detailDate(price.historical_low_at)}`}</p>}{price.url&&<a class="lab-primary-button" href={price.url} target="_blank" rel="noreferrer">View on Steam <Icon name="external"/></a>}</section>}
+              {!!title.friends.length&&<section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
               {signedIn&&trackable&&<section class="lab-note lab-module"><div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><Icon name="comment"/></div><textarea id="detail-note" rows="3" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea><div class="lab-note-footer"><button class="lab-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></div></section>}
             </div>
             <section class="lab-related lab-module" data-detail-related hidden={!title.relations.length}><div class="lab-section-title"><h2>Relations</h2></div><div class="lab-related-grid" data-detail-related-grid>{title.relations.map(work=><MediaDetailWork work={work}/>)}</div></section>
@@ -89,7 +86,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
     </div>
   </div>
   <dialog class="media-lightbox" id="detail-lightbox" aria-labelledby="detail-lightbox-caption"><button class="media-square media-lightbox-close" type="button" data-detail-close-lightbox aria-label="Close artwork"><Icon name="close"/></button><button class="media-square" type="button" data-detail-image-step="-1" aria-label="Previous artwork"><Icon name="chevron-left"/></button><img data-detail-lightbox-image alt=""/><button class="media-square" type="button" data-detail-image-step="1" aria-label="Next artwork"><Icon name="chevron-right"/></button><p id="detail-lightbox-caption"></p></dialog>
-  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,total,relatedPending:signedIn&&trackable&&title.related_pending})}/>
+  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&trackable&&title.related_pending})}/>
   <template data-detail-work-icons><span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span><Icon name="arrow-right"/></template>
 </article>:<div class="page-width"><p class="error-message" role="alert">{error||'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}
 </Tracker>
