@@ -4,7 +4,6 @@ import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
 import { initializeScrollMotion } from './scroll-motion';
-import { setupScoreSteppers } from './scoreStepper';
 import { showToast } from './toasts';
 import {kindLabel,relationLabel} from './media-detail-data';
 
@@ -91,9 +90,6 @@ export function mountMediaDetail() {
   const favorite = root.querySelector<HTMLButtonElement>('[data-favorite-toggle]');
   const library = root.querySelector<HTMLButtonElement>('[data-library-toggle]');
   const note = root.querySelector<HTMLTextAreaElement>('#detail-note');
-  const seasonInputs = [...root.querySelectorAll<HTMLInputElement>('[data-season]')];
-  const dirtySeasons = new Set<string>();
-  seasonInputs.forEach(input=>input.addEventListener('input',()=>dirtySeasons.add(input.dataset.season!),{signal}));
   let noteDirty = false;
   note?.addEventListener('input',()=>{noteDirty=true;},{signal});
   const paint = (state: EditorTitle) => {
@@ -109,11 +105,6 @@ export function mountMediaDetail() {
       library.title=active?'Remove from library':'Add to library'; library.setAttribute('aria-label',library.title);
     }
     if (note && !noteDirty) note.value=state.entry?.notes || '';
-    const hasSeasons=Object.values(state.entry?.season_scores || {}).some(Boolean);
-    seasonInputs.forEach(input=>{
-      if(!dirtySeasons.has(input.dataset.season!))input.value=String(state.entry?.season_scores?.[input.dataset.season!] ?? '');
-    });
-    root.querySelectorAll<HTMLElement>('[data-save-season]').forEach(button=>button.dataset.hasSeasons=hasSeasons?'yes':'no');
     root.querySelectorAll<HTMLElement>('[data-season-score]').forEach(score=>score.textContent=String(state.entry?.season_scores?.[score.dataset.seasonScore!] || '—'));
     const average=root.querySelector<HTMLInputElement>('[data-season-average]');
     if(average)average.checked=state.entry?.rating_mode==='average';
@@ -159,7 +150,6 @@ export function mountMediaDetail() {
   loadDetailImages=mountDetailImages(root,info,signal);
 
   const seasons=root.querySelector<HTMLElement>('.seasons-section');
-  if (seasons) setupScoreSteppers(seasons);
   seasons?.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>mountDetailsMotion(details,signal));
   const paintEpisodeTitles=()=>{
     root.querySelectorAll<HTMLElement>('[data-episode-row]').forEach(row=>{
@@ -173,8 +163,6 @@ export function mountMediaDetail() {
     button.setAttribute('aria-pressed',String(showing));button.querySelector('span:not(.ui-icon)')!.textContent=showing?'Titles shown':'Titles hidden';
     paintEpisodeTitles();
   },{signal});
-  root.querySelectorAll<HTMLButtonElement>('[data-open-season-score]').forEach(button=>button.addEventListener('click',()=>showDialog(root.querySelector<HTMLDialogElement>(`#season-rating-${button.dataset.openSeasonScore}`)!),{signal}));
-  root.querySelectorAll<HTMLButtonElement>('[data-close-season-score]').forEach(button=>button.addEventListener('click',()=>{void closeDialog(button.closest('dialog')!);},{signal}));
   root.querySelector<HTMLInputElement>('[data-season-average]')?.addEventListener('change',async event=>{
     const input=event.currentTarget as HTMLInputElement;if(!title)return;
     input.disabled=true;
@@ -237,24 +225,38 @@ export function mountMediaDetail() {
   },{signal}));
   const mode=root.querySelector<HTMLDialogElement>('#season-mode');
   mode?.addEventListener('click',event=>{if(event.target===mode)void closeDialog(mode,'cancel');},{signal});
-  root.querySelectorAll<HTMLButtonElement>('[data-save-season]').forEach(button=>button.addEventListener('click',async()=>{
-    const input=root.querySelector<HTMLInputElement>(`[data-season="${button.dataset.saveSeason}"]`)!;
-    if(!input.reportValidity()||!title)return;
-    const score=Number(input.value||0);
-    const patch:Record<string,unknown>={season_scores:{[button.dataset.saveSeason!]:score}};
-    if(button.dataset.hasSeasons==='no'&&title.entry?.rating_mode==='average')patch.rating_mode='average';
-    if(button.dataset.hasSeasons==='no'&&title.entry?.rating_mode!=='average'&&Number(input.value)>0&&mode){
-      mode.returnValue='cancel';showDialog(mode);
-      const result=await new Promise<string>(resolve=>{
-        const done=()=>{mode.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve(signal.aborted?'cancel':mode.returnValue);};
-        mode.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
-      });
-      if(!['manual','average'].includes(result)||signal.aborted)return;patch.rating_mode=result;
-    }
-    button.disabled=true;
-    try{await editorStore.write(title,patch);if(Number(input.value||0)===score)dirtySeasons.delete(input.dataset.season!);await closeDialog(input.closest('dialog')!);showToast('Season score saved.','success');}
-    catch(error){showToast((error as Error).message,'error');}
-    finally{button.disabled=false;}
+  root.querySelectorAll<HTMLButtonElement>('[data-open-season-score]').forEach(button=>button.addEventListener('click',()=>{
+    if(!title)return;
+    const open=(window as Window & {anyListQuickRate?:(detail:{title:string;poster?:string;score:number|null;ratingMode:'manual';onScore:(score:number|null)=>Promise<void>})=>void}).anyListQuickRate;
+    if(!open){showToast('The rating picker is loading. Try again.','error');return;}
+    const number=button.dataset.openSeasonScore!;
+    open({title:`${title.title} · Season ${number}`,poster:title.poster||undefined,
+      score:title.entry?.season_scores?.[number]||null,ratingMode:'manual',onScore:async score=>{
+        if(!title||signal.aborted)return;
+        button.disabled=true;
+        try {
+          const patch:Record<string,unknown>={season_scores:{[number]:score??0}};
+          const hasSeasons=Object.values(title.entry?.season_scores||{}).some(Boolean);
+          if(!hasSeasons&&title.entry?.rating_mode==='average')patch.rating_mode='average';
+          if(!hasSeasons&&title.entry?.rating_mode!=='average'&&score&&mode){
+            const picker=document.querySelector<HTMLDialogElement>('#quick-rating');
+            if(picker?.open)await new Promise<void>(resolve=>{
+              const done=()=>{picker.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve();};
+              picker.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
+            });
+            if(signal.aborted)return;
+            mode.returnValue='cancel';showDialog(mode);
+            const result=await new Promise<string>(resolve=>{
+              const done=()=>{mode.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve(signal.aborted?'cancel':mode.returnValue);};
+              mode.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
+            });
+            if(!['manual','average'].includes(result)||signal.aborted)return;
+            patch.rating_mode=result;
+          }
+          await editorStore.write(title,patch);
+          if(!signal.aborted)showToast(score==null?'Season score removed.':'Season score saved.','success');
+        }finally{button.disabled=false;}
+      }});
   },{signal}));
   if(new URLSearchParams(location.search).get('rate')==='1')requestAnimationFrame(()=>{if(!signal.aborted)root.querySelector<HTMLButtonElement>('[data-quick-rate-id]')?.click();});
 }

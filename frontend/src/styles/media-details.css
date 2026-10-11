@@ -57,8 +57,6 @@
 .media-detail .lab-season-card .lab-episode-list { animation:none; }
 .media-detail .lab-episode-copy { min-width:0; }
 .media-detail .lab-episode-copy h3 { overflow-wrap:anywhere; }
-.media-season-rating-body { display:grid; gap:16px; padding:22px; }
-.media-season-rating-body input { width:100%; }
 .media-detail .lab-episode-check:disabled { opacity:.4; cursor:default; }
 .media-scroll-reveal { translate:0 12px; opacity:.2; }
 @media (max-width:900px) {
