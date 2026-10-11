@@ -28,6 +28,7 @@ const artwork=[...new Set([...(title?.artwork||[]),title?.backdrop].filter(Boole
 const scenes=artwork.filter(url=>url!==title?.backdrop);
 const creator=others.filter(person=>person.roles.some(role=>/director|author|creator|developer/i.test(role))).slice(0,2).map(person=>person.name).join(', ');
 const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
+const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab'))?.id||'overview';
 const sources=[...(title?.sources||[]),...(title?.tmdb_id?[{name:'TMDB',url:`https://www.themoviedb.org/${title.type==='series'?'tv':'movie'}/${title.tmdb_id}`}]:[]),...(title?.imdb_id?[{name:'IMDb',url:`https://www.imdb.com/title/${title.imdb_id}/`}]:[])];
 const ratings=[{name:'TMDB',value:title?.tmdb_score},{name:'IMDb',value:title?.imdb_score},
   {name:'RT Critics',value:title?.rt_critic_score},{name:'RT Audience',value:title?.rt_audience_score}].filter(rating=>rating.value!=null);
@@ -58,9 +59,9 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
       {!!sources.length&&<nav class="lab-source-links" aria-label="Metadata sources">{[...new Map(sources.map(source=>[source.url,source])).values()].map(source=><a href={source.url} target="_blank" rel="noreferrer">{source.name}<Icon name="external"/></a>)}</nav>}
     </aside>
     <div class="lab-main">
-      <div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map((tab,i)=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={i===0} tabindex={i===0?0:-1} data-detail-tab={tab.id}>{tab.label}</button>)}</div></div>
+      <div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map(tab=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={tab.id===initialTab} tabindex={tab.id===initialTab?0:-1} data-detail-tab={tab.id}>{tab.label}</button>)}</div></div>
       <div data-detail-panels>
-        <div class="lab-panel" id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview">
+        <div class="lab-panel" id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview" hidden={initialTab!=='overview'}>
           <div class="lab-overview-grid">
             <div class="lab-primary-column">
               <section class="lab-story lab-module" data-detail-synopsis><div class="lab-section-title"><h2>Overview</h2></div><p data-biography-text>{synopsis.lead||'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{synopsis.expandable&&<button class="lab-text-button" type="button" data-biography-toggle aria-expanded="false">Read more</button>}</section>
@@ -80,9 +81,9 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
             <section class="lab-similar lab-module" data-detail-similar hidden={!title.similar.length}><div class="lab-section-title"><h2>Similar {title.type==='series'?'series':`${title.type}s`}</h2></div><div class="lab-similar-grid" data-detail-similar-grid>{title.similar.map(work=><MediaDetailWork work={work} similar/>)}</div></section>
           </div>
         </div>
-        {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden><MediaDetailSeasons title={title} signedIn={signedIn}/></section>}
-        {!!people.length&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden>{[...(cast.length?[{label:'Cast',rows:cast}]:[]),...(others.length?[{label:trackable?'Crew & studios':'Creators',rows:others}]:[])].map(group=><section class="lab-module media-credit-group"><div class="lab-section-title"><h2>{group.label}</h2></div><div class="lab-person-grid">{group.rows.map(person=><MediaDetailPerson person={person}/>)}</div></section>)}</section>}
-        {!!artwork.length&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden><div class="lab-gallery">{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img src={url} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
+        {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn}/></section>}
+        {!!people.length&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}>{[...(cast.length?[{label:'Cast',rows:cast}]:[]),...(others.length?[{label:trackable?'Crew & studios':'Creators',rows:others}]:[])].map(group=><section class="lab-module media-credit-group"><div class="lab-section-title"><h2>{group.label}</h2></div><div class="lab-person-grid">{group.rows.map(person=><MediaDetailPerson person={person}/>)}</div></section>)}</section>}
+        {!!artwork.length&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><div class="lab-gallery">{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img src={url} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
       </div>
     </div>
   </div>
