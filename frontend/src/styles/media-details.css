@@ -96,6 +96,7 @@
   .media-detail .lab-season-card .lab-episode-check { width:44px; height:44px; }
   .lab-similar-grid .media-work-placeholder { width:100%; height:auto; aspect-ratio:2/3; }
   .media-detail .media-lightbox { gap:8px; padding:20px 8px; }
+  .media-detail .media-lightbox[data-gallery=posters]>img { height:min(600px,calc(100dvh - 160px),calc((100vw - 146px) * 1.5)); }
 }
 @media (hover:none),(pointer:coarse) { .media-detail :is(.lab-person,.lab-related-card,.lab-similar-grid img,.lab-poster,.lab-gallery img,.lab-art-image img):hover { transform:none; }.media-detail .lab-person:hover { background:var(--panel); } }
 @media (prefers-reduced-motion:reduce) { .media-scroll-reveal { translate:none; opacity:1; } }
