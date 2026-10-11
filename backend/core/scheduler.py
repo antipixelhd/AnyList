@@ -598,6 +598,30 @@ async def _show_metadata_refresher():
                 if tvdb_key:
                     from core import tvdb as tvdb_client
                     tvdb_client.set_subscriber_pin(tvdb_key, tvdb_pin)
+                from core.runtime_backfill import backfill_history_runtimes
+                runtime_coverage = await backfill_history_runtimes(db, api_key, tvdb_api_key=tvdb_key)
+                log.info("Historical runtime backfill: %s", runtime_coverage)
+                from core.country_backfill import backfill_legacy_countries, backfill_catalogue_countries
+                from core.catalogue_providers import CatalogueProviders, ProviderHTTP
+                country_coverage = await backfill_legacy_countries(db, api_key, tvdb_api_key=tvdb_key)
+                log.info("Country metadata backfill: %s", country_coverage)
+                catalogue_countries = await backfill_catalogue_countries(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
+                ))
+                log.info("Catalogue country backfill: %s", catalogue_countries)
+                from core.actor_backfill import backfill_actors
+                actor_coverage = await backfill_actors(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
+                ))
+                log.info("Actor metadata backfill: %s", actor_coverage)
+                from core.character_backfill import backfill_screen_characters, backfill_tvmaze_images
+                character_coverage = await backfill_screen_characters(db)
+                character_images = await backfill_tvmaze_images(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key))
+                log.info("Character metadata backfill: %s; TVmaze images: %s", character_coverage, character_images)
+                from core.studio_artwork import backfill_studio_artwork
+                studio_artwork = await backfill_studio_artwork(db, api_key, limit=25)
+                log.info("Studio logo banner backfill: %s", studio_artwork)
                 if not settings_store.check_tmdb_key(api_key) and not tvdb_key:
                     log.info("Show metadata refresher: no TMDB or TVDB key configured anywhere, skipping")
                     # Cached confirmed dates can still reach their premiere
@@ -801,7 +825,10 @@ async def _watchlist_poller():
 @asynccontextmanager
 async def background_jobs():
     """Run periodic jobs for the application lifespan and cancel them on exit."""
+    from core.statistics_snapshots import scheduler as statistics_scheduler
+
     jobs = (
+        statistics_scheduler,
         _auto_sync_scheduler,
         _stream_action_retry_scheduler,
         _rating_push_scheduler,

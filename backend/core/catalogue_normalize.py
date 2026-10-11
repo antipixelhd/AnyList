@@ -3,13 +3,26 @@
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+from core.countries import country_codes, game_countries, numeric_country, screen_countries
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
+
+
+def regular_episode_count(seasons):
+    if not isinstance(seasons, list):
+        return None
+    regular = [s for s in seasons if isinstance(s, dict) and isinstance(s.get("season_number"), int) and s["season_number"] > 0]
+    if not regular or not all(isinstance(s.get("episode_count"), int) and not isinstance(s["episode_count"], bool) and s["episode_count"] >= 0 for s in regular):
+        return None
+    return sum(s["episode_count"] for s in regular)
+
+
 NAMESPACE_KINDS = {
     "tmdb.movie": {"movie"},
     "tmdb.series": {"series"},
     "tvdb.series": {"series"},
+    "tvdb.movie": {"movie"},
     "imdb.title": {"movie", "series"},
     "tmdb.person": {"person"},
     "tvdb.person": {"person"},
@@ -144,6 +157,9 @@ def normalize_tmdb(raw, kind):
                 "genres": raw.get("genres"),
                 "episode_count": raw.get("number_of_episodes"),
                 "episode_run_time": raw.get("episode_run_time"),
+                "original_language": raw.get("original_language"),
+                "regular_episode_count": regular_episode_count(raw.get("seasons")),
+                **screen_countries(raw),
             },
         )
     )
@@ -166,6 +182,8 @@ def normalize_tmdb(raw, kind):
                 artwork="https://image.tmdb.org/t/p/original" + p["profile_path"]
                 if p.get("profile_path")
                 else None,
+                description=p.get("biography"),
+                attributes={k: p[k] for k in ("birthday", "deathday", "place_of_birth", "known_for_department") if p.get(k)},
             )
             roles = p.get("roles") if group == "cast" else p.get("jobs")
             for r in roles or [p]:
@@ -199,6 +217,11 @@ def normalize_tmdb(raw, kind):
                         "position": p.get("order"),
                     }
                 )
+    for p in raw.get("created_by") or []:
+        if p.get("id"):
+            doc["credits"].append({"contributor": entity("person", "tmdb.person", p,
+                artwork="https://image.tmdb.org/t/p/original" + p["profile_path"] if p.get("profile_path") else None),
+                "role": "writer", "role_label": "Creator", "source_key": f"created_by:{p['id']}"})
     for field, namespace, role in [
         ("production_companies", "tmdb.company", "producer"),
         ("networks", "tmdb.network", "broadcaster"),
@@ -213,6 +236,7 @@ def normalize_tmdb(raw, kind):
                         artwork="https://image.tmdb.org/t/p/original" + p["logo_path"]
                         if p.get("logo_path")
                         else None,
+                        attributes={"origin_country": p["origin_country"]} if p.get("origin_country") else None,
                     ),
                     "role": role,
                     "source_key": f"{field}:{p['id']}",
@@ -220,6 +244,9 @@ def normalize_tmdb(raw, kind):
             )
     doc["coverage"] = {
         "credits": "series_aggregate" if raw.get("aggregate_credits") else "title",
+        "credits_complete": all(isinstance(credits.get(group), list) for group in ("cast", "crew"))
+            and isinstance(raw.get("production_companies"), list)
+            and (kind == "movie" or (isinstance(raw.get("created_by"), list) and bool(raw.get("aggregate_credits")))),
         "characters": "role_labels_only",
     }
     for r in (raw.get("recommendations") or {}).get("results", []):
@@ -233,25 +260,30 @@ def normalize_tmdb(raw, kind):
     return doc
 
 
-def normalize_tvdb(raw):
+def normalize_tvdb(raw, kind="series"):
+    release = raw.get("firstAired") or raw.get("first_release") or raw.get("releaseDate")
+    if isinstance(release, dict):
+        release = release.get("date")
     doc = document(
         entity(
-            "series",
-            "tvdb.series",
+            kind,
+            f"tvdb.{kind}",
             raw,
             description=raw.get("overview"),
             artwork=raw.get("image"),
             attributes={
-                "release_date": raw.get("firstAired"),
-                "origin_countries": [raw["originalCountry"]]
-                if raw.get("originalCountry")
-                else None,
+                "release_date": release,
+                "origin_countries": country_codes(raw.get("originalCountry")),
+                **screen_countries({"origin_country": country_codes(raw.get("originalCountry"))}),
+                "original_language": raw.get("originalLanguage"),
+                "runtime": raw.get("runtime") if kind == "movie" else None,
+                "episode_run_time": [raw["averageRuntime"]] if kind == "series" and raw.get("averageRuntime") else None,
                 "genres": raw.get("genres"),
             },
         )
     )
     for x in raw.get("remoteIds") or []:
-        ns = {"TheMovieDB.com": "tmdb.series", "IMDB": "imdb.title"}.get(
+        ns = {"TheMovieDB.com": f"tmdb.{kind}", "IMDB": "imdb.title"}.get(
             x.get("sourceName")
         )
         if ns and x.get("id"):
@@ -266,6 +298,9 @@ def normalize_tvdb(raw):
             {"id": pid, "name": p.get("personName")},
             artwork=p.get("personImgURL"),
         )
+        for external in (raw.get("_people") or {}).get(str(pid), {}).get("remoteIds") or []:
+            if external.get("sourceName") == "TheMovieDB.com" and str(external.get("id", "")).isdecimal():
+                person["identities"].append(identity("tmdb.person", external["id"]))
         doc["credits"].append(
             {
                 "contributor": person,
@@ -274,14 +309,24 @@ def normalize_tvdb(raw):
                 else None,
                 "role_label": p.get("peopleType"),
                 "character_label": p.get("name"),
+                "character_image_url": image(p.get("image")) or (
+                    "https://artworks.thetvdb.com/" + p["image"].lstrip("/")
+                    if isinstance(p.get("image"), str) and p["image"] and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", p["image"]) else None
+                ),
                 "source_key": str(p["id"]),
                 "position": p.get("sort"),
             }
         )
         # TVDB Character records are title/performer associations, not global
-        # fictional identities. Artwork stays in the source snapshot.
-    for p in raw.get("companies") or []:
-        label = (p.get("companyType") or {}).get("companyTypeName", "")
+        # fictional identities. Role artwork belongs to this credit.
+    companies = raw.get("companies") or []
+    if isinstance(companies, dict):
+        labels = {"studio": "Studio", "network": "Network", "production": "Production Company", "distributor": "Distributor"}
+        companies = [{**p, "companyType": p.get("companyType") if isinstance(p.get("companyType"), dict) else {"companyTypeName": labels.get(group, group)}}
+                     for group, rows in companies.items() for p in rows or [] if isinstance(p, dict)]
+    for p in companies:
+        company_type = p.get("companyType")
+        label = company_type.get("companyTypeName", "") if isinstance(company_type, dict) else ""
         role = {
             "Network": "broadcaster",
             "Production Company": "producer",
@@ -312,6 +357,7 @@ def normalize_igdb(raw):
                 "release_date": date(raw.get("first_release_date")),
                 "genres": raw.get("genres"),
                 "artwork": [image(a) for a in raw.get("artworks") or []],
+                **game_countries(raw),
             },
         )
     )
@@ -334,6 +380,7 @@ def normalize_igdb(raw):
                             c,
                             description=c.get("description"),
                             artwork=c.get("logo"),
+                            attributes={"countries": [code] if (code := numeric_country(c.get("country"))) else []},
                         ),
                         "role": role,
                         "source_key": f"{p['id']}:{role}",

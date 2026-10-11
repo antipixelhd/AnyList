@@ -32,7 +32,7 @@ const responses = await Promise.allSettled([
     Astro.locals.token,
   ),
   tracker(
-    `browse/facets?${new URLSearchParams({ media_type: type, region: params.get("region") || "US" })}`,
+    `browse/facets?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", genres: params.get("genres") || "" })}`,
     Astro.locals.token,
   ),
 ]);

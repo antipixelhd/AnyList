@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from models.catalogue import (
@@ -232,7 +232,8 @@ def has_value(value):
 
 async def upsert(db, model, values, keys, preserve_missing=False):
     if preserve_missing:
-        values = {k: v for k, v in values.items() if k in keys or has_value(v)}
+        values = {k: v for k, v in values.items() if k in keys or has_value(v)
+                  or (model is CatalogueCredit and k == "screen_character_id")}
         if "attributes" in values:
             values["attributes"] = {
                 k: v for k, v in values["attributes"].items() if has_value(v)
@@ -308,12 +309,24 @@ async def ingest_document(db, doc, provider):
                 "role": c["role"],
                 "role_label": c.get("role_label"),
                 "character_label": c.get("character_label"),
+                "character_image_url": c.get("character_image_url"),
+                # This derived link is rebuilt below after role/performer changes.
+                "screen_character_id": None,
                 "scope": c.get("scope", "title"),
                 "position": c.get("position"),
             },
             ["work_id", "provider", "source_key"],
             preserve_missing=True,
         )
+    # A complete authoritative screen-credit response replaces obsolete rows.
+    # Partial payloads and other providers retain their last successful credits.
+    if provider == "tmdb" and work.kind in ("movie", "series") and doc.get("coverage", {}).get("credits_complete"):
+        keys = {str(c["source_key"])[:200] for c in doc["credits"] if not c.get("edition_identity")}
+        await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id == work.id,
+            CatalogueCredit.provider == provider, CatalogueCredit.source_key.not_in(keys)))
+    if work.kind in ("movie", "series"):
+        from core.screen_characters import project_characters
+        await project_characters(db, work.id)
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
         if character.kind != "character":
@@ -430,7 +443,21 @@ async def ingest_document(db, doc, provider):
             preserve_missing=True,
         )
     await db.flush()
+    if work.kind == "book":
+        await rollup_book_countries(db, work)
     return work
+
+
+async def rollup_book_countries(db, work):
+    """Work-level countries cover ingested editions; editions keep their own."""
+    from core.countries import country_codes
+    attrs = await db.scalars(select(CatalogueEntity.attributes).join(
+        BookEdition, BookEdition.entity_id == CatalogueEntity.id,
+    ).where(BookEdition.work_id == work.id))
+    countries = sorted({code for data in attrs for code in country_codes(data.get("publication_countries"))})
+    if countries:
+        merge_fields(work, {"attributes": {"countries": countries, "publication_countries": countries,
+                                          "country_basis": "publication"}}, "openlibrary")
 
 
 async def link_performance(db, credit_id, appearance_id, language=""):
@@ -520,7 +547,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 
 async def refresh_metadata(
-    db, providers, provider, kind, external_id, edition_page=None
+    db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -585,7 +612,16 @@ async def refresh_metadata(
             await db.commit()
             return result
         async with db.begin_nested():
-            entity = await ingest_document(db, doc, provider)
+            if additive:
+                if not any(x['namespace'] == namespace and x['external_id'] == external_id
+                           for x in doc['work']['identities']):
+                    raise IdentityConflict('Provider reply identity mismatch')
+                from core.catalogue_additive import fill_document
+                entity = await fill_document(db, doc, provider)
+                if expected_entity_id and entity.id != expected_entity_id:
+                    raise IdentityConflict('Existing title bridge requires review')
+            else:
+                entity = await ingest_document(db, doc, provider)
             row.entity_id = entity.id
             row.payload = payload
             row.coverage = doc.get("coverage", {})

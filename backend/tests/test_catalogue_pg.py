@@ -87,6 +87,8 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module(
                     "migrations.versions.mt038_openlibrary_identities"
                 ).upgrade()
+                importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
+                importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -97,6 +99,276 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.admin.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
         await self.admin.dispose()
+
+    async def test_character_fallback_from_unlisted_sequel_preserves_actor_and_title_priority(self):
+        from core.statistics_actors import load_actors, actor_groups
+        from core.screen_characters import character_detail
+        from models.catalogue import ScreenCharacter
+        async with self.Session() as db:
+            works = []
+            for id, person, role in ((1, 123, 'Tony Stark'), (2, 123, 'Tony Stark (voice)'),
+                                     (3, 456, 'Tony Stark'), (4, 123, 'Sherlock Holmes')):
+                works.append(await catalogue.ingest_document(db, normalize_tmdb({'id': id, 'title': f'Film {id}',
+                    'credits': {'cast': [{'id': person, 'name': f'Actor {person}', 'character': role, 'credit_id': str(id)}]}}, 'movie'), 'tmdb'))
+            credits = list(await db.scalars(select(CatalogueCredit).order_by(CatalogueCredit.id)))
+            self.assertEqual(credits[0].screen_character_id, credits[1].screen_character_id)
+            self.assertNotEqual(credits[0].screen_character_id, credits[2].screen_character_id)
+            self.assertNotEqual(credits[0].screen_character_id, credits[3].screen_character_id)
+            credits[1].character_image_url = 'https://example.test/sequel.jpg'
+            credits[2].character_image_url = 'https://example.test/wrong-actor.jpg'
+            credits[3].character_image_url = 'https://example.test/wrong-role.jpg'
+            await db.flush()
+            fact = {'key': 'one', 'name': 'Film 1', 'poster': 'https://example.test/poster.jpg', 'detail_media_id': 1,
+                    'listed': True, 'entity_id': works[0].id, 'kind': 'movie', 'media': [], 'score': 8, 'minutes': 100, 'runtime_missing': 0}
+            await load_actors(db, [fact])
+            groups = actor_groups([fact])
+            self.assertEqual(groups[0]['titles'], 1)
+            self.assertEqual(groups[0]['top_titles'][0]['character_images'], ['https://example.test/sequel.jpg'])
+            credits[0].character_image_url = 'https://example.test/local.jpg'
+            await db.flush()
+            await load_actors(db, [fact])
+            self.assertEqual(actor_groups([fact])[0]['top_titles'][0]['character_images'],
+                             ['https://example.test/local.jpg', 'https://example.test/sequel.jpg'])
+            detail = await character_detail(db, credits[0].screen_character_id)
+            self.assertEqual(len(detail['media']), 2)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ScreenCharacter)), 3)
+
+    async def test_character_projection_aliases_generic_roles_and_reclassified_credit(self):
+        from core.screen_characters import project_characters
+        async with self.Session() as db:
+            works = []
+            for id, role in ((1, 'Tony Stark / Iron Man'), (2, 'Iron Man'), (3, 'Self'), (4, 'Self')):
+                works.append(await catalogue.ingest_document(db, normalize_tmdb({'id': id, 'title': f'Film {id}',
+                    'credits': {'cast': [{'id': 123, 'name': 'Actor', 'character': role, 'credit_id': str(id)}]}}, 'movie'), 'tmdb'))
+            first = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id == works[0].id))
+            db.add(CatalogueCredit(work_id=works[0].id, contributor_id=first.contributor_id, provider='tvdb', source_key='role',
+                                  role='actor', character_label='Iron Man'))
+            await db.flush()
+            await project_characters(db, works[0].id)
+            await project_characters(db, works[1].id)
+            await db.flush()
+            credits = list(await db.scalars(select(CatalogueCredit).order_by(CatalogueCredit.id)))
+            self.assertEqual(first.screen_character_id, credits[-1].screen_character_id)
+            # An existing exact role remains separate when a compound role is ambiguous.
+            self.assertNotEqual(credits[2].screen_character_id, credits[3].screen_character_id)
+            document = normalize_tmdb({'id': 1, 'title': 'Film', 'credits': {'crew': [
+                {'id': 123, 'name': 'Actor', 'job': 'Director', 'department': 'Directing', 'credit_id': '1'}]}}, 'movie')
+            await catalogue.ingest_document(db, document, 'tmdb')
+            await db.refresh(first)
+            self.assertEqual(first.role, 'director')
+            self.assertIsNone(first.screen_character_id)
+
+    async def test_character_database_rejects_wrong_actor_kind_role_and_work(self):
+        from models.catalogue import ScreenCharacter
+        async with self.Session() as db:
+            person = CatalogueEntity(kind='person', name='Actor', attributes={})
+            other = CatalogueEntity(kind='person', name='Other', attributes={})
+            org = CatalogueEntity(kind='organization', name='Company', attributes={})
+            game = CatalogueEntity(kind='game', name='Game', attributes={})
+            movie = CatalogueEntity(kind='movie', name='Movie', attributes={})
+            db.add_all([person, other, org, game, movie]); await db.flush()
+            role = ScreenCharacter(actor_id=person.id, role_key='alice', name='Alice', aliases=['alice'])
+            db.add(role); await db.flush()
+            for work, actor, job in ((movie, other, 'actor'), (movie, person, 'director'), (game, person, 'actor')):
+                with self.assertRaises(IntegrityError):
+                    async with db.begin_nested():
+                        db.add(CatalogueCredit(work_id=work.id, contributor_id=actor.id, provider='reviewed', source_key=job,
+                                              role=job, screen_character_id=role.id))
+                        await db.flush()
+            with self.assertRaises(IntegrityError):
+                async with db.begin_nested():
+                    db.add(ScreenCharacter(actor_id=org.id, role_key='alice', name='Alice', aliases=[]))
+                    await db.flush()
+
+    async def test_tvmaze_backfill_is_bounded_retains_good_art_and_marks_retry(self):
+        from types import SimpleNamespace
+        from core.character_backfill import backfill_tvmaze_images, backfill_screen_characters
+        from models.users import User
+        from models.tracking import TrackedEntry
+        from test_character_backfill import member
+        async with self.Session() as db:
+            await catalogue.ingest_document(db, normalize_tmdb({'id': 42, 'name': 'Show', 'imdb_id': 'tt123',
+                'credits': {'cast': [{'id': 123, 'name': 'Actor', 'character': 'Alice', 'credit_id': '1'}]}}, 'series'), 'tmdb')
+            user = User(email='character@example.test', username='character-test', api_key='fixture-only')
+            media = Media(media_type=MediaType.series, title='Show', tmdb_id=42)
+            db.add_all([user, media]); await db.flush()
+            db.add(TrackedEntry(user_id=user.id, media_id=media.id, status='planning'))
+            await db.commit()
+            adapter = SimpleNamespace(http=SimpleNamespace(request=AsyncMock(side_effect=[
+                {'id': 99, 'externals': {'imdb': 'tt123'}}, [member()]])))
+            result = await backfill_tvmaze_images(db, adapter, limit=1)
+            self.assertEqual(result, {'examined': 1, 'images': 1, 'failed': 0, 'unmatched': 0})
+            enriched = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.provider == 'tvmaze'))
+            self.assertIsNotNone(enriched.screen_character_id)
+            self.assertEqual((await backfill_tvmaze_images(db, adapter))['examined'], 0)
+            adapter.http.request = AsyncMock(side_effect=ProviderError('unavailable'))
+            self.assertEqual((await backfill_tvmaze_images(db, adapter, force=True))['failed'], 1)
+            await db.refresh(enriched)
+            self.assertEqual(enriched.character_image_url, 'https://example.test/role.jpg')
+            self.assertEqual((await backfill_screen_characters(db))['examined'], 1)
+            self.assertEqual((await backfill_screen_characters(db))['examined'], 0)
+
+    async def test_tvdb_movie_role_artwork_and_verified_person_identity(self):
+        from core.catalogue_normalize import normalize_tmdb, normalize_tvdb
+        from core.statistics_actors import load_actors, actor_groups
+        from models.catalogue import CatalogueCredit
+        first = normalize_tmdb({"id": 42, "title": "Film", "credits": {"cast": [{"id": 123, "name": "Actor", "character": "Alice", "credit_id": "tmdb-role"}]}}, "movie")
+        raw = {"id": 84, "name": "Film", "remoteIds": [{"sourceName": "TheMovieDB.com", "id": "42"}],
+            "characters": [{"id": 1, "peopleId": 9, "personName": "Actor", "name": "Alice", "type": 3, "image": "https://artworks.thetvdb.com/role.jpg"}],
+            "_people": {"9": {"remoteIds": [{"sourceName": "TheMovieDB.com", "id": "123"}]}}}
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db, first, "tmdb")
+            enriched = await catalogue.ingest_document(db, normalize_tvdb(raw, "movie"), "tvdb")
+            self.assertEqual(work.id, enriched.id)
+            self.assertEqual((await catalogue.resolve_identity(db, "tvdb.movie", "84")).entity_id, work.id)
+            raw["characters"][0]["image"] = None
+            await catalogue.ingest_document(db, normalize_tvdb(raw, "movie"), "tvdb")
+            await db.flush()
+            credits = list((await db.scalars(select(CatalogueCredit).where(CatalogueCredit.work_id == work.id))).all())
+            self.assertEqual(len({c.contributor_id for c in credits}), 1)
+            self.assertEqual(next(c for c in credits if c.provider == "tvdb").character_image_url, "https://artworks.thetvdb.com/role.jpg")
+            fact = {"key": "catalogue:42", "name": "Film", "poster": None, "detail_media_id": 42, "listed": True,
+                    "entity_id": work.id, "kind": "movie", "media": [], "score": 8, "minutes": 100, "runtime_missing": 0}
+            await load_actors(db, [fact])
+            actors = actor_groups([fact])
+            self.assertEqual((len(actors), actors[0]["titles"]), (1, 1))
+            self.assertEqual(actors[0]["top_titles"][0]["character_image"], "https://artworks.thetvdb.com/role.jpg")
+
+    async def test_country_batches_skip_ineligible_rows_before_limit(self):
+        from core.country_backfill import backfill_catalogue_countries, backfill_legacy_countries
+        from core.catalogue_providers import CatalogueProviders
+        from unittest.mock import patch
+        adapter = CatalogueProviders()
+        adapter.tmdb_key, adapter.tvdb_key = 'configured-key', None
+        adapter.detail = AsyncMock(return_value=(normalize_tmdb({'id':42, 'title':'Film', 'origin_country':['US']}, 'movie'), {}))
+        async with self.Session() as db:
+            unavailable = await catalogue.ingest_document(db, normalize_tvdb({'id':84, 'name':'Unavailable'}, 'movie'), 'tvdb')
+            available = await catalogue.ingest_document(db, normalize_tmdb({'id':42, 'title':'Available'}, 'movie'), 'tmdb')
+            legacy_unavailable = Media(title='TVDB only', media_type=MediaType.movie, tvdb_id=84)
+            legacy_available = Media(title='TMDB film', media_type=MediaType.movie, tmdb_id=42)
+            db.add_all([legacy_unavailable, legacy_available])
+            await db.commit()
+            result = await backfill_catalogue_countries(db, adapter, limit=1)
+            self.assertEqual((result['examined'], result['recovered']), (1,1))
+            self.assertEqual(available.attributes['countries'], ['US'])
+            self.assertNotIn('country_backfill_attempted_at', unavailable.attributes)
+            with patch('core.country_backfill.tmdb.get_movie', AsyncMock(return_value={'id':42, 'origin_country':['US']})) as fetch:
+                result = await backfill_legacy_countries(db, 'configured-key', limit=2)
+            self.assertEqual(result['recovered'], 1)
+            self.assertEqual(legacy_available.tmdb_data['origin_country'], ['US'])
+            self.assertNotIn('country_backfill_attempted_at', legacy_unavailable.tmdb_data or {})
+        fetch.assert_awaited_once()
+        adapter.detail.assert_awaited_once()
+
+    async def test_cached_tvdb_movie_country_replays_without_credentials(self):
+        from core.country_backfill import backfill_catalogue_countries
+        from core.catalogue_providers import CatalogueProviders
+        raw = {'id':84, 'name':'Cached film', 'originalCountry':'usa'}
+        adapter = CatalogueProviders()
+        adapter.tmdb_key = adapter.tvdb_key = None
+        adapter.detail = AsyncMock()
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db, normalize_tvdb(raw, 'movie'), 'tvdb')
+            work.attributes = {}
+            db.add(MetadataSnapshot(entity_id=work.id, provider='tvdb', kind='movie', external_id='84', payload=raw))
+            await db.commit()
+            result = await backfill_catalogue_countries(db, adapter)
+            await db.refresh(work)
+            self.assertEqual(work.attributes['countries'], ['US'])
+            self.assertEqual(result['recovered'], 1)
+        adapter.detail.assert_not_awaited()
+
+    async def test_catalogue_without_credentials_does_not_consume_retry_window(self):
+        from core.country_backfill import backfill_catalogue_countries
+        from core.catalogue_providers import CatalogueProviders
+        adapter = CatalogueProviders()
+        adapter.tmdb_key = adapter.tvdb_key = None
+        adapter.detail = AsyncMock(return_value=(normalize_tmdb({'id':42, 'title':'Film', 'origin_country':['US']}, 'movie'), {}))
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db, normalize_tmdb({'id':42, 'title':'Film'}, 'movie'), 'tmdb')
+            await db.commit()
+            await backfill_catalogue_countries(db, adapter)
+            self.assertNotIn('country_backfill_attempted_at', work.attributes)
+            adapter.detail.assert_not_awaited()
+            adapter.tmdb_key = 'configured-key'
+            await backfill_catalogue_countries(db, adapter)
+            self.assertEqual(work.attributes['countries'], ['US'])
+        adapter.detail.assert_awaited_once()
+
+    async def test_country_backfill_game_fetch_book_isbn_and_protected_origin(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from core.country_backfill import backfill_catalogue_countries
+        from models.catalogue import CatalogueIdentity
+
+        async with self.Session() as db:
+            game_raw = {"id": 1, "name": "Game", "involved_companies": [
+                {"id": 1, "developer": True, "company": {"id": 10, "name": "Canadian studio"}},
+                {"id": 2, "publisher": True, "company": {"id": 11, "name": "French publisher"}},
+            ]}
+            game = await catalogue.ingest_document(db, normalize_igdb(game_raw), "igdb")
+            book = await catalogue.ingest_document(db, normalize_hardcover({
+                "id": 1, "title": "Book", "_editions": [{"id": 1, "isbn_13": "9783551354013"}],
+            }), "hardcover")
+            movie = await catalogue.ingest_document(db, normalize_tmdb({"id": 7, "title": "Movie"}, "movie"), "tmdb")
+            movie.attributes = {"origin_countries": ["GB"]}
+            movie.protected_fields = ["attributes.origin_countries"]
+            db.add(MetadataSnapshot(provider="tmdb", kind="movie", external_id="7", entity_id=movie.id,
+                                    payload={"id": 7, "title": "Movie", "origin_country": ["US"]}))
+            await db.commit()
+            game_raw["involved_companies"][0]["company"]["country"] = 124
+            game_raw["involved_companies"][1]["company"]["country"] = 250
+            providers = SimpleNamespace(http=None, validate=lambda *_: None, igdb=AsyncMock(return_value=[game_raw]),
+                                        openlibrary_isbn=AsyncMock(return_value="OL1M"),
+                                        detail=AsyncMock())
+            with patch("core.openlibrary.get", AsyncMock(return_value={
+                "key": "/books/OL1M", "isbn_13": ["9783551354013"], "publish_country": "gw",
+            })):
+                result = await backfill_catalogue_countries(db, providers)
+            self.assertEqual(result["failed"], 0)
+            self.assertEqual(game.attributes["countries"], ["CA"])
+            self.assertEqual(game.attributes["publisher_countries"], ["FR"])
+            self.assertEqual(book.attributes["countries"], ["DE"])
+            self.assertEqual(movie.attributes["countries"], ["GB"])
+            self.assertEqual(movie.attributes["origin_countries"], ["GB"])
+            providers.openlibrary_isbn.assert_awaited_once_with("9783551354013")
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueIdentity).where(
+                CatalogueIdentity.namespace == "openlibrary.book")), 0)
+            self.assertEqual((await backfill_catalogue_countries(db, providers))["examined"], 0)
+
+    async def test_country_rollup_retains_countries_from_all_ingested_edition_pages(self):
+        from core.openlibrary import normalize
+        async with self.Session() as db:
+            for id, country in ((1, "nyu"), (2, "gw")):
+                doc = normalize({"key": "/works/OL1W", "title": "Book", "_editions": [
+                    {"key": f"/books/OL{id}M", "works": [{"key": "/works/OL1W"}], "publish_country": country},
+                ]})
+                work = await catalogue.ingest_document(db, doc, "openlibrary")
+            self.assertEqual(work.attributes["countries"], ["DE", "US"])
+            editions = list(await db.scalars(select(CatalogueEntity).where(CatalogueEntity.kind == "edition")))
+            self.assertEqual([e.attributes["countries"] for e in editions], [["US"], ["DE"]])
+
+    async def test_legacy_country_sweep_selects_missing_rows_and_retries_weekly(self):
+        from unittest.mock import patch
+        from core import country_backfill
+        async with self.Session() as db:
+            missing = Media(media_type=MediaType.movie, title="Missing", tmdb_id=1, tmdb_data={"runtime": 80})
+            known = Media(media_type=MediaType.movie, title="Known", tmdb_id=2, tmdb_data={"origin_country": ["GB"]})
+            unresolved = Media(media_type=MediaType.movie, title="Unresolved", tmdb_id=3)
+            show = Show(title="Series", tmdb_id=10, tmdb_data={})
+            db.add_all([missing, known, unresolved, show])
+            await db.commit()
+            with patch.object(country_backfill.tmdb, "get_movie", AsyncMock(side_effect=[
+                {"id": 1, "origin_country": ["US"]}, {"id": 3},
+            ])) as movies, patch.object(country_backfill.tmdb, "get_show", AsyncMock(return_value={"id": 10, "origin_country": ["JP"]})) as shows:
+                result = await country_backfill.backfill_legacy_countries(db, "key")
+                self.assertEqual((result["examined"], result["recovered"]), (3, 2))
+                self.assertEqual(missing.tmdb_data["runtime"], 80)
+                self.assertEqual(known.tmdb_data["origin_country"], ["GB"])
+                self.assertEqual(show.tmdb_data["origin_country"], ["JP"])
+                self.assertEqual((await country_backfill.backfill_legacy_countries(db, "key"))["examined"], 0)
+                self.assertEqual(movies.await_count, 2)
+                shows.assert_awaited_once()
 
     async def test_book_providers_share_verified_isbn_work_and_edition_in_both_orders(
         self,

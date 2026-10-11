@@ -7,7 +7,7 @@ import binascii
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,8 @@ from models import Media, User, UserSettings, UserProfileData, GlobalSettings, F
 from models.base import MediaType, PrivacyLevel
 from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
+from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
+from schemas_contributors import ContributorKind, ContributorPage, ListScope
 
 router = APIRouter()
 
@@ -827,6 +829,73 @@ async def catalog_access(db, viewer):
         raise HTTPException(401, "Sign in to browse")
 
 
+@router.get('/contributors/{kind}/{contributor_key}')
+async def contributor_details(
+    kind: ContributorKind,
+    contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+    media_type: MediaScope = 'all',
+    list_scope: ListScope = 'all',
+    status: Literal['', 'watching', 'completed', 'planning', 'paused', 'dropped'] = '',
+    page: Annotated[int, Query(ge=1, le=500)] = 1,
+    cursor: Annotated[str | None, Query(max_length=400)] = None,
+    source: Literal['', 'local', 'provider'] = '',
+) -> ContributorPage:
+    from core.contributor_details import contributor_page
+
+    await catalog_access(db, viewer)
+    if int(contributor_key.split(':')[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid contributor identifier')
+    if not viewer and (list_scope != 'all' or status):
+        raise HTTPException(401, 'Sign in to filter your list')
+    response.headers['Cache-Control'] = 'private, no-store'
+    try:
+        result = await contributor_page(db, viewer, kind=kind, key=contributor_key,
+                                        media_type=media_type, list_scope=list_scope, status=status,
+                                        page=page, cursor=cursor, source=source)
+    except ValueError:
+        raise HTTPException(422, 'Invalid timeline cursor') from None
+    except RuntimeError:
+        raise HTTPException(502, 'Unable to load more works. Try again.') from None
+    if result is None:
+        raise HTTPException(404, 'Contributor not found')
+    return ContributorPage.model_validate(result)
+
+
+@router.get('/studios/{studio_key}')
+async def studio_metadata(
+    studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+) -> StudioDetail:
+    from core.statistics_studios import studio_detail
+    await catalog_access(db, viewer)
+    if int(studio_key.split(':', 1)[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid studio identifier')
+    result = await studio_detail(db, studio_key)
+    if not result:
+        raise HTTPException(404, 'Studio not found')
+    return StudioDetail.model_validate(result)
+
+
+@router.get('/staff/{person_key}')
+async def staff_metadata(
+    person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+) -> PersonDetail:
+    from core.statistics_staff import person_detail
+    await catalog_access(db, viewer)
+    if int(person_key.split(':', 1)[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid person identifier')
+    result = await person_detail(db, person_key, show_anime=await anime_is_visible(db))
+    if not result:
+        raise HTTPException(404, 'Person not found')
+    return PersonDetail.model_validate(result)
+
+
 async def profile_access(db, username, viewer):
     user = (await db.execute(select(User).where(User.username == username).options(selectinload(User.profile)))).scalar_one_or_none()
     if not user:
@@ -987,6 +1056,57 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     }
 
 
+@router.post("/stats/refresh")
+async def refresh_my_statistics(
+    response: Response,
+    viewer: Annotated[User, Depends(get_current_user)],
+) -> StatisticsRefresh:
+    from core.statistics_refresh import refresh_account
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await refresh_account(viewer.id)
+
+
+@router.get("/stats/refresh")
+async def my_statistics_refresh_status(
+    response: Response,
+    viewer: Annotated[User, Depends(get_current_user)],
+) -> StatisticsRefresh:
+    from core.statistics_refresh import refresh_status
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await refresh_status(viewer.id)
+
+
+@router.get("/profile/{username}/stats/overview")
+async def profile_stats_overview(
+    username: str,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+    media_type: Annotated[MediaScope, Query()] = "all",
+) -> OverviewResponse:
+    from core.statistics_snapshots import read_overview
+
+    user, owner = await profile_access(db, username, viewer)
+    response.headers["Cache-Control"] = "private, no-store"
+    following = follows_you = False
+    if viewer and not owner:
+        following = (await db.scalar(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))) is not None
+        follows_you = (await db.scalar(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))) is not None
+    prefs = await db.get(TrackingPreferences, user.id)
+    header = {
+        "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
+                    "bio": user.profile.bio if user.profile else None,
+                    "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
+                    "has_avatar": bool(user.profile and user.profile.avatar_path),
+                    "background_url": user.profile.background_url if user.profile else None},
+        "owner": owner, "following": following, "follows_you": follows_you,
+        "combine_lists": True if prefs is None else prefs.combine_lists,
+    }
+    return OverviewResponse.model_validate({**header, **await read_overview(db, user.id, media_type)})
+
+
 @router.get("/profile/{username}/stats/summary")
 async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
                         year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db),
@@ -1048,7 +1168,7 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
 
 
 @router.get('/browse/facets')
-async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
     await catalog_access(db, viewer)
@@ -1066,7 +1186,24 @@ async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region
     if not providers:
         providers = await local_providers(db, region)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
-    return {'genres': [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])], 'providers': providers, 'notice': notice}
+    options = [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])]
+    options.extend({'id': value, 'name': value[5:]} for value in browse_genres(genres) if isinstance(value, str))
+    return {'genres': options, 'providers': providers, 'notice': notice}
+
+
+def browse_genres(value: str) -> list[int | str]:
+    parts = value.split(',') if value else []
+    if len(parts) > 12:
+        raise HTTPException(422, 'Choose up to 12 valid filters')
+    result = []
+    for part in parts:
+        if not part:
+            raise HTTPException(422, 'Choose up to 12 valid filters')
+        if part.startswith('name:') and 0 < len(part[5:]) <= 80 and part[5:].strip() == part[5:] and not any(ord(c) < 32 for c in part):
+            result.append(part)
+        else:
+            result.extend(browse_ids(part))
+    return list(dict.fromkeys(result))
 
 
 def browse_ids(value: str) -> list[int]:
@@ -1105,9 +1242,9 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
-    genre_ids = browse_ids(genres)
+    genre_ids = browse_genres(genres)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
-    if not set(genre_ids).issubset(allowed) or (start and end and start > end):
+    if not {value for value in genre_ids if isinstance(value, int)}.issubset(allowed) or (start and end and start > end):
         raise HTTPException(422, 'Check genres and release dates')
     if (media_type == 'movie' and status not in ('', 'released', 'upcoming')) or (media_type == 'series' and status == 'released'):
         raise HTTPException(422, 'Choose a status for this media type')

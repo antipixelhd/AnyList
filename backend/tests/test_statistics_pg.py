@@ -1,0 +1,639 @@
+"""Real PostgreSQL scheduling, invalidation and API tests in disposable schemas."""
+
+import asyncio
+import importlib
+import os
+import unittest
+import uuid
+from unittest.mock import AsyncMock, patch
+from datetime import datetime, timedelta
+
+os.environ.setdefault("SECRET_KEY", "statistics-test-only")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+
+import httpx
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from fastapi import FastAPI
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from core import statistics_snapshots as snapshots
+from db import get_db
+from dependencies import get_current_user, get_optional_user
+from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
+from models.base import MediaType, PrivacyLevel
+from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink, CatalogueIdentity
+from models.statistics import UserStatsSnapshot, UserStatsState
+from models.tracking import TrackedEntry
+from routers.tracking import router
+from core.statistics_refresh import refresh_account, refresh_status
+
+URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATABASE_URL")
+
+
+@unittest.skipUnless(URL, "Requires explicit disposable statistics PostgreSQL")
+class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        if not (":55449/catalogue_test" in URL or "/anylist_test" in URL):
+            raise RuntimeError("Refusing non-disposable statistics DB")
+        self.schema = "statistics_test_" + uuid.uuid4().hex
+        self.admin = create_async_engine(URL)
+        async with self.admin.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{self.schema}"'))
+        self.engine = create_async_engine(URL, connect_args={"server_settings": {"search_path": self.schema}})
+
+        def setup(conn):
+            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name != "stats_metadata_revision"]
+            Base.metadata.create_all(conn, tables=wanted)
+            conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
+            conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
+            conn.execute(text("DROP TABLE catalogue_screen_characters"))
+            with Operations.context(MigrationContext.configure(conn)):
+                importlib.import_module("migrations.versions.mt039_statistics_snapshots").upgrade()
+                importlib.import_module("migrations.versions.mt040_statistics_utc_schedule").upgrade()
+                importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
+                importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
+
+        async with self.engine.begin() as conn:
+            await conn.run_sync(setup)
+            precision = await conn.scalars(text("SELECT DISTINCT datetime_precision FROM information_schema.columns WHERE table_schema=current_schema() AND table_name IN ('user_stats_state', 'user_stats_snapshots') AND data_type LIKE 'timestamp%'"))
+            self.assertEqual(list(precision), [3])
+        self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
+        async with self.Session() as db:
+            user = User(email="stats@example.org", username="statistics-fixture", api_key="fixture-key")
+            db.add(user)
+            db.add(GlobalSettings(id=1, show_anime=True, enable_logged_out_navigation=True))
+            await db.flush()
+            db.add(UserProfileData(user_id=user.id, privacy_level=PrivacyLevel.public))
+            movie = Media(title="Fixture movie", media_type=MediaType.movie, runtime=100, release_date="2020-01-01", tmdb_data={"genres": ["Drama"]})
+            db.add(movie)
+            await db.flush()
+            work = CatalogueEntity(kind="movie", name="Fixture movie", attributes={})
+            person = CatalogueEntity(kind="person", name="Fixture Actor", attributes={})
+            db.add_all([work, person])
+            await db.flush()
+            db.add(CatalogueLegacyLink(media_id=movie.id, entity_id=work.id))
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id, provider="tvdb", source_key="fixture-role",
+                role="actor", character_label="Fixture Character", character_image_url="https://artworks.thetvdb.com/role.jpg"))
+            studio = CatalogueEntity(kind="organization", name="Fixture Studio", image_url="https://example.test/logo.png", description="Independent film studio.", attributes={"origin_country": "US"})
+            network = CatalogueEntity(kind="organization", name="Fixture Network", attributes={})
+            db.add_all([studio, network])
+            await db.flush()
+            db.add(CatalogueIdentity(entity_id=studio.id, namespace="tmdb.company", external_id="99", source="tmdb"))
+            db.add_all([CatalogueCredit(work_id=work.id, contributor_id=studio.id, provider="tmdb", source_key="company", role="producer"),
+                        CatalogueCredit(work_id=work.id, contributor_id=studio.id, provider="tvdb", source_key="company", role="producer"),
+                        CatalogueCredit(work_id=work.id, contributor_id=network.id, provider="tmdb", source_key="network", role="broadcaster")])
+            db.add(TrackedEntry(user_id=user.id, media_id=movie.id, status="completed", rating_mode="manual", manual_score=8))
+            db.add(WatchEvent(user_id=user.id, media_id=movie.id, completed=True, watched_at=datetime(2026, 1, 1)))
+            await db.commit()
+            self.user_id, self.media_id = user.id, movie.id
+            self.studio_id, self.network_id = studio.id, network.id
+        app = FastAPI()
+        self.app = app
+        app.include_router(router, prefix="/tracking")
+
+        async def db_override():
+            async with self.Session() as db:
+                yield db
+
+        self.viewer = None
+        app.dependency_overrides[get_db] = db_override
+        app.dependency_overrides[get_optional_user] = lambda: self.viewer
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+        await self.engine.dispose()
+        async with self.admin.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
+        await self.admin.dispose()
+
+    async def build(self):
+        claim = await snapshots.claim_next(self.Session)
+        self.assertIsNotNone(claim)
+        result = await snapshots.compute(claim, self.Session)
+        self.assertTrue(await snapshots.publish(claim, result, self.Session))
+        return claim, result
+
+    async def test_manual_refresh_publishes_immediately_before_daily_due(self):
+        await self.build()
+        previous = await self.state()
+        self.assertGreater(previous.next_due_at, snapshots.utcnow())
+        async with self.Session() as db:
+            await db.execute(update(TrackedEntry).where(TrackedEntry.user_id == self.user_id).values(manual_score=9))
+            await db.commit()
+        result = await refresh_account(self.user_id, self.Session)
+        self.assertEqual(result.status, 'ready')
+        self.assertNotEqual(result.generation, previous.active_snapshot_id)
+        state = await self.state()
+        self.assertFalse(state.dirty)
+        self.assertGreater(state.next_due_at, snapshots.utcnow() + timedelta(hours=23))
+        async with self.Session() as db:
+            payload = (await db.get(UserStatsSnapshot, result.generation)).payload
+            self.assertEqual(payload['all']['totals']['mean_score'], 9)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)), 1)
+
+    async def test_manual_refresh_and_scheduler_share_one_lease(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        original = snapshots.compute
+
+        async def paused_compute(claim, factory):
+            started.set()
+            await release.wait()
+            return await original(claim, factory)
+
+        with patch.object(snapshots, 'compute', side_effect=paused_compute) as compute:
+            task = asyncio.create_task(refresh_account(self.user_id, self.Session))
+            try:
+                await asyncio.wait_for(started.wait(), 5)
+                self.assertEqual((await refresh_account(self.user_id, self.Session)).status, 'refreshing')
+                self.assertEqual((await refresh_status(self.user_id, self.Session)).status, 'refreshing')
+                self.assertIsNone(await snapshots.claim_next(self.Session))
+                self.assertEqual(compute.call_count, 1)
+            finally:
+                release.set()
+            self.assertEqual((await task).status, 'ready')
+
+    async def test_manual_refresh_failure_retains_last_good_snapshot_and_retries(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        with patch.object(snapshots, 'compute', side_effect=RuntimeError('private detail')):
+            result = await refresh_account(self.user_id, self.Session)
+        self.assertEqual((result.status, result.generation), ('error', previous))
+        state = await self.state()
+        self.assertIsNone(state.lease_token)
+        self.assertGreater(state.next_due_at, snapshots.utcnow())
+        self.assertEqual((await refresh_account(self.user_id, self.Session)).status, 'ready')
+
+    async def test_manual_refresh_retries_changed_source_before_publication(self):
+        original = snapshots.compute
+        calls = 0
+
+        async def change_once(claim, factory):
+            nonlocal calls
+            result = await original(claim, factory)
+            calls += 1
+            if calls == 1:
+                async with self.Session() as db:
+                    await db.execute(update(TrackedEntry).values(manual_score=9))
+                    await db.commit()
+            return result
+
+        with patch.object(snapshots, 'compute', side_effect=change_once):
+            result = await refresh_account(self.user_id, self.Session)
+        self.assertEqual((calls, result.status), (2, 'ready'))
+        async with self.Session() as db:
+            self.assertEqual((await db.get(UserStatsSnapshot, result.generation)).payload['all']['totals']['mean_score'], 9)
+
+    async def test_cancelled_manual_refresh_releases_lease_without_losing_snapshot(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        started = asyncio.Event()
+
+        async def pause(claim, factory):
+            started.set()
+            await asyncio.Event().wait()
+
+        with patch.object(snapshots, 'compute', side_effect=pause):
+            task = asyncio.create_task(refresh_account(self.user_id, self.Session))
+            await asyncio.wait_for(started.wait(), 5)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        state = await self.state()
+        self.assertIsNone(state.lease_token)
+        self.assertEqual(state.active_snapshot_id, previous)
+        self.assertEqual(state.error_code, 'calculation_failed')
+
+    async def test_manual_refresh_recovers_expired_lease(self):
+        async with self.Session() as db:
+            await db.execute(update(UserStatsState).where(UserStatsState.user_id == self.user_id).values(
+                lease_token=str(uuid.uuid4()), lease_until=snapshots.utcnow() - timedelta(minutes=1)))
+            await db.commit()
+        self.assertEqual((await refresh_account(self.user_id, self.Session)).status, 'ready')
+
+    async def test_refresh_api_requires_session_and_only_changes_authenticated_account(self):
+        self.assertEqual((await self.client.post('/tracking/stats/refresh')).status_code, 401)
+        self.assertEqual((await self.client.get('/tracking/stats/refresh')).status_code, 401)
+        async with self.Session() as db:
+            other = User(email='refresh-other@example.org', username='refresh-other', api_key='refresh-other-key')
+            db.add(other)
+            await db.commit()
+            other_before = await db.get(UserStatsState, other.id)
+            before_due = other_before.next_due_at
+            viewer = await db.get(User, self.user_id)
+        self.app.dependency_overrides[get_current_user] = lambda: viewer
+        with patch.object(snapshots, 'AsyncSessionLocal', self.Session):
+            response = await self.client.post(f'/tracking/stats/refresh?user_id={other.id}', json={'user_id': other.id})
+            status = await self.client.get('/tracking/stats/refresh')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual(response.json()['status'], 'ready')
+        self.assertEqual(status.json(), response.json())
+        self.assertEqual(set(response.json()), {'status', 'generation', 'computed_at'})
+        async with self.Session() as db:
+            other_after = await db.get(UserStatsState, other.id)
+            self.assertEqual(other_after.next_due_at, before_due)
+            self.assertIsNone(other_after.active_snapshot_id)
+            self.assertIsNone(other_after.lease_token)
+            self.assertEqual((await db.get(UserStatsSnapshot, response.json()['generation'])).user_id, self.user_id)
+
+    async def test_studio_snapshot_and_public_metadata_do_not_expose_personal_data(self):
+        await self.build()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        group = response.json()['overview']['studios'][0]
+        self.assertEqual((group['label'], group['titles'], group['mean_score'], group['minutes']), ('Fixture Studio', 1, 8, 100))
+        self.assertEqual(len(response.json()['overview']['studios']), 1)
+        detail = await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()['countries'], ['US'])
+        self.assertEqual(set(detail.json()), {'key', 'name', 'image', 'description', 'countries'})
+        self.assertEqual((await self.client.get('/tracking/studios/tmdb:99')).json()['name'], 'Fixture Studio')
+        self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.network_id}')).status_code, 404)
+        self.assertEqual((await self.client.get('/tracking/studios/invalid:99')).status_code, 422)
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')).status_code, 401)
+
+    async def test_legacy_studio_page_uses_saved_company_metadata(self):
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.tmdb_data = {'production_companies': [{'id': 999, 'name': 'Legacy Studio', 'logo_path': '/logo.png', 'origin_country': 'JP'}]}
+            await db.commit()
+        response = await self.client.get('/tracking/studios/tmdb:999')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.json()['name'], response.json()['countries']), ('Legacy Studio', ['JP']))
+        self.assertEqual(response.json()['image'], 'https://image.tmdb.org/t/p/w185/logo.png')
+
+    async def test_staff_deduplicates_jobs_and_person_page_uses_saved_metadata_and_identity_links(self):
+        async with self.Session() as db:
+            work_id = await db.scalar(select(CatalogueLegacyLink.entity_id).where(CatalogueLegacyLink.media_id == self.media_id))
+            person = CatalogueEntity(kind='person', name='Fixture Director', description='Saved biography.', attributes={'birthday': '1970-01-01', 'place_of_birth': 'Berlin'})
+            db.add(person)
+            await db.flush()
+            db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='123', source='tmdb'))
+            for job, role in [('Director', 'director'), ('Screenplay', 'writer')]:
+                db.add(CatalogueCredit(work_id=work_id, contributor_id=person.id, provider='tmdb', source_key=job, role=role, role_label=job))
+            second = Media(title='Other work', media_type=MediaType.movie, tmdb_id=987, release_date='2022-01-01')
+            entity = CatalogueEntity(kind='movie', name='Other work', attributes={})
+            db.add_all([second, entity])
+            await db.flush()
+            db.add(CatalogueIdentity(entity_id=entity.id, namespace='tmdb.movie', external_id='987', source='tmdb'))
+            db.add(CatalogueCredit(work_id=entity.id, contributor_id=person.id, provider='tmdb', source_key='Other director', role='director', role_label='Director'))
+            await db.commit()
+            person_id = person.id
+        await self.build()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        groups = response.json()['overview']['staff']
+        self.assertEqual(len(groups), 1)
+        self.assertEqual((groups[0]['titles'], groups[0]['mean_score'], groups[0]['minutes']), (1, 8, 100))
+        self.assertEqual(groups[0]['top_titles'][0]['roles'], ['Director', 'Screenplay'])
+        detail = await self.client.get(f'/tracking/staff/catalogue%3A{person_id}')
+        self.assertEqual(detail.status_code, 200, detail.text)
+        data = detail.json()
+        self.assertEqual((data['biography'], data['birthday'], data['place_of_birth']), ('Saved biography.', '1970-01-01', 'Berlin'))
+        self.assertEqual([w['title'] for w in data['works']], ['Other work', 'Fixture movie'])
+        self.assertNotIn('mean_score', data)
+        self.assertEqual((await self.client.get('/tracking/staff/tmdb:123')).json()['name'], 'Fixture Director')
+        self.assertEqual((await self.client.get(f'/tracking/staff/catalogue:{self.studio_id}')).status_code, 404)
+        self.assertEqual((await self.client.get('/tracking/staff/tmdb:9999')).status_code, 404)
+        self.assertEqual((await self.client.get('/tracking/staff/catalogue:9999999999')).status_code, 422)
+        async with self.Session() as db:
+            await db.execute(update(Media).where(Media.id == second.id).values(tmdb_data={'genres': ['Animation'], 'origin_country': ['JP']}))
+            await db.execute(update(GlobalSettings).values(show_anime=False))
+            await db.commit()
+        detail = await self.client.get(f'/tracking/staff/catalogue:{person_id}')
+        self.assertEqual([w['title'] for w in detail.json()['works']], ['Fixture movie'])
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        self.assertEqual((await self.client.get(f'/tracking/staff/catalogue:{person_id}')).status_code, 401)
+
+    async def test_legacy_creator_has_a_person_page_without_person_or_credit_projection(self):
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.tmdb_id = 42
+            movie.tmdb_data = {'created_by': [{'id': 456, 'name': 'Legacy Creator', 'profile_path': '/creator.jpg'}]}
+            await db.commit()
+        detail = await self.client.get('/tracking/staff/tmdb:456')
+        self.assertEqual(detail.status_code, 200, detail.text)
+        data = detail.json()
+        self.assertEqual(data['name'], 'Legacy Creator')
+        self.assertEqual(data['roles'], ['Creator'])
+        self.assertEqual(data['works'][0]['href'], f'/title/{self.media_id}')
+        await self.build()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        self.assertEqual(response.json()['overview']['staff'][0]['label'], 'Legacy Creator')
+
+    async def force_due(self):
+        async with self.Session() as db:
+            await db.execute(update(UserStatsState).where(UserStatsState.user_id == self.user_id).values(next_due_at=snapshots.utcnow() - timedelta(seconds=1)))
+            await db.commit()
+
+    async def state(self):
+        async with self.Session() as db:
+            return await db.get(UserStatsState, self.user_id)
+
+    async def test_failed_studio_artwork_retries_without_pinning_next_batch(self):
+        from core.studio_artwork import backfill_studio_artwork
+        async with self.Session() as db:
+            studio = await db.get(CatalogueEntity, self.studio_id)
+            before = studio.image_url
+            with patch('core.studio_artwork.tmdb.get_company_images', AsyncMock(side_effect=RuntimeError('unavailable'))) as fetch:
+                result = await backfill_studio_artwork(db, 'fixture-key', limit=1)
+                self.assertEqual(result['failed'], 1)
+                self.assertEqual((await backfill_studio_artwork(db, 'fixture-key', limit=1))['examined'], 0)
+            fetch.assert_awaited_once()
+            self.assertEqual(studio.image_url, before)
+            self.assertNotIn('studio_artwork_version', studio.attributes)
+            self.assertIn('studio_artwork_attempted_at', studio.attributes)
+
+    async def test_actor_batch_skips_unconfigured_provider_before_limit(self):
+        from core.actor_backfill import backfill_actors
+        from types import SimpleNamespace
+        async with self.Session() as db:
+            missing = await db.get(Media, self.media_id)
+            missing.tmdb_id, missing.tvdb_id = None, 84
+            available = Media(title='Recoverable cast', media_type=MediaType.movie, tmdb_id=10)
+            db.add(available)
+            await db.flush()
+            db.add(TrackedEntry(user_id=self.user_id, media_id=available.id))
+            await db.commit()
+            providers = SimpleNamespace(tmdb_key='fixture-key', tvdb_key=None)
+            with patch('core.actor_backfill.catalogue.refresh_metadata', AsyncMock(return_value={'status':'updated', 'entity_id':9})) as refresh:
+                result = await backfill_actors(db, providers, limit=1)
+            self.assertEqual((result['examined'], result['updated']), (1,1))
+            self.assertNotIn('actor_backfill_attempted_at', missing.tmdb_data or {})
+        self.assertEqual(refresh.await_args.args[2:5], ('tmdb', 'movie', '10'))
+
+    async def test_runtime_batch_skips_ineligible_history_before_limit(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        async with self.Session() as db:
+            missing = await db.get(Media, self.media_id)
+            missing.runtime, missing.tmdb_id, missing.tvdb_id, missing.tmdb_data = None, None, None, {}
+            available = Media(title='Recoverable film', media_type=MediaType.movie, tmdb_id=10)
+            db.add(available)
+            await db.flush()
+            db.add(WatchEvent(user_id=self.user_id, media_id=available.id, completed=True))
+            await db.commit()
+            with patch('core.runtime_backfill.tmdb.get_movie', AsyncMock(return_value={'id':10, 'runtime':120})) as fetch:
+                result = await backfill_history_runtimes(db, 'fixture-key', limit=1)
+            self.assertEqual((result['examined'], result['recovered']), (1,1))
+            self.assertEqual(available.runtime, 120)
+            self.assertNotIn('runtime_backfill_attempted_at', missing.tmdb_data)
+        fetch.assert_awaited_once()
+
+    async def test_runtime_backfill_deduplicates_history_and_refreshes_statistics(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.runtime, movie.tmdb_id = None, 10
+            db.add(WatchEvent(user_id=self.user_id, media_id=movie.id, completed=True, play_count=3))
+            unwatched = Media(title="Incomplete watch", media_type=MediaType.movie, tmdb_id=11)
+            db.add(unwatched)
+            await db.flush()
+            db.add(WatchEvent(user_id=self.user_id, media_id=unwatched.id, completed=False))
+            await db.commit()
+        _, before = await self.build()
+        self.assertEqual(before["payload"]["all"]["coverage"]["runtime_missing_plays"], 4)
+        async with self.Session() as db:
+            with patch("core.runtime_backfill.tmdb.get_movie", AsyncMock(return_value={"id": 10, "runtime": 120})) as fetch:
+                result = await backfill_history_runtimes(db, "fixture-key", limit=1)
+            fetch.assert_awaited_once()
+            self.assertEqual(result["recovered"], 1)
+            self.assertIsNone((await db.get(Media, unwatched.id)).runtime)
+            events = (await db.scalars(select(WatchEvent).where(WatchEvent.media_id == self.media_id))).all()
+            self.assertEqual(sum(e.play_count for e in events), 4)
+        await self.force_due()
+        _, after = await self.build()
+        self.assertGreater(after["metadata_revision"], before["metadata_revision"])
+        self.assertEqual(after["payload"]["all"]["coverage"]["runtime_missing_plays"], 0)
+        self.assertEqual(after["payload"]["all"]["totals"]["watch_minutes"], 480)
+
+    async def test_planned_runtimes_are_backfilled_without_creating_watch_events(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        from models.show import Show
+        async with self.Session() as db:
+            planned = Media(title='Planned film',media_type=MediaType.movie,tmdb_id=22)
+            series = Media(title='Planned show',media_type=MediaType.series,tmdb_id=33)
+            show = Show(title='Planned show',tmdb_id=33)
+            db.add_all([planned,series,show])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user_id,media_id=planned.id,status='planning'),
+                        TrackedEntry(user_id=self.user_id,media_id=series.id,status='planning')])
+            released = Media(title='Released',media_type=MediaType.episode,tmdb_id=44,show_id=show.id,season_number=1,release_date='2020-01-01')
+            future = Media(title='Future',media_type=MediaType.episode,tmdb_id=45,show_id=show.id,season_number=1,release_date='2199-01-01')
+            db.add_all([released,future])
+            await db.commit()
+            watched_before = await db.scalar(select(func.count()).select_from(WatchEvent))
+            with patch('core.runtime_backfill.tmdb.get_movie',AsyncMock(return_value={'id':22,'runtime':90})), patch(
+                'core.runtime_backfill.tmdb.get_season',AsyncMock(return_value={'episodes':[{'id':44,'runtime':30},{'id':45,'runtime':40}]})):
+                result = await backfill_history_runtimes(db,'key')
+            self.assertEqual(result['recovered'],2)
+            self.assertEqual(released.runtime,30)
+            self.assertIsNone(future.runtime)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)),watched_before)
+
+    async def test_complete_credit_refresh_removes_obsolete_people_but_partial_preserves_them(self):
+        from core.catalogue import ingest_document
+        from core.catalogue_normalize import normalize_tmdb
+        async with self.Session() as db:
+            raw={'id':1234,'title':'Credit film','production_companies':[],
+                 'credits':{'cast':[{'id':777,'name':'Old actor','credit_id':'old'}],'crew':[{'id':778,'name':'Director','job':'Director','credit_id':'director'}]}}
+            work=await ingest_document(db,normalize_tmdb(raw,'movie'),'tmdb')
+            await ingest_document(db,normalize_tmdb({'id':1234,'title':'Credit film','credits':{'cast':[]}},'movie'),'tmdb')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit).where(CatalogueCredit.work_id==work.id)),2)
+            await ingest_document(db,normalize_tmdb({**raw,'credits':{'cast':[],'crew':raw['credits']['crew']}},'movie'),'tmdb')
+            roles=list(await db.scalars(select(CatalogueCredit.role).where(CatalogueCredit.work_id==work.id)))
+            self.assertEqual(roles,['director'])
+
+    async def test_movie_runtime_recovers_through_verified_tvdb_catalogue_identity(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        async with self.Session() as db:
+            movie=await db.get(Media,self.media_id)
+            movie.tmdb_id=999;movie.runtime=None
+            work_id=await db.scalar(select(CatalogueLegacyLink.entity_id).where(CatalogueLegacyLink.media_id==movie.id))
+            db.add_all([CatalogueIdentity(entity_id=work_id,namespace='tmdb.movie',external_id='999',source='tmdb'),
+                        CatalogueIdentity(entity_id=work_id,namespace='tvdb.movie',external_id='1099',source='tvdb')])
+            await db.commit()
+            with patch('core.runtime_backfill.tmdb.get_movie',AsyncMock(return_value={'id':999,'runtime':0})), patch(
+                'core.runtime_backfill.tvdb.get_movie',AsyncMock(return_value={'id':1099,'runtime':110})) as fetch:
+                result=await backfill_history_runtimes(db,'tmdb',tvdb_api_key='tvdb')
+            fetch.assert_awaited_once_with(1099,'tvdb')
+            self.assertEqual((result['recovered'],movie.runtime),(1,110))
+
+    async def test_first_request_is_pending_and_worker_publishes_all_scopes_together(self):
+        response = await self.client.get("/tracking/profile/statistics-fixture/stats/overview")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.assertEqual(response.json()["status"], "pending")
+        self.assertIsNone(response.json()["overview"])
+        await self.build()
+        generations = set()
+        for scope, titles in (("all", 1), ("movie", 1), ("series", 0)):
+            r = await self.client.get("/tracking/profile/statistics-fixture/stats/overview", params={"media_type": scope})
+            self.assertEqual(r.status_code, 200, r.text)
+            data = r.json()
+            generations.add(data["generation"])
+            self.assertEqual(data["overview"]["totals"]["watched_titles"], titles)
+            genres = data["overview"]["genres"]
+            if titles:
+                self.assertEqual(genres[0]["label"], "Drama")
+                self.assertEqual(genres[0]["top_titles"][0]["score"], 8)
+                self.assertTrue(genres[0]["top_titles"][0]["href"].startswith("/title/"))
+                actor = data["overview"]["actors"][0]
+                self.assertEqual((actor["label"], actor["titles"], actor["mean_score"], actor["minutes"]), ("Fixture Actor", 1, 8, 100))
+                self.assertEqual(actor["top_titles"][0]["character"], "Fixture Character")
+                self.assertEqual(actor["top_titles"][0]["character_image"], "https://artworks.thetvdb.com/role.jpg")
+            else:
+                self.assertEqual(genres, [])
+                self.assertEqual(data["overview"]["actors"], [])
+        self.assertEqual(len(generations), 1)
+        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview", params={"media_type": "game"})).status_code, 422)
+
+    async def test_named_genre_matches_string_and_object_metadata_without_broadening(self):
+        from core.browse import local_query
+        async with self.Session() as db:
+            db.add_all([Media(title=title, media_type=MediaType.movie, tmdb_data={"genres": genres}) for title, genres in [
+                ("String genre", ["Suspense"]), ("Object genre", [{"name": "Suspense"}]), ("Different genre", ["Drama"])]])
+            await db.commit()
+            query = local_query("movie", term="", genres=["name:Suspense"], start=None, end=None, status="", provider=None,
+                                region="US", sort="title", show_anime=True)
+            self.assertEqual({m.title for m in (await db.scalars(query)).all()}, {"String genre", "Object genre"})
+
+    async def test_two_workers_cannot_claim_same_job(self):
+        claims = await asyncio.gather(snapshots.claim_next(self.Session), snapshots.claim_next(self.Session))
+        self.assertEqual(sum(c is not None for c in claims), 1)
+
+    async def test_non_utc_database_timezone_does_not_delay_initial_or_purge_work(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(text("SET LOCAL TIME ZONE 'Europe/Berlin'"))
+            other = User(email="timezone@example.org", username="timezone", api_key="timezone-fixture")
+            db.add(other)
+            await db.flush()
+            state = await db.get(UserStatsState, other.id)
+            self.assertLess(abs((state.next_due_at - snapshots.utcnow()).total_seconds()), 5)
+            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == self.user_id))
+            await db.commit()
+        self.assertLess(abs(((await self.state()).next_due_at - snapshots.utcnow()).total_seconds()), 5)
+
+    async def test_expired_worker_cannot_publish_after_lease_reassignment(self):
+        first = await snapshots.claim_next(self.Session)
+        result = await snapshots.compute(first, self.Session)
+        async with self.Session() as db:
+            await db.execute(update(UserStatsState).values(lease_until=snapshots.utcnow() - timedelta(seconds=1)))
+            await db.commit()
+        second = await snapshots.claim_next(self.Session)
+        self.assertNotEqual(first["token"], second["token"])
+        self.assertFalse(await snapshots.publish(first, result, self.Session))
+        self.assertTrue(await snapshots.publish(second, await snapshots.compute(second, self.Session), self.Session))
+
+    async def test_fact_revision_race_keeps_dirty_and_does_not_publish_stale_snapshot(self):
+        claim = await snapshots.claim_next(self.Session)
+        result = await snapshots.compute(claim, self.Session)
+        async with self.Session() as db:
+            await db.execute(update(TrackedEntry).values(manual_score=6))
+            await db.commit()
+        self.assertFalse(await snapshots.publish(claim, result, self.Session))
+        state = await self.state()
+        self.assertTrue(state.dirty)
+        self.assertIsNone(state.active_snapshot_id)
+
+    async def test_shared_metadata_revision_rejects_stale_computation(self):
+        claim = await snapshots.claim_next(self.Session)
+        result = await snapshots.compute(claim, self.Session)
+        async with self.Session() as db:
+            await db.execute(update(Media).where(Media.id == self.media_id).values(runtime=120))
+            await db.commit()
+        self.assertFalse(await snapshots.publish(claim, result, self.Session))
+        self.assertTrue((await self.state()).dirty)
+
+    async def test_completion_removal_invalidates_immediately(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(update(WatchEvent).where(WatchEvent.user_id == self.user_id).values(completed=False))
+            await db.commit()
+        self.assertIsNone((await self.state()).active_snapshot_id)
+
+    async def test_failed_build_retains_last_good_generation_and_retries(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        async with self.Session() as db:
+            await db.execute(update(TrackedEntry).values(manual_score=6))
+            await db.commit()
+        await self.force_due()
+        claim = await snapshots.claim_next(self.Session)
+        await snapshots.record_failure(claim, self.Session)
+        state = await self.state()
+        self.assertEqual(state.active_snapshot_id, previous)
+        self.assertEqual(state.error_code, "calculation_failed")
+        self.assertGreater(state.next_due_at, snapshots.utcnow())
+        self.assertIsNone(state.lease_token)
+
+    async def test_unchanged_due_check_skips_calculation_without_new_compute_time(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        await self.force_due()
+        self.assertEqual(await snapshots.claim_next(self.Session), {"skipped": True})
+        self.assertEqual((await self.state()).active_snapshot_id, previous)
+
+    async def test_bulk_sensitive_removal_purges_snapshot_immediately(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == self.user_id))
+            await db.commit()
+        self.assertIsNone((await self.state()).active_snapshot_id)
+        async with self.Session() as db:
+            self.assertEqual(list(await db.scalars(select(UserStatsSnapshot))), [])
+        response = await self.client.get("/tracking/profile/statistics-fixture/stats/overview")
+        self.assertEqual(response.json()["status"], "pending")
+
+    async def test_rolled_back_fact_change_does_not_invalidate_published_generation(self):
+        await self.build()
+        before = await self.state()
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent))
+            await db.rollback()
+        after = await self.state()
+        self.assertEqual(after.source_revision, before.source_revision)
+        self.assertEqual(after.active_snapshot_id, before.active_snapshot_id)
+
+    async def test_private_profile_access_changes_immediately_for_cached_data(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(update(UserProfileData).values(privacy_level=PrivacyLevel.private))
+            await db.commit()
+            self.viewer = await db.get(User, self.user_id)
+        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 200)
+        self.viewer = None
+        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 403)
+
+    async def test_visibility_change_invalidates_existing_generation(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(show_anime=False))
+            await db.commit()
+        self.assertIsNone((await self.state()).active_snapshot_id)
+
+    async def test_snapshot_pointer_rejects_another_users_generation(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        async with self.Session() as db:
+            other = User(email="other@example.org", username="other", api_key="other-key")
+            db.add(other)
+            await db.flush()
+            await db.execute(update(UserStatsState).where(UserStatsState.user_id == other.id).values(active_snapshot_id=previous))
+            with self.assertRaises(IntegrityError):
+                await db.commit()
+
+    async def test_user_deletion_cleans_state_and_snapshots(self):
+        await self.build()
+        async with self.Session() as db:
+            await db.execute(delete(User).where(User.id == self.user_id))
+            await db.commit()
+            self.assertIsNone(await db.get(UserStatsState, self.user_id))
+            self.assertEqual(list(await db.scalars(select(UserStatsSnapshot))), [])

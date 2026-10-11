@@ -1,0 +1,8 @@
+---
+import Card from './StatsMediaGroupCard.astro';
+import type { GenreGroup, MediaScope } from '../lib/stats-overview-data';
+import { genreBrowseHref } from '../lib/stats-genres-data';
+interface Props { genre: GenreGroup; rank: number; media: MediaScope; }
+const { genre, rank, media } = Astro.props;
+---
+<Card group={genre} rank={rank} href={genreBrowseHref(genre, media)} prefix="genre" />

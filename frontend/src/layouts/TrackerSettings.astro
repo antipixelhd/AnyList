@@ -55,7 +55,7 @@ const pathname = Astro.url.pathname;
             return <a href={item.href} class:list={{ active }} aria-current={active ? 'page' : undefined}>{item.label}</a>;
           })}
         </div>)}
-        {user?.is_admin && <div class="settings-nav-group"><p class="settings-nav-heading">Instance</p><a href="/admin" class:list={{ active: pathname === '/admin' }} aria-current={pathname === '/admin' ? 'page' : undefined}>Administration</a></div>}
+        {user?.is_admin && <div class="settings-nav-group"><p class="settings-nav-heading">Instance</p><a href="/admin" class:list={{ active: pathname === '/admin' }} aria-current={pathname === '/admin' ? 'page' : undefined}>Administration</a><a href="/admin/data-health" class:list={{ active: pathname === '/admin/data-health' }} aria-current={pathname === '/admin/data-health' ? 'page' : undefined}>Data health</a></div>}
       </nav>
       <main id="settings-content" class="settings-content" aria-labelledby="settings-category-title">
         <h2 id="settings-category-title" class="settings-category-title">{title}</h2>

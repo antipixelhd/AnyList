@@ -96,6 +96,17 @@ test('Browse keeps initially visible cards painted but still animates new cards 
   assert.equal(p.animations.length, 3);
 });
 
+test('restored contributor scroll positions stay painted while new cards still arrive once', t => {
+  const p = preview(t, {initialY: 1200, animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true, appearedAttribute:'data-browse-appeared'});
+  assert.equal(p.animations.length, 0);
+  assert.equal(p.classes.size, 0);
+  p.scroll(0);
+  p.scroll(1200);
+  assert.equal(p.animations.length, 0);
+  p.append();
+  assert.equal(p.animations.length, 1);
+});
+
 test('desktop fades on entry without replaying while still visible', t => {
   const p = preview(t);
   assert(p.classes.has('lab-scroll-reveal'));

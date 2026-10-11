@@ -12,7 +12,7 @@ const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oid
 const PUBLIC_PREFIXES = ["/auth/activate/", "/forgot-password", "/reset-password/", "/confirm-email-change/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/device/code", "/api/proxy/auth/device/token", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
-const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|browse(?:\/facets|\/tags|\/sections)?|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all)))\/?$/;
+const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/actors\/(?:catalogue|tmdb)(?:%3[Aa]|:)\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog|browse(?:\/facets|\/tags|\/sections)?|people\/[^/]+|title\/\d+|profile\/[^/]+\/(?:movie|series|all|stats\/(?:overview|summary))))\/?$/;
 // Old numeric Stats bookmarks redirect to the username-based profile Stats
 // route after the same public-profile permission check as /profile/{id}.
 const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
@@ -35,7 +35,7 @@ const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|
 // Movie/episode and show/season/episode detail pages (TMDB- and TVDB-numbered
 // variants), gated the same way as PUBLIC_EXPLORE_PAGE_RE above.
 const PUBLIC_MEDIA_DETAIL_PAGE_RE =
-  /^\/(?:media\/(?:movie|episode)\/\d+|show\/(?:tvdb\/)?\d+(?:\/season\/\d+(?:\/\d+)?)?|person\/\d+|network\/\d+|studio\/\d+)\/?$/;
+  /^\/(?:media\/(?:movie|episode)\/\d+|show\/(?:tvdb\/)?\d+(?:\/season\/\d+(?:\/\d+)?)?|person\/(?:\d+|(?:catalogue|tmdb)(?:%3[Aa]|:)\d+)|network\/\d+|studio\/(?:\d+|(?:catalogue|tmdb)(?:%3[Aa]|:)\d+)|api\/proxy\/tracking\/(?:(?:studios|staff)|contributors\/(?:actor|staff|studio))\/(?:catalogue|tmdb)(?:%3[Aa]|:)\d+)\/?$/;
 // The detail pages' "More like this" row and the person page's credits
 // pagination are loaded client-side from these partials - same admin+
 // global-key gate as the pages above, otherwise an anonymous fetch() here

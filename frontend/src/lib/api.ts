@@ -1,4 +1,5 @@
 import { responsiveArtwork } from "./responsive-artwork";
+import type { DataHealth } from './data-health';
 
 const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BASE = `http://127.0.0.1:${BACKEND_PORT}`;
@@ -760,6 +761,8 @@ export const api = {
   },
 
   admin: {
+    getDataHealth: (token: string) =>
+      get<DataHealth>('/admin/data-health', undefined, token),
     getSettings: (token: string) =>
       get<GlobalSettings>("/admin/settings", undefined, token),
     listUsers: (token: string) =>

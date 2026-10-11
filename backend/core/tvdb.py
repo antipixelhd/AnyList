@@ -228,6 +228,35 @@ async def get_series(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAU
     return data.get("data") or {}
 
 
+async def get_person(person_id: int, api_key: str) -> dict:
+    data = await _get(f"/people/{person_id}/extended", api_key)
+    return data.get("data") or {}
+
+
+async def get_movie(movie_id: int, api_key: str) -> dict:
+    data = await _get(f"/movies/{movie_id}/extended", api_key)
+    return data.get("data") or {}
+
+
+async def find_movie(imdb_id: str, api_key: str) -> int | None:
+    import re
+    if not re.fullmatch(r"tt[0-9]+", imdb_id or ""):
+        return None
+    data = await _get(f"/search/remoteid/{imdb_id}", api_key)
+    ids = {row["movie"]["id"] for row in data.get("data") or [] if row.get("movie") and row["movie"].get("id")}
+    return next(iter(ids)) if len(ids) == 1 else None
+
+
+async def search_movies(query: str, api_key: str) -> list[dict]:
+    data = await _get("/search", api_key, params={"query": query, "type": "movie"})
+    rows = []
+    for item in data.get("data") or []:
+        identifier = str(item.get("tvdb_id") or item.get("id") or "").removeprefix("movie-")
+        if identifier.isdecimal():
+            rows.append({"tvdb_id": int(identifier), "title": item.get("name"), "image_url": _image_url(item.get("image_url") or item.get("thumbnail"))})
+    return rows
+
+
 async def get_season(season_id: int, api_key: str, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
     """Fetch extended season metadata, including translated names and overviews."""
     data = await _get(
@@ -315,6 +344,8 @@ async def get_series_episodes(
 
 def format_series(raw: dict, language: str | None = None) -> dict:
     """Normalise TVDB extended series data into a frontend-friendly dict."""
+    from core.countries import country_codes
+
     image = raw.get("image") or ""
     poster = _image_url(image) if image else None
 
@@ -405,6 +436,7 @@ def format_series(raw: dict, language: str | None = None) -> dict:
         "network": network,
         "seasons": seasons,
         "original_language": raw.get("originalLanguage"),
+        "origin_country": country_codes(raw.get("originalCountry")),
         "age_rating": age_rating,
         "imdb_id": imdb_id,
         "tmdb_id_cross": tmdb_id_cross,

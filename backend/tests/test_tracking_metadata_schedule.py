@@ -9,10 +9,18 @@ os.environ.setdefault(
     "postgresql+asyncpg://test:test@localhost/test",
 )
 
-from core.tracking_metadata import tracking_catalogue_is_fresh
+from core.tracking_metadata import retain_episode_runtime, tracking_catalogue_is_fresh
 
 
 class TrackingCatalogueScheduleTests(unittest.TestCase):
+    def test_catalogue_refresh_keeps_recovered_runtime_when_provider_omits_it(self):
+        episode = SimpleNamespace(runtime=45)
+        for value in (None, 0, -1, True, 'unknown'):
+            retain_episode_runtime(episode, {'runtime': value})
+            self.assertEqual(episode.runtime, 45)
+        retain_episode_runtime(episode, {'runtime': 48})
+        self.assertEqual(episode.runtime, 48)
+
     def _media(self, refreshed_at):
         return SimpleNamespace(
             tmdb_data={"tracking_catalogue_refreshed_at": refreshed_at}

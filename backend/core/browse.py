@@ -235,6 +235,9 @@ def local_query(
         )
         query = query.where(~func.coalesce(and_(animated, japanese), False))
     for genre in genres:
+        if isinstance(genre, str):
+            query = query.where(or_(data["genres"].contains([genre[5:]]), data["genres"].contains([{"name": genre[5:]}])))
+            continue
         query = query.where(
             or_(
                 data["genres"].contains([GENRES[genre]]),
@@ -532,6 +535,9 @@ async def browse_page(
     )
     notice = None
     remote = None
+    named_genre = any(isinstance(value, str) for value in filters.get("genres", []))
+    if named_genre:
+        source = "local"  # Provider-specific names cannot become TMDB genre IDs.
     imdb_sort = not term and filters["sort"] in IMDB_SORTS
     available = bool(mdblist_key) if imdb_sort else bool(key)
     if source == "remote" and not available:
@@ -558,7 +564,7 @@ async def browse_page(
                 if imdb_sort
                 else "Discovery is unavailable. Showing the local catalogue."
             )
-    elif not available:
+    elif not available and not named_genre:
         notice = (
             "Showing the local catalogue. Add an MDBList key in Settings to discover more."
             if imdb_sort

@@ -3,11 +3,13 @@
 from core import tmdb
 
 FIELDS = (
+    "original_language",
     "origin_country",
     "production_countries",
     "number_of_episodes",
     "episode_run_time",
     "production_companies",
+    "created_by",
     "cast",
 )
 
@@ -16,13 +18,23 @@ def retained_fields(previous):
     return {key: previous[key] for key in FIELDS if (previous or {}).get(key)}
 
 
+def tvdb_fields(data, previous=None):
+    fields = retained_fields(previous or {})
+    for key in ("origin_country", "original_language"):
+        if data.get(key):
+            fields[key] = data[key]
+    return fields
+
+
 def tmdb_fields(data, previous=None):
     fields = retained_fields(previous or {})
     for key in (
+        "original_language",
         "origin_country",
         "production_countries",
         "number_of_episodes",
         "episode_run_time",
+        "created_by",
     ):
         if data.get(key):
             fields[key] = data[key]

@@ -1,0 +1,8 @@
+---
+import Card from './StatsPersonCard.astro';
+import type { ActorGroup } from '../lib/stats-overview-data';
+import type { ActorArtwork } from '../lib/stats-actors-data';
+interface Props { actor: ActorGroup; rank: number; mode: ActorArtwork; }
+const { actor, rank, mode } = Astro.props;
+---
+<Card person={actor} rank={rank} mode={mode} prefix="actor" />

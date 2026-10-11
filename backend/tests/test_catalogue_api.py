@@ -52,6 +52,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             ("GET", "/catalogue/providers"),
             ("GET", "/catalogue/search?provider=igdb&kind=game&q=x"),
             ("GET", "/catalogue/entities/1"),
+            ("GET", "/catalogue/characters?actor_id=1"),
+            ("GET", "/catalogue/characters/1"),
             ("POST", "/catalogue/backfill"),
             ("POST", "/catalogue/books/lookup/9783551354013"),
             ("DELETE", "/catalogue/performances/1"),
@@ -74,6 +76,21 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         ]:
             response = await self.client.request(method, path, json=body)
             self.assertEqual(response.status_code, 403)
+
+    async def test_character_mapping_api_validates_filters_and_returns_metadata(self):
+        self.login()
+        for path in ('/catalogue/characters', '/catalogue/characters?actor_id=-1', '/catalogue/characters?work_id=1&limit=101'):
+            self.assertEqual((await self.client.get(path)).status_code, 422)
+        detail = {'id': 3, 'name': 'Alice', 'actor_id': 1, 'actor_name': 'Actor', 'aliases': ['alice'],
+                  'media': [{'id': 10, 'name': 'Film', 'kind': 'movie', 'images': [{'url': 'https://example.test/role.jpg', 'provider': 'tvdb'}]}]}
+        self.db.scalars = AsyncMock(return_value=[3])
+        with patch.object(catalogue, 'character_detail', AsyncMock(return_value=detail)):
+            response = await self.client.get('/catalogue/characters?actor_id=1&work_id=10')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['results'], [detail])
+            self.assertEqual((await self.client.get('/catalogue/characters/3')).json(), detail)
+        with patch.object(catalogue, 'character_detail', AsyncMock(return_value=None)):
+            self.assertEqual((await self.client.get('/catalogue/characters/99')).status_code, 404)
 
     async def test_detail_and_provider_sources_do_not_expose_internal_state(self):
         self.login()

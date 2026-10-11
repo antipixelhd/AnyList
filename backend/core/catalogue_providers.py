@@ -31,6 +31,7 @@ ATTRIBUTION = {
         "notice": "This product uses the TMDB API but is not endorsed or certified by TMDB.",
     },
     "tvdb": {"name": "TheTVDB", "url": "https://thetvdb.com"},
+    "tvmaze": {"name": "TVmaze", "url": "https://www.tvmaze.com", "notice": "TVmaze data: CC BY-SA"},
     "igdb": {"name": "IGDB", "url": "https://www.igdb.com"},
     "hardcover": {"name": "Hardcover", "url": "https://hardcover.app"},
     "openlibrary": {"name": "Open Library", "url": "https://openlibrary.org"},
@@ -45,10 +46,11 @@ INTERVALS = {
     "itad": 0.5,
     "tmdb": 0.3,
     "tvdb": 0.5,
+    "tvmaze": 0.5,
 }
 SUPPORT = {
     "tmdb": {"movie", "series"},
-    "tvdb": {"series"},
+    "tvdb": {"movie", "series"},
     "igdb": {"game"},
     "rawg": {"game"},
     "hardcover": {"book"},
@@ -246,9 +248,10 @@ class ProviderHTTP:
                         continue
                     if status != 200:
                         if (
-                            provider == "openlibrary"
+                            provider in ("openlibrary", "tvmaze")
                             and status in (301, 302, 303, 307, 308)
-                            and url.startswith("https://openlibrary.org/isbn/")
+                            and (provider == "openlibrary" and url.startswith("https://openlibrary.org/isbn/")
+                                 or provider == "tvmaze" and url == "https://api.tvmaze.com/lookup/shows")
                         ):
                             return {"_redirect": headers.get("Location", "")}
                         raise ProviderError(
@@ -292,7 +295,7 @@ class ProviderHTTP:
 
 
 IGDB_FIELDS = (
-    "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,"
+    "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,"
     + ",".join(
         f"{field}.{projection}"
         for field in (
@@ -502,7 +505,7 @@ class CatalogueProviders:
         from core import tvdb
 
         async with self.http.lane("tvdb"):
-            rows = await tvdb.search_series(query, self.tvdb_key)
+            rows = await (tvdb.search_movies(query, self.tvdb_key) if kind == "movie" else tvdb.search_series(query, self.tvdb_key))
         return [
             {
                 "external_id": str(r["tvdb_id"]),
@@ -723,8 +726,23 @@ class CatalogueProviders:
         from core import tvdb
 
         async with self.http.lane("tvdb"):
-            raw = await tvdb.get_series(id, self.tvdb_key)
-        return normalize_tvdb(raw), raw
+            raw = await (tvdb.get_movie(id, self.tvdb_key) if kind == "movie" else tvdb.get_series(id, self.tvdb_key))
+        # Verify cross-provider people by authoritative IDs, never by names.
+        # Bound the fan-out to twelve principal cast members per title.
+        people = {}
+        for member in sorted(raw.get("characters") or [], key=lambda p: p.get("sort") or 0):
+            pid = member.get("peopleId") or member.get("personId")
+            if not pid or str(pid) in people or member.get("type") != 3:
+                continue
+            if len(people) >= 12:
+                break
+            try:
+                async with self.http.lane("tvdb"):
+                    people[str(pid)] = await tvdb.get_person(int(pid), self.tvdb_key)
+            except Exception:
+                people[str(pid)] = {}  # Retain title credits when optional people enrichment fails.
+        raw = {**raw, "_people": people}
+        return normalize_tvdb(raw, kind), raw
 
     async def book_editions_page(self, id, page):
         """Resume a book with more editions than the ordinary detail bound."""

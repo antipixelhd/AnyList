@@ -110,6 +110,8 @@ app.include_router(mdblist.router, prefix="/mdblist", tags=["mdblist"])
 app.include_router(bingebase.router, prefix="/bingebase", tags=["bingebase"])
 app.include_router(comments.router, prefix="/comments", tags=["comments"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+from routers import admin_data_health
+app.include_router(admin_data_health.router)
 app.include_router(export.router, prefix="/export", tags=["export"])
 app.include_router(yamtrack.router, prefix="/yamtrack", tags=["yamtrack"])
 app.include_router(netflix_import.router, prefix="/imports", tags=["imports"])

@@ -35,8 +35,9 @@ from .tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, Track
 from .streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from .netflix_import import NetflixImportSession
 from .watch_intent import WatchIntent
+from .statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
 from .catalogue import (CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink,
-                        BookEdition, GameRelease, CatalogueCredit, CharacterAppearance,
+                        BookEdition, GameRelease, CatalogueCredit, ScreenCharacter, CharacterAppearance,
                         CharacterPerformance, CatalogueRelationship, MetadataSnapshot,
                         MetadataProviderBudget, SteamPriceSnapshot)
 
@@ -89,7 +90,8 @@ __all__ = [
     "TrackedEntry", "TrackingActivity", "TrackingDeletion", "TrackingPreferences",
     "SyncReview", "StreamBaseline",
     "CatalogueEntity", "CatalogueIdentity", "CatalogueLegacyLink", "CatalogueShowLink",
-    "BookEdition", "GameRelease", "CatalogueCredit", "CharacterAppearance",
+    "BookEdition", "GameRelease", "CatalogueCredit", "ScreenCharacter", "CharacterAppearance",
     "CharacterPerformance", "CatalogueRelationship", "MetadataSnapshot",
     "MetadataProviderBudget", "SteamPriceSnapshot",
+    "StatsMetadataRevision", "UserStatsSnapshot", "UserStatsState",
 ]

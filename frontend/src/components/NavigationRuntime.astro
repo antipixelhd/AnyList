@@ -3,6 +3,7 @@
 
 <script>
   import { wirePasswordToggles } from '../lib/password-toggle';
+  import { mutationFetch } from '../lib/mutation-fetch';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number };
@@ -184,41 +185,10 @@
   if (!state.initialized) {
     state.initialized = true;
     state.originalFetch = window.fetch.bind(window);
-    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = input instanceof Request ? input : null;
-      const method = String(init?.method || request?.method || 'GET').toUpperCase();
-      try {
-        if (method !== 'GET' && !navigator.onLine) {
-          showToast('No internet access. This change was not queued.');
-          throw new TypeError('Offline writes are not queued');
-        }
-        const response = await state.originalFetch!(input, init);
-        if (method !== 'GET' && response.ok) {
-          const url = new URL(request?.url || String(input), location.href);
-          if (url.origin === location.origin && url.pathname.startsWith('/api/proxy/')) {
-            // Mutations can change totals, lists, detail controls, feeds, and profiles.
-            // Retire all same-user page snapshots before the next client navigation.
-            clearPages();
-            document.dispatchEvent(new Event('anylist:data-changed'));
-          }
-        }
-        return response;
-      } catch (error) {
-        if (method !== 'GET' && navigator.onLine) showToast('Could not connect. This change was not queued.');
-        throw error;
-      }
-    };
-
-    document.addEventListener('click', event => {
-      if (navigator.onLine || event.defaultPrevented || event.button !== 0) return;
-      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]');
-      if (!anchor || anchor.target || anchor.hasAttribute('download')) return;
-      const url = new URL(anchor.href, location.href);
-      if (!cacheable(url) || state.pages.has(keyFor(url))) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      showToast('No internet access. Visit this page while online to keep it available in this tab.');
-    }, true);
+    window.fetch = mutationFetch(state.originalFetch, location.href, () => {
+      clearPages();
+      document.dispatchEvent(new Event('anylist:data-changed'));
+    }, () => showToast('Could not reach the server. This change was not queued.'));
 
     document.addEventListener('submit', event => {
       const form = event.target as HTMLFormElement;

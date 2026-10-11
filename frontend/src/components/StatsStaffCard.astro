@@ -1,0 +1,7 @@
+---
+import Card from './StatsPersonCard.astro';
+import type { StaffGroup } from '../lib/stats-overview-data';
+interface Props { person: StaffGroup; rank: number; }
+const { person, rank } = Astro.props;
+---
+<Card person={person} rank={rank} mode="media" prefix="staff" />
