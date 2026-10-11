@@ -84,8 +84,9 @@ async def work_details(db, work):
         variants = provider_images(images, snapshot.provider)
         posters.extend(variants['posters'])
         artwork.extend(variants['artwork'])
-        if url := public_url(raw.get('homepage') or raw.get('url')):
-            sources.append({'name': snapshot.provider.upper(), 'url': url})
+        homepage = public_url(raw.get('homepage'))
+        if url := homepage or public_url(raw.get('url')):
+            sources.append({'name': 'Official website' if homepage else snapshot.provider.upper(), 'url': url})
     from core.media_related import catalogue_related
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
