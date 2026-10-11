@@ -79,6 +79,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media = await db.get(Media, self.media_id)
             media.tmdb_id = 99
             media.tmdb_data = {'_anylist_images': {'expires_at':'2099-01-01T00:00:00+00:00',
+                'retry_after':'2099-01-01T00:00:00+00:00', 'retry_version':0,
                 'posters':['https://example.test/unverified.jpg']}}
             await db.commit()
         raw = {'id':99,'posters':[{'file_path':'/foreign.jpg','iso_639_1':'de'},

@@ -77,10 +77,10 @@ def _inspect(content):
             path = Path(directory) / 'thumb.jpg'
             path.write_bytes(content)
             try:
-                result = subprocess.run([binary, str(path), 'stdout', '-l', 'eng', '--psm', '11'],
+                completed = subprocess.run([binary, str(path), 'stdout', '-l', 'eng', '--psm', '11'],
                     capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=4, check=False)
-                text = (result.stdout or '') if result.returncode == 0 else ''
-                checked = result.returncode == 0
+                text = (completed.stdout or '') if completed.returncode == 0 else ''
+                checked = completed.returncode == 0
             except (OSError, subprocess.TimeoutExpired):
                 checked = False
     else:

@@ -2,12 +2,14 @@ import os
 import unittest
 from io import BytesIO
 import random
+import subprocess
+from unittest.mock import patch
 
 os.environ.setdefault('SECRET_KEY', 'test-only-secret')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
 from PIL import Image, ImageDraw
-from core.media_image_analysis import fingerprint, same_composition, select_variants
+from core.media_image_analysis import _inspect, fingerprint, same_composition, select_variants
 
 
 def fixture(seed=1, shift=0, title=False):
@@ -25,6 +27,14 @@ def fixture(seed=1, shift=0, title=False):
 
 
 class ImageAnalysisTests(unittest.TestCase):
+    def test_ocr_process_result_preserves_the_image_fingerprint(self):
+        completed = subprocess.CompletedProcess([], 0, stdout='An Apple Original', stderr='')
+        with patch('core.media_image_analysis.shutil.which', return_value='tesseract'), patch('core.media_image_analysis.subprocess.run', return_value=completed):
+            result = _inspect(fixture())
+        self.assertTrue(result['branded'])
+        self.assertTrue(result['branding_checked'])
+        self.assertEqual(len(result['gray']), 768)
+
     def test_translations_and_title_overlays_share_a_composition_but_other_scenes_do_not(self):
         original = fingerprint(fixture())
         self.assertTrue(same_composition(original, fingerprint(fixture(shift=20))))

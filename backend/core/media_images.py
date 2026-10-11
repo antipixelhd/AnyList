@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import asyncio
 import re
 import httpx
+import logging
 from weakref import WeakValueDictionary
 
 from sqlalchemy import func, literal, update
@@ -11,8 +12,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from core.catalogue_normalize import image
 from models import Media
 
-IMAGE_POLICY_VERSION = 2
+IMAGE_POLICY_VERSION = 3
 _fills = WeakValueDictionary()
+logger = logging.getLogger(__name__)
 
 
 def image_key(url):
@@ -83,7 +85,10 @@ async def _fill_screen_images(db, media, api_key):
         return
     cache = dict((media.tmdb_data or {}).get('_anylist_images') or {})
     now = datetime.now(timezone.utc)
-    for field in ('retry_after', *(['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION else [])):
+    fields = ['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION else []
+    if cache.get('retry_version') == IMAGE_POLICY_VERSION:
+        fields.append('retry_after')
+    for field in fields:
         try:
             if datetime.fromisoformat(cache.get(field, '')) > now:
                 return
@@ -105,8 +110,11 @@ async def _fill_screen_images(db, media, api_key):
         selected = {field: selection['images'] for field, selection in selections.items()}
         selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
         cache = {**selected, 'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
-    except Exception:
+    except Exception as error:
+        logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)
         cache['retry_after'] = (now + timedelta(minutes=10)).isoformat()
+        cache['retry_version'] = IMAGE_POLICY_VERSION
+        cache['last_error'] = type(error).__name__
     await db.execute(update(Media).where(Media.id == media.id).values(
         tmdb_data=func.coalesce(Media.tmdb_data, literal({}, type_=JSONB)).op('||')({'_anylist_images': cache})))
     await db.commit()
