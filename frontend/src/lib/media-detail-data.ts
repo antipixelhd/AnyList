@@ -2,7 +2,7 @@ import type { EditorTitle } from './editor-store';
 import {countryLabel} from './stats-overview-data';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; url: string | null; roles: string[]; characters: string[]};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; characters: string[]};
 export type DetailMedia = EditorTitle & {
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
@@ -15,6 +15,48 @@ export type DetailMedia = EditorTitle & {
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
 };
 export const kindLabel = {movie:'Movie', series:'Series', game:'Game', book:'Book'};
+const nameKey=(name:string)=>name.trim().toLocaleLowerCase().replace(/\s+/g,' ');
+const roleText=(person:DetailPerson)=>[...person.roles,...(person.role_codes||[])].join(' ');
+export function detailCredits(media:DetailMedia) {
+  const position=(person:DetailPerson)=>person.position??Number.MAX_SAFE_INTEGER;
+  const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b));
+  const priority=(person:DetailPerson)=>{
+    const roles=[...person.roles,...(person.role_codes||[])];
+    const ranks=[/^(director|creator|showrunner)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author)$/i,/^executive producer$/i,/^(producer|developer)$/i,/^(cinematographer|director of photography|composer|original music composer)$/i];
+    const rank=ranks.findIndex(pattern=>roles.some(role=>pattern.test(role.trim())));
+    return rank<0?ranks.length:rank;
+  };
+  const crew=media.people.filter(person=>person.kind!=='actor').sort((a,b)=>priority(a)-priority(b)||position(a)-position(b));
+  const companies=new Map<string,DetailPerson>();
+  for(const person of media.organizations.filter(person=>/producer|production|studio|developer|publisher/i.test(roleText(person)))){
+    const key=nameKey(person.name),previous=companies.get(key);
+    companies.set(key,previous?{...previous,url:previous.url||person.url,image:previous.image||person.image,
+      roles:[...new Set([...previous.roles,...person.roles])],role_codes:[...new Set([...(previous.role_codes||[]),...(person.role_codes||[])])]}:person);
+  }
+  const studios=[...companies.values()];
+  return {cast,principal:crew.filter(person=>priority(person)<5),supporting:crew.filter(person=>priority(person)>=5),studios,
+    preview:cast.length?cast.slice(0,8):crew.slice(0,8)};
+}
+export function detailOrganizationFacts(media:DetailMedia) {
+  const groups:{label:string;rows:{name:string;url?:string|null}[]}[]=[];
+  const seen=new Set<string>();
+  const add=(label:string,rows:{name:string;url?:string|null}[])=>{
+    const unique=rows.filter(row=>{const key=nameKey(row.name);if(!key||seen.has(key))return false;seen.add(key);return true;});
+    if(unique.length)groups.push({label,rows:unique});
+  };
+  add('Created by',media.creators||[]);
+  // The title's primary TMDB networks take precedence over alternate regional
+  // broadcasters/distributors from catalogue enrichment (e.g. YouTube rentals).
+  const networks=media.organizations.filter(person=>/broadcaster|network/i.test(roleText(person)));
+  add('Network',media.networks?.length?media.networks.map(network=>({name:network.name,url:networks.find(row=>nameKey(row.name)===nameKey(network.name))?.url})):networks);
+  const production=detailCredits(media).studios;
+  if(media.type==='book')add('Publisher',production);
+  else if(media.type==='game'){
+    add('Developer',production.filter(person=>/developer/i.test(roleText(person))));
+    add('Publisher',production.filter(person=>/publisher/i.test(roleText(person))));
+  }else add('Studios',production);
+  return groups;
+}
 export function localMediaId(value: string | undefined) {
   return /^[1-9][0-9]{0,9}$/.test(value || '') && Number(value) <= 2147483647 ? Number(value) : null;
 }

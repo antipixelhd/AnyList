@@ -46,6 +46,7 @@ async def work_details(db, work):
         .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id).limit(500))).all()
     people = {}
     organizations = {}
+    billing = {}
     studio_ids = {contributor.id for credit, contributor in credits if credit.role == 'producer'}
     for credit, contributor in credits:
         actor = credit.role == 'actor'
@@ -57,8 +58,15 @@ async def work_details(db, work):
             group[key] = {'id': contributor.id, 'kind': kind, 'name': contributor.name,
                 'image': image(contributor.image_url), 'url': f'/{path}/catalogue:{contributor.id}'
                 if kind != 'studio' or (work.kind in ('movie', 'series') and contributor.id in studio_ids) else None,
-                'roles': [], 'characters': []}
+                'roles': [], 'role_codes': [], 'position': credit.position, 'characters': []}
         row = group[key]
+        if credit.position is not None:
+            candidate = (0 if credit.provider == 'tmdb' else 1, credit.position)
+            if key not in billing or candidate < billing[key]:
+                billing[key] = candidate
+                row['position'] = credit.position
+        if credit.role not in row['role_codes']:
+            row['role_codes'].append(credit.role)
         role = credit.role_label or credit.role.replace('_', ' ').title()
         if role not in row['roles']:
             row['roles'].append(role)

@@ -1896,6 +1896,46 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(jobs_after, jobs_before)
         self.local_outbound.assert_not_awaited()
 
+    async def test_unlisted_favorite_preserves_absent_status_and_survives_list_addition(self):
+        from models.tracking import MediaFavorite
+        response = await self.save(self.movie, favorite=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()['status'])
+        self.assertIsNone(await self.db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.movie.id)))
+        self.assertIsNotNone(await self.db.get(MediaFavorite, (self.owner.id, self.movie.id)))
+        editor = (await self.client.get(f'/tracking/editor/{self.movie.id}')).json()
+        self.assertTrue(editor['favorite']); self.assertIsNone(editor['entry'])
+        profile = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()
+        self.assertEqual(profile['counts']['movies'], 0)
+        self.assertEqual(profile['counts']['favorites'], 1)
+        self.assertEqual(profile['favorites'][0]['id'], self.movie.id)
+        self.local_outbound.assert_not_awaited()
+        listed = await self.save(self.movie, status='paused')
+        self.assertTrue(listed.json()['favorite'])
+        unfavorite = await self.save(self.movie, favorite=False)
+        self.assertEqual(unfavorite.json()['status'], 'paused')
+        self.assertFalse(unfavorite.json()['favorite'])
+
+    async def test_favorites_preserve_every_existing_status_and_tracking_history(self):
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='planning',
+            progress=1, manual_score=8, rating_mode='manual', season_scores={},
+            start_date=date(2024, 1, 1), finish_date=date(2024, 2, 1))
+        self.db.add(entry); await self.db.commit()
+        for status in ('planning', 'watching', 'completed', 'paused', 'dropped'):
+            entry.status = status; await self.db.commit()
+            for favorite in (True, False):
+                saved = await self.save(self.movie, favorite=favorite)
+                self.assertEqual(saved.status_code, 200, saved.text)
+                result = saved.json()
+                self.assertEqual(result['status'], status)
+                self.assertEqual(result['progress'], 1)
+                self.assertEqual(result['score'], 8)
+                self.assertEqual(result['start_date'], '2024-01-01')
+                self.assertEqual(result['finish_date'], '2024-02-01')
+        self.assertIsNone(await self.db.scalar(select(TrackingActivity.id).where(TrackingActivity.user_id == self.owner.id)))
+        self.assertIsNone(await self.db.scalar(select(TrackingDeliveryJob.id).where(TrackingDeliveryJob.user_id == self.owner.id)))
+        self.local_outbound.assert_not_awaited()
+
     async def test_library_action_saves_without_a_connection_and_survives_refresh(self):
         response=await self.client.put(f'/tracking/library/{self.movie.id}',json={'in_library':True})
         self.assertEqual(response.status_code,200,response.text)

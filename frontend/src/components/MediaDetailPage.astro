@@ -6,10 +6,11 @@ import ImageLightbox from './ImageLightbox.astro';
 import MediaDetailSeasons from './MediaDetailSeasons.astro';
 import MediaDetailFacts from './MediaDetailFacts.astro';
 import MediaDetailPerson from './MediaDetailPerson.astro';
+import MediaDetailCredits from './MediaDetailCredits.astro';
 import MediaDetailWork from './MediaDetailWork.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
-import {prepareDetail,kindLabel,detailFacts,detailSynopsis,detailDate,moneyLabel} from '../lib/media-detail-data';
+import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,detailDate,moneyLabel} from '../lib/media-detail-data';
 import '../styles/dev-details.css';
 import '../styles/dev-marquee.css';
 import '../styles/dev-marquee-25.css';
@@ -23,9 +24,9 @@ const backdrop=responsiveArtwork(title?.backdrop,{size:'w1280',sizes:'100vw',rou
 const facts=title?detailFacts(title):[];
 const synopsis=detailSynopsis(title?.overview);
 const people=title?[...title.people,...title.organizations]:[];
-const cast=people.filter(person=>person.kind==='actor');
 const others=people.filter(person=>person.kind!=='actor');
-const preview=[...cast.slice(0,4),...others.slice(0,4)];
+const credits=title?detailCredits(title):null;
+const preview=credits?.preview||[];
 const artwork=[...new Set([...(title?.artwork||[]),title?.backdrop].filter(Boolean))] as string[];
 const scenes=artwork.filter(url=>url!==title?.backdrop);
 const creator=others.filter(person=>person.roles.some(role=>/director|author|creator|developer/i.test(role))).slice(0,2).map(person=>person.name).join(', ');
@@ -52,7 +53,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
   <div class="lab-layout">
     <aside class="lab-sidebar">
       {trackable&&<section class="lab-tracking media-tracking" aria-label="Your tracking">
-        {signedIn?<><div class="media-action-row"><StatusControl mediaId={title.id} status={title.entry?.status}/><button class="media-square media-favorite" type="button" data-favorite-toggle aria-pressed={!!title.entry?.favorite} aria-label={title.entry?.favorite?'Remove from favorites':'Add to favorites'} title={title.entry?.favorite?'Remove from favorites':'Add to favorites'}><Icon name="heart"/></button></div>
+        {signedIn?<><div class="media-action-row"><StatusControl mediaId={title.id} status={title.entry?.status}/><button class="media-square media-favorite" type="button" data-favorite-toggle aria-pressed={!!(title.favorite??title.entry?.favorite)} aria-label={(title.favorite??title.entry?.favorite)?'Remove from favorites':'Add to favorites'} title={(title.favorite??title.entry?.favorite)?'Remove from favorites':'Add to favorites'}><Icon name="heart"/></button></div>
         <div class="media-rating-row"><div class="lab-rating-field"><span class="lab-field-label">{title.type==='series'?'Your show score':'Your score'}</span><button class="lab-rating-control media-personal-score" type="button" data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={poster?.src||''} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'} aria-label={`Rate ${title.title}. Current score: ${scoreLabel(title.entry?.score??null)}`}><Icon name="star"/><strong data-score-label>{scoreLabel(title.entry?.score??null)}</strong><span>/ 10</span></button></div>{canUseLibrary&&<button class="media-square media-library" type="button" data-library-toggle aria-pressed={!!library?.desired} aria-label={library?.desired?'Remove from library':'Add to library'} title={library?.desired?'Remove from library':'Add to library'} disabled={!library}><Icon name="list"/></button>}</div>
         </>:<a class="lab-primary-button" href={login}>Sign in to add to your list <Icon name="plus"/></a>}
         {libraryError&&<p class="error-message" role="alert">{libraryError}</p>}
@@ -84,7 +85,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
           </div>
         </div>
         {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn}/></section>}
-        {!!people.length&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}>{[...(cast.length?[{label:'Cast',rows:cast}]:[]),...(others.length?[{label:trackable?'Crew & studios':'Creators',rows:others}]:[])].map(group=><section class="lab-module media-credit-group"><div class="lab-section-title"><h2>{group.label}</h2></div><div class="lab-person-grid">{group.rows.map(person=><MediaDetailPerson person={person}/>)}</div></section>)}</section>}
+        {!!people.length&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}>{credits&&<><MediaDetailCredits label="Cast" rows={credits.cast} id="cast"/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label={credits.principal.length?'Other crew':'Crew'} rows={credits.supporting} id="supporting" secondary/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}
         {(trackable||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><div class="lab-gallery" data-detail-artwork-grid>{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img src={url} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
       </div>
     </div>

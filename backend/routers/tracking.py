@@ -19,7 +19,7 @@ from core.tracking_rules import TrackingStatus, normalize_score, effective_score
 from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
-from models.tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
+from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
 from schemas_contributors import ContributorKind, ContributorPage, ListScope
@@ -41,7 +41,7 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
         if terms:show_ids=set((await db.execute(select(Show.id).where(or_(*terms)))).scalars())
         if show_ids:ids.update((await db.execute(select(Media.id).where(Media.show_id.in_(show_ids)))).scalars())
     episodes=(await db.execute(select(Media).where(Media.id.in_(ids),Media.media_type==MediaType.episode))).scalars().all()
-    for model in (WatchEvent,PlaybackProgress,PlaybackSession,Rating,TrackingActivity,SyncReview,TrackedEntry):
+    for model in (WatchEvent,PlaybackProgress,PlaybackSession,Rating,TrackingActivity,SyncReview,TrackedEntry,MediaFavorite):
         await db.execute(delete(model).where(model.user_id==viewer.id,model.media_id.in_(ids)))
     from models.tracking import StreamAction
     await db.execute(delete(StreamAction).where(StreamAction.user_id==viewer.id,StreamAction.media_id.in_(ids)))
@@ -625,10 +625,14 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     if not await anime_is_visible(db):
         activity_rows = [row for row in activity_rows if not tracking_projection.is_anime(row[1])]
     prefs=await db.get(TrackingPreferences,user.id)
-    favorite_entries = [(e, m, index) for index, (e, m) in enumerate(entries) if e.favorite]
+    show_anime = await anime_is_visible(db)
+    favorite_media = {m.id: m for e, m in entries if e.favorite}
+    for m in await db.scalars(select(Media).join(MediaFavorite, MediaFavorite.media_id == Media.id).where(MediaFavorite.user_id == user.id)):
+        if show_anime or not tracking_projection.is_anime(m):
+            favorite_media[m.id] = m
     favorite_order = list((prefs.favorite_order if prefs else None) or [])
     order_index = {media_id: index for index, media_id in enumerate(favorite_order)}
-    favorite_entries.sort(key=lambda row: (order_index.get(row[0].media_id, len(order_index)), row[2]))
+    favorites = sorted(favorite_media.values(), key=lambda m: (order_index.get(m.id, len(order_index)), m.id))
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
         "background_url": user.profile.background_url if user.profile else None,
@@ -638,9 +642,9 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "counts":{"movies":sum(m.media_type==MediaType.movie for e,m in entries),"series":sum(m.media_type==MediaType.series for e,m in entries),
                   "completed":sum(e.status=='completed' for e,m in entries),"following":len(following_ids),"followers":len(followers_ids),
-                  "favorites":sum(e.favorite for e,m in entries),"rated":len(scores)},
+                  "favorites":len(favorites),"rated":len(scores)},
         "average_score":round(sum(scores)/len(scores),1) if scores else None,
-        "favorites":[tracking_projection.media_data(m) for e,m,_ in favorite_entries],"people":visible,
+        "favorites":[tracking_projection.media_data(m) for m in favorites],"people":visible,
         "recent_activity":tracking_projection.activity_data(activity_rows,limit=12)}
 
 
@@ -660,6 +664,10 @@ async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(
     favorite_rows = (await db.execute(select(TrackedEntry.media_id, Media).join(
         Media, Media.id == TrackedEntry.media_id
     ).where(TrackedEntry.user_id == viewer.id, TrackedEntry.favorite.is_(True)))).all()
+    favorites = {media_id: media for media_id, media in favorite_rows}
+    for media in await db.scalars(select(Media).join(MediaFavorite, MediaFavorite.media_id == Media.id).where(MediaFavorite.user_id == viewer.id)):
+        favorites[media.id] = media
+    favorite_rows = list(favorites.items())
     show_anime = await anime_is_visible(db)
     visible_ids = {media_id for media_id, media in favorite_rows if show_anime or not tracking_projection.is_anime(media)}
     hidden_ids = {media_id for media_id, media in favorite_rows if not show_anime and tracking_projection.is_anime(media)}
@@ -1406,7 +1414,8 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     details = await screen_related(db, media, details)
     from core.media_images import screen_images
     details.update(screen_images(media, details))
-    return {**tracking_projection.media_data(media), **details, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
+    favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
+    return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 
@@ -1522,20 +1531,28 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     # Serialize edits for this user, including first insertion of a title.
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
-    if (entry is not None and body.model_fields_set == {"favorite"}
-            and entry.favorite == body.favorite):
-        result = tracking_projection.entry_data(entry, media, True)
-        if media.media_type == MediaType.series:
-            dot, reason = await season_releases.media_availability_dot(db, viewer.id, media, entry.status)
-            result['availability_dot'], result['availability_reason'] = dot, reason
-        else:
-            result['availability_dot'], result['availability_reason'] = False, None
-        latest_job_id = (await db.execute(select(TrackingDeliveryJob.id).where(
-            TrackingDeliveryJob.user_id == viewer.id,
-            TrackingDeliveryJob.media_id == media_id,
-        ).order_by(TrackingDeliveryJob.id.desc()).limit(1))).scalar_one_or_none()
-        result["delivery_job_id"] = latest_job_id
-        return result
+    favorite_row = await db.get(MediaFavorite, (viewer.id, media_id))
+    if entry and favorite_row is not None:
+        entry.favorite = True
+    if 'favorite' in body.model_fields_set:
+        if body.favorite is None:
+            raise HTTPException(422, 'favorite cannot be null')
+        if body.favorite and favorite_row is None:
+            db.add(MediaFavorite(user_id=viewer.id, media_id=media_id))
+        elif not body.favorite and favorite_row is not None:
+            await db.delete(favorite_row)
+        if entry:
+            entry.favorite = body.favorite
+        if body.model_fields_set == {'favorite'}:
+            await db.commit()
+            if entry:
+                await db.refresh(entry)
+            result = {**(tracking_projection.entry_data(entry, media, True) if entry else tracking_projection.media_data(media)),
+                      'favorite': body.favorite, 'status': entry.status if entry else None, 'delivery_job_id': None,
+                      'availability_dot': False, 'availability_reason': None}
+            if entry and media.media_type == MediaType.series:
+                result['availability_dot'], result['availability_reason'] = await season_releases.media_availability_dot(db, viewer.id, media, entry.status)
+            return result
     was_new_entry = entry is None
     previous = entry.status if entry else None
     old_start_date = entry.start_date if entry else None
@@ -1549,7 +1566,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         # do this; they honor the marker until the user makes this choice.
         await db.execute(delete(TrackingDeletion).where(TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id==media_id))
         await db.execute(delete(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.media_id==media_id,SyncReview.kind=='outbound_pending'))
-        entry = TrackedEntry(user_id=viewer.id, media_id=media_id, status="planning", rating_mode="manual", season_scores={}, progress=0, favorite=False, rewatch_count=0)
+        entry = TrackedEntry(user_id=viewer.id, media_id=media_id, status="planning", rating_mode="manual", season_scores={}, progress=0, favorite=favorite_row is not None, rewatch_count=0)
         db.add(entry)
     fields = body.model_fields_set
     local_status_decision = 'status' in fields

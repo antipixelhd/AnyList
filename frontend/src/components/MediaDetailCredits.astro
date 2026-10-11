@@ -1,0 +1,14 @@
+---
+import MediaDetailPerson from './MediaDetailPerson.astro';
+import type {DetailPerson} from '../lib/media-detail-data';
+interface Props {label:string;rows:DetailPerson[];id:string;limit?:number;secondary?:boolean}
+const {label,rows,id,limit=8,secondary=false}=Astro.props;
+---
+{rows.length>0&&<section class:list={['lab-module','media-credit-group',{'media-credit-secondary':secondary}]} data-credit-section>
+  <div class="lab-section-title"><h2>{label}</h2></div>
+  <div class="media-credit-content" id={`credits-${id}`} data-credit-content>
+    <div class="lab-person-grid">{rows.slice(0,limit).map(person=><MediaDetailPerson person={person}/>)}</div>
+    {rows.length>limit&&<div class="lab-person-grid media-credit-more" data-credit-rest hidden>{rows.slice(limit).map(person=><MediaDetailPerson person={person}/>)}</div>}
+  </div>
+  {rows.length>limit&&<button class="lab-text-button media-credit-toggle" type="button" data-credit-toggle aria-expanded="false" aria-controls={`credits-${id}`}>Show more</button>}
+</section>}

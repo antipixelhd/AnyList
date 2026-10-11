@@ -55,6 +55,11 @@
 .media-work-placeholder { display:grid; place-items:center; width:74px; min-height:110px; flex-shrink:0; color:var(--lab-muted); background:var(--panel); }
 .lab-similar-grid .media-work-placeholder { width:65px; height:97px; min-height:0; border-radius:5px; }
 .media-credit-group+.media-credit-group { margin-top:30px; }
+.media-credit-more { margin-top:20px; }
+.media-credit-more[hidden] { display:none; }
+.media-credit-toggle { margin-top:20px; }
+.media-credit-group { scroll-margin-top:96px; }
+.media-fact-entry { display:block; }
 .media-season-actions { display:flex; align-items:center; gap:18px; }
 .media-detail .lab-season-rate .ui-icon { color:#f7b731; }
 .media-season-disclosure>summary { list-style:none; cursor:pointer; }

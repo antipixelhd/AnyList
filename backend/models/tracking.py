@@ -5,6 +5,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base
 
 
+class MediaFavorite(Base):
+    """Favorites can exist independently of a tracked list entry."""
+    __tablename__ = "media_favorites"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    media_id: Mapped[int] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), primary_key=True)
+
+
 class TrackedEntry(Base):
     __tablename__ = "tracked_entries"
     __table_args__ = (UniqueConstraint("user_id", "media_id", name="uq_tracked_user_media"),)

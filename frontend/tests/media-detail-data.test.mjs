@@ -6,8 +6,28 @@ import test from 'node:test';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,countryLabel};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel};',context);
 const {api}=context;
+
+test('credits prioritize cast billing, responsible crew and separate production companies',()=>{
+  const person=(id,kind,roles,position)=>({id,kind,name:`Person ${id}`,roles,position,characters:[]});
+  const media=api.prepareDetail({type:'series',people:[person(1,'actor',['Actor'],5),person(2,'actor',['Actor'],0),person(3,'staff',['Costume Assistant'],1),person(4,'staff',['Director'],9),person(5,'staff',['Writer'],4)],organizations:[person(6,'studio',['Network'],0),person(7,'studio',['Production Company'],0)]});
+  const credits=api.detailCredits(media);
+  assert.deepEqual(Array.from(credits.preview,p=>p.id),[2,1]);
+  assert.deepEqual(Array.from(credits.principal,p=>p.id),[4,5]);
+  assert.deepEqual(Array.from(credits.supporting,p=>p.id),[3]);
+  assert.deepEqual(Array.from(credits.studios,p=>p.id),[7]);
+  media.people=media.people.filter(p=>p.kind!=='actor');
+  assert.deepEqual(Array.from(api.detailCredits(media).preview,p=>p.id),[4,5,3]);
+});
+
+test('information groups roles once and prefers primary networks over alternate outlets',()=>{
+  const organization=(id,name,roles)=>({id,kind:'studio',name,roles,characters:[],url:null});
+  const media=api.prepareDetail({type:'series',networks:[{name:'Apple TV+'}],organizations:[organization(1,'YouTube',['Network']),organization(2,'Apple TV+',['Network']),organization(3,'Apple Studios',['Studio']),organization(4,'Apple Studios',['Production Company']),organization(5,'Rental store',['Distributor'])]});
+  const groups=api.detailOrganizationFacts(media);
+  assert.deepEqual(Array.from(groups,g=>g.label),['Network','Studios']);
+  assert.deepEqual(Array.from(groups.flatMap(g=>g.rows),p=>p.name),['Apple TV+','Apple Studios']);
+});
 test('direct catalogue routes validate local IDs and reject ambiguous or oversized values',()=>{
   assert.equal(api.localMediaId('12'),12);
   for(const value of ['0','-1','12x','1e2','2147483648','01',undefined])assert.equal(api.localMediaId(value),null);

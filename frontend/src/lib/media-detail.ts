@@ -52,6 +52,28 @@ export function mountMediaDetail() {
   let title = editorStore.find(info.id);
   const synopsis = root.querySelector<HTMLElement>('[data-detail-synopsis]');
   if (synopsis) mountContributorBiography(synopsis,signal);
+  root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{
+    const button=section.querySelector<HTMLButtonElement>('[data-credit-toggle]');
+    const content=section.querySelector<HTMLElement>('[data-credit-content]');
+    const rest=section.querySelector<HTMLElement>('[data-credit-rest]');
+    if(!button||!content||!rest)return;
+    const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+    let expanded=false,animation:Animation|undefined;
+    const settle=()=>{animation?.cancel();animation=undefined;rest.hidden=!expanded;content.style.removeProperty('overflow');};
+    button.addEventListener('click',()=>{
+      const start=content.getBoundingClientRect().height;
+      animation?.cancel();expanded=!expanded;
+      if(!expanded&&section.getBoundingClientRect().top<0)section.scrollIntoView({block:'start',behavior:reduced.matches?'auto':'smooth'});
+      button.setAttribute('aria-expanded',String(expanded));button.textContent=expanded?'Hide':'Show more';
+      rest.hidden=!expanded;
+      const end=content.getBoundingClientRect().height;
+      if(reduced.matches||start===end){settle();return;}
+      rest.hidden=false;content.style.overflow='hidden';
+      const current=content.animate([{height:`${start}px`},{height:`${end}px`}],{duration:300,easing:'cubic-bezier(.2,.7,.2,1)',fill:'both'});
+      animation=current;current.finished.then(()=>{if(animation===current)settle();}).catch(()=>{});
+    },{signal});
+    reduced.addEventListener('change',settle,{signal});signal.addEventListener('abort',settle,{once:true});
+  });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (!signal.aborted) initializeScrollMotion(root,signal,'.lab-module','media-scroll-reveal', {
       animateInitial:false,downwardOnly:true,once:true,
@@ -107,7 +129,7 @@ export function mountMediaDetail() {
       indicator.dataset.watched=String(value.watched);
     }
     if (favorite) {
-      const active = !!state.entry?.favorite;
+      const active = state.favorite ?? !!state.entry?.favorite;
       favorite.dataset.favorite=String(active); favorite.setAttribute('aria-pressed',String(active));
       favorite.title=active?'Remove from favorites':'Add to favorites'; favorite.setAttribute('aria-label',favorite.title);
     }
@@ -136,9 +158,9 @@ export function mountMediaDetail() {
   if (title) paint(title);
   favorite?.addEventListener('click',()=>{
     if (!title) return;
-    const desired=!title.entry?.favorite;
+    const desired=!(title.favorite ?? title.entry?.favorite);
     void editorStore.write(title,{favorite:desired}).then(saved=>{
-      if (title?.entry?.favorite===saved.favorite) showToast({message:desired?'Added to favorites.':'Removed from favorites.',kind:'success',key:'detail-favorite'});
+      if (title?.favorite===saved.favorite) showToast({message:desired?'Added to favorites.':'Removed from favorites.',kind:'success',key:'detail-favorite'});
     }).catch(error=>showToast(error.message,'error'));
   },{signal});
   library?.addEventListener('click',()=>{

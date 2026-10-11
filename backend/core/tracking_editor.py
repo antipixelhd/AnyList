@@ -6,7 +6,7 @@ from core.tracking_rules import effective_score
 from models import Collection, CollectionFile, Media, MediaServerConnection
 from models.base import CollectionSource
 from models.streaming_library import StreamingLibraryIntent
-from models.tracking import TrackedEntry
+from models.tracking import MediaFavorite, TrackedEntry
 
 
 async def attach_editor_context(db, viewer, results, *, media_rows=None):
@@ -23,6 +23,8 @@ async def attach_editor_context(db, viewer, results, *, media_rows=None):
     entries = {row.media_id: row for row in (await db.execute(select(TrackedEntry).where(
         TrackedEntry.user_id == viewer.id, TrackedEntry.media_id.in_(ids),
     ))).scalars().all()} if ids else {}
+    favorites = set(await db.scalars(select(MediaFavorite.media_id).where(
+        MediaFavorite.user_id == viewer.id, MediaFavorite.media_id.in_(ids)))) if ids else set()
     available = bool((await db.execute(select(MediaServerConnection.id).where(
         MediaServerConnection.user_id == viewer.id,
         MediaServerConnection.type.in_(("stremio", "nuvio")),
@@ -45,11 +47,12 @@ async def attach_editor_context(db, viewer, results, *, media_rows=None):
             row["backdrop"] = cached.backdrop_path
             row["poster"] = row.get("poster") or cached.poster_path
         entry = entries.get(row.get("id"))
+        row['favorite'] = row.get('id') in favorites or bool(entry and entry.favorite)
         row["entry"] = {
             "status": entry.status, "progress": entry.progress,
             "manual_score": entry.manual_score, "rating_mode": entry.rating_mode,
             "score": effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
-            "season_scores": entry.season_scores, "favorite": entry.favorite,
+            "season_scores": entry.season_scores, "favorite": row['favorite'],
             "start_date": entry.start_date, "finish_date": entry.finish_date,
             "rewatch_count": entry.rewatch_count, "notes": entry.notes,
         } if entry else None

@@ -10,6 +10,29 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
 
+test('favorites preserve absent list membership and roll back independently on errors',async()=>{
+  let pending=deferred();
+  const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1});
+  const first=store.write(title,{favorite:true});
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+  await turn();pending.resolve({id:1,status:null,favorite:true});await first;
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+  pending=deferred();const failed=store.write(title,{favorite:false});
+  assert.equal(title.entry,null);assert.equal(title.favorite,false);
+  await turn();pending.reject(new Error('Unavailable'));await assert.rejects(failed);
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+});
+
+test('favoriting tracked titles preserves status, progress and dates',async()=>{
+  const entry={status:'paused',progress:7,start_date:'2025-01-01',finish_date:null,favorite:false};
+  const store=new EditorStore(async()=>({...entry,favorite:true}));
+  const title=store.seed({...draft(),id:1,entry});
+  const saved=store.write(title,{favorite:true});
+  assert.equal(title.entry.status,'paused');assert.equal(title.entry.progress,7);
+  await saved;assert.equal(title.entry.start_date,'2025-01-01');assert.equal(title.entry.status,'paused');
+});
+
 test('commit notifications follow successful writes and removals, never optimistic or failed writes',async()=>{
   let pending=deferred();const commits=[];
   const store=new EditorStore(()=>pending.promise,()=>{},(title,patch)=>commits.push({entry:title.entry&&{...title.entry},patch}));
