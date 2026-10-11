@@ -22,6 +22,28 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cast_images_prefer_current_title_then_verified_actor_role_elsewhere(self):
+        from core.screen_characters import project_characters
+        async with self.Session() as db:
+            media = await db.get(Media,self.media_id)
+            from core.media_details import screen_work
+            work = await screen_work(db,media)
+            credit = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id==work.id,CatalogueCredit.role=='actor'))
+            actor = await db.get(CatalogueEntity,credit.contributor_id)
+            actor.image_url='https://example.test/actor.jpg'
+            donor=CatalogueEntity(kind='movie',name='Other appearance',attributes={})
+            unrelated=CatalogueEntity(kind='person',name='Different actor',attributes={})
+            db.add_all([donor,unrelated]);await db.flush()
+            db.add_all([CatalogueCredit(work_id=donor.id,contributor_id=actor.id,provider='tvdb',source_key='donor',role='actor',character_label=credit.character_label,character_image_url='https://example.test/other-role.jpg'),
+                CatalogueCredit(work_id=donor.id,contributor_id=unrelated.id,provider='tvdb',source_key='unrelated',role='actor',character_label=credit.character_label,character_image_url='https://example.test/wrong-actor.jpg')])
+            await db.flush()
+            await project_characters(db,work.id);await project_characters(db,donor.id);await db.commit()
+            people=(await work_details(db,work))['people']
+            self.assertEqual(people[0]['character_images'],['https://artworks.thetvdb.com/role.jpg','https://example.test/other-role.jpg'])
+            self.assertEqual(people[0]['image'],'https://example.test/actor.jpg')
+            credit.character_image_url=None;await db.commit()
+            self.assertEqual((await work_details(db,work))['people'][0]['character_image'],'https://example.test/other-role.jpg')
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
         self.app.include_router(router)

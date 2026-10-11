@@ -3,6 +3,7 @@ import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
+import { mountDetailCast } from './media-detail-cast';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
@@ -15,6 +16,7 @@ export function mountMediaDetail() {
   if (!root) return;
   pageListeners = new AbortController();
   const {signal} = pageListeners;
+  mountDetailCast(root,signal);
   document.addEventListener('astro:before-swap', () => pageListeners?.abort(), {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);

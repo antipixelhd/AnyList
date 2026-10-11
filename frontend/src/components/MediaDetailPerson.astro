@@ -1,10 +1,14 @@
 ---
 import Icon from './Icon.astro';
 import type {DetailPerson} from '../lib/media-detail-data';
+import {responsiveArtwork} from '../lib/responsive-artwork';
 const {person} = Astro.props as {person:DetailPerson};
 const Tag = person.url ? 'a' : 'div';
+const actor = person.kind === 'actor';
+const portrait=responsiveArtwork(person.image,{size:'w185',sizes:'57px',route:'direct'});
 ---
-<Tag class="lab-person" href={person.url || undefined}>
-  {person.image ? <img src={person.image} alt="" loading="lazy"/> : <span class="lab-person-initials" aria-hidden="true"><Icon name={person.kind === 'studio' ? 'film' : 'user'}/></span>}
-  <div><h3>{person.name}</h3><p>{person.characters.length ? person.characters.join(' / ') : person.roles.join(', ')}</p></div>
+<Tag class="lab-person" href={person.url || undefined} data-cast-person={actor ? JSON.stringify(person) : undefined}>
+  {actor ? <span class="media-person-art" aria-hidden="true">{portrait&&<img {...portrait} alt="" loading="lazy"/>}<span class="lab-person-initials" hidden={!!portrait}><Icon name="user"/></span></span>
+    : person.image ? <img src={person.image} alt="" loading="lazy"/> : <span class="lab-person-initials" aria-hidden="true"><Icon name={person.kind === 'studio' ? 'film' : 'user'}/></span>}
+  <div><h3 data-cast-primary={actor ? '' : undefined}>{person.name}</h3><p data-cast-secondary={actor ? '' : undefined}>{person.characters.length ? person.characters.join(' / ') : person.roles.join(', ')}</p></div>
 </Tag>

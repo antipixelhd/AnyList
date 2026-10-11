@@ -2,7 +2,13 @@ import type { EditorTitle } from './editor-store';
 import {countryLabel} from './stats-overview-data';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; characters: string[]};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; characters: string[]};
+export function detailCastPresentation(person: DetailPerson, mode: 'actors' | 'characters') {
+  const character = person.characters.filter(Boolean).join(' / ');
+  return {primary: mode === 'characters' && character ? character : person.name,
+    secondary: mode === 'characters' ? character ? person.name : '' : character || person.roles.join(', '),
+    images: [...new Set((mode === 'characters' ? [person.character_image, ...(person.character_images || []), person.image] : [person.image]).filter((url):url is string=>!!url))]};
+}
 export type DetailMedia = EditorTitle & {
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;

@@ -5,6 +5,7 @@ from sqlalchemy import or_, select
 
 from core.catalogue_normalize import image
 from core.media_images import provider_images, unique_images
+from core.screen_characters import character_images, role_image_candidates
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
     CatalogueLegacyLink, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
@@ -47,6 +48,10 @@ async def work_details(db, work):
     people = {}
     organizations = {}
     billing = {}
+    images = await character_images(db, {credit.screen_character_id for credit, _ in credits
+        if credit.role == 'actor' and credit.screen_character_id})
+    local_images = {}
+    alternative_images = {}
     studio_ids = {contributor.id for credit, contributor in credits if credit.role == 'producer'}
     for credit, contributor in credits:
         actor = credit.role == 'actor'
@@ -72,6 +77,13 @@ async def work_details(db, work):
             row['roles'].append(role)
         if credit.character_label and credit.character_label not in row['characters']:
             row['characters'].append(credit.character_label)
+        if actor:
+            local_images.setdefault(key, []).extend([url] if (url := image(credit.character_image_url)) else [])
+            alternative_images.setdefault(key, []).extend(role_image_candidates(credit, images.get(credit.screen_character_id, [])))
+    for key, row in people.items():
+        if row['kind'] == 'actor':
+            row['character_images'] = list(dict.fromkeys(local_images.get(key, []) + alternative_images.get(key, [])))[:4]
+            row['character_image'] = next(iter(row['character_images']), None)
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
     posters = [work.image_url, *(attrs.get('posters') or [])]

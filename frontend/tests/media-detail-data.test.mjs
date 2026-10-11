@@ -6,8 +6,19 @@ import test from 'node:test';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,countryLabel};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation};',context);
 const {api}=context;
+
+test('cast mode reverses name hierarchy and preserves actor portrait as the final fallback',()=>{
+  const actor={name:'Actor',kind:'actor',characters:['Character'],roles:['Actor'],image:'portrait',character_image:'local',character_images:['local','other']};
+  const character=api.detailCastPresentation(actor,'characters');
+  assert.equal(character.primary,'Character');assert.equal(character.secondary,'Actor');
+  assert.deepEqual(Array.from(character.images),['local','other','portrait']);
+  const person=api.detailCastPresentation(actor,'actors');
+  assert.equal(person.primary,'Actor');assert.equal(person.secondary,'Character');assert.deepEqual(Array.from(person.images),['portrait']);
+  const missing=api.detailCastPresentation({...actor,characters:[],character_image:null,character_images:[]},'characters');
+  assert.equal(missing.primary,'Actor');assert.equal(missing.secondary,'');assert.deepEqual(Array.from(missing.images),['portrait']);
+});
 
 test('similar captions use the first available genre and year with clean missing-data fallbacks',()=>{
   assert.equal(api.detailWorkCaption({type:'movie',genres:['Science Fiction','Action'],year:'2020'},true),'Science Fiction · 2020');
