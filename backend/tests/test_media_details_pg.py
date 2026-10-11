@@ -10,8 +10,8 @@ from sqlalchemy import select, text
 import test_statistics_pg as fixture
 from dependencies import get_current_user
 from core.media_details import work_details
-from models import Follow, Media, TrackedEntry, User, UserProfileData
-from models.base import PrivacyLevel
+from models import Follow, Media, Show, TrackedEntry, User, UserProfileData, WatchEvent
+from models.base import MediaType, PrivacyLevel
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
     CatalogueRelationship, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
@@ -32,6 +32,66 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.viewer = await db.get(User, self.user_id)
         self.app.dependency_overrides[get_current_user] = lambda: self.viewer
+
+    async def test_episode_rows_use_canonical_catalogue_and_private_watch_history(self):
+        await self.login()
+        async with self.Session() as db:
+            show=Show(title='Episode fixture',tmdb_id=989)
+            db.add(show);await db.flush()
+            media=Media(title='Series fixture',media_type=MediaType.series,tmdb_id=989,tmdb_data={
+                'seasons':[{'season_number':1,'episode_count':2},{'season_number':2,'episode_count':1}],
+                'tracking_episode_ids':[9001,9002,9003],'tracking_catalogue_refreshed_at':'2026-10-11T00:00:00Z'})
+            episodes=[Media(title=name,media_type=MediaType.episode,show_id=show.id,tmdb_id=native,
+                season_number=number,episode_number=position,release_date=date,runtime=45,poster_path='/still.jpg')
+                for native,number,position,name,date in [(9001,1,1,'Watched', '2020-01-01'),(9002,1,2,'Not watched','2020-01-02'),(9003,2,1,'Future','2099-01-01'),(9999,1,3,'Stale identity','2020-01-03')]]
+            db.add_all([media,*episodes]);await db.flush()
+            other=User(username='other-viewer',email='other-viewer@example.test',api_key='other-fixture')
+            db.add(other);await db.flush()
+            db.add_all([WatchEvent(user_id=self.user_id,media_id=episodes[0].id,completed=True),
+                WatchEvent(user_id=self.user_id,media_id=episodes[0].id,completed=True),
+                WatchEvent(user_id=other.id,media_id=episodes[1].id,completed=True)])
+            await db.commit();media_id=media.id
+        data=(await self.client.get(f'/tracking/title/{media_id}')).json()
+        self.assertEqual(data['seasons'][0]['released_count'],2)
+        self.assertEqual(data['seasons'][0]['watched_count'],1)
+        self.assertEqual([episode['watched'] for episode in data['seasons'][0]['episodes']],[True,False])
+        self.assertEqual(data['seasons'][0]['episodes'][0]['image'],'/still.jpg')
+        self.assertFalse(data['seasons'][1]['episodes'][0]['released'])
+        self.viewer=None
+        public=(await self.client.get(f'/tracking/title/{media_id}')).json()
+        self.assertFalse(any(episode['watched'] for season in public['seasons'] for episode in season['episodes']))
+
+    async def test_individual_episode_edits_preserve_gaps_and_later_history(self):
+        await self.login()
+        async with self.Session() as db:
+            show=Show(title='Exact episode fixture',tmdb_id=987)
+            db.add(show);await db.flush()
+            series=Media(title=show.title,media_type=MediaType.series,tmdb_id=987,tmdb_data={
+                'seasons':[{'season_number':1,'episode_count':4}],
+                'tracking_episode_ids':[8001,8002,8003,8004],'tracking_catalogue_refreshed_at':'2026-10-11T00:00:00Z'})
+            episodes=[Media(title=f'Episode {number}',media_type=MediaType.episode,show_id=show.id,
+                tmdb_id=8000+number,season_number=1,episode_number=number,release_date='2099-01-01' if number==4 else '2020-01-01') for number in range(1,5)]
+            db.add_all([series,*episodes]);await db.commit();series_id=series.id;ids=[episode.id for episode in episodes]
+        with patch('core.local_outbound.dispatch_local_tracking_delta',new=AsyncMock()):
+            url=f'/tracking/entry/{series_id}/episode/'
+            response=await self.client.patch(url+str(ids[2]),json={'watched':True})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['status'],'watching')
+            data=(await self.client.get(f'/tracking/title/{series_id}')).json()
+            self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,False,True,False])
+            await self.client.patch(url+str(ids[2]),json={'watched':True})
+            async with self.Session() as db:
+                self.assertEqual(len(list(await db.scalars(select(WatchEvent).where(WatchEvent.user_id==self.user_id,WatchEvent.media_id==ids[2])))),1)
+            for identifier in ids[:2]:
+                response=await self.client.patch(url+str(identifier),json={'watched':True})
+            self.assertEqual(response.json()['status'],'completed')
+            response=await self.client.patch(url+str(ids[0]),json={'watched':False})
+            self.assertEqual(response.json()['status'],'watching')
+            data=(await self.client.get(f'/tracking/title/{series_id}')).json()
+            self.assertEqual(data['seasons'][0]['watched_count'],2)
+            self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,True,True,False])
+            self.assertEqual((await self.client.patch(url+str(ids[3]),json={'watched':True})).status_code,409)
+            self.assertEqual((await self.client.patch(url+str(self.media_id),json={'watched':True})).status_code,409)
 
     async def test_relation_migration_preserves_existing_edges_and_refuses_lossy_downgrade(self):
         def migrate(conn):

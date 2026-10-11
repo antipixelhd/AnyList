@@ -46,7 +46,18 @@
 .media-work-placeholder { display:grid; place-items:center; width:74px; min-height:110px; flex-shrink:0; color:var(--lab-muted); background:var(--panel); }
 .lab-similar-grid .media-work-placeholder { width:65px; height:97px; min-height:0; border-radius:5px; }
 .media-credit-group+.media-credit-group { margin-top:30px; }
-.media-detail .season-card { border-radius:var(--lab-radius); }
+.media-season-actions { display:flex; align-items:center; gap:18px; }
+.media-detail .lab-season-rate .ui-icon { color:#f7b731; }
+.media-season-disclosure>summary { list-style:none; cursor:pointer; }
+.media-season-disclosure>summary::-webkit-details-marker { display:none; }
+.media-season-disclosure[open] .lab-season-expand .ui-icon { transform:rotate(180deg); }
+.media-season-disclosure .lab-season-expand { padding:6px 0; }
+.media-detail .lab-season-card .lab-episode-list { animation:none; }
+.media-detail .lab-episode-copy { min-width:0; }
+.media-detail .lab-episode-copy h3 { overflow-wrap:anywhere; }
+.media-season-rating-body { display:grid; gap:16px; padding:22px; }
+.media-season-rating-body input { width:100%; }
+.media-detail .lab-episode-check:disabled { opacity:.4; cursor:default; }
 .media-lightbox { width:min(1200px,calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 40px); padding:24px; background:var(--panel); color:var(--bright); border:1px solid var(--border); border-radius:var(--lab-radius); grid-template-columns:40px minmax(0,1fr) 40px; align-items:center; gap:18px; }
 .media-lightbox[open] { display:grid; }
 .media-lightbox::backdrop { background:#000c; }
@@ -65,6 +76,8 @@
   .media-detail .lab-tabs { overflow-x:auto; scrollbar-width:none; justify-content:start; }.media-detail .lab-tabs button { flex-shrink:0; }
   .media-detail .lab-genres a { padding:4px 7px; font-size:.9rem; }.media-detail .lab-genres { gap:5px; }
   .media-detail .lab-public-score .lab-section-title h2 { font-size:1.6rem; }
+  .media-season-disclosure .lab-season-toolbar>.lab-season-expand { width:auto; }
+  .media-detail .lab-season-card .lab-episode-check { width:44px; height:44px; }
   .lab-similar-grid .media-work-placeholder { width:100%; height:auto; aspect-ratio:2/3; }
   .media-detail .media-lightbox { gap:8px; padding:20px 8px; }
 }

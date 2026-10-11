@@ -36,7 +36,7 @@ const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.searc
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
 ---
 <Tracker title={title?.title||'Media'} preloadBodyFonts>
-{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type}>
+{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-spoilers="false">
   {signedIn&&trackable&&<script id="title-editor-data" type="application/json" set:html={encode({...title,editor_library:{available:!!library?.connections?.length,desired:library?.desired===true}})}/>}
   <header class="lab-hero">
     {backdrop&&<img class="lab-hero-image" src={backdrop.src} srcset={backdrop.srcset} sizes={backdrop.sizes} alt="" fetchpriority="high"/>}<div class="lab-hero-shade"></div>

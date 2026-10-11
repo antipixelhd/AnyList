@@ -1,5 +1,5 @@
 import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
-import { createContentTransition } from './content-motion';
+import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { initializeScrollMotion } from './scroll-motion';
@@ -111,6 +111,11 @@ export function mountMediaDetail() {
       if(!dirtySeasons.has(input.dataset.season!))input.value=String(state.entry?.season_scores?.[input.dataset.season!] ?? '');
     });
     root.querySelectorAll<HTMLElement>('[data-save-season]').forEach(button=>button.dataset.hasSeasons=hasSeasons?'yes':'no');
+    root.querySelectorAll<HTMLElement>('[data-season-score]').forEach(score=>score.textContent=String(state.entry?.season_scores?.[score.dataset.seasonScore!] || '—'));
+    const average=root.querySelector<HTMLInputElement>('[data-season-average]');
+    if(average)average.checked=state.entry?.rating_mode==='average';
+    const showScore=root.querySelector<HTMLElement>('[data-season-show-score]');
+    if(showScore)showScore.textContent=`${state.entry?.score??'—'} / 10`;
     const rating = root.querySelector<HTMLElement>('[data-quick-rate-id]');
     if (rating) {
       const score = state.entry?.score || null;
@@ -170,6 +175,60 @@ export function mountMediaDetail() {
 
   const seasons=root.querySelector<HTMLElement>('.seasons-section');
   if (seasons) setupScoreSteppers(seasons);
+  seasons?.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>mountDetailsMotion(details,signal));
+  const paintEpisodeTitles=()=>{
+    root.querySelectorAll<HTMLElement>('[data-episode-row]').forEach(row=>{
+      const heading=row.querySelector<HTMLElement>('[data-episode-title]')!;
+      heading.textContent=root.dataset.spoilers==='true'||row.dataset.watched==='true'?heading.dataset.episodeTitle!:`Episode ${heading.dataset.episodeNumber}`;
+    });
+  };
+  root.querySelector<HTMLButtonElement>('[data-episode-spoilers]')?.addEventListener('click',event=>{
+    const button=event.currentTarget as HTMLButtonElement;
+    const showing=root.dataset.spoilers!=='true';root.dataset.spoilers=String(showing);
+    button.setAttribute('aria-pressed',String(showing));button.querySelector('span:not(.ui-icon)')!.textContent=showing?'Titles shown':'Titles hidden';
+    paintEpisodeTitles();
+  },{signal});
+  root.querySelectorAll<HTMLButtonElement>('[data-open-season-score]').forEach(button=>button.addEventListener('click',()=>showDialog(root.querySelector<HTMLDialogElement>(`#season-rating-${button.dataset.openSeasonScore}`)!),{signal}));
+  root.querySelectorAll<HTMLButtonElement>('[data-close-season-score]').forEach(button=>button.addEventListener('click',()=>{void closeDialog(button.closest('dialog')!);},{signal}));
+  root.querySelector<HTMLInputElement>('[data-season-average]')?.addEventListener('change',async event=>{
+    const input=event.currentTarget as HTMLInputElement;if(!title)return;
+    input.disabled=true;
+    try{await editorStore.write(title,{rating_mode:input.checked?'average':'manual'});}
+    catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
+    finally{input.disabled=false;}
+  },{signal});
+  let seasonReadVersion=0;
+  const refreshSeasonState=async()=>{
+    const version=++seasonReadVersion;
+    const response=await fetch(`/api/proxy/tracking/title/${info.id}`,{signal});
+    if(!response.ok)throw new Error('Unable to refresh episode state. Reload to see your saved change.');
+    const data=await response.json();if(signal.aborted||version!==seasonReadVersion)return;
+    paint(editorStore.seed({...data,editor_library:title?.editor_library}));
+    for(const season of data.seasons||[]){
+      const number=season.season_number;
+      const count=root.querySelector<HTMLElement>(`[data-season-count="${number}"]`);
+      if(count)count.textContent=season.released_count==null?'Episode metadata not loaded':`${season.watched_count} / ${season.released_count} watched`;
+      const toggle=root.querySelector<HTMLButtonElement>(`[data-season-progress="${number}"]`);
+      if(toggle){const complete=!!season.released_count&&season.watched_count>=season.released_count;toggle.dataset.watched=String(!complete);toggle.disabled=!season.released_count;toggle.firstChild!.textContent=complete?'Mark season unwatched ':'Mark season watched ';}
+      for(const episode of season.episodes||[]){
+        const row=root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);if(!row)continue;
+        row.dataset.watched=String(episode.watched);
+        const button=row.querySelector<HTMLButtonElement>('[data-watch-episode]');
+        if(button){button.setAttribute('aria-pressed',String(episode.watched));button.setAttribute('aria-label',`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`);button.disabled=!episode.released||season.released_count==null;}
+      }
+    }
+    paintEpisodeTitles();
+  };
+  root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{
+    const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
+    try{
+      const id=Number(button.dataset.watchEpisode);
+      const response=await fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched})});
+      const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
+      await refreshSeasonState();
+    }catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
+    finally{button.disabled=false;button.removeAttribute('aria-busy');}
+  },{signal}));
   const request=async(path:string,body?:unknown)=>{
     const response=await fetch(`/api/proxy/tracking/${path}`,{method:body?'PATCH':'POST',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
     const data=await response.json().catch(()=>({}));
@@ -187,7 +246,7 @@ export function mountMediaDetail() {
     try {
       try{await request(`entry/${info.id}/season/${button.dataset.seasonProgress}`,body);}
       catch(error){if(!(error as Error).message.includes('Confirm to continue'))throw error;if(!confirm((error as Error).message))return;body.confirm_rollback=true;await request(`entry/${info.id}/season/${button.dataset.seasonProgress}`,body);}
-      location.reload();
+      await refreshSeasonState();
     }catch(error){showToast((error as Error).message,'error');}
     finally{button.disabled=false;}
   },{signal}));
@@ -198,7 +257,8 @@ export function mountMediaDetail() {
     if(!input.reportValidity()||!title)return;
     const score=Number(input.value||0);
     const patch:Record<string,unknown>={season_scores:{[button.dataset.saveSeason!]:score}};
-    if(button.dataset.hasSeasons==='no'&&Number(input.value)>0&&mode){
+    if(button.dataset.hasSeasons==='no'&&title.entry?.rating_mode==='average')patch.rating_mode='average';
+    if(button.dataset.hasSeasons==='no'&&title.entry?.rating_mode!=='average'&&Number(input.value)>0&&mode){
       mode.returnValue='cancel';showDialog(mode);
       const result=await new Promise<string>(resolve=>{
         const done=()=>{mode.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve(signal.aborted?'cancel':mode.returnValue);};
@@ -207,7 +267,7 @@ export function mountMediaDetail() {
       if(!['manual','average'].includes(result)||signal.aborted)return;patch.rating_mode=result;
     }
     button.disabled=true;
-    try{await editorStore.write(title,patch);if(Number(input.value||0)===score)dirtySeasons.delete(input.dataset.season!);showToast('Season score saved.','success');}
+    try{await editorStore.write(title,patch);if(Number(input.value||0)===score)dirtySeasons.delete(input.dataset.season!);await closeDialog(input.closest('dialog')!);showToast('Season score saved.','success');}
     catch(error){showToast((error as Error).message,'error');}
     finally{button.disabled=false;}
   },{signal}));

@@ -1381,15 +1381,23 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
                     "has_avatar": bool(profile.avatar_path), "score": score, "status": e.status})
     seasons = [dict(s) for s in (media.tmdb_data or {}).get("seasons", [])]
     episodes = await released_episodes(db, media)
+    from core.tracking_metadata import released_episodes as catalogue_episodes
+    all_episodes = await catalogue_episodes(db, media, include_unreleased=True) if media.media_type == MediaType.series else []
+    released_ids = {episode.id for episode in episodes}
     watched = set()
-    if viewer and episodes:
+    if viewer and all_episodes:
         watched = set((await db.execute(select(WatchEvent.media_id).where(
-            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in episodes]),
+            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in all_episodes]),
             WatchEvent.completed.is_(True)))).scalars())
     for season in seasons:
         released = [e for e in episodes if e.season_number == season.get('season_number')]
         season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
         season['watched_count'] = sum(e.id in watched for e in released)
+        season['episodes'] = [{'id':episode.id, 'episode_number':episode.episode_number,
+            'title':episode.title, 'air_date':episode.release_date, 'runtime':episode.runtime,
+            'image':episode.poster_path or (episode.tmdb_data or {}).get('still_path'),
+            'watched':episode.id in watched, 'released':episode.id in released_ids}
+            for episode in all_episodes if episode.season_number == season.get('season_number')]
     from core.media_details import screen_work, work_details
     from core.countries import screen_countries
     details = await work_details(db, await screen_work(db, media))
@@ -1447,6 +1455,19 @@ class SeasonProgressPatch(BaseModel):
     confirm_rollback: bool = False
 
 
+class EpisodeProgressPatch(BaseModel):
+    model_config = {'extra':'forbid'}
+    watched: bool
+
+
+@router.patch('/entry/{media_id}/episode/{episode_id}')
+async def save_episode_progress(media_id: Annotated[int, Path(gt=0)], episode_id: Annotated[int, Path(gt=0)],
+        body: EpisodeProgressPatch, background_tasks: BackgroundTasks,
+        db: Annotated[AsyncSession, Depends(get_db)], viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    return await _save_entry(media_id, EntryPatch(), background_tasks, db, viewer,
+        episode_change=(episode_id, body.watched))
+
+
 @router.patch('/entry/{media_id}/season/{season_number}')
 async def save_season_progress(media_id: int, season_number: int, body: SeasonProgressPatch,
                                background_tasks: BackgroundTasks,
@@ -1472,9 +1493,16 @@ async def save_season_progress(media_id: int, season_number: int, body: SeasonPr
 @router.patch("/entry/{media_id}")
 async def save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
                      db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    return await _save_entry(media_id, body, background_tasks, db, viewer)
+
+
+async def _save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
+                     db: AsyncSession, viewer: User, *, episode_change: tuple[int, bool] | None = None):
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
+    if episode_change and media.media_type != MediaType.series:
+        raise HTTPException(404, 'Series not found')
     # Serialize edits for this user, including first insertion of a title.
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
@@ -1530,23 +1558,34 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
     episodes = []
     completing_series = media.media_type == MediaType.series and status == 'completed' and previous != 'completed'
     status_driven_movie = media.media_type == MediaType.movie and 'status' in fields
-    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie:
+    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie or episode_change:
         if media.media_type == MediaType.series and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
             raise HTTPException(409, 'Refresh episode metadata on the title page before changing progress')
         episodes = [media] if status_driven_movie else await released_episodes(db, media)
         target = (1 if status == 'completed' else 0) if status_driven_movie else len(episodes) if body.mark_released_watched or completing_series else body.progress
-        if not episodes or target > len(episodes):
+        if not episodes or (target is not None and target > len(episodes)):
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]
         watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids), WatchEvent.completed.is_(True)))).scalars())
+        if episode_change:
+            episode_id, episode_watched = episode_change
+            if episode_id not in ids:
+                raise HTTPException(409, 'A released episode from this series is required')
+            desired = watched | {episode_id} if episode_watched else watched - {episode_id}
+            target = max((index + 1 for index, identifier in enumerate(ids) if identifier in desired), default=0)
+            marking = [episode for episode in episodes if episode.id == episode_id and episode.id not in watched] if episode_watched else []
+            removing = watched - desired
+        else:
+            marking = episodes[:target]
+            removing = watched.intersection(ids[target:]) if not status_driven_movie else set()
         from core.watch_dates import inferred_watch_datetime
-        completion_evidence_date = entry.finish_date if entry.status == 'completed' else None
+        completion_evidence_date = entry.finish_date if entry.status == 'completed' and not episode_change else None
         inferred_watched_at = inferred_watch_datetime(completion_evidence_date)
         # A user's explicit progress edit is better date evidence than an
         # unrelated episode's title-wide Stremio clock.
         from core.watch_dates import replace_inferred_watch_date
         shared_events = (await db.execute(select(WatchEvent).where(
-            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[:target]),
+            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([episode.id for episode in marking]),
             WatchEvent.completed.is_(True), WatchEvent.date_shared.is_(True)))).scalars().all()
         for event in shared_events:
             replace_inferred_watch_date(event, inferred_watched_at, inferred=True)
@@ -1554,23 +1593,28 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
         # catalogue refresh, so only later watched events make this a rollback.
         # Status alone changes the movie's current 0/1 progress, not its past
         # viewing history. An explicit progress rollback still removes history.
-        rollback = bool(watched.intersection(ids[target:])) and not status_driven_movie
-        if rollback and not body.confirm_rollback:
+        rollback = bool(removing)
+        if rollback and not body.confirm_rollback and not episode_change:
             raise HTTPException(409, "Confirm marking later episodes unwatched")
-        for episode in episodes[:target]:
+        for episode in marking:
             if episode.id not in watched or (media.media_type == MediaType.movie and old_progress == 0 and previous != 'completed'):
                 db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True,
                     watched_at=inferred_watched_at, date_inferred=True))
                 added_watched_ids.add(episode.id)
         if rollback:
-            removed_watched_ids = watched.intersection(ids[target:])
-            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[target:])))
+            removed_watched_ids = removing
+            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(removing if episode_change else ids[target:])))
         entry.progress = target
-        if 'status' not in fields and target > 0:
+        if episode_change and previous == 'completed' and removing:
+            entry.status = 'watching' if target else 'planning'
+            entry.finish_date = None
+            local_status_decision = True
+        elif 'status' not in fields and target > 0:
             # Watching later episodes resumes paused/dropped titles, while a
             # completed title remains completed even when correcting history.
             from core.tracking_rules import observed_status
-            entry.status = 'watching' if media.media_type == MediaType.movie and target == 0 and previous == 'completed' else observed_status(previous, target == len(episodes), True)
+            complete = len(desired) == len(episodes) if episode_change else target == len(episodes)
+            entry.status = observed_status(previous, complete, True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
             local_status_decision = entry.status != previous
     if local_status_decision:

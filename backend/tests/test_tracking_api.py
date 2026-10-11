@@ -3046,7 +3046,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         details={'status':'Returning Series','next_episode_to_air':{'season_number':1,'episode_number':2,'air_date':'2999-01-01'},
                  'seasons':[{'season_number':1,'episode_count':2,'name':'Season 1','air_date':'2020-01-01'}]}
-        season={'episodes':[{'id':987654310,'episode_number':1,'name':'First','air_date':'2020-01-01'},
+        season={'episodes':[{'id':987654310,'episode_number':1,'name':'First','air_date':'2020-01-01','still_path':'/first-still.jpg','overview':'First synopsis'},
                             {'id':987654311,'episode_number':2,'name':'Future','air_date':'2999-01-01'}]}
         with patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
              patch('core.tmdb.get_show',new=AsyncMock(return_value=details)), \
@@ -3054,6 +3054,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             res=await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['episodes'],2)
+        first=(await self.db.execute(select(Media).where(Media.tmdb_id==987654310))).scalar_one()
+        self.assertEqual(first.poster_path,'/first-still.jpg')
+        self.assertEqual(first.overview,'First synopsis')
         res=await self.save(self.show,status='completed')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['progress'],1)
