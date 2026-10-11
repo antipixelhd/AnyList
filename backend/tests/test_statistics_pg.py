@@ -337,6 +337,38 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             return await db.get(UserStatsState, self.user_id)
 
+    async def test_failed_studio_artwork_retries_without_pinning_next_batch(self):
+        from core.studio_artwork import backfill_studio_artwork
+        async with self.Session() as db:
+            studio = await db.get(CatalogueEntity, self.studio_id)
+            before = studio.image_url
+            with patch('core.studio_artwork.tmdb.get_company_images', AsyncMock(side_effect=RuntimeError('unavailable'))) as fetch:
+                result = await backfill_studio_artwork(db, 'fixture-key', limit=1)
+                self.assertEqual(result['failed'], 1)
+                self.assertEqual((await backfill_studio_artwork(db, 'fixture-key', limit=1))['examined'], 0)
+            fetch.assert_awaited_once()
+            self.assertEqual(studio.image_url, before)
+            self.assertNotIn('studio_artwork_version', studio.attributes)
+            self.assertIn('studio_artwork_attempted_at', studio.attributes)
+
+    async def test_actor_batch_skips_unconfigured_provider_before_limit(self):
+        from core.actor_backfill import backfill_actors
+        from types import SimpleNamespace
+        async with self.Session() as db:
+            missing = await db.get(Media, self.media_id)
+            missing.tmdb_id, missing.tvdb_id = None, 84
+            available = Media(title='Recoverable cast', media_type=MediaType.movie, tmdb_id=10)
+            db.add(available)
+            await db.flush()
+            db.add(TrackedEntry(user_id=self.user_id, media_id=available.id))
+            await db.commit()
+            providers = SimpleNamespace(tmdb_key='fixture-key', tvdb_key=None)
+            with patch('core.actor_backfill.catalogue.refresh_metadata', AsyncMock(return_value={'status':'updated', 'entity_id':9})) as refresh:
+                result = await backfill_actors(db, providers, limit=1)
+            self.assertEqual((result['examined'], result['updated']), (1,1))
+            self.assertNotIn('actor_backfill_attempted_at', missing.tmdb_data or {})
+        self.assertEqual(refresh.await_args.args[2:5], ('tmdb', 'movie', '10'))
+
     async def test_runtime_batch_skips_ineligible_history_before_limit(self):
         from core.runtime_backfill import backfill_history_runtimes
         async with self.Session() as db:

@@ -16,6 +16,18 @@ async def lane(*args):
 
 
 class ActorBackfillTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unmatched_imdb_lookup_consumes_retry_without_a_refresh_source(self):
+        row = fixtures.media(1, 'movie', tmdb_id=None, imdb_id='tt123', tmdb_data={})
+        db = AsyncMock(); db.scalars.return_value = MagicMock(); db.scalars.return_value.all.return_value = [row]
+        providers = Row(tmdb_key=None, tvdb_key='private', http=Row(lane=lane))
+        with patch('core.actor_backfill.tvdb.find_movie', AsyncMock(return_value=None)), patch(
+            'core.actor_backfill.catalogue.refresh_metadata', AsyncMock()) as refresh:
+            result = await backfill_actors(db, providers)
+        refresh.assert_not_awaited()
+        self.assertEqual(result['updated'], 0)
+        self.assertIn('actor_backfill_attempted_at', row.tmdb_data)
+        db.commit.assert_awaited_once()
+
     async def test_movie_matches_tvdb_by_imdb_and_refreshes_both_providers(self):
         row = fixtures.media(1, "movie", tmdb_id=10, imdb_id="tt123", tmdb_data={})
         db = AsyncMock(); db.scalars.return_value = MagicMock(); db.scalars.return_value.all.return_value = [row]

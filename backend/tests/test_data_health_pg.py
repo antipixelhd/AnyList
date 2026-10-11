@@ -221,6 +221,44 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(snapshot.next_attempt_at)
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity).where(CatalogueEntity.name=='Wrong movie')),0)
 
+    async def test_cached_tvdb_movie_repairs_without_credentials(self):
+        async with self.Session() as db:
+            movie = await db.get(Media, self.media_id)
+            movie.tmdb_id, movie.tvdb_id = None, 84
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie'))
+            db.add(CatalogueIdentity(entity_id=work.id, namespace='tvdb.movie', external_id='84', source='tvdb'))
+            db.add(MetadataSnapshot(provider='tvdb', kind='movie', external_id='84', entity_id=work.id,
+                payload={'id':84, 'name':'Cached film', 'originalCountry':'usa'}))
+            await db.commit()
+            providers = type('Providers', (), {'tmdb_key':None, 'tvdb_key':None, 'detail':AsyncMock()})()
+            result = await fill_screen_metadata(db, providers, limit=1)
+            self.assertEqual((result['updated'], result['failed']), (1,0))
+            await db.refresh(work)
+            self.assertEqual(work.attributes['countries'], ['US'])
+        providers.detail.assert_not_awaited()
+
+    async def test_screen_repair_skips_unconfigured_titles_before_limit(self):
+        from models.catalogue import CatalogueLegacyLink
+        async with self.Session() as db:
+            unavailable = await db.get(Media, self.media_id)
+            unavailable.tmdb_id, unavailable.tvdb_id = None, 84
+            available = Media(title='Recoverable film', media_type=MediaType.movie, tmdb_id=42)
+            work = CatalogueEntity(kind='movie', name='Recoverable film', attributes={})
+            db.add_all([available, work])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user_id, media_id=available.id),
+                CatalogueLegacyLink(media_id=available.id, entity_id=work.id),
+                CatalogueIdentity(entity_id=work.id, namespace='tmdb.movie', external_id='42', source='tmdb'),
+                MetadataSnapshot(provider='tmdb', kind='movie', external_id='42', entity_id=work.id,
+                    payload={'id':42, 'title':'Recoverable film', 'origin_country':['US']})])
+            await db.commit()
+            providers = type('Providers', (), {'tmdb_key':'configured-key', 'tvdb_key':None, 'detail':AsyncMock()})()
+            result = await fill_screen_metadata(db, providers, limit=1)
+            self.assertEqual((result['examined'], result['updated']), (1,1))
+            self.assertEqual(work.attributes['countries'], ['US'])
+            self.assertNotIn('health_metadata_attempted_at', unavailable.tmdb_data or {})
+        providers.detail.assert_not_awaited()
+
     async def test_cached_projection_fills_fields_without_provider_requests(self):
         async with self.Session() as db:
             movie=await db.get(Media,self.media_id); movie.tmdb_id=42

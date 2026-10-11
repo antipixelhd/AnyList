@@ -1,7 +1,7 @@
 """Bounded shared cast refresh for listed titles; no calls from statistics reads."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import and_, exists, or_, select
 
 from core import catalogue
 from core import tvdb
@@ -22,9 +22,18 @@ async def backfill_actors(db, providers, *, limit=BATCH_SIZE, force=False, user_
     membership = select(TrackedEntry.id).where(TrackedEntry.media_id == Media.id)
     if user_id is not None:
         membership = membership.where(TrackedEntry.user_id == user_id)
+    sources = []
+    if providers.tmdb_key:
+        sources.append(Media.tmdb_id.is_not(None))
+    if providers.tvdb_key:
+        sources.extend([
+            Media.tvdb_id.is_not(None),
+            and_(Media.media_type == MediaType.series, select(Show.id).where(
+                Show.tmdb_id == Media.tmdb_id, Show.tvdb_id.is_not(None)).correlate(Media).exists()),
+            and_(Media.media_type == MediaType.movie, Media.imdb_id.is_not(None)),
+        ])
     query = select(Media).where(Media.media_type.in_([MediaType.movie, MediaType.series]),
-        exists(membership),
-        or_(Media.tmdb_id.is_not(None), Media.tvdb_id.is_not(None)))
+        exists(membership), or_(*sources) if sources else False)
     if not force:
         query = query.where(or_(attrs["actor_backfill_attempted_at"].astext.is_(None),
             attrs["actor_metadata_version"].astext != str(VERSION),
@@ -33,11 +42,13 @@ async def backfill_actors(db, providers, *, limit=BATCH_SIZE, force=False, user_
     result = {"examined": len(rows), "updated": 0, "failed": 0}
     for row in rows:
         success = False
+        attempted_source = False
         sources = [("tmdb", row.tmdb_id)] if row.tmdb_id and providers.tmdb_key else []
         tvdb_id = row.tvdb_id
-        if row.media_type == MediaType.series and not tvdb_id and row.tmdb_id:
+        if row.media_type == MediaType.series and not tvdb_id and row.tmdb_id and providers.tvdb_key:
             tvdb_id = await db.scalar(select(Show.tvdb_id).where(Show.tmdb_id == row.tmdb_id).limit(1))
         if row.media_type == MediaType.movie and not tvdb_id and row.imdb_id and providers.tvdb_key:
+            attempted_source = True
             try:
                 async with providers.http.lane("tvdb"):
                     tvdb_id = await tvdb.find_movie(row.imdb_id, providers.tvdb_key)
@@ -54,6 +65,7 @@ async def backfill_actors(db, providers, *, limit=BATCH_SIZE, force=False, user_
                         snapshot.expires_at = now  # Old snapshots need verified person cross-references once.
                         await db.commit()
                 refreshed = await catalogue.refresh_metadata(db, providers, provider, row.media_type.value, str(identifier))
+                attempted_source = attempted_source or refreshed['status'] != 'refreshing'
                 if refreshed["status"] in ("cached", "updated") and refreshed["entity_id"]:
                     # Existing snapshots predate role artwork; project last-good
                     # payloads through the current normalizer without a new call.
@@ -78,10 +90,11 @@ async def backfill_actors(db, providers, *, limit=BATCH_SIZE, force=False, user_
                 elif refreshed["status"] not in ("refreshing",):
                     result["failed"] += 1
             except Exception:
+                attempted_source = True
                 await db.rollback()
                 await db.refresh(row)
                 result["failed"] += 1
-        if sources:
+        if attempted_source:
             row.tmdb_data = {**(row.tmdb_data or {}), "actor_metadata_version": VERSION,
                              "actor_backfill_attempted_at": now.isoformat()}
             await db.commit()

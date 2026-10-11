@@ -40,7 +40,9 @@ async def backfill_studio_artwork(db, api_key, *, limit=50, force=False):
         CatalogueIdentity.entity_id == CatalogueEntity.id).where(
         CatalogueEntity.kind == 'organization', CatalogueIdentity.namespace == 'tmdb.company')
     if not force:
-        query = query.where(or_(attrs['studio_artwork_checked_at'].astext.is_(None),
+        query = query.where(or_(attrs['studio_artwork_attempted_at'].astext.is_(None),
+            attrs['studio_artwork_attempted_at'].astext < (now-timedelta(days=7)).isoformat()),
+            or_(attrs['studio_artwork_checked_at'].astext.is_(None),
             attrs['studio_artwork_checked_at'].astext < (now-timedelta(days=30)).isoformat(),
             attrs['studio_artwork_version'].astext != str(VERSION)))
     rows = list((await db.execute(query.order_by(CatalogueEntity.id).limit(limit))).all()) if api_key else []
@@ -69,7 +71,11 @@ async def backfill_studio_artwork(db, api_key, *, limit=50, force=False):
     for (row, identity), reply in zip(rows, replies):
         await db.refresh(row, with_for_update=True)
         await db.refresh(identity)
-        if reply is None or identity.entity_id != row.id or identity.external_id != reply[0]:
+        if identity.entity_id != row.id:
+            result['failed'] += 1
+            continue
+        row.attributes = {**(row.attributes or {}), 'studio_artwork_attempted_at':now.isoformat()}
+        if reply is None or identity.external_id != reply[0]:
             result['failed'] += 1
             continue
         image = reply[1]

@@ -24,6 +24,13 @@ async def fill_screen_metadata(db, providers, *, limit=10):
     rows = (await db.execute(text(COHORT + f"""
       SELECT * FROM titles t WHERE coalesce(root_count,0)<=1 AND
       (tmdb_id IS NOT NULL OR tvdb_id IS NOT NULL) AND
+      ((:tmdb_enabled AND tmdb_id IS NOT NULL) OR (:tvdb_enabled AND tvdb_id IS NOT NULL)
+       OR EXISTS (SELECT 1 FROM catalogue_metadata_snapshots s WHERE s.kind=t.media_type::text
+          AND ((s.provider='tmdb' AND s.external_id=t.tmdb_id::text)
+               OR (s.provider='tvdb' AND s.external_id=t.tvdb_id::text))
+          AND s.payload IS NOT NULL AND s.error_code IS NULL
+          AND (s.next_attempt_at IS NULL OR s.next_attempt_at<=:now)
+          AND (s.lease_token IS NULL OR s.lease_until IS NULL OR s.lease_until<=:now))) AND
       (entity_id IS NULL OR NOT EXISTS (SELECT 1 FROM tracked_credits c WHERE c.work_id=t.entity_id AND c.role='actor')
        OR NOT EXISTS (SELECT 1 FROM tracked_credits c JOIN catalogue_entities p ON p.id=c.contributor_id AND p.kind='person' WHERE c.work_id=t.entity_id AND c.role<>'actor')
        OR NOT EXISTS (SELECT 1 FROM tracked_credits c JOIN catalogue_entities p ON p.id=c.contributor_id AND p.kind='organization' WHERE c.work_id=t.entity_id AND c.role='producer')
@@ -31,7 +38,9 @@ async def fill_screen_metadata(db, providers, *, limit=10):
        OR (nullif(image_url,'') IS NULL AND nullif(poster_path,'') IS NULL))
       AND (attrs->>'health_metadata_attempted_at' IS NULL OR attrs->>'health_metadata_attempted_at'<:cutoff)
       ORDER BY attrs->>'health_metadata_attempted_at' NULLS FIRST,id LIMIT :limit
-    """), {'cutoff': (statistics_snapshots.utcnow() - timedelta(days=7)).isoformat(), 'limit': limit})).mappings().all()
+    """), {'cutoff': (statistics_snapshots.utcnow() - timedelta(days=7)).isoformat(), 'limit': limit,
+           'now': statistics_snapshots.utcnow(), 'tmdb_enabled':bool(providers.tmdb_key),
+           'tvdb_enabled':bool(providers.tvdb_key)})).mappings().all()
     result = {'examined': len(rows), 'updated': 0, 'failed': 0, 'deferred': 0}
     for row in rows:
         succeeded = False
@@ -50,7 +59,7 @@ async def fill_screen_metadata(db, providers, *, limit=10):
                     result['deferred'] += 1
                     continue
                 if snapshot and snapshot.payload and not snapshot.error_code:
-                    doc = catalogue_normalize.normalize_tmdb(snapshot.payload, kind) if provider == 'tmdb' else catalogue_normalize.normalize_tvdb(snapshot.payload)
+                    doc = catalogue_normalize.normalize_tmdb(snapshot.payload, kind) if provider == 'tmdb' else catalogue_normalize.normalize_tvdb(snapshot.payload, kind)
                 elif key:
                     receipt = await catalogue.refresh_metadata(db, providers, provider, kind, str(external_id),
                         additive=True, expected_entity_id=row['entity_id'])
