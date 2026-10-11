@@ -8,6 +8,10 @@ depends_on = None
 
 
 def upgrade():
+    # mt039 seeds existing users in this transaction. Drain the deferred owner
+    # FK checks before ALTER TABLE, then retain deferred snapshot publishing.
+    op.execute("SET CONSTRAINTS fk_stats_active_owner IMMEDIATE")
+    op.execute("SET CONSTRAINTS fk_stats_active_owner DEFERRED")
     clock = "date_trunc('milliseconds', now() AT TIME ZONE 'UTC')"
     op.execute(f"ALTER TABLE user_stats_snapshots ALTER COLUMN computed_at SET DEFAULT {clock}")
     op.execute(f"ALTER TABLE user_stats_state ALTER COLUMN next_due_at SET DEFAULT {clock}")

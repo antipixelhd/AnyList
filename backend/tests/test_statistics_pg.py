@@ -50,11 +50,20 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
             conn.execute(text("DROP TABLE catalogue_screen_characters"))
+            # Existing installations upgrade all revisions in one transaction.
+            # Seed an account first so mt039 queues its deferred owner FK check.
+            conn.execute(User.__table__.insert().values(
+                email="stats@example.org", username="statistics-fixture", api_key="fixture-key"))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module("migrations.versions.mt039_statistics_snapshots").upgrade()
                 importlib.import_module("migrations.versions.mt040_statistics_utc_schedule").upgrade()
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
                 importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
+            self.assertEqual(conn.scalar(text("SELECT count(*) FROM user_stats_state")), 1)
+            self.assertEqual(tuple(conn.execute(text(
+                "SELECT condeferrable, condeferred FROM pg_constraint "
+                "WHERE conrelid='user_stats_state'::regclass AND conname='fk_stats_active_owner'"
+            )).one()), (True, True))
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -62,8 +71,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(precision), [3])
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.Session() as db:
-            user = User(email="stats@example.org", username="statistics-fixture", api_key="fixture-key")
-            db.add(user)
+            user = await db.scalar(select(User).where(User.username == "statistics-fixture"))
             db.add(GlobalSettings(id=1, show_anime=True, enable_logged_out_navigation=True))
             await db.flush()
             db.add(UserProfileData(user_id=user.id, privacy_level=PrivacyLevel.public))
