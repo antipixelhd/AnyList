@@ -5,6 +5,7 @@ import { showDialog, closeDialog, reveal } from './ui-motion';
 import { initializeScrollMotion } from './scroll-motion';
 import { setupScoreSteppers } from './scoreStepper';
 import { showToast } from './toasts';
+import {kindLabel,relationLabel} from './media-detail-data';
 
 let pageListeners: AbortController | undefined;
 export function mountMediaDetail() {
@@ -16,11 +17,39 @@ export function mountMediaDetail() {
   document.addEventListener('astro:before-swap', () => pageListeners?.abort(), {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
+  if(info.relatedPending){
+    void fetch(`/api/proxy/tracking/title/${info.id}/related`,{signal}).then(async response=>{
+      if(!response.ok)return;
+      const data=await response.json();
+      if(signal.aborted)return;
+      for(const field of ['relations','similar'] as const){
+        const section=root.querySelector<HTMLElement>(`[data-detail-${field==='relations'?'related':'similar'}]`)!;
+        const grid=section.querySelector<HTMLElement>('[class$="-grid"]')!;
+        const rows=(Array.isArray(data[field])?data[field]:[]).filter((row:any)=>field!=='similar'||row.type===info.type);
+        const cards=rows.map((work:any)=>{
+          const card=document.createElement('a');
+          const url=new URL(work.url,location.origin);
+          if(url.origin!==location.origin&&url.protocol!=='https:')return null;
+          card.href=url.href;
+          if(field==='relations')card.className='lab-related-card';
+          if(work.poster){const image=document.createElement('img');image.src=work.poster;image.alt='';image.loading='lazy';card.append(image);}
+          else{const cover=document.createElement('span');cover.className='media-work-placeholder';cover.setAttribute('aria-hidden','true');card.append(cover);}
+          const copy=document.createElement('div');
+          if(field==='relations'){const label=document.createElement('span');label.className='lab-relation-type';label.textContent=work.label||relationLabel(work.relation,work.reverse);copy.append(label);}
+          const title=document.createElement('h3');title.textContent=work.title;
+          const detail=document.createElement('p');detail.textContent=[kindLabel[work.type as keyof typeof kindLabel],work.year].filter(Boolean).join(' · ');
+          copy.append(title,detail);card.append(copy);return card;
+        }).filter((card:HTMLAnchorElement|null):card is HTMLAnchorElement=>!!card);
+        grid.replaceChildren(...cards);section.hidden=!cards.length;
+        if(cards.length&&section.getBoundingClientRect().top<innerHeight&&section.getBoundingClientRect().bottom>0)reveal(section);
+      }
+    }).catch(()=>{});
+  }
   let title = editorStore.find(info.id);
   const synopsis = root.querySelector<HTMLElement>('[data-detail-synopsis]');
   if (synopsis) mountContributorBiography(synopsis,signal);
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (!signal.aborted) initializeScrollMotion(root,signal,'.media-module','media-scroll-reveal', {
+    if (!signal.aborted) initializeScrollMotion(root,signal,'.lab-module','media-scroll-reveal', {
       animateInitial:false,downwardOnly:true,once:true,
     });
   }));
@@ -78,8 +107,6 @@ export function mountMediaDetail() {
       progress.hidden=!state.entry;
       const value = state.entry?.progress || 0;
       progress.querySelector('[data-detail-progress-label]')!.textContent = info.type==='movie' ? value?'Watched':'Unwatched' : `${value}${info.total ? ` / ${info.total}`:''} episodes watched`;
-      const bar = progress.querySelector<HTMLProgressElement>('progress');
-      if (bar) bar.value=value;
     }
     if (note && !noteDirty) note.value=state.entry?.notes || '';
     const hasSeasons=Object.values(state.entry?.season_scores || {}).some(Boolean);

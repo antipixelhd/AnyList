@@ -8,7 +8,7 @@ export type DetailMedia = EditorTitle & {
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
-  people: DetailPerson[]; organizations: DetailPerson[]; artwork: string[]; relations: any[];
+  people: DetailPerson[]; organizations: DetailPerson[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
   tmdb_score?: number | null; imdb_score?: number | null; rt_critic_score?: number | null; rt_audience_score?: number | null;
@@ -20,9 +20,10 @@ export function localMediaId(value: string | undefined) {
 }
 export function prepareDetail(raw: Record<string, any>): DetailMedia {
   const detail: Record<string, any> = {...raw, entry:raw.entry || null};
-  for (const field of ['genres','seasons','friends','people','organizations','artwork','relations','sources','editions','releases','prices','countries']) {
+  for (const field of ['genres','seasons','friends','people','organizations','artwork','relations','similar','sources','editions','releases','prices','countries']) {
     detail[field] = Array.isArray(raw[field]) ? raw[field] : [];
   }
+  detail.similar=detail.similar.filter((work:any)=>work.type===raw.type);
   return detail as DetailMedia;
 }
 export function durationLabel(minutes?: number | null) {
@@ -61,7 +62,8 @@ export function detailFacts(media: DetailMedia) {
 export function relationLabel(relation: string, reverse = false) {
   const labels: Record<string, [string,string]> = {dlc:['DLC for','DLC'],expansion:['Expansion of','Expansion'],
     standalone_expansion:['Expansion of','Standalone expansion'],remake:['Remake of','Remake'],remaster:['Remaster of','Remaster'],
-    port:['Port of','Port'],version:['Version of','Version'],series_member:['Series','Series'],recommendation:['Related','Related']};
+    port:['Port of','Port'],version:['Version of','Version'],series_member:['Series','Series'],recommendation:['Related','Related'],
+    adaptation:['Adaptation of','Adaptation'],based_on:['Source','Adaptation'],prequel:['Prequel to','Sequel'],sequel:['Sequel to','Prequel'],spin_off:['Spin-off of','Spin-off'],shared_universe:['Shared universe','Shared universe']};
   return labels[relation]?.[reverse ? 1 : 0] || 'Related';
 }
 export function moneyLabel(value: {currency?: string; amount?: number; amountInt?: number} | null | undefined) {

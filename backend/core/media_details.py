@@ -6,7 +6,7 @@ from sqlalchemy import or_, select
 from core.catalogue_normalize import image
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
-    CatalogueLegacyLink, CatalogueRelationship, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
+    CatalogueLegacyLink, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
 )
 
 
@@ -39,7 +39,7 @@ async def screen_work(db, media):
 
 async def work_details(db, work):
     if work is None:
-        return {'people': [], 'organizations': [], 'artwork': [], 'relations': [], 'sources': []}
+        return {'people': [], 'organizations': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
         CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id)
         .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id).limit(500))).all()
@@ -80,28 +80,10 @@ async def work_details(db, work):
                         artwork.append(url)
         if url := public_url(raw.get('homepage') or raw.get('url')):
             sources.append({'name': snapshot.provider.upper(), 'url': url})
-    relations = []
-    edges = list(await db.scalars(select(CatalogueRelationship).where(or_(
-        CatalogueRelationship.source_id == work.id, CatalogueRelationship.target_id == work.id))
-        .order_by(CatalogueRelationship.id).limit(60)))
-    ids = {edge.target_id if edge.source_id == work.id else edge.source_id for edge in edges}
-    related = {row.id: row for row in await db.scalars(select(CatalogueEntity).where(CatalogueEntity.id.in_(ids)))} if ids else {}
-    legacy = dict((await db.execute(select(CatalogueLegacyLink.entity_id, CatalogueLegacyLink.media_id)
-        .where(CatalogueLegacyLink.entity_id.in_(ids)))).all()) if ids else {}
-    seen = set()
-    for edge in edges:
-        target = related.get(edge.target_id if edge.source_id == work.id else edge.source_id)
-        if target is None or target.kind not in ('movie', 'series', 'game', 'book') or (target.id, edge.relation) in seen:
-            continue
-        seen.add((target.id, edge.relation))
-        url = f'/title/{legacy[target.id]}' if target.id in legacy else (
-            f'/{"games" if target.kind == "game" else "books"}/{target.id}' if target.kind in ('game', 'book') else None)
-        if url:
-            relations.append({'id': target.id, 'title': target.name, 'type': target.kind, 'poster': image(target.image_url),
-                'year': str((target.attributes or {}).get('release_date') or '')[:4],
-                'relation': edge.relation, 'reverse': edge.target_id == work.id, 'url': url})
+    from core.media_related import catalogue_related
+    related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
-        'artwork': list(dict.fromkeys(artwork))[:30], 'relations': relations,
+        'artwork': list(dict.fromkeys(artwork))[:30], **related,
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 

@@ -30,3 +30,10 @@ test('cached game prices respect currency minor units and missing prices stay ab
   assert.equal(api.moneyLabel({amount:0,currency:'USD'}),'$0.00');
   for(const value of [null,{}, {currency:'EUR'}, {currency:'USD',amount:-1}, {currency:'bad',amount:1}])assert.equal(api.moneyLabel(value),null);
 });
+test('similar titles stay in the viewed media type while relations preserve direction',()=>{
+  const media=api.prepareDetail({type:'movie',similar:[{type:'series',title:'Series'},{type:'movie',title:'Movie'}],relations:[{type:'book',title:'Source'}]});
+  assert.deepEqual(Array.from(media.similar,row=>row.title),['Movie']);
+  assert.equal(media.relations[0].type,'book');
+  assert.equal(api.relationLabel('based_on',false),'Source');
+  assert.equal(api.relationLabel('based_on',true),'Adaptation');
+});

@@ -1,7 +1,11 @@
 """Real catalogue detail projections and route authorization in disposable schemas."""
+import importlib
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import select
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import select, text
 
 import test_statistics_pg as fixture
 from dependencies import get_current_user
@@ -28,6 +32,28 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.viewer = await db.get(User, self.user_id)
         self.app.dependency_overrides[get_current_user] = lambda: self.viewer
+
+    async def test_relation_migration_preserves_existing_edges_and_refuses_lossy_downgrade(self):
+        def migrate(conn):
+            migration = importlib.import_module('migrations.versions.mt043_media_relations')
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.downgrade()
+                source = conn.scalar(text("SELECT id FROM catalogue_entities WHERE kind='movie' LIMIT 1"))
+                target = conn.scalar(text("INSERT INTO catalogue_entities(kind,name,attributes) VALUES ('book','Migration source','{}') RETURNING id"))
+                params = {'source':source, 'target':target}
+                conn.execute(text("INSERT INTO catalogue_relationships(source_id,target_id,relation,provider,attributes) VALUES (:source,:target,'recommendation','tmdb','{}')"), params)
+                migration.upgrade()
+                conn.execute(text("INSERT INTO catalogue_relationships(source_id,target_id,relation,provider,attributes) VALUES (:source,:target,'based_on','tmdb','{}')"), params)
+                with self.assertRaisesRegex(RuntimeError, 'existing data was preserved'):
+                    migration.downgrade()
+                self.assertEqual(conn.scalar(text('SELECT count(*) FROM catalogue_relationships')), 2)
+                conn.execute(text("DELETE FROM catalogue_relationships WHERE relation='based_on'"))
+                migration.downgrade()
+                self.assertEqual(conn.scalar(text('SELECT count(*) FROM catalogue_relationships')), 1)
+                definition = conn.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='catalogue_relationships'::regclass AND conname='ck_catalogue_relationship_type'"))
+                self.assertNotIn('based_on', definition)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(migrate)
 
     async def test_screen_credits_deduplicate_providers_and_retain_multiple_characters(self):
         async with self.Session() as db:
@@ -117,3 +143,67 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['sources'][0]['url'], 'https://openlibrary.org/works/OL123W')
         self.assertEqual((await self.client.get(f'/catalogue/entities/{edition_id}/details')).status_code, 404)
         self.assertEqual((await self.client.get('/catalogue/entities/0/details')).status_code, 422)
+
+    async def test_relations_cross_types_while_recommendations_stay_in_the_current_type(self):
+        async with self.Session() as db:
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            book = CatalogueEntity(kind='book', name='Original novel', attributes={})
+            movie = CatalogueEntity(kind='movie', name='Similar movie', attributes={})
+            series = CatalogueEntity(kind='series', name='Related series', attributes={})
+            game = CatalogueEntity(kind='game', name='A game', attributes={})
+            other_game = CatalogueEntity(kind='game', name='Similar game', attributes={})
+            db.add_all([book,movie,series,game,other_game]); await db.flush()
+            db.add_all([CatalogueIdentity(entity_id=movie.id, namespace='tmdb.movie', external_id='55', source='tmdb'),
+                CatalogueIdentity(entity_id=series.id, namespace='tmdb.series', external_id='66', source='tmdb'),
+                CatalogueRelationship(source_id=work.id,target_id=book.id,relation='based_on',provider='manual'),
+                CatalogueRelationship(source_id=work.id,target_id=movie.id,relation='recommendation',provider='tmdb'),
+                CatalogueRelationship(source_id=work.id,target_id=series.id,relation='spin_off',provider='manual'),
+                CatalogueRelationship(source_id=game.id,target_id=other_game.id,relation='recommendation',provider='igdb')])
+            await db.commit()
+            details = await work_details(db,work)
+            self.assertEqual({row['type'] for row in details['relations']}, {'book','series'})
+            self.assertEqual([row['type'] for row in details['similar']], ['movie'])
+            self.assertEqual(details['similar'][0]['url'], '/discover-title?type=movie&id=55')
+            self.assertEqual((await work_details(db,game))['similar'][0]['url'], f'/games/{other_game.id}')
+            self.assertTrue((await work_details(db,book))['relations'][0]['reverse'])
+
+    async def test_book_series_members_and_author_suggestions_are_separate(self):
+        async with self.Session() as db:
+            books = [CatalogueEntity(kind='book',name=name,attributes={}) for name in ('First','Second','Other story')]
+            series = CatalogueEntity(kind='book_series',name='Fixture trilogy',attributes={})
+            author = CatalogueEntity(kind='person',name='Author',attributes={})
+            db.add_all([*books,series,author]); await db.flush()
+            for book in books:
+                db.add(CatalogueCredit(work_id=book.id,contributor_id=author.id,provider='hardcover',source_key=f'author:{book.id}',role='author'))
+            for book in books[:2]:
+                db.add(CatalogueRelationship(source_id=book.id,target_id=series.id,relation='series_member',provider='hardcover'))
+            await db.commit()
+            details = await work_details(db,books[0])
+            self.assertEqual([row['title'] for row in details['relations']], ['Second'])
+            self.assertEqual(details['relations'][0]['label'], 'Fixture trilogy')
+            self.assertEqual([row['title'] for row in details['similar']], ['Other story'])
+
+    async def test_collection_cache_is_non_destructive_and_recommendations_exclude_collection_and_other_types(self):
+        await self.login()
+        async with self.Session() as db:
+            media = await db.get(Media,self.media_id)
+            media.tmdb_id = 99
+            media.tmdb_data = {'belongs_to_collection':{'id':10}, 'protected_fixture':'keep'}
+            await db.commit()
+        collection = {'id':10,'name':'Fixture collection','parts':[{'id':99,'title':'Current','release_date':'2020-01-01'}, {'id':55,'title':'Earlier','release_date':'2010-01-01'}]}
+        recommendations = {'results':[{'id':55,'title':'Earlier'}, {'id':77,'title':'Another movie','poster_path':'/cover.jpg'}, {'id':66,'name':'A series','media_type':'tv'}, {'id':99,'title':'Current'}, {'id':88,'title':'Adult','adult':True}]}
+        with (patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-only')),
+                patch('core.tmdb.get_collection',new=AsyncMock(return_value=collection)) as fetch_collection,
+                patch('core.tmdb.get_movie_recommendations',new=AsyncMock(return_value=recommendations)) as fetch_recommendations):
+            response = await self.client.get(f'/tracking/title/{self.media_id}/related')
+            self.assertEqual(response.status_code,200,response.text)
+            data = response.json()
+            self.assertEqual([row['title'] for row in data['relations']], ['Earlier'])
+            self.assertEqual(data['relations'][0]['label'], 'Previous entry')
+            self.assertEqual([row['title'] for row in data['similar']], ['Another movie'])
+            self.assertEqual(data['similar'][0]['poster'], 'https://image.tmdb.org/t/p/w500/cover.jpg')
+            self.assertFalse(data['related_pending'])
+            self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/related')).status_code,200)
+            fetch_collection.assert_awaited_once(); fetch_recommendations.assert_awaited_once()
+        async with self.Session() as db:
+            self.assertEqual((await db.get(Media,self.media_id)).tmdb_data['protected_fixture'],'keep')

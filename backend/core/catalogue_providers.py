@@ -307,7 +307,7 @@ IGDB_FIELDS = (
             "ports",
             "similar_games",
         )
-        for projection in ("name", "version_parent.name")
+        for projection in ("name", "cover.url", "first_release_date", "version_parent.name", "version_parent.cover.url", "version_parent.first_release_date")
     )
 )
 
