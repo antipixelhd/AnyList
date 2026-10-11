@@ -28,19 +28,30 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None):
     if media.media_type not in (MediaType.movie, MediaType.series):
         return 'unavailable'
     work = await screen_work(db, media)
+    linked = False
     if work:
+        if await db.get(CatalogueLegacyLink, media.id) is None:
+            await catalogue.write_lock(db)
+            # Re-resolve after the write lock; never bridge by a title's name.
+            verified = await screen_work(db, media)
+            if verified is None or verified.id != work.id or verified.kind != media.media_type.value:
+                return 'failed'
+            await catalogue.upsert(db, CatalogueLegacyLink,
+                {'media_id': media.id, 'entity_id': work.id}, ['media_id'])
+            await db.commit()
+            linked = True
         roles = list(await db.scalars(select(CatalogueCredit.role).join(CatalogueEntity,
             CatalogueEntity.id == CatalogueCredit.contributor_id).where(
             CatalogueCredit.work_id == work.id, CatalogueEntity.kind == 'person')))
         if 'actor' in roles and any(role != 'actor' for role in roles):
-            return 'complete'
+            return 'updated' if linked else 'complete'
     if providers is None:
         providers = CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal),
             tmdb_key=await settings_store.get_user_tmdb_key(db, user_id),
             tvdb_key=await settings_store.get_user_tvdb_key(db, user_id))
     sources = [('tmdb', media.tmdb_id), ('tvdb', media.tvdb_id)]
     result = 'unavailable'
-    updated = False
+    updated = linked
     for provider, native in sources:
         if not native:
             continue

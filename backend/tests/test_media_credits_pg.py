@@ -146,3 +146,14 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
             media = await db.get(Media, response.json()['id'])
             self.assertEqual(len((await work_details(db, await screen_work(db, media)))['people']), 2)
         self.providers.detail.assert_awaited_once()
+
+    async def test_complete_identity_match_restores_missing_bridge_without_fetching(self):
+        from core.catalogue import ingest_document
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+            work = await ingest_document(db, normalize_tmdb(movie_payload(), 'movie'), 'tmdb')
+            await db.commit()
+            self.assertIsNone(await db.get(CatalogueLegacyLink, media.id))
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'updated')
+            self.assertEqual((await db.get(CatalogueLegacyLink, media.id)).entity_id, work.id)
+        self.providers.detail.assert_not_awaited()
