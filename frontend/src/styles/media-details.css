@@ -10,7 +10,7 @@
 .media-detail .media-tracking { display:flex; flex-direction:column; gap:17px; }
 .media-action-row { display:flex; align-items:stretch; gap:6px; min-width:0; }
 .media-rating-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:0; }
-.media-detail :is(.lab-rating-control,.lab-big-score,.lab-friends .lab-section-title) .ui-icon { color:#f7b731; }
+.media-detail :is(.lab-rating-control,.lab-friends .lab-section-title) .ui-icon { color:#f7b731; }
 .media-detail .status-control { margin:0; min-width:0; flex:1; }
 .media-detail .media-tracking .media-action-row .status-split>button:first-child { min-width:0; padding:10px 4px; font-size:1.1rem; white-space:nowrap; }
 .media-detail .media-tracking .media-action-row .status-split .status-arrow { width:30px; padding:7px; }
@@ -28,7 +28,8 @@
 .media-detail .lab-person h3,.media-detail .lab-related-card h3,.media-detail .lab-similar-grid h3 { overflow-wrap:anywhere; }
 .media-detail div.lab-person { cursor:default; }
 .media-detail div.lab-person:hover { transform:none; background:var(--panel); }
-.media-detail .media-provider-ratings { display:grid; gap:14px; margin-top:20px; font-size:1.1rem; }
+.media-detail .lab-public-score .lab-section-title h2 { font-size:1.3rem; }
+.media-detail .media-provider-ratings { display:grid; gap:14px; font-size:1.1rem; }
 .media-detail .media-provider-ratings p { display:flex; justify-content:space-between; gap:8px; color:var(--lab-muted); }
 .media-detail .media-provider-ratings strong { color:var(--bright); font-variant-numeric:tabular-nums; }
 .media-detail .lab-note-footer { justify-content:end; }
@@ -63,6 +64,7 @@
   .media-detail.concept-marquee .media-tracking .media-rating-row { grid-column:1; grid-row:2; }
   .media-detail .lab-tabs { overflow-x:auto; scrollbar-width:none; justify-content:start; }.media-detail .lab-tabs button { flex-shrink:0; }
   .media-detail .lab-genres a { padding:4px 7px; font-size:.9rem; }.media-detail .lab-genres { gap:5px; }
+  .media-detail .lab-public-score .lab-section-title h2 { font-size:1.6rem; }
   .lab-similar-grid .media-work-placeholder { width:100%; height:auto; aspect-ratio:2/3; }
   .media-detail .media-lightbox { gap:8px; padding:20px 8px; }
 }
