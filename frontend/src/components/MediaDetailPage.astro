@@ -2,6 +2,7 @@
 import Tracker from '../layouts/Tracker.astro';
 import StatusControl from './StatusControl.astro';
 import Icon from './Icon.astro';
+import ImageLightbox from './ImageLightbox.astro';
 import MediaDetailSeasons from './MediaDetailSeasons.astro';
 import MediaDetailPerson from './MediaDetailPerson.astro';
 import MediaDetailWork from './MediaDetailWork.astro';
@@ -87,7 +88,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
       </div>
     </div>
   </div>
-  <dialog class="media-lightbox" id="detail-lightbox" aria-labelledby="detail-lightbox-caption"><button class="media-square media-lightbox-close" type="button" data-detail-close-lightbox aria-label="Close image viewer"><Icon name="close"/></button><button class="media-square" type="button" data-detail-image-step="-1" aria-label="Previous image"><Icon name="chevron-left"/></button><img data-detail-lightbox-image alt=""/><button class="media-square" type="button" data-detail-image-step="1" aria-label="Next image"><Icon name="chevron-right"/></button><p id="detail-lightbox-caption"></p></dialog>
+  <ImageLightbox id="detail-lightbox" gallery/>
   <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&trackable&&title.related_pending,imagesAvailable:signedIn&&trackable,posters:[poster?.src,...title.posters].filter(Boolean),artwork})}/>
   <template data-detail-work-icons><span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span><Icon name="arrow-right"/></template>
 </article>:<div class="page-width"><p class="error-message" role="alert">{error||'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}

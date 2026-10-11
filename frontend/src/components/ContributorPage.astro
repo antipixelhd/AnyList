@@ -1,6 +1,7 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
 import Icon from './Icon.astro';
+import ImageLightbox from './ImageLightbox.astro';
 import BrowseCard from './BrowseCard.astro';
 import { tracker, artwork, statuses } from '../lib/tracker';
 import { metadataKey } from '../lib/catalogue-key';
@@ -46,7 +47,7 @@ if (data) {
     <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
-        <div class="contributor-portrait">{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></div>
+        <button class="contributor-portrait" type="button" data-portrait-image={artwork(data.image,'original')} data-portrait-caption={data.name} disabled={!portrait} aria-label={`Expand ${data.name} image`}>{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></button>
         {facts.length > 0 && <section class="contributor-facts" aria-label="Information"><h2>Information</h2><dl>{facts.map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>}
         {data.links.length > 0 && <nav class="contributor-links" aria-label="External links">{data.links.map(link => <a href={link.href} target="_blank" rel="noreferrer">{link.label}<Icon name="external" /></a>)}</nav>}
       </aside>
@@ -83,6 +84,7 @@ if (data) {
         </section>
       </div>
     </div>
+    <ImageLightbox id="contributor-image-viewer" imageKind={kind==='studio'?'logo':undefined}/>
     <script type="application/json" data-contributor-data set:html={JSON.stringify(data).replaceAll('<','\u003c')} />
   </article> : <div class="page-width contributor-error"><h1>{kind === 'studio' ? 'Studio' : 'Person'}</h1><p role="alert">{error}</p><a href="/browse">Browse titles</a></div>}
 </Tracker>

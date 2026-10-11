@@ -1,5 +1,6 @@
 import {showDialog,closeDialog,reveal} from './ui-motion';
 import {showToast} from './toasts';
+import {bindImageViewerDismissal} from './image-viewer';
 
 type Galleries = {posters:string[]; artwork:string[]};
 export function uniqueDetailImages(values:unknown[]):string[] {
@@ -14,12 +15,12 @@ export function uniqueDetailImages(values:unknown[]):string[] {
 
 export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) {
   const lightbox=root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
-  const image=lightbox.querySelector<HTMLImageElement>('[data-detail-lightbox-image]')!;
+  const image=lightbox.querySelector<HTMLImageElement>('[data-image-viewer-image]')!;
   const caption=lightbox.querySelector<HTMLElement>('p')!;
   const name=root.querySelector('.lab-heading h1')!.textContent!;
   const galleries:Galleries={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[])};
   let active:keyof Galleries='artwork',current=0,revision=0;
-  const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-detail-image-step]')];
+  const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-image-viewer-step]')];
   const showImage=(index:number)=>{
     const rows=galleries[active];
     if(!rows.length)return;
@@ -95,9 +96,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     showImage(galleries[active].indexOf(url));showDialog(lightbox);void loadImages();
   },{signal});
   if(new URLSearchParams(location.search).get('tab')==='artwork')void loadImages();
-  lightbox.querySelector('[data-detail-close-lightbox]')!.addEventListener('click',()=>{void closeDialog(lightbox);},{signal});
-  lightbox.addEventListener('click',event=>{if(event.target===lightbox)void closeDialog(lightbox);},{signal});
+  bindImageViewerDismissal(lightbox,signal);
   lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1));}},{signal});
-  arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.detailImageStep)),{signal}));
+  arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep)),{signal}));
   return loadImages;
 }

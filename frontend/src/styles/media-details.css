@@ -60,14 +60,6 @@
 .media-season-rating-body { display:grid; gap:16px; padding:22px; }
 .media-season-rating-body input { width:100%; }
 .media-detail .lab-episode-check:disabled { opacity:.4; cursor:default; }
-.media-lightbox { width:min(1200px,calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 40px); padding:24px; background:var(--panel); color:var(--bright); border:1px solid var(--border); border-radius:var(--lab-radius); grid-template-columns:40px minmax(0,1fr) 40px; align-items:center; gap:18px; }
-.media-lightbox[open] { display:grid; }
-.media-lightbox::backdrop { background:#000c; }
-.media-lightbox>img { max-width:100%; max-height:calc(100dvh - 160px); margin:auto; object-fit:contain; }
-.media-lightbox[data-gallery=posters]>img { height:min(600px,calc(100dvh - 160px)); aspect-ratio:2/3; }
-.media-lightbox[data-gallery=artwork]>img { width:100%; aspect-ratio:16/9; }
-.media-lightbox-close { position:absolute; right:14px; top:14px; z-index:1; }
-.media-lightbox p { grid-column:1/-1; text-align:center; font-size:1.2rem; }
 .media-scroll-reveal { translate:0 12px; opacity:.2; }
 @media (max-width:900px) {
   .media-detail .lab-game-offer { order:2; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
@@ -95,8 +87,6 @@
   .media-season-disclosure .lab-season-toolbar>.lab-season-expand { width:auto; }
   .media-detail .lab-season-card .lab-episode-check { width:44px; height:44px; }
   .lab-similar-grid .media-work-placeholder { width:100%; height:auto; aspect-ratio:2/3; }
-  .media-detail .media-lightbox { gap:8px; padding:20px 8px; }
-  .media-detail .media-lightbox[data-gallery=posters]>img { height:min(600px,calc(100dvh - 160px),calc((100vw - 146px) * 1.5)); }
 }
 @media (hover:none),(pointer:coarse) { .media-detail :is(.lab-person,.lab-related-card,.lab-similar-grid img,.lab-poster,.lab-gallery img,.lab-art-image img):hover { transform:none; }.media-detail .lab-person:hover { background:var(--panel); } }
 @media (prefers-reduced-motion:reduce) { .media-scroll-reveal { translate:none; opacity:1; } }
