@@ -1344,6 +1344,8 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: i
         except Exception:
             await db.rollback()
             raise HTTPException(502, 'Unable to load title metadata; try again later')
+    from core.media_credits import fill_screen_credits
+    await fill_screen_credits(db, media, viewer.id)
     return {'id':media.id}
 
 
@@ -1374,6 +1376,8 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     if viewer:
         from core.external_scores import refresh_external_scores
         await refresh_external_scores(db, media, viewer.id)
+        from core.media_credits import fill_screen_credits
+        await fill_screen_credits(db, media, viewer.id)
     entry = None
     friends = []
     if viewer:
