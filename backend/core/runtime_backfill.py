@@ -72,14 +72,17 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
         result["examined"] += 1
         data = dict(media.tmdb_data or {})
         runtime = positive_number(data.get("runtime"))
+        attempted_source = bool(runtime)
         failed = False
         try:
             if not runtime and api_key and media.media_type == MediaType.movie and media.tmdb_id:
+                attempted_source = True
                 response = await tmdb.get_movie(media.tmdb_id, api_key=api_key, cache_ttl=None)
                 if response.get("id") == media.tmdb_id:
                     runtime = positive_number(response.get("runtime"))
             elif not runtime and api_key and show and show.tmdb_id and media.tmdb_id:
                 if media.season_number is not None:
+                    attempted_source = True
                     key = (show.tmdb_id, media.season_number)
                     if key not in seasons:
                         seasons[key] = {}  # Failed seasons are not requested once per episode.
@@ -100,6 +103,7 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
                         CatalogueIdentity.namespace == 'tmdb.movie', CatalogueIdentity.external_id == str(media.tmdb_id)))
                     native = int(native) if native and native.isdecimal() else None
                 if native:
+                    attempted_source = True
                     if native not in tvdb_movies:
                         tvdb_movies[native] = {}
                         tvdb_movies[native] = await tvdb.get_movie(native, tvdb_api_key)
@@ -107,6 +111,7 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
                     if response.get('id') == native:
                         runtime = positive_number(response.get('runtime'))
             if not runtime and tvdb_api_key and show and show.tvdb_id and media.tvdb_id:
+                attempted_source = True
                 if show.tvdb_id not in tvdb_shows:
                     tvdb_shows[show.tvdb_id] = []
                     tvdb_shows[show.tvdb_id] = await tvdb.get_series_episodes(
@@ -125,6 +130,7 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
                 if not isinstance(values, list):
                     values = [values]
                 if not any(positive_number(v) for v in values):
+                    attempted_source = True
                     summary = await tvdb.get_series(show.tvdb_id, tvdb_api_key, cache_ttl=None)
                     average = positive_number(summary.get("averageRuntime"))
                     if summary.get("id") == show.tvdb_id and average:
@@ -141,8 +147,9 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
             result["recovered"] += 1
         else:
             result["unresolved"] += 1
-        data["runtime_backfill_attempted_at"] = now.isoformat()
-        data['runtime_metadata_version'] = VERSION
-        media.tmdb_data = data
+        if attempted_source:
+            data["runtime_backfill_attempted_at"] = now.isoformat()
+            data['runtime_metadata_version'] = VERSION
+            media.tmdb_data = data
     await db.commit()
     return result

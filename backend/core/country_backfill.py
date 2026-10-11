@@ -64,9 +64,11 @@ async def backfill_legacy_countries(db, api_key=None, *, tvdb_api_key=None, limi
             result["examined"] += 1
             kind = "series" if model is Show else row.media_type.value
             failed = False
+            attempted_source = False
             try:
                 response = {}
                 if api_key and row.tmdb_id:
+                    attempted_source = True
                     key = (kind, row.tmdb_id)
                     if key not in responses:
                         responses[key] = {}
@@ -79,6 +81,7 @@ async def backfill_legacy_countries(db, api_key=None, *, tvdb_api_key=None, limi
                     if raw.get("id") == row.tmdb_id:
                         response = {k: raw.get(k) for k in ("origin_country", "production_countries")}
                 if not country_codes(response.get("origin_country")) and kind == "series" and tvdb_api_key and row.tvdb_id:
+                    attempted_source = True
                     key = ("tvdb", row.tvdb_id)
                     if key not in responses:
                         responses[key] = {}
@@ -92,8 +95,9 @@ async def backfill_legacy_countries(db, api_key=None, *, tvdb_api_key=None, limi
             except Exception:
                 failed = True  # Provider exception strings can contain secrets.
             result["failed"] += int(failed)
-            data["country_backfill_attempted_at"] = now.isoformat()
-            row.tmdb_data = data
+            if attempted_source:
+                data["country_backfill_attempted_at"] = now.isoformat()
+                row.tmdb_data = data
             result["recovered" if movie_countries(data) else "unresolved"] += 1
         if result["examined"] >= limit:
             break
@@ -141,6 +145,7 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
         if not force and not due(row.attributes, now):
             continue
         result["examined"] += 1
+        attempted_source = bool(country_codes(row.attributes.get("countries")))
         try:
             async with db.begin_nested():
                 snapshots = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id == row.id,
@@ -150,13 +155,14 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
                     if snapshot.provider == "tmdb":
                         doc = catalogue_normalize.normalize_tmdb(raw, row.kind)
                     elif snapshot.provider == "tvdb":
-                        doc = catalogue_normalize.normalize_tvdb(raw)
+                        doc = catalogue_normalize.normalize_tvdb(raw, row.kind)
                     elif snapshot.provider == "igdb":
                         doc = catalogue_normalize.normalize_igdb(raw)
                     elif snapshot.provider == "openlibrary":
                         doc = openlibrary.normalize(raw)
                     else:
                         continue
+                    attempted_source = True
                     await apply_document_countries(db, doc, snapshot.provider)
                 ids = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == row.id)))
                 attrs = dict(row.attributes or {})
@@ -168,6 +174,13 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
                             if mapping:
                                 source = namespace.split(".")[0]
                                 try:
+                                    providers.validate(source, row.kind)
+                                except ProviderError as exc:
+                                    if exc.code == "not_configured":
+                                        continue
+                                    raise
+                                attempted_source = True
+                                try:
                                     doc, _ = await providers.detail(source, row.kind, mapping.external_id)
                                 except Exception:
                                     if source == "tmdb" and row.kind == "series":
@@ -178,26 +191,38 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
                                     break
                     countries = movie_countries(row.attributes)
                     if countries:
+                        attempted_source = True
                         catalogue.merge_fields(row, {"attributes": {"countries": countries,
                             "country_basis": "origin" if country_codes(row.attributes.get("origin_countries") or row.attributes.get("origin_country")) else "production"}},
                             "tmdb" if any(x.namespace.startswith("tmdb.") for x in ids) else "tvdb")
                 elif row.kind == "game" and not attrs.get("countries"):
                     mapping = next((x for x in ids if x.namespace == "igdb.game"), None)
                     if mapping:
-                        providers.validate("igdb", "game")
-                        # A country backfill needs companies only, not character/edition fan-outs.
-                        raw = await providers.igdb("games", "fields id,name,involved_companies.developer,involved_companies.publisher,involved_companies.company.id,involved_companies.company.name,involved_companies.company.country; "
-                                                   f"where id = {int(mapping.external_id)}; limit 1;")
-                        if raw and str(raw[0].get("id")) == mapping.external_id:
-                            await apply_document_countries(db, catalogue_normalize.normalize_igdb(raw[0]), "igdb")
+                        configured = True
+                        try:
+                            providers.validate("igdb", "game")
+                        except ProviderError as exc:
+                            if exc.code == "not_configured":
+                                configured = False
+                            else:
+                                raise
+                        if configured:
+                            attempted_source = True
+                            # A country backfill needs companies only, not character/edition fan-outs.
+                            raw = await providers.igdb("games", "fields id,name,involved_companies.developer,involved_companies.publisher,involved_companies.company.id,involved_companies.company.name,involved_companies.company.country; "
+                                                       f"where id = {int(mapping.external_id)}; limit 1;")
+                            if raw and str(raw[0].get("id")) == mapping.external_id:
+                                await apply_document_countries(db, catalogue_normalize.normalize_igdb(raw[0]), "igdb")
                 elif row.kind == "edition" and not attrs.get("publication_countries"):
                     countries = publication_countries(attrs)
                     if countries:
+                        attempted_source = True
                         catalogue.merge_fields(row, {"attributes": {"publication_countries": countries, "countries": countries,
                                                                   "country_basis": "publication"}}, "openlibrary")
                     else:
                         mapping = next((x for x in ids if x.namespace == "openlibrary.edition"), None)
                         isbn = next((x for x in ids if x.namespace in ("isbn.13", "isbn.10")), None)
+                        attempted_source = attempted_source or bool(mapping or isbn)
                         external_id = mapping.external_id if mapping else await providers.openlibrary_isbn(isbn.external_id) if isbn else None
                         if external_id:
                             raw = await openlibrary.get(providers.http, f"/books/{external_id}.json")
@@ -219,21 +244,27 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
                     await db.flush()
                     edition = await db.get(BookEdition, row.id)
                     if edition:
+                        attempted_source = True
                         await catalogue.rollup_book_countries(db, await db.get(CatalogueEntity, edition.work_id))
                 elif row.kind == "book":
                     mapping = next((x for x in ids if x.namespace == "openlibrary.book"), None)
                     if mapping and not row.attributes.get("countries"):
+                        attempted_source = True
                         raw = await openlibrary.get(providers.http, f"/works/{mapping.external_id}/editions.json",
                                                     params={"limit": openlibrary.EDITION_LIMIT, "offset": 0})
                         doc = openlibrary.normalize({"key": f"/works/{mapping.external_id}", "title": row.name,
                                                      "_editions": raw.get("entries", [])[:openlibrary.EDITION_LIMIT]})
                         await apply_document_countries(db, doc, "openlibrary")
                     await db.flush()
+                    attempted_source = True  # Reproject the retained edition relationships.
                     await catalogue.rollup_book_countries(db, row)
         except Exception:
             result["failed"] += 1
             # Savepoint rollback expires loaded fields; reload before marking retry.
             await db.refresh(row)
+        if not attempted_source:
+            result["unresolved"] += 1
+            continue
         row.attributes = {**row.attributes, "country_metadata_version": VERSION,
                           "country_backfill_attempted_at": now.isoformat()}
         result["recovered" if country_codes(row.attributes.get("countries")) else "unresolved"] += 1

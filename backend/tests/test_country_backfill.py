@@ -58,6 +58,20 @@ class CountryProjectionTests(unittest.TestCase):
 
 
 class LegacyCountryBackfillTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_credentials_allow_immediate_retry_after_configuration(self):
+        row = self.movie()
+        await backfill.backfill_legacy_countries(self.session([row]))
+        self.assertNotIn('country_backfill_attempted_at', row.tmdb_data)
+        with patch.object(backfill.tmdb, 'get_movie', AsyncMock(return_value={'id':1, 'origin_country':['US']})) as fetch:
+            await backfill.backfill_legacy_countries(self.session([row]), 'configured-key')
+        fetch.assert_awaited_once()
+        self.assertEqual(row.tmdb_data['origin_country'], ['US'])
+
+    async def test_tvdb_only_key_does_not_consume_movie_retry_window(self):
+        row = self.movie()
+        await backfill.backfill_legacy_countries(self.session([row]), tvdb_api_key='configured-key')
+        self.assertNotIn('country_backfill_attempted_at', row.tmdb_data)
+
     def session(self, movies, shows=()):
         return Row(scalars=AsyncMock(side_effect=[movies, shows]), commit=AsyncMock())
 

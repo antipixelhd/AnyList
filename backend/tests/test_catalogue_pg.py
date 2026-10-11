@@ -234,6 +234,41 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((len(actors), actors[0]["titles"]), (1, 1))
             self.assertEqual(actors[0]["top_titles"][0]["character_image"], "https://artworks.thetvdb.com/role.jpg")
 
+    async def test_cached_tvdb_movie_country_replays_without_credentials(self):
+        from core.country_backfill import backfill_catalogue_countries
+        from core.catalogue_providers import CatalogueProviders
+        raw = {'id':84, 'name':'Cached film', 'originalCountry':'usa'}
+        adapter = CatalogueProviders()
+        adapter.tmdb_key = adapter.tvdb_key = None
+        adapter.detail = AsyncMock()
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db, normalize_tvdb(raw, 'movie'), 'tvdb')
+            work.attributes = {}
+            db.add(MetadataSnapshot(entity_id=work.id, provider='tvdb', kind='movie', external_id='84', payload=raw))
+            await db.commit()
+            result = await backfill_catalogue_countries(db, adapter)
+            await db.refresh(work)
+            self.assertEqual(work.attributes['countries'], ['US'])
+            self.assertEqual(result['recovered'], 1)
+        adapter.detail.assert_not_awaited()
+
+    async def test_catalogue_without_credentials_does_not_consume_retry_window(self):
+        from core.country_backfill import backfill_catalogue_countries
+        from core.catalogue_providers import CatalogueProviders
+        adapter = CatalogueProviders()
+        adapter.tmdb_key = adapter.tvdb_key = None
+        adapter.detail = AsyncMock(return_value=(normalize_tmdb({'id':42, 'title':'Film', 'origin_country':['US']}, 'movie'), {}))
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db, normalize_tmdb({'id':42, 'title':'Film'}, 'movie'), 'tmdb')
+            await db.commit()
+            await backfill_catalogue_countries(db, adapter)
+            self.assertNotIn('country_backfill_attempted_at', work.attributes)
+            adapter.detail.assert_not_awaited()
+            adapter.tmdb_key = 'configured-key'
+            await backfill_catalogue_countries(db, adapter)
+            self.assertEqual(work.attributes['countries'], ['US'])
+        adapter.detail.assert_awaited_once()
+
     async def test_country_backfill_game_fetch_book_isbn_and_protected_origin(self):
         from types import SimpleNamespace
         from unittest.mock import patch

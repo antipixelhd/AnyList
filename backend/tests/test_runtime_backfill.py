@@ -26,6 +26,25 @@ def session(rows):
 
 
 class RuntimeBackfillTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_credentials_do_not_consume_retry_window(self):
+        row = movie()
+        db = session([(row, None)])
+        result = await backfill.backfill_history_runtimes(db)
+        self.assertEqual(result['unresolved'], 1)
+        self.assertNotIn('runtime_backfill_attempted_at', row.tmdb_data)
+        with patch.object(backfill.tmdb, 'get_movie', AsyncMock(return_value={'id':10, 'runtime':100})) as fetch:
+            await backfill.backfill_history_runtimes(db, 'configured-key')
+        fetch.assert_awaited_once()
+        self.assertEqual(row.runtime, 100)
+
+    async def test_unusable_provider_identity_does_not_consume_retry_window(self):
+        row = movie()
+        row.tmdb_id = None
+        with patch.object(backfill.tmdb, 'get_movie', AsyncMock()) as fetch:
+            await backfill.backfill_history_runtimes(session([(row,None)]), 'configured-key')
+        fetch.assert_not_awaited()
+        self.assertNotIn('runtime_backfill_attempted_at', row.tmdb_data)
+
     async def test_cached_runtime_needs_no_provider_and_retains_metadata(self):
         row = movie(tmdb_data={"runtime": 98, "tracking_keep": True})
         db = session([(row, None)])
