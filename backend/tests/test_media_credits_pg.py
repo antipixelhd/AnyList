@@ -112,19 +112,24 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit).where(
                 CatalogueCredit.work_id == other_id)), 0)
 
-    async def test_signed_in_detail_repairs_but_guest_remains_read_only(self):
+    async def test_first_render_is_cached_and_signed_in_background_repairs_missing_credits(self):
         self.reply(movie_payload())
         async with self.Session() as db:
             media = await self.new_movie(db)
             media_id = media.id
             self.viewer = await db.get(User, self.user_id)
-        with patch('core.media_credits.CatalogueProviders', return_value=self.providers):
+        with patch('core.media_credits.CatalogueProviders', return_value=self.providers), patch(
+            'core.screen_character_art.fill_character_art',AsyncMock(return_value={'state':'ready','pending':False})):
             self.viewer = None
             self.assertEqual((await self.client.get(f'/tracking/title/{media_id}')).json()['people'], [])
             self.providers.detail.assert_not_awaited()
             async with self.Session() as db:
                 self.viewer = await db.get(User, self.user_id)
             data = (await self.client.get(f'/tracking/title/{media_id}')).json()
+            self.assertEqual(data['people'], [])
+            self.providers.detail.assert_not_awaited()
+            self.app.dependency_overrides[get_current_user] = lambda: self.viewer
+            data = (await self.client.get(f'/tracking/title/{media_id}/people')).json()
             self.assertEqual(len(data['people']), 2)
         self.providers.detail.assert_awaited_once()
 

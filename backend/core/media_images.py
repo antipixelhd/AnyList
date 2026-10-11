@@ -75,6 +75,13 @@ def provider_images(raw, provider='tmdb'):
 
 def screen_images(media, details):
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
+    retry = 0
+    try:
+        retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)
+    except (TypeError, ValueError):
+        pass
+    status = {'state': 'deferred' if retry else 'ready' if cache.get('version') == IMAGE_POLICY_VERSION else 'pending',
+              'error': cache.get('last_error') if retry else None, 'retry_after': retry}
     primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
     if cache.get('version') == IMAGE_POLICY_VERSION:
         primary = image(cache.get('primary_poster')) or primary
@@ -84,10 +91,10 @@ def screen_images(media, details):
         backdrop = next((url for url in artwork if image_key(url) == image_key(preferred)), next(iter(artwork), None))
         return {'poster': primary or next(iter(posters), None), 'backdrop': backdrop,
                 'posters': posters, 'artwork': artwork,
-                'image_replacements': cache.get('replacements') or {}}
+                'image_replacements': cache.get('replacements') or {}, 'image_status': status}
     # Never paint the old unfiltered gallery while a new policy is being filled.
     return {'poster': primary, 'backdrop': None, 'posters': unique_images([primary]),
-            'artwork': [], 'image_replacements': {}}
+            'artwork': [], 'image_replacements': {}, 'image_status': status}
 
 
 async def fill_screen_images(db, media, api_key):
@@ -141,9 +148,13 @@ async def _fill_screen_images(db, media, api_key):
                  'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
     except Exception as error:
         logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)
-        cache['retry_after'] = (now + timedelta(minutes=10)).isoformat()
+        delay = 600
+        if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429:
+            from core.catalogue_providers import retry_after_seconds
+            delay = max(delay, retry_after_seconds(error.response.headers.get('Retry-After', ''), delay))
+        cache['retry_after'] = (now + timedelta(seconds=delay)).isoformat()
         cache['retry_version'] = IMAGE_POLICY_VERSION
-        cache['last_error'] = type(error).__name__
+        cache['last_error'] = 'rate_limited' if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429 else 'unavailable'
     await db.execute(update(Media).where(Media.id == media.id).values(
         tmdb_data=func.coalesce(Media.tmdb_data, literal({}, type_=JSONB)).op('||')({'_anylist_images': cache})))
     await db.commit()

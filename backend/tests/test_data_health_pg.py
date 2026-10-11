@@ -282,15 +282,17 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
             'core.data_health_repairs.backfill_history_runtimes',AsyncMock(return_value={'examined':0,'failed':0})) as runtimes, patch(
             'core.data_health_repairs.backfill_legacy_countries',AsyncMock(return_value={'examined':0,'failed':0})), patch(
             'core.data_health_repairs.backfill_catalogue_countries',AsyncMock(return_value={'examined':0,'failed':0})) as countries, patch(
-            'core.data_health_repairs.backfill_tvmaze_images',AsyncMock(return_value={'examined':0,'failed':0})) as images:
+            'core.data_health_repairs.backfill_tvmaze_images',AsyncMock(return_value={'examined':0,'failed':0})) as images, patch(
+            'core.screen_character_art.backfill_character_art',AsyncMock(return_value={'examined':0,'failed':0})) as tvdb_images:
             await run_job(job_id,factory=self.Session,bind=self.engine)
         self.assertEqual(runtimes.await_args.kwargs['limit'],50)
         self.assertEqual(countries.await_args.kwargs['missing_only'],True)
         self.assertEqual(images.await_args.kwargs['limit'],10)
+        self.assertEqual(tvdb_images.await_args.kwargs['limit'],10)
         async with self.Session() as db:
             job=await db.get(SyncJob,job_id)
             self.assertEqual(job.status,SyncStatus.completed)
-            self.assertEqual(job.processed_items,5)
+            self.assertEqual(job.processed_items,6)
             self.assertEqual(job.errors,1)
 
     async def test_unnamed_voice_credits_are_unavailable_metadata_not_broken_links(self):

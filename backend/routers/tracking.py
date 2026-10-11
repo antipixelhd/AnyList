@@ -1371,13 +1371,8 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
         raise HTTPException(404, "Title not found")
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):
         raise HTTPException(404,"Title not found")
-    # Logged-out visitors only read the shared cache. Signed-in visits may
-    # refresh stale scores using the user's key, then the administrator key.
-    if viewer:
-        from core.external_scores import refresh_external_scores
-        await refresh_external_scores(db, media, viewer.id)
-        from core.media_credits import fill_screen_credits
-        await fill_screen_credits(db, media, viewer.id)
+    # First render reads local metadata only. Optional provider enrichment is
+    # requested separately after the page becomes interactive.
     entry = None
     friends = []
     if viewer:
@@ -1418,6 +1413,10 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     details = await screen_related(db, media, details)
     from core.media_images import screen_images
     details.update(screen_images(media, details))
+    from core.screen_character_art import cached_character_status
+    details['character_status'] = await cached_character_status(db, media.id)
+    from core.external_scores import effective_mdblist_key
+    details['scores_pending'] = bool(viewer and await effective_mdblist_key(db, viewer.id))
     favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
     return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
@@ -1434,8 +1433,45 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
         raise HTTPException(404, 'Title not found')
     from core.media_details import screen_work
     from core.media_related import catalogue_related, fill_screen_related, screen_related
-    await fill_screen_related(db, media, await settings_store.get_user_tmdb_key(db, viewer.id))
-    return await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)))
+    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    await fill_screen_related(db, media, key)
+    data = await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)))
+    if not key:
+        data['related_status'] = {'state':'unavailable','retry_after':0,'error':'missing_key'}
+    return data
+
+
+@router.get('/title/{media_id}/people')
+async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+                       viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    media = await db.get(Media, media_id)
+    if not media or media.media_type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(404, 'Title not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Title not found')
+    from core.media_credits import fill_screen_credits
+    from core.screen_character_art import fill_character_art
+    from core.media_details import screen_work, work_details
+    credits = await fill_screen_credits(db, media, viewer.id)
+    status = await fill_character_art(db, media, viewer.id)
+    details = await work_details(db, await screen_work(db, media))
+    return {'people': details['people'], 'organizations': details['organizations'],
+            'credits_status': credits, 'character_status': status}
+
+
+@router.get('/title/{media_id}/scores')
+async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+                       viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    media = await db.get(Media, media_id)
+    if not media or media.media_type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(404, 'Title not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Title not found')
+    from core.external_scores import refresh_score_status
+    state = await refresh_score_status(db, media, viewer.id)
+    values = {key: value for key, value in tracking_projection.media_data(media).items()
+              if key in ('imdb_score', 'rt_critic_score', 'rt_audience_score', 'external_scores_updated_at')}
+    return {**values, 'score_status': state}
 
 
 @router.get('/title/{media_id}/images')
@@ -1448,8 +1484,12 @@ async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
         raise HTTPException(404, 'Title not found')
     from core.media_details import screen_work, work_details
     from core.media_images import fill_screen_images, screen_images
-    await fill_screen_images(db, media, await settings_store.get_user_tmdb_key(db, viewer.id))
-    return screen_images(media, await work_details(db, await screen_work(db, media)))
+    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    await fill_screen_images(db, media, key)
+    data = screen_images(media, await work_details(db, await screen_work(db, media)))
+    if not key:
+        data['image_status'] = {'state': 'unavailable', 'error': 'missing_key', 'retry_after': 0}
+    return data
 
 
 @router.post('/title/{media_id}/refresh-episodes')

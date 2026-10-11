@@ -619,6 +619,10 @@ async def _show_metadata_refresher():
                 character_images = await backfill_tvmaze_images(db, CatalogueProviders(
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key))
                 log.info("Character metadata backfill: %s; TVmaze images: %s", character_coverage, character_images)
+                from core.screen_character_art import backfill_character_art
+                tvdb_characters = await backfill_character_art(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key))
+                log.info("TVDB character artwork backfill: %s", tvdb_characters)
                 from core.studio_artwork import backfill_studio_artwork
                 studio_artwork = await backfill_studio_artwork(db, api_key, limit=25)
                 log.info("Studio logo banner backfill: %s", studio_artwork)

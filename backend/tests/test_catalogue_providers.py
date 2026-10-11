@@ -318,6 +318,12 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
                     "itad", "GET", "https://api.isthereanydeal.com/test"
                 )
             self.assertEqual(ctx.exception.retry_after, 300)
+            # A different title must share the cooldown rather than hit the provider again.
+            with self.assertRaises(providers.ProviderError) as cooled:
+                await providers.ProviderHTTP(client).request(
+                    'itad', 'GET', 'https://api.isthereanydeal.com/another-title'
+                )
+            self.assertGreater(cooled.exception.retry_after, 290)
 
     async def test_pagination_is_bounded_and_coverage_explicit(self):
         adapter = providers.CatalogueProviders()

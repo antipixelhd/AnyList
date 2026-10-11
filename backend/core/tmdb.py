@@ -128,10 +128,13 @@ async def _get(
             async with httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT)) as client:
                 r = await client.get(url, headers=headers or {}, params=params)
                 if r.status_code == 429:
-                    wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
+                    from core.catalogue_providers import retry_after_seconds
+                    wait = retry_after_seconds(r.headers.get("Retry-After", ''), 2 ** (attempt + 1))
                     last_exc = httpx.HTTPStatusError(
                         "429 Too Many Requests", request=r.request, response=r
                     )
+                    if wait > 5:
+                        raise last_exc
                     await asyncio.sleep(wait)
                     continue
                 r.raise_for_status()

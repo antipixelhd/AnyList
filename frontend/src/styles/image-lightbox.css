@@ -14,6 +14,16 @@
 .image-lightbox:not([data-gallery])>img { grid-column:1/-1; height:min(600px,calc(100dvh - 160px)); }
 .image-lightbox[data-image-kind=logo]>img { background:#e9eef5; padding:24px; border-radius:8px; }
 .image-lightbox p { grid-column:1/-1; text-align:center; font-size:1.2rem; }
+.image-viewer-loading { grid-column:2; grid-row:1; width:100%; aspect-ratio:16/9; }
+.image-lightbox[data-gallery=posters] .image-viewer-loading { height:min(600px,calc(100dvh - 160px)); width:auto; aspect-ratio:2/3; margin:auto; }
+.image-viewer-slots { grid-column:1/-1; display:flex; justify-content:center; gap:8px; overflow-x:auto; padding:4px; }
+.image-viewer-slots button { flex:0 0 44px; width:44px; height:62px; padding:0; border:2px solid transparent; border-radius:4px; overflow:hidden; cursor:pointer; background:var(--field); }
+.image-viewer-slots button[aria-current=true] { border-color:var(--blue); }
+.image-viewer-slots img { width:100%; height:100%; object-fit:cover; }
+.image-lightbox[data-gallery=artwork] .image-viewer-slots button { flex-basis:72px; width:72px; height:42px; }
+.image-lightbox [data-image-viewer-status] { grid-column:1/-1; text-align:center; }
+.image-lightbox[data-gallery]>img { max-height:calc(100dvh - 250px); }
+.image-lightbox[data-gallery=posters]>img,.image-lightbox[data-gallery=posters] .image-viewer-loading { height:min(540px,calc(100dvh - 250px)); }
 .image-lightbox .image-viewer-button { width:40px; height:40px; display:grid; place-items:center; padding:0; border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--muted); cursor:pointer; }
 .image-lightbox .image-viewer-button .ui-icon { width:15px; height:15px; }
 .image-lightbox .image-viewer-close { position:absolute; right:14px; top:14px; z-index:1; }
@@ -22,5 +32,7 @@
   .image-lightbox { gap:8px; padding:20px 8px; }
   .image-lightbox .image-viewer-button { width:44px; height:44px; }
   .image-lightbox[data-gallery=posters]>img { height:min(600px,calc(100dvh - 160px),calc((100vw - 146px) * 1.5)); }
+  .image-lightbox[data-gallery=posters] .image-viewer-loading { height:min(600px,calc(100dvh - 160px),calc((100vw - 146px) * 1.5)); }
+  .image-viewer-slots { justify-content:start; }
   .image-lightbox:not([data-gallery])>img { height:auto; max-height:calc(100dvh - 160px); }
 }

@@ -4,6 +4,7 @@ import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
 import { mountDetailCast } from './media-detail-cast';
+import {detailBackground,type DetailLoadState} from './detail-background';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
@@ -16,16 +17,33 @@ export function mountMediaDetail() {
   if (!root) return;
   pageListeners = new AbortController();
   const {signal} = pageListeners;
-  mountDetailCast(root,signal);
   document.addEventListener('astro:before-swap', () => pageListeners?.abort(), {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
+  mountDetailCast(root,signal,info);
+  if(info.backgroundAvailable){
+    const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
+    const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{
+      root.querySelectorAll<HTMLElement>('[data-detail-score]').forEach(node=>{
+        const field=node.dataset.detailScore!;
+        if(!(field in data))return;
+        const value=data[field];node.classList.remove('detail-value-skeleton');
+        node.textContent=value==null||value===0?'—':field.startsWith('rt_')?`${Math.round(value)}%`:String(Number(value.toFixed(1)));
+      });
+      return data.score_status as DetailLoadState;
+    },(state,error)=>{
+      if(!scoreStatus)return;
+      scoreStatus.hidden=state!=='retry';
+      if(state==='retry'){
+        scoreStatus.replaceChildren(document.createTextNode(error||'Extra ratings are temporarily unavailable. Retrying automatically.'));
+        const button=document.createElement('button');button.type='button';button.className='lab-text-button';button.textContent='Retry';button.addEventListener('click',()=>void scores.retry(),{signal});scoreStatus.append(' ',button);
+      }
+    });
+    scores.start();
+  }
   if(info.relatedPending){
     const icons=root.querySelector<HTMLTemplateElement>('[data-detail-work-icons]')!.content;
-    void fetch(`/api/proxy/tracking/title/${info.id}/related`,{signal}).then(async response=>{
-      if(!response.ok)return;
-      const data=await response.json();
-      if(signal.aborted)return;
+    const related=detailBackground<any>(`/api/proxy/tracking/title/${info.id}/related`,signal,data=>{
       for(const field of ['relations','similar'] as const){
         const section=root.querySelector<HTMLElement>(`[data-detail-${field==='relations'?'related':'similar'}]`)!;
         const grid=section.querySelector<HTMLElement>('[class$="-grid"]')!;
@@ -49,7 +67,11 @@ export function mountMediaDetail() {
         grid.replaceChildren(...cards);section.hidden=!cards.length;
         if(cards.length&&section.getBoundingClientRect().top<innerHeight&&section.getBoundingClientRect().bottom>0)reveal(section);
       }
-    }).catch(()=>{});
+      return data.related_status;
+    },(state,error)=>{
+      if(state==='retry')showToast({message:error||'Related titles are temporarily unavailable. Retrying automatically.',kind:'error',key:'detail-related'});
+    });
+    related.start();
   }
   let title = editorStore.find(info.id);
   const synopsis = root.querySelector<HTMLElement>('[data-detail-synopsis]');

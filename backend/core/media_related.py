@@ -162,7 +162,15 @@ async def screen_related(db, media, details):
     relations = unique(relations)
     excluded = {(row['type'], row['url']) for row in relations}
     similar = unique([row for raw in recommendations if isinstance(raw, dict) and (row := card(raw))] + list(details.get('similar') or []), excluded)[:12]
-    return {**details, 'relations':relations, 'similar':similar, 'related_pending':related_pending(media)}
+    retry = 0
+    try:
+        retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)
+    except (ValueError, TypeError):
+        pass
+    pending = related_pending(media)
+    return {**details, 'relations':relations, 'similar':similar, 'related_pending':pending,
+            'related_status': {'state':'deferred' if retry else 'pending' if pending else 'ready',
+                               'error':cache.get('last_error') if retry else None, 'retry_after':retry}}
 
 
 async def fill_screen_related(db, media, api_key):
@@ -191,8 +199,16 @@ async def fill_screen_related(db, media, api_key):
                 raise ValueError('Invalid recommendation response')
             cache['recommendations'] = result
         cache.pop('retry_after', None)
-    except Exception:
-        cache['retry_after'] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        cache.pop('last_error', None)
+    except Exception as error:
+        import httpx
+        delay = 600
+        limited = isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429
+        if limited:
+            from core.catalogue_providers import retry_after_seconds
+            delay = max(delay, retry_after_seconds(error.response.headers.get('Retry-After',''),delay))
+        cache['last_error'] = 'rate_limited' if limited else 'unavailable'
+        cache['retry_after'] = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
     await db.execute(update(Media).where(Media.id == media.id).values(tmdb_data=func.coalesce(Media.tmdb_data, literal({}, type_=JSONB)).op('||')({'_anylist_related':cache})))
     await db.commit()
     await db.refresh(media)

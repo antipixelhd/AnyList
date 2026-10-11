@@ -505,6 +505,16 @@ def refresh_result(row, status):
     }
 
 
+def background_status(row, state, now=None):
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    retry = row.next_attempt_at or row.lease_until
+    seconds = max(0, int((retry - now).total_seconds()) + 1) if retry else 0
+    if row.lease_token:
+        seconds = min(5, seconds)
+    return {'state': state, 'error': row.error_code, 'retry_after': seconds,
+            'pending': (row.coverage or {}).get('pending', False), 'images': (row.coverage or {}).get('images', 0)}
+
+
 def cached_refresh_status(row, now):
     if row.lease_until and row.lease_until > now:
         return "refreshing"

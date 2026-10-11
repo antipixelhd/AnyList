@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update, func
 from sqlalchemy.dialects.postgresql import insert
 
 from core.config import settings
@@ -154,9 +154,10 @@ class ProviderHTTP:
                 ).scalar_one()
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
                 if row.next_request_at and row.next_request_at > now:
-                    await asyncio.sleep(
-                        min(2, (row.next_request_at - now).total_seconds())
-                    )
+                    delay = (row.next_request_at - now).total_seconds()
+                    if delay > 5:
+                        raise ProviderError('rate_limited', delay)
+                    await asyncio.sleep(delay)
                 month = now.strftime("%Y-%m")
                 if row.month != month:
                     row.month, row.request_count = month, 0
@@ -189,13 +190,25 @@ class ProviderHTTP:
         else:
             lock = _local_locks.setdefault(provider, asyncio.Lock())
             async with lock:
-                await asyncio.sleep(
-                    max(0, _local_next.get(provider, 0) - time.monotonic())
-                )
+                delay = max(0, _local_next.get(provider, 0) - time.monotonic())
+                if delay > 5:
+                    raise ProviderError('rate_limited', delay)
+                await asyncio.sleep(delay)
                 try:
                     yield
                 finally:
                     _local_next[provider] = time.monotonic() + interval
+
+    async def defer(self, provider, delay):
+        """Share cooldowns; callers return a retry state without a long wait."""
+        if self.session_factory:
+            async with self.session_factory() as db:
+                deadline = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=delay)
+                await db.execute(update(MetadataProviderBudget).where(MetadataProviderBudget.provider == provider)
+                    .values(next_request_at=func.greatest(MetadataProviderBudget.next_request_at, deadline)))
+                await db.commit()
+        else:
+            _local_next[provider] = max(_local_next.get(provider, 0), time.monotonic() + delay)
 
     async def request(self, provider, method, url, *, cache=True, **kwargs):
         # Cache keys are digests, never raw credentials. Max 128 responses, 10m.
@@ -239,6 +252,8 @@ class ProviderHTTP:
                         delay = retry_after_seconds(
                             headers.get("Retry-After", ""), 2**attempt
                         )
+                        if status == 429:
+                            await self.defer(provider, delay)
                         if attempt == 2 or delay > 5:
                             raise ProviderError(
                                 "rate_limited" if status == 429 else "unavailable",
