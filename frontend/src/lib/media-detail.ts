@@ -2,6 +2,7 @@ import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
 import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
+import { mountDetailImages } from './media-detail-images';
 import { initializeScrollMotion } from './scroll-motion';
 import { setupScoreSteppers } from './scoreStepper';
 import { showToast } from './toasts';
@@ -57,6 +58,7 @@ export function mountMediaDetail() {
     });
   }));
 
+  let loadDetailImages=()=>Promise.resolve();
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!,signal);
@@ -70,6 +72,7 @@ export function mountMediaDetail() {
     const url = new URL(location.href);
     if (id === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab',id);
     history.replaceState(history.state,'',url);
+    if(id==='artwork')void loadDetailImages();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
   tabs.forEach((tab,index) => {
@@ -153,25 +156,7 @@ export function mountMediaDetail() {
     finally { button.disabled=false; button.removeAttribute('aria-busy'); }
   },{signal});
 
-  const lightbox=root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
-  const image=lightbox.querySelector<HTMLImageElement>('[data-detail-lightbox-image]')!;
-  const caption=lightbox.querySelector<HTMLElement>('p')!;
-  const images=[...root.querySelectorAll<HTMLButtonElement>('[data-detail-image]')];
-  const unique=[...new Map(images.map(button=>[button.dataset.detailImage!,button])).values()];
-  let currentImage=0, imageRevision=0;
-  const showImage=(index:number)=>{
-    currentImage=(index+unique.length)%unique.length;
-    const button=unique[currentImage]; const revision=++imageRevision;
-    image.src=button.dataset.detailImage!; image.alt=button.dataset.detailCaption || '';
-    caption.textContent=image.alt;
-    lightbox.querySelectorAll<HTMLButtonElement>('[data-detail-image-step]').forEach(arrow=>arrow.hidden=unique.length<2);
-    void image.decode().catch(()=>{}).then(()=>{if(revision===imageRevision&&!signal.aborted)reveal(image);});
-  };
-  images.forEach(button=>button.addEventListener('click',()=>{showImage(unique.findIndex(item=>item.dataset.detailImage===button.dataset.detailImage));showDialog(lightbox);},{signal}));
-  lightbox.querySelector('[data-detail-close-lightbox]')!.addEventListener('click',()=>{void closeDialog(lightbox);},{signal});
-  lightbox.addEventListener('click',event=>{if(event.target===lightbox)void closeDialog(lightbox);},{signal});
-  lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(currentImage+(event.key==='ArrowLeft'?-1:1));}},{signal});
-  lightbox.querySelectorAll<HTMLButtonElement>('[data-detail-image-step]').forEach(button=>button.addEventListener('click',()=>showImage(currentImage+Number(button.dataset.detailImageStep)),{signal}));
+  loadDetailImages=mountDetailImages(root,info,signal);
 
   const seasons=root.querySelector<HTMLElement>('.seasons-section');
   if (seasons) setupScoreSteppers(seasons);

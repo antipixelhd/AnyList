@@ -64,6 +64,8 @@
 .media-lightbox[open] { display:grid; }
 .media-lightbox::backdrop { background:#000c; }
 .media-lightbox>img { max-width:100%; max-height:calc(100dvh - 160px); margin:auto; object-fit:contain; }
+.media-lightbox[data-gallery=posters]>img { height:min(600px,calc(100dvh - 160px)); aspect-ratio:2/3; }
+.media-lightbox[data-gallery=artwork]>img { width:100%; aspect-ratio:16/9; }
 .media-lightbox-close { position:absolute; right:14px; top:14px; z-index:1; }
 .media-lightbox p { grid-column:1/-1; text-align:center; font-size:1.2rem; }
 .media-scroll-reveal { translate:0 12px; opacity:.2; }

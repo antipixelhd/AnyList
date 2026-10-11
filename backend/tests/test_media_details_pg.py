@@ -33,6 +33,44 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.viewer = await db.get(User, self.user_id)
         self.app.dependency_overrides[get_current_user] = lambda: self.viewer
 
+    async def test_image_cache_is_separate_non_destructive_and_reused(self):
+        self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/images')).status_code, 401)
+        await self.login()
+        async with self.Session() as db:
+            media = await db.get(Media, self.media_id)
+            media.tmdb_id = 99
+            media.tmdb_data = {'protected_fixture': 'keep'}
+            await db.commit()
+        raw = {'id':99, 'posters':[{'file_path':'/poster.jpg','aspect_ratio':.667}],
+               'backdrops':[{'file_path':'/scene.jpg','aspect_ratio':1.778}]}
+        with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
+            data = (await self.client.get(f'/tracking/title/{self.media_id}/images')).json()
+            self.assertIn('https://image.tmdb.org/t/p/original/poster.jpg', data['posters'])
+            self.assertEqual(data['artwork'], ['https://image.tmdb.org/t/p/original/scene.jpg'])
+            await self.client.get(f'/tracking/title/{self.media_id}/images')
+            fetch.assert_awaited_once()
+        async with self.Session() as db:
+            media = await db.get(Media, self.media_id)
+            self.assertEqual(media.tmdb_data['protected_fixture'], 'keep')
+        projected = (await self.client.get(f'/tracking/title/{self.media_id}')).json()
+        self.assertEqual(projected['artwork'], data['artwork'])
+
+    async def test_image_provider_failure_preserves_cache_and_cools_down(self):
+        await self.login()
+        async with self.Session() as db:
+            media = await db.get(Media, self.media_id)
+            media.tmdb_id = 99
+            media.tmdb_data = {'_anylist_images': {'posters':['https://example.test/old.jpg']}}
+            await db.commit()
+        with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_title_images', AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
+            for _ in range(2):
+                response = await self.client.get(f'/tracking/title/{self.media_id}/images')
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('https://example.test/old.jpg', response.json()['posters'])
+            fetch.assert_awaited_once()
+
     async def test_episode_rows_use_canonical_catalogue_and_private_watch_history(self):
         await self.login()
         async with self.Session() as db:

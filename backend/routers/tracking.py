@@ -1404,6 +1404,8 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
     from core.media_related import screen_related
     details = await screen_related(db, media, details)
+    from core.media_images import screen_images
+    details.update(screen_images(media, details))
     return {**tracking_projection.media_data(media), **details, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
@@ -1421,6 +1423,20 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
     from core.media_related import catalogue_related, fill_screen_related, screen_related
     await fill_screen_related(db, media, await settings_store.get_user_tmdb_key(db, viewer.id))
     return await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)))
+
+
+@router.get('/title/{media_id}/images')
+async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+                       viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    media = await db.get(Media, media_id)
+    if not media or media.media_type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(404, 'Title not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Title not found')
+    from core.media_details import screen_work, work_details
+    from core.media_images import fill_screen_images, screen_images
+    await fill_screen_images(db, media, await settings_store.get_user_tmdb_key(db, viewer.id))
+    return screen_images(media, await work_details(db, await screen_work(db, media)))
 
 
 @router.post('/title/{media_id}/refresh-episodes')

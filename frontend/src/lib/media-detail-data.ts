@@ -8,7 +8,7 @@ export type DetailMedia = EditorTitle & {
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
-  people: DetailPerson[]; organizations: DetailPerson[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
+  people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
   tmdb_score?: number | null; imdb_score?: number | null; rt_critic_score?: number | null; rt_audience_score?: number | null;
@@ -20,7 +20,7 @@ export function localMediaId(value: string | undefined) {
 }
 export function prepareDetail(raw: Record<string, any>): DetailMedia {
   const detail: Record<string, any> = {...raw, entry:raw.entry || null};
-  for (const field of ['genres','seasons','friends','people','organizations','artwork','relations','similar','sources','editions','releases','prices','countries']) {
+  for (const field of ['genres','seasons','friends','people','organizations','posters','artwork','relations','similar','sources','editions','releases','prices','countries']) {
     detail[field] = Array.isArray(raw[field]) ? raw[field] : [];
   }
   detail.similar=detail.similar.filter((work:any)=>work.type===raw.type);

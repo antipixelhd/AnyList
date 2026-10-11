@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 
 from core.catalogue_normalize import image
+from core.media_images import provider_images, unique_images
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
     CatalogueLegacyLink, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
@@ -39,7 +40,7 @@ async def screen_work(db, media):
 
 async def work_details(db, work):
     if work is None:
-        return {'people': [], 'organizations': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
+        return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
         CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id)
         .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id).limit(500))).all()
@@ -65,25 +66,22 @@ async def work_details(db, work):
             row['characters'].append(credit.character_label)
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
+    posters = [work.image_url, *(attrs.get('posters') or [])]
     snapshots = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id == work.id)
         .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6)))
     sources = []
     for snapshot in snapshots:
         raw = snapshot.payload or {}
         images = raw.get('images') or {}
-        if isinstance(images, dict):
-            for backdrop in images.get('backdrops') or []:
-                if isinstance(backdrop, dict):
-                    path = backdrop.get('file_path')
-                    url = f'https://image.tmdb.org/t/p/w1280{path}' if snapshot.provider == 'tmdb' and isinstance(path, str) and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path) else image(path)
-                    if url:
-                        artwork.append(url)
+        variants = provider_images(images, snapshot.provider)
+        posters.extend(variants['posters'])
+        artwork.extend(variants['artwork'])
         if url := public_url(raw.get('homepage') or raw.get('url')):
             sources.append({'name': snapshot.provider.upper(), 'url': url})
     from core.media_related import catalogue_related
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
-        'artwork': list(dict.fromkeys(artwork))[:30], **related,
+        'posters': unique_images(posters), 'artwork': unique_images(artwork), **related,
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
@@ -100,6 +98,7 @@ async def catalogue_title(db, work):
         editions = [{'id': edition.entity_id, 'name': entity.name, 'image': image(entity.image_url),
             'release_date': edition.release_date, 'language': edition.language, 'format': edition.format,
             'pages': edition.pages} for edition, entity in rows]
+        details['posters'] = unique_images([*details['posters'], *(row['image'] for row in editions)])
     if work.kind == 'game':
         releases = [{'platform': release.platform_name, 'region': release.region, 'release_date': release.release_date}
             for release in await db.scalars(select(GameRelease).where(GameRelease.work_id == work.id)

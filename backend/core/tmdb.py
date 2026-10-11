@@ -559,6 +559,13 @@ async def get_company_images(company_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/company/{company_id}/images", headers=get_headers(api_key))
 
 
+async def get_title_images(tmdb_id: int, kind: str, api_key: str = None) -> dict:
+    if kind not in ('movie', 'series'):
+        raise ValueError('Unsupported screen media kind')
+    endpoint = 'movie' if kind == 'movie' else 'tv'
+    return await _get(f"{TMDB_BASE}/{endpoint}/{tmdb_id}/images", headers=get_headers(api_key))
+
+
 async def get_person_profile(person_id: int, api_key: str = None) -> dict:
     """Basic biography without downloading the entire filmography for backfills."""
     return await _get(f"{TMDB_BASE}/person/{person_id}", headers=get_headers(api_key))
