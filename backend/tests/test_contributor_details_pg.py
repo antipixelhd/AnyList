@@ -130,16 +130,24 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['banner'],'https://image.tmdb.org/t/p/original/banner.png')
         self.assertIsNone((await self.request()).json()['banner'])
 
-    async def test_studio_logo_mismatch_retains_last_good_image_and_retry_eligibility(self):
+    async def test_studio_logo_mismatch_retains_last_good_image_and_bounds_retries(self):
         from core.studio_artwork import backfill_studio_artwork
         async with self.Session() as db:
             studio = await db.get(CatalogueEntity,self.studio_id)
             studio.attributes = {'studio_banner':'https://example.test/saved.png'}
             await db.commit()
-            with patch('core.studio_artwork.tmdb.get_company_images', AsyncMock(return_value={'id':100,'logos':[]})):
+            with patch('core.studio_artwork.tmdb.get_company_images', AsyncMock(return_value={'id':100,'logos':[]})) as fetch:
                 result = await backfill_studio_artwork(db,'fixture')
-            self.assertEqual(result['failed'],1)
-            self.assertEqual(studio.attributes,{'studio_banner':'https://example.test/saved.png'})
+                self.assertEqual(result['failed'],1)
+                self.assertEqual(studio.attributes['studio_banner'],'https://example.test/saved.png')
+                self.assertTrue(studio.attributes['studio_artwork_attempted_at'])
+                self.assertNotIn('studio_artwork_checked_at',studio.attributes)
+                self.assertNotIn('studio_artwork_version',studio.attributes)
+                self.assertEqual((await backfill_studio_artwork(db,'fixture'))['examined'],0)
+                fetch.assert_awaited_once()
+                self.assertEqual((await backfill_studio_artwork(db,'fixture',force=True))['failed'],1)
+                self.assertEqual(fetch.await_count,2)
+                self.assertEqual(studio.attributes['studio_banner'],'https://example.test/saved.png')
 
     async def test_profile_backfill_only_fills_missing_fields_and_resumes_without_refetching(self):
         from core.contributor_backfill import backfill_contributors
