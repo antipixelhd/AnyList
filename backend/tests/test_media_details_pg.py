@@ -266,7 +266,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
             book = CatalogueEntity(kind='book', name='Original novel', attributes={})
-            movie = CatalogueEntity(kind='movie', name='Similar movie', attributes={})
+            movie = CatalogueEntity(kind='movie', name='Similar movie', attributes={'genres':[{'name':'Drama'}, 'Mystery']})
             series = CatalogueEntity(kind='series', name='Related series', attributes={})
             game = CatalogueEntity(kind='game', name='A game', attributes={})
             other_game = CatalogueEntity(kind='game', name='Similar game', attributes={})
@@ -282,6 +282,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({row['type'] for row in details['relations']}, {'book','series'})
             self.assertEqual([row['type'] for row in details['similar']], ['movie'])
             self.assertEqual(details['similar'][0]['url'], '/discover-title?type=movie&id=55')
+            self.assertEqual(details['similar'][0]['genres'], ['Drama','Mystery'])
             self.assertEqual((await work_details(db,game))['similar'][0]['url'], f'/games/{other_game.id}')
             self.assertTrue((await work_details(db,book))['relations'][0]['reverse'])
 
@@ -309,7 +310,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_data = {'belongs_to_collection':{'id':10}, 'protected_fixture':'keep'}
             await db.commit()
         collection = {'id':10,'name':'Fixture collection','parts':[{'id':99,'title':'Current','release_date':'2020-01-01'}, {'id':55,'title':'Earlier','release_date':'2010-01-01'}]}
-        recommendations = {'results':[{'id':55,'title':'Earlier'}, {'id':77,'title':'Another movie','poster_path':'/cover.jpg'}, {'id':66,'name':'A series','media_type':'tv'}, {'id':99,'title':'Current'}, {'id':88,'title':'Adult','adult':True}]}
+        recommendations = {'results':[{'id':55,'title':'Earlier'}, {'id':77,'title':'Another movie','poster_path':'/cover.jpg','genre_ids':[878,28,999999]}, {'id':66,'name':'A series','media_type':'tv'}, {'id':99,'title':'Current'}, {'id':88,'title':'Adult','adult':True}]}
         with (patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-only')),
                 patch('core.tmdb.get_collection',new=AsyncMock(return_value=collection)) as fetch_collection,
                 patch('core.tmdb.get_movie_recommendations',new=AsyncMock(return_value=recommendations)) as fetch_recommendations):
@@ -320,6 +321,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data['relations'][0]['label'], 'Previous entry')
             self.assertEqual([row['title'] for row in data['similar']], ['Another movie'])
             self.assertEqual(data['similar'][0]['poster'], 'https://image.tmdb.org/t/p/w500/cover.jpg')
+            self.assertEqual(data['similar'][0]['genres'], ['Science Fiction','Action'])
             self.assertFalse(data['related_pending'])
             self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/related')).status_code,200)
             fetch_collection.assert_awaited_once(); fetch_recommendations.assert_awaited_once()

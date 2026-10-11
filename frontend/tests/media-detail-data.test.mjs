@@ -6,8 +6,16 @@ import test from 'node:test';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,countryLabel};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption};',context);
 const {api}=context;
+
+test('similar captions use the first available genre and year with clean missing-data fallbacks',()=>{
+  assert.equal(api.detailWorkCaption({type:'movie',genres:['Science Fiction','Action'],year:'2020'},true),'Science Fiction · 2020');
+  assert.equal(api.detailWorkCaption({type:'game',genres:['',' Adventure '],year:'2019'},true),'Adventure · 2019');
+  assert.equal(api.detailWorkCaption({type:'book',year:'1965'},true),'1965');
+  assert.equal(api.detailWorkCaption({type:'series',genres:['Drama']},true),'Drama');
+  assert.equal(api.detailWorkCaption({type:'movie',genres:['Drama'],year:'2020'}),'Movie · 2020');
+});
 
 test('credits prioritize cast billing, responsible crew and separate production companies',()=>{
   const person=(id,kind,roles,position)=>({id,kind,name:`Person ${id}`,roles,position,characters:[]});

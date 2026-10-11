@@ -530,6 +530,18 @@
   scale: 1.1;
   z-index: 1;
 }
+.browse-actions button[data-browse-action="rate"] {
+  background: #f7b731;
+  color: #142131;
+}
+.browse-actions button[data-browse-action="rate"]:is(:hover, :focus-visible) {
+  background: #ffd166;
+  color: #142131;
+}
+.browse-actions button[data-browse-action="rate"]:focus-visible {
+  outline: 2px solid #ffd166;
+  outline-offset: 2px;
+}
 .browse-actions button[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;

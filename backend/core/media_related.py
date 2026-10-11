@@ -14,6 +14,14 @@ from models import Media
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueRelationship
 
 
+def genre_names(values=None, ids=None):
+    from core.browse import GENRES
+    names = [value if isinstance(value, str) else value.get('name')
+             for value in values or [] if isinstance(value, (str, dict))]
+    names.extend(GENRES.get(native) for native in ids or [])
+    return list(dict.fromkeys(name.strip() for name in names if isinstance(name, str) and name.strip()))
+
+
 def tmdb_image(path):
     if isinstance(path, str) and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path):
         return 'https://image.tmdb.org/t/p/w500' + path
@@ -84,7 +92,8 @@ async def catalogue_related(db, work):
         if not url:
             return None
         return {'id':target.id, 'title':target.name, 'type':target.kind, 'poster':image(target.image_url),
-            'year':str((target.attributes or {}).get('release_date') or '')[:4], 'url':url}
+            'year':str((target.attributes or {}).get('release_date') or '')[:4],
+            'genres':genre_names((target.attributes or {}).get('genres')), 'url':url}
 
     relations, similar, seen = [], [], set()
     for edge in edges:
@@ -128,8 +137,9 @@ async def screen_related(db, media, details):
     parts = collection.get('parts') or []
     recommendations = (cache.get('recommendations') or data.get('recommendations') or {}).get('results') or []
     ids = {row.get('id') for row in parts + recommendations if isinstance(row, dict) and isinstance(row.get('id'), int)}
-    locals_ = {row.tmdb_id:row.id for row in await db.scalars(select(Media).where(
+    local_rows = {row.tmdb_id:row for row in await db.scalars(select(Media).where(
         Media.media_type == media.media_type, Media.tmdb_id.in_(ids)))} if ids else {}
+    locals_ = {native: row.id for native, row in local_rows.items()}
 
     def card(raw):
         native = raw.get('id')
@@ -138,6 +148,8 @@ async def screen_related(db, media, details):
             return None
         return {'id':locals_.get(native), 'tmdb_id':native, 'type':kind, 'title':raw.get('title') or raw.get('name') or '',
             'poster':tmdb_image(raw.get('poster_path')), 'year':str(raw.get('release_date') or raw.get('first_air_date') or '')[:4],
+            'genres':genre_names(raw.get('genres'), raw.get('genre_ids')) or genre_names(
+                (local_rows[native].tmdb_data or {}).get('genres') if native in local_rows else None),
             'url':f'/title/{locals_[native]}' if native in locals_ else f'/discover-title?type={kind}&id={native}'}
 
     relations = list(details.get('relations') or [])

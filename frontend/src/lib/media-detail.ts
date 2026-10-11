@@ -5,7 +5,7 @@ import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
-import {kindLabel,relationLabel} from './media-detail-data';
+import {detailWorkCaption,relationLabel} from './media-detail-data';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
 
 let pageListeners: AbortController | undefined;
@@ -39,7 +39,7 @@ export function mountMediaDetail() {
           const copy=document.createElement('div');
           if(field==='relations'){const label=document.createElement('span');label.className='lab-relation-type';label.textContent=work.label||relationLabel(work.relation,work.reverse);copy.append(label);}
           const title=document.createElement('h3');title.textContent=work.title;
-          const detail=document.createElement('p');detail.textContent=[kindLabel[work.type as keyof typeof kindLabel],work.year].filter(Boolean).join(' · ');
+          const detail=document.createElement('p');detail.textContent=detailWorkCaption(work,field==='similar');
           copy.append(title,detail);card.append(copy);
           if(field==='similar')card.append(icons.lastElementChild!.cloneNode(true));
           return card;
