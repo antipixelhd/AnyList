@@ -16,7 +16,7 @@ const {media,library=null,libraryError='',canUseLibrary=false,error=''}=Astro.pr
 const title=media?prepareDetail(media):null;
 const signedIn=!!Astro.locals.user;
 const trackable=title&&['movie','series'].includes(title.type)&&title.tracking_available!==false;
-const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:360px) 92px, (max-width:650px) 110px, (max-width:900px) 170px, (max-width:1100px) 190px, 210px',route:'direct'});
+const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:650px) 108px, (max-width:900px) 170px, (max-width:1100px) 190px, 210px',route:'direct'});
 const backdrop=responsiveArtwork(title?.backdrop,{size:'w1280',sizes:'100vw',route:'direct'});
 const facts=title?detailFacts(title):[];
 const synopsis=detailSynopsis(title?.overview);

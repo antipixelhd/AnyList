@@ -2,6 +2,8 @@
 .media-detail { --media-radius:var(--lab-radius); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
 .media-detail .lab-hero { overflow:visible; }
+.media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
+.media-detail.concept-marquee .lab-layout { padding-top:16px; }
 .media-detail .lab-hero-image,.media-detail .lab-hero-shade { pointer-events:none; }
 .media-detail .lab-hero-image { object-fit:cover; }
 .media-detail .media-cover-empty { display:grid; place-items:center; background:var(--panel); color:var(--blue); font-size:5rem; }
@@ -70,6 +72,18 @@
   .media-detail .lab-game-offer .lab-primary-button { grid-column:1/-1; }
 }
 @media (max-width:650px) {
+  /* Folio opening: the cover overlaps a short backdrop, while the heading
+     grows naturally below it instead of fitting inside a fixed hero. */
+  .media-detail.concept-marquee .lab-hero { height:auto; background:none; }
+  .media-detail.concept-marquee .lab-hero-image,.media-detail.concept-marquee .lab-hero-shade { height:210px; bottom:auto; }
+  .media-detail.concept-marquee .lab-hero-content { display:grid; grid-template-columns:108px minmax(0,1fr); align-items:start; gap:20px; height:auto; padding:145px 0 0; }
+  .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:108px; height:162px; }
+  .media-detail.concept-marquee .lab-heading { margin-top:39px; padding:0; }
+  .media-detail.concept-marquee .lab-heading h1 { font-size:3rem; line-height:1.12; margin:8px 0; }
+  .media-detail.concept-marquee .lab-heading .lab-kicker { gap:7px; line-height:1.8; }
+  .media-detail.concept-marquee .lab-tagline { font-size:1.2rem; }
+  .media-detail.concept-marquee .lab-hero-art-button { position:absolute; top:12px; bottom:auto; right:0; }
+  .media-detail.concept-marquee .lab-layout { padding-top:24px; }
   .media-detail .media-tracking { display:grid; grid-template-columns:minmax(0,1fr); gap:15px; padding-bottom:28px; }
   .media-detail.concept-marquee .media-tracking .media-action-row { grid-column:1/-1; grid-row:1; }.media-detail .media-square { width:44px; height:44px; }.media-detail .media-tracking .media-action-row .status-split .button-primary { min-height:44px; font-size:1.2rem; }.media-detail .media-tracking .media-action-row .status-split .status-arrow { width:40px; }
   .media-detail.concept-marquee .media-tracking .media-rating-row { grid-column:1; grid-row:2; }
