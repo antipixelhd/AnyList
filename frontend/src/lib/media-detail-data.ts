@@ -97,7 +97,7 @@ export function detailFacts(media: DetailMedia) {
   const facts: {label: string; value: string}[] = [];
   const add = (label: string, value: unknown) => { if (value != null && value !== '' && value !== 0) facts.push({label,value:String(value)}); };
   add(media.type === 'book' ? 'First published' : 'Released', detailDate(media.release_date) || media.year);
-  add('Release status',media.release_status);
+  add('Status',media.release_status);
   if (media.type === 'movie') add('Runtime',durationLabel(media.runtime));
   if (media.type === 'series') {
     add('Episode runtime',durationLabel(media.episode_runtime)); add('Seasons',media.season_count); add('Episodes',media.episode_count);
