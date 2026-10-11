@@ -75,13 +75,16 @@ async def work_details(db, work):
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
     posters = [work.image_url, *(attrs.get('posters') or [])]
+    if work.kind in ('movie', 'series'):
+        # Untagged legacy URLs cannot establish the requested image language.
+        artwork, posters = [], []
     snapshots = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id == work.id)
         .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6)))
     sources = []
     for snapshot in snapshots:
         raw = snapshot.payload or {}
         images = raw.get('images') or {}
-        variants = provider_images(images, snapshot.provider)
+        variants = provider_images(images, snapshot.provider) if snapshot.provider == 'tmdb' or work.kind not in ('movie', 'series') else {'posters': [], 'artwork': []}
         posters.extend(variants['posters'])
         artwork.extend(variants['artwork'])
         homepage = public_url(raw.get('homepage'))

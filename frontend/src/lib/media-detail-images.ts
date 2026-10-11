@@ -64,26 +64,57 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   };
   root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(watchLandscape);
   let loading:Promise<void>|undefined;
+  const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
   const loadImages=()=>{
     if(!info.imagesAvailable)return Promise.resolve();
     if(loading)return loading;
+    if(galleryStatus&&!galleries.artwork.length){galleryStatus.textContent='Loading artwork…';galleryStatus.hidden=false;}
     loading=fetch(`/api/proxy/tracking/title/${info.id}/images`,{signal}).then(async response=>{
       if(!response.ok)throw new Error('Image variants unavailable');
       const data=await response.json();
       if(signal.aborted)return;
       const selected=galleries[active][current];
-      galleries.posters=uniqueDetailImages([...galleries.posters,...(data.posters||[])]);
-      galleries.artwork=uniqueDetailImages([...galleries.artwork,...(data.artwork||[])]);
+      galleries.posters=uniqueDetailImages(data.posters||[]);
+      galleries.artwork=uniqueDetailImages(data.artwork||[]);
+      if(galleryStatus){galleryStatus.hidden=!!galleries.artwork.length;galleryStatus.textContent='No artwork available.';}
+      const cover=root.querySelector<HTMLButtonElement>('.media-cover');
+      if(cover&&galleries.posters.length){
+        cover.dataset.detailImage=galleries.posters[0];
+        const coverImage=cover.querySelector('img');
+        if(coverImage){coverImage.removeAttribute('srcset');coverImage.src=galleries.posters[0].replace('/original/','/w500/');}
+      }
+      const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
+      if(heroButton&&galleries.artwork.length){
+        const currentKey=(heroButton.dataset.detailImage||'').replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
+        const preferred=galleries.artwork.find(url=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1')===currentKey)||galleries.artwork[0];
+        heroButton.dataset.detailImage=preferred;
+        const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+        if(hero){hero.removeAttribute('srcset');hero.src=preferred.replace('/original/','/w1280/');}
+      }
+      const preview=root.querySelector<HTMLButtonElement>('.lab-art-image');
+      if(preview){
+        if(galleries.artwork.length){
+          const preferred=galleries.artwork.includes(preview.dataset.detailImage||'')?preview.dataset.detailImage!:galleries.artwork[0];
+          preview.dataset.detailImage=preferred;
+          const thumbnail=preview.querySelector('img');if(thumbnail)thumbnail.src=preferred;
+        }else preview.closest<HTMLElement>('section')!.hidden=true;
+      }
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
-        const existing=new Set([...grid.querySelectorAll<HTMLElement>('[data-detail-image]')].map(button=>button.dataset.detailImage));
-        galleries.artwork.filter(url=>!existing.has(url)).forEach(url=>{
-          const button=document.createElement('button');button.type='button';button.dataset.detailImage=url;button.setAttribute('aria-label',`Expand ${name} artwork`);
-          const thumbnail=document.createElement('img');thumbnail.src=url;thumbnail.alt=`${name} artwork`;thumbnail.loading='lazy';button.append(thumbnail);grid.append(button);watchLandscape(button);
+        const existing=new Map([...grid.querySelectorAll<HTMLButtonElement>('[data-detail-image]')].map(button=>[button.dataset.detailImage,button]));
+        const buttons=galleries.artwork.map((url,index)=>{
+          let button=existing.get(url);
+          if(!button){
+            button=document.createElement('button');button.type='button';button.dataset.detailImage=url;
+            const thumbnail=document.createElement('img');thumbnail.src=url;thumbnail.alt=`${name} artwork`;thumbnail.loading='lazy';button.append(thumbnail);watchLandscape(button);
+          }
+          button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);return button;
         });
+        grid.replaceChildren(...buttons);
       }
-      if(lightbox.open)showImage(Math.max(0,galleries[active].indexOf(selected)));
-    }).catch(()=>{loading=undefined;});
+      const preferred=data.image_replacements?.[selected]||selected;
+      if(lightbox.open){if(galleries[active].length)showImage(Math.max(0,galleries[active].indexOf(preferred)));else void closeDialog(lightbox);}
+    }).catch(()=>{loading=undefined;if(galleryStatus&&!signal.aborted&&!galleries.artwork.length){galleryStatus.textContent='Artwork could not be loaded.';galleryStatus.hidden=false;}});
     return loading;
   };
   root.addEventListener('click',event=>{
@@ -92,8 +123,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     active=button.dataset.detailGallery==='posters'?'posters':'artwork';
     lightbox.dataset.gallery=active;
     const url=button.dataset.detailImage!;
-    if(!galleries[active].includes(url))galleries[active].unshift(url);
-    showImage(galleries[active].indexOf(url));showDialog(lightbox);void loadImages();
+    if(galleries[active].length){showImage(Math.max(0,galleries[active].indexOf(url)));showDialog(lightbox);void loadImages();}
+    else {
+      button.setAttribute('aria-busy','true');
+      void loadImages().then(()=>{if(signal.aborted)return;if(galleries[active].length){showImage(0);showDialog(lightbox);}else showToast('No image variants available.','error');}).finally(()=>button.removeAttribute('aria-busy'));
+    }
   },{signal});
   if(new URLSearchParams(location.search).get('tab')==='artwork')void loadImages();
   bindImageViewerDismissal(lightbox,signal);

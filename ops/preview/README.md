@@ -204,7 +204,8 @@ belong in those root-owned env files; never commit populated files.
 
 4. Bootstrap using direct administrator access. Supported baseline: Ubuntu 24.04,
    systemd, PostgreSQL 16, Git/OpenSSH, Python 3, Node 22.12+ at `/usr/bin/node`, npm,
-   uv at `/usr/local/bin/uv`, and current Tailscale with workload identity support.
+   uv at `/usr/local/bin/uv`, Tesseract with English language data (`tesseract-ocr`
+   and `tesseract-ocr-eng`), and current Tailscale with workload identity support.
    PostgreSQL must listen only on loopback/socket, use peer auth for local postgres
    administration and password auth for slot TCP logins. Preview DB roles must not
    be superusers/CREATEDB/CREATEROLE or members of production roles. Enable Tailscale

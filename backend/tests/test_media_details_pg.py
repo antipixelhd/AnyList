@@ -10,6 +10,7 @@ from sqlalchemy import select, text
 import test_statistics_pg as fixture
 from dependencies import get_current_user
 from core.media_details import work_details
+from core.media_images import IMAGE_POLICY_VERSION
 from models import Follow, Media, Show, TrackedEntry, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import (
@@ -44,6 +45,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         raw = {'id':99, 'posters':[{'file_path':'/poster.jpg','aspect_ratio':.667}],
                'backdrops':[{'file_path':'/scene.jpg','aspect_ratio':1.778}]}
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
               patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
             data = (await self.client.get(f'/tracking/title/{self.media_id}/images')).json()
             self.assertIn('https://image.tmdb.org/t/p/original/poster.jpg', data['posters'])
@@ -61,7 +63,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             media = await db.get(Media, self.media_id)
             media.tmdb_id = 99
-            media.tmdb_data = {'_anylist_images': {'posters':['https://example.test/old.jpg']}}
+            media.tmdb_data = {'_anylist_images': {'version':IMAGE_POLICY_VERSION, 'posters':['https://example.test/old.jpg']}}
             await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
               patch('core.tmdb.get_title_images', AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
@@ -69,6 +71,23 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get(f'/tracking/title/{self.media_id}/images')
                 self.assertEqual(response.status_code, 200)
                 self.assertIn('https://example.test/old.jpg', response.json()['posters'])
+            fetch.assert_awaited_once()
+
+    async def test_legacy_image_cache_is_refreshed_even_when_its_expiry_is_in_the_future(self):
+        await self.login()
+        async with self.Session() as db:
+            media = await db.get(Media, self.media_id)
+            media.tmdb_id = 99
+            media.tmdb_data = {'_anylist_images': {'expires_at':'2099-01-01T00:00:00+00:00',
+                'posters':['https://example.test/unverified.jpg']}}
+            await db.commit()
+        raw = {'id':99,'posters':[{'file_path':'/foreign.jpg','iso_639_1':'de'},
+            {'file_path':'/english.jpg','iso_639_1':'en'}],'backdrops':[]}
+        with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
+              patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
+            response = await self.client.get(f'/tracking/title/{self.media_id}/images')
+            self.assertEqual(response.json()['posters'], ['https://image.tmdb.org/t/p/original/english.jpg'])
             fetch.assert_awaited_once()
 
     async def test_episode_rows_use_canonical_catalogue_and_private_watch_history(self):

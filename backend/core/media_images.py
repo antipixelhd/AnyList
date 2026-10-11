@@ -1,12 +1,18 @@
 """Separate poster variants from landscape artwork; cache provider lookups."""
 from datetime import datetime, timedelta, timezone
+import asyncio
 import re
+import httpx
+from weakref import WeakValueDictionary
 
 from sqlalchemy import func, literal, update
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core.catalogue_normalize import image
 from models import Media
+
+IMAGE_POLICY_VERSION = 2
+_fills = WeakValueDictionary()
 
 
 def image_key(url):
@@ -23,13 +29,15 @@ def unique_images(values):
     return result[:60]
 
 
-def provider_images(raw, provider='tmdb'):
+def image_candidates(raw, provider='tmdb'):
     result = {'posters': [], 'artwork': []}
     if not isinstance(raw, dict):
         return result
     for field, target in [('posters', 'posters'), ('backdrops', 'artwork')]:
         for row in raw.get(field) or []:
             if not isinstance(row, dict):
+                continue
+            if row.get('iso_639_1') not in ('en', None):
                 continue
             ratio = row.get('aspect_ratio')
             if ratio is None and all(isinstance(row.get(field), (int, float)) and row[field] > 0 for field in ('height', 'width')):
@@ -41,29 +49,41 @@ def provider_images(raw, provider='tmdb'):
                    if provider == 'tmdb' and isinstance(path, str)
                    and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path) else image(path))
             if url:
-                result[target].append(url)
-    return {field: unique_images(values) for field, values in result.items()}
+                result[target].append({'url': url, 'language': row.get('iso_639_1'),
+                    'width': row.get('width') or 0, 'votes': row.get('vote_count') or 0})
+    for field, rows in result.items():
+        seen = set()
+        result[field] = [row for row in sorted(rows, key=lambda row: (row['language'] != 'en', -row['votes'], -row['width']))
+            if not (image_key(row['url']) in seen or seen.add(image_key(row['url'])))][:60]
+    return result
+
+
+def provider_images(raw, provider='tmdb'):
+    return {field: [row['url'] for row in rows] for field, rows in image_candidates(raw, provider).items()}
 
 
 def screen_images(media, details):
-    from core.tracking_projection import media_data
-    primary = media_data(media)
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
-    stored = provider_images((media.tmdb_data or {}).get('images'))
-    posters = unique_images([primary.get('poster'), *details.get('posters', []),
-                             *cache.get('posters', []), *stored['posters']])
-    poster_keys = {image_key(url) for url in posters}
-    artwork = unique_images([primary.get('backdrop'), *details.get('artwork', []),
-                             *cache.get('artwork', []), *stored['artwork']])
-    return {'posters': posters, 'artwork': [url for url in artwork if image_key(url) not in poster_keys]}
+    if cache.get('version') == IMAGE_POLICY_VERSION:
+        return {'posters': unique_images(cache.get('posters') or []), 'artwork': unique_images(cache.get('artwork') or []),
+                'image_replacements': cache.get('replacements') or {}}
+    # Never paint the old unfiltered gallery while a new policy is being filled.
+    return {'posters': [], 'artwork': [], 'image_replacements': {}}
 
 
 async def fill_screen_images(db, media, api_key):
+    lock = _fills.setdefault(media.id, asyncio.Lock())
+    async with lock:
+        await db.refresh(media)
+        await _fill_screen_images(db, media, api_key)
+
+
+async def _fill_screen_images(db, media, api_key):
     if not api_key or not media.tmdb_id:
         return
     cache = dict((media.tmdb_data or {}).get('_anylist_images') or {})
     now = datetime.now(timezone.utc)
-    for field in ('retry_after', 'expires_at'):
+    for field in ('retry_after', *(['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION else [])):
         try:
             if datetime.fromisoformat(cache.get(field, '')) > now:
                 return
@@ -74,7 +94,17 @@ async def fill_screen_images(db, media, api_key):
         raw = await tmdb.get_title_images(media.tmdb_id, media.media_type.value, api_key)
         if raw.get('id') != media.tmdb_id or not all(isinstance(raw.get(field), list) for field in ('posters', 'backdrops')):
             raise ValueError('Invalid image response')
-        cache = {**provider_images(raw), 'expires_at': (now + timedelta(days=30)).isoformat()}
+        from core.media_image_analysis import inspect_image, select_galleries
+        candidates = image_candidates(raw)
+        async with httpx.AsyncClient() as client:
+            for rows in candidates.values():
+                analyses = await asyncio.gather(*(inspect_image(row['url'], client) for row in rows))
+                for row, analysis in zip(rows, analyses):
+                    row['analysis'] = analysis
+        selections = await select_galleries(candidates)
+        selected = {field: selection['images'] for field, selection in selections.items()}
+        selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
+        cache = {**selected, 'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
     except Exception:
         cache['retry_after'] = (now + timedelta(minutes=10)).isoformat()
     await db.execute(update(Media).where(Media.id == media.id).values(

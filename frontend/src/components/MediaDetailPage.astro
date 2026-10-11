@@ -27,7 +27,7 @@ const people=title?[...title.people,...title.organizations]:[];
 const others=people.filter(person=>person.kind!=='actor');
 const credits=title?detailCredits(title):null;
 const preview=credits?.preview||[];
-const artwork=[...new Set([...(title?.artwork||[]),title?.backdrop].filter(Boolean))] as string[];
+const artwork=[...new Set((title?.artwork||[]).filter(Boolean))] as string[];
 const scenes=artwork.filter(url=>url!==title?.backdrop);
 const creator=others.filter(person=>person.roles.some(role=>/director|author|creator|developer/i.test(role))).slice(0,2).map(person=>person.name).join(', ');
 const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(trackable||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
@@ -86,12 +86,12 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         </div>
         {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn}/></section>}
         {!!people.length&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}>{credits&&<><MediaDetailCredits label="Cast" rows={credits.cast} id="cast"/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label={credits.principal.length?'Other crew':'Crew'} rows={credits.supporting} id="supporting" secondary/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}
-        {(trackable||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><div class="lab-gallery" data-detail-artwork-grid>{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img src={url} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
+        {(trackable||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><p class="section-empty" data-detail-artwork-status hidden></p><div class="lab-gallery" data-detail-artwork-grid>{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img src={url} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
       </div>
     </div>
   </div>
   <ImageLightbox id="detail-lightbox" gallery/>
-  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&trackable&&title.related_pending,imagesAvailable:signedIn&&trackable,posters:[poster?.src,...title.posters].filter(Boolean),artwork})}/>
+  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&trackable&&title.related_pending,imagesAvailable:signedIn&&trackable,posters:title.posters,artwork})}/>
   <template data-detail-work-icons><span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span><Icon name="arrow-right"/></template>
 </article>:<div class="page-width"><p class="error-message" role="alert">{error||'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}
 </Tracker>

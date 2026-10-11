@@ -3,7 +3,7 @@ set -euo pipefail
 # Stage 2, root, from a reviewed checkout. No network installation or credentials here.
 [[ $EUID -eq 0 ]] || { echo 'Run as root during initial bootstrap' >&2; exit 1; }
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for command in python3 git node npm uv psql pg_dump pg_restore tailscale systemctl systemd-run; do
+for command in python3 git node npm uv psql pg_dump pg_restore tailscale systemctl systemd-run tesseract; do
   command -v "$command" >/dev/null || { echo "Missing prerequisite: $command" >&2; exit 1; }
 done
 [[ -x /usr/local/bin/uv && -x /usr/bin/node ]] || { echo 'Install uv at /usr/local/bin/uv and Node at /usr/bin/node' >&2; exit 1; }

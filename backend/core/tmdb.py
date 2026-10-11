@@ -563,7 +563,8 @@ async def get_title_images(tmdb_id: int, kind: str, api_key: str = None) -> dict
     if kind not in ('movie', 'series'):
         raise ValueError('Unsupported screen media kind')
     endpoint = 'movie' if kind == 'movie' else 'tv'
-    return await _get(f"{TMDB_BASE}/{endpoint}/{tmdb_id}/images", headers=get_headers(api_key))
+    return await _get(f"{TMDB_BASE}/{endpoint}/{tmdb_id}/images", headers=get_headers(api_key),
+                      params={'include_image_language': 'en,null'})
 
 
 async def get_person_profile(person_id: int, api_key: str = None) -> dict:

@@ -1412,8 +1412,11 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
     from core.media_related import screen_related
     details = await screen_related(db, media, details)
-    from core.media_images import screen_images
+    from core.media_images import IMAGE_POLICY_VERSION, image_key, screen_images
     details.update(screen_images(media, details))
+    if ((media.tmdb_data or {}).get('_anylist_images') or {}).get('version') == IMAGE_POLICY_VERSION:
+        details['poster'] = next(iter(details['posters']), None)
+        details['backdrop'] = next((url for url in details['artwork'] if image_key(url) == image_key(media.backdrop_path or '')), next(iter(details['artwork']), None))
     favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
     return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
