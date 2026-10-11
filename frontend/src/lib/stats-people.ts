@@ -97,7 +97,7 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
   }
   function render(next: Overview | null, animate = false) {
     overview = next;
-    const before = new Map([...grid.children].map(card => [card, card.getBoundingClientRect()]));
+    const before = new Map(animate ? [...grid.children].map(card => [card, card.getBoundingClientRect()] as const) : []);
     animations.forEach(a => a.cancel()); animations.clear();
     const existing = new Map([...grid.querySelectorAll<HTMLElement>(`[data-${prefix}-key]`)].map(card => [card.dataset[`${prefix}Key`], card]));
     const rows = section === 'staff' ? rankedStaff(next?.staff || [], genreSort(root.dataset.staffSort)) : rankedActors(next?.actors || [], genreSort(root.dataset.actorSort));

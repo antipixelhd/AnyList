@@ -50,12 +50,17 @@ function mount(root: HTMLElement) {
   const pies = new Map<string, Chart<'pie'>>();
   const metrics = new Map<string, ChartMetric>(chartKeys.map(key => [key, 'titles']));
   const from = node<HTMLSelectElement>('[data-watch-from]'), through = node<HTMLSelectElement>('[data-watch-through]');
+  const colors = new Map<string, string>();
   const color = (variable: string) => {
+    const cached = colors.get(variable);
+    if (cached) return cached;
     const probe = document.createElement('span');
+    probe.style.position = 'absolute';
     probe.style.color = `var(${variable})`;
     root.append(probe);
     const result = getComputedStyle(probe).color;
     probe.remove();
+    colors.set(variable, result);
     return result;
   };
   const categoryColor = (key: string) => {
@@ -164,6 +169,10 @@ function mount(root: HTMLElement) {
     }));
   }
   function render(next: OverviewResponse, initial = false) {
+    colors.clear();
+    // Resolve the theme once before chart/table writes, avoiding repeated
+    // synchronous layout reads during first paint and snapshot updates.
+    for (const variable of ['--stats-cyan', '--muted', '--bright']) color(variable);
     response = next;
     root.dataset.initial = JSON.stringify(next);
     node('.overview-error').hidden = true;
@@ -198,10 +207,12 @@ function mount(root: HTMLElement) {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
     }
-    genres.render(data, !initial);
-    actors.render(data, !initial);
-    studios.render(data, !initial);
-    staff.render(data, !initial);
+    // Hidden sections already have server-rendered cards. Enhance only the
+    // section being viewed; switching sections uses the current snapshot.
+    if (section === 'genres') genres.render(data, !initial);
+    if (section === 'actors') actors.render(data, !initial);
+    if (section === 'studios') studios.render(data, !initial);
+    if (section === 'staff') staff.render(data, !initial);
     if (wasPending && !initial) reveal(node('.overview-results'));
     syncLinks();
     node('[data-overview-announcement]').textContent = `${data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;

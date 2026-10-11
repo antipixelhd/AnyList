@@ -46,7 +46,7 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
   }
   function render(next: Overview | null, animate = false) {
     overview = next;
-    const before = new Map([...grid.children].map(card => [card, card.getBoundingClientRect()]));
+    const before = new Map(animate ? [...grid.children].map(card => [card, card.getBoundingClientRect()] as const) : []);
     animations.forEach(animation => animation.cancel()); animations.clear();
     const existing = new Map([...grid.querySelectorAll<HTMLElement>(`[data-${prefix}-key]`)].map(card => [card.dataset[`${prefix}Key`], card]));
     const rows = next ? options.rows(next) : [];

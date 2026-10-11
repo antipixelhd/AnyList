@@ -18,7 +18,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   if (aliases) mountDetailsMotion(aliases, signal);
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (!signal.aborted && root.isConnected) initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
-      animateInitial:!root.hasAttribute('data-contributor-arrivals-ready'), downwardOnly:true, scaleEntrance:true, once:true,
+      // SSR content is already painted, including restored scroll positions.
+      // Animate only cards that arrive later or enter from below the viewport.
+      animateInitial:false, downwardOnly:true, scaleEntrance:true, once:true,
       appearedAttribute:'data-browse-appeared',
     });
     root.setAttribute('data-contributor-arrivals-ready','');

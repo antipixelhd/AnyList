@@ -41,7 +41,7 @@ if (data) {
   if (data.next_cursor) next.searchParams.set('cursor', data.next_cursor); else next.searchParams.delete('cursor');
 }
 ---
-<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')}>
+<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} preloadBodyFonts>
   {data ? <article class="contributor-page" data-contributor-page data-view={view} data-endpoint={endpoint}>
     <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}</div>
     <div class="page-width contributor-layout">
