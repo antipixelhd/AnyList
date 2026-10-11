@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import String, and_, or_, select
 from sqlalchemy.orm import aliased
 
 from core import tmdb, tvdb
@@ -48,10 +48,28 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
                  or_(and_(planned_title.tmdb_id.isnot(None), planned_title.tmdb_id == Show.tmdb_id),
                      and_(planned_title.tvdb_id.isnot(None), planned_title.tvdb_id == Show.tvdb_id))),
         )).correlate(Media, Show).exists()
+    sources = [Media.tmdb_data['runtime'].astext.isnot(None)]
+    if api_key:
+        sources.extend([
+            and_(Media.media_type == MediaType.movie, Media.tmdb_id.isnot(None)),
+            and_(Media.media_type == MediaType.episode, Show.tmdb_id.isnot(None),
+                 Media.tmdb_id.isnot(None), Media.season_number.isnot(None)),
+        ])
+    if tvdb_api_key:
+        native = aliased(CatalogueIdentity)
+        mapped_movie = select(native.id).join(CatalogueIdentity, CatalogueIdentity.entity_id == native.entity_id).where(
+            native.namespace == 'tvdb.movie', native.external_id.op('~')('^[0-9]+$'),
+            CatalogueIdentity.namespace == 'tmdb.movie', CatalogueIdentity.external_id == Media.tmdb_id.cast(String),
+        ).correlate(Media).exists()
+        sources.extend([
+            and_(Media.media_type == MediaType.movie, or_(Media.tvdb_id.isnot(None), mapped_movie)),
+            and_(Media.media_type == MediaType.episode, Show.tvdb_id.isnot(None)),
+        ])
     rows = (await db.execute(
         select(Media, Show).outerjoin(Show, Show.id == Media.show_id)
         .where(
             Media.media_type.in_([MediaType.movie, MediaType.episode]),
+            or_(*sources),
             or_(Media.runtime.is_(None), Media.runtime <= 0),
             or_(planning, select(WatchEvent.id).where(
                 WatchEvent.media_id == Media.id, WatchEvent.completed.is_(True),
@@ -72,7 +90,7 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
         result["examined"] += 1
         data = dict(media.tmdb_data or {})
         runtime = positive_number(data.get("runtime"))
-        attempted_source = bool(runtime)
+        attempted_source = data.get('runtime') is not None
         failed = False
         try:
             if not runtime and api_key and media.media_type == MediaType.movie and media.tmdb_id:
@@ -123,6 +141,8 @@ async def backfill_history_runtimes(db, api_key=None, *, tvdb_api_key=None, limi
         except Exception:
             failed = True
         try:
+            if not runtime and tvdb_api_key and show and show.tvdb_id:
+                attempted_source = True  # Cached summaries are also a source.
             if not runtime and tvdb_api_key and show and show.tvdb_id and show.tvdb_id not in estimated_shows:
                 estimated_shows.add(show.tvdb_id)
                 show_data = dict(getattr(show, "tmdb_data", None) or {})

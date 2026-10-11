@@ -234,6 +234,32 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((len(actors), actors[0]["titles"]), (1, 1))
             self.assertEqual(actors[0]["top_titles"][0]["character_image"], "https://artworks.thetvdb.com/role.jpg")
 
+    async def test_country_batches_skip_ineligible_rows_before_limit(self):
+        from core.country_backfill import backfill_catalogue_countries, backfill_legacy_countries
+        from core.catalogue_providers import CatalogueProviders
+        from unittest.mock import patch
+        adapter = CatalogueProviders()
+        adapter.tmdb_key, adapter.tvdb_key = 'configured-key', None
+        adapter.detail = AsyncMock(return_value=(normalize_tmdb({'id':42, 'title':'Film', 'origin_country':['US']}, 'movie'), {}))
+        async with self.Session() as db:
+            unavailable = await catalogue.ingest_document(db, normalize_tvdb({'id':84, 'name':'Unavailable'}, 'movie'), 'tvdb')
+            available = await catalogue.ingest_document(db, normalize_tmdb({'id':42, 'title':'Available'}, 'movie'), 'tmdb')
+            legacy_unavailable = Media(title='TVDB only', media_type=MediaType.movie, tvdb_id=84)
+            legacy_available = Media(title='TMDB film', media_type=MediaType.movie, tmdb_id=42)
+            db.add_all([legacy_unavailable, legacy_available])
+            await db.commit()
+            result = await backfill_catalogue_countries(db, adapter, limit=1)
+            self.assertEqual((result['examined'], result['recovered']), (1,1))
+            self.assertEqual(available.attributes['countries'], ['US'])
+            self.assertNotIn('country_backfill_attempted_at', unavailable.attributes)
+            with patch('core.country_backfill.tmdb.get_movie', AsyncMock(return_value={'id':42, 'origin_country':['US']})) as fetch:
+                result = await backfill_legacy_countries(db, 'configured-key', limit=2)
+            self.assertEqual(result['recovered'], 1)
+            self.assertEqual(legacy_available.tmdb_data['origin_country'], ['US'])
+            self.assertNotIn('country_backfill_attempted_at', legacy_unavailable.tmdb_data or {})
+        fetch.assert_awaited_once()
+        adapter.detail.assert_awaited_once()
+
     async def test_cached_tvdb_movie_country_replays_without_credentials(self):
         from core.country_backfill import backfill_catalogue_countries
         from core.catalogue_providers import CatalogueProviders

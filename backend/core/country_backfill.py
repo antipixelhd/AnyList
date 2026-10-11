@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from core import catalogue, catalogue_normalize, openlibrary, tmdb, tvdb
 from core.countries import country_codes, publication_countries
@@ -44,7 +44,15 @@ async def backfill_legacy_countries(db, api_key=None, *, tvdb_api_key=None, limi
     responses = {}
     for model in (Media, Show):
         attempted = model.tmdb_data["country_backfill_attempted_at"].astext
+        cached_fields = ('origin_countries', 'production_countries')
+        sources = [model.tmdb_data[field].astext.not_in(['[]', '{}', '', 'null']) for field in cached_fields]
+        if api_key:
+            sources.append(model.tmdb_id.isnot(None))
+        if tvdb_api_key:
+            sources.append(model.tvdb_id.isnot(None) if model is Show else
+                           and_(Media.media_type == MediaType.series, Media.tvdb_id.isnot(None)))
         query = select(model).where(
+            or_(*sources),
             or_(model.tmdb_data["origin_country"].astext.is_(None),
                 model.tmdb_data["origin_country"].astext == "[]"),
             True if force else or_(attempted.is_(None), attempted <= cutoff),
@@ -64,7 +72,7 @@ async def backfill_legacy_countries(db, api_key=None, *, tvdb_api_key=None, limi
             result["examined"] += 1
             kind = "series" if model is Show else row.media_type.value
             failed = False
-            attempted_source = False
+            attempted_source = any(data.get(field) not in (None, [], {}, '') for field in cached_fields)
             try:
                 response = {}
                 if api_key and row.tmdb_id:
@@ -130,7 +138,37 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
     """
     now = datetime.now(timezone.utc)
     attempted = CatalogueEntity.attributes["country_backfill_attempted_at"].astext
+    sources = [CatalogueEntity.attributes[field].astext.not_in(['[]', '{}', '', 'null'])
+               for field in COUNTRY_FIELDS - {'country_basis'}]
+    sources.append(select(MetadataSnapshot.id).where(
+        MetadataSnapshot.entity_id == CatalogueEntity.id, MetadataSnapshot.payload.isnot(None),
+        MetadataSnapshot.provider.in_(['tmdb', 'tvdb', 'igdb', 'openlibrary']),
+    ).correlate(CatalogueEntity).exists())
+    for provider, kind, namespace in [('tmdb', 'movie', 'tmdb.movie'), ('tmdb', 'series', 'tmdb.series'),
+                                      ('tvdb', 'movie', 'tvdb.movie'), ('tvdb', 'series', 'tvdb.series'),
+                                      ('igdb', 'game', 'igdb.game')]:
+        try:
+            providers.validate(provider, kind)
+        except ProviderError as exc:
+            if exc.code == 'not_configured':
+                continue
+            raise
+        sources.append(and_(CatalogueEntity.kind == kind, select(CatalogueIdentity.id).where(
+            CatalogueIdentity.entity_id == CatalogueEntity.id, CatalogueIdentity.namespace == namespace,
+        ).correlate(CatalogueEntity).exists()))
+    sources.extend([
+        and_(CatalogueEntity.kind == 'edition', select(CatalogueIdentity.id).where(
+            CatalogueIdentity.entity_id == CatalogueEntity.id,
+            CatalogueIdentity.namespace.in_(['openlibrary.edition', 'isbn.13', 'isbn.10']),
+        ).correlate(CatalogueEntity).exists()),
+        and_(CatalogueEntity.kind == 'book', select(CatalogueIdentity.id).where(
+            CatalogueIdentity.entity_id == CatalogueEntity.id, CatalogueIdentity.namespace == 'openlibrary.book',
+        ).correlate(CatalogueEntity).exists()),
+        select(BookEdition.entity_id).where(or_(BookEdition.work_id == CatalogueEntity.id,
+                                               BookEdition.entity_id == CatalogueEntity.id)).correlate(CatalogueEntity).exists(),
+    ])
     rows = list(await db.scalars(select(CatalogueEntity).where(
+        or_(*sources),
         CatalogueEntity.kind.in_(["movie", "series", "game", "book", "edition"]),
         True if not missing_only else or_(CatalogueEntity.attributes['countries'].astext.is_(None),
                                          CatalogueEntity.attributes['countries'].astext == '[]'),
@@ -145,13 +183,17 @@ async def backfill_catalogue_countries(db, providers, *, limit=BATCH_SIZE, force
         if not force and not due(row.attributes, now):
             continue
         result["examined"] += 1
-        attempted_source = bool(country_codes(row.attributes.get("countries")))
+        attempted_source = any(row.attributes.get(field) not in (None, [], {}, '')
+                               for field in COUNTRY_FIELDS - {'country_basis'})
         try:
             async with db.begin_nested():
                 snapshots = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id == row.id,
                                                                                  MetadataSnapshot.payload.isnot(None))))
                 for snapshot in snapshots:
                     raw = snapshot.payload
+                    if snapshot.provider not in ('tmdb', 'tvdb', 'igdb', 'openlibrary'):
+                        continue
+                    attempted_source = True
                     if snapshot.provider == "tmdb":
                         doc = catalogue_normalize.normalize_tmdb(raw, row.kind)
                     elif snapshot.provider == "tvdb":

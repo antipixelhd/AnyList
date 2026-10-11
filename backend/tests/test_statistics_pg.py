@@ -337,6 +337,23 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             return await db.get(UserStatsState, self.user_id)
 
+    async def test_runtime_batch_skips_ineligible_history_before_limit(self):
+        from core.runtime_backfill import backfill_history_runtimes
+        async with self.Session() as db:
+            missing = await db.get(Media, self.media_id)
+            missing.runtime, missing.tmdb_id, missing.tvdb_id, missing.tmdb_data = None, None, None, {}
+            available = Media(title='Recoverable film', media_type=MediaType.movie, tmdb_id=10)
+            db.add(available)
+            await db.flush()
+            db.add(WatchEvent(user_id=self.user_id, media_id=available.id, completed=True))
+            await db.commit()
+            with patch('core.runtime_backfill.tmdb.get_movie', AsyncMock(return_value={'id':10, 'runtime':120})) as fetch:
+                result = await backfill_history_runtimes(db, 'fixture-key', limit=1)
+            self.assertEqual((result['examined'], result['recovered']), (1,1))
+            self.assertEqual(available.runtime, 120)
+            self.assertNotIn('runtime_backfill_attempted_at', missing.tmdb_data)
+        fetch.assert_awaited_once()
+
     async def test_runtime_backfill_deduplicates_history_and_refreshes_statistics(self):
         from core.runtime_backfill import backfill_history_runtimes
         async with self.Session() as db:
