@@ -657,6 +657,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         row = response.json()["results"][0]
         self.assertEqual(row["id"], self.movies[0].id)
         self.assertEqual(row["list_status"], "watching")
+        self.assertEqual(row['release_date'], '2021-02-03')
         self.assertTrue(response.json()["has_more"])
 
     async def test_remote_failure_does_not_change_sources_mid_scroll(self):

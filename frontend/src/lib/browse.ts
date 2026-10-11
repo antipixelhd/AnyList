@@ -13,6 +13,7 @@ import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import { initializeBrowseSort } from "./browse-sort";
+import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
@@ -113,6 +114,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     values.set("media_type", field("type").value);
     values.set("sort", sort.value);
+    if(field('view').value==='timeline')values.set('view','timeline');
     return values;
   };
   const requestPath = (values: URLSearchParams) => isCategoryView(values)
@@ -135,6 +137,17 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       "",
       `${location.pathname}${values.size ? `?${values}` : ""}`,
     );
+    root.querySelectorAll<HTMLAnchorElement>('[data-browse-layout]').forEach(link=>{
+      const target=new URLSearchParams(values);
+      if(link.dataset.browseLayout==='timeline')target.set('view','timeline');else target.delete('view');
+      link.href=`${location.pathname}${target.size?'?'+target:''}`;
+      if(link.dataset.browseLayout===field('view').value)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+    });
+    root.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
+      const target=new URLSearchParams(values);target.delete('genres');target.delete('status');
+      if(link.dataset.browseType==='series')target.set('type','series');else target.delete('type');
+      link.href=`${location.pathname}${target.size?'?'+target:''}`;
+    });
   };
   const json = async (path: string, options: RequestInit = {}) => {
     const response = await fetch(`/api/proxy/tracking/${path}`, options);
@@ -184,6 +197,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   };
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
+    const cards:HTMLElement[]=[];
     for (const item of results) {
       if (deduplicate && seen.has(key(item))) continue;
       if (deduplicate) seen.add(key(item));
@@ -229,10 +243,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         });
       paintState(card, item);
       items.set(card, item);
+      cards.push(card);
       if ('entry' in item) editorStore.seed(item as EditorTitle);
       fragment.append(card);
     }
-    destination.append(fragment);
+    if(destination===grid&&field('view').value==='timeline')appendBrowseTimeline(destination,cards,items);
+    else destination.append(fragment);
+    return cards;
   };
   const renderSections = (results: Section[]) => {
     for (const section of results) {
@@ -433,9 +450,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         loadingView.handoff([...sections.querySelectorAll<HTMLElement>('.browse-card-body')]);
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
-        const existing = grid.querySelectorAll('.browse-card-body').length;
-        render(response.results);
-        loadingView.handoff([...grid.querySelectorAll<HTMLElement>('.browse-card-body')].slice(existing));
+        const cards=render(response.results);
+        loadingView.handoff(cards.map(card=>card.querySelector<HTMLElement>('.browse-card-body')!));
         payload = response;
       }
       notice.textContent = response.notice || "";
@@ -587,6 +603,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   bindBrowseCardTouch(region, signal);
   sort.addEventListener("change", changed, { signal });
+  root.querySelectorAll<HTMLAnchorElement>('[data-browse-layout]').forEach(link=>link.addEventListener('click',event=>{
+    if(event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+    event.preventDefault();
+    const view=link.dataset.browseLayout!;
+    if(field('view').value===view)return;
+    field('view').value=view;root.dataset.browseView=view;
+    grid.className=view==='timeline'?'browse-timeline':'browse-grid';
+    changed();
+  },{signal}));
   root
     .querySelectorAll<HTMLAnchorElement>("[data-browse-type]")
     .forEach((link) =>

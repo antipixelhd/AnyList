@@ -617,6 +617,7 @@ async def browse_page(
                     "type": media_type,
                     "title": item.get("title") or item.get("name"),
                     "poster": item.get("poster_path"),
+                    "release_date": item.get("release_date") or item.get("first_air_date") or None,
                     "year": (
                         item.get("release_date") or item.get("first_air_date") or ""
                     )[:4],
