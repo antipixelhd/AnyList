@@ -1,6 +1,10 @@
 .image-lightbox { width:min(1200px,calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 40px); padding:24px; background:var(--panel); color:var(--bright); border:1px solid var(--border); border-radius:8px; grid-template-columns:40px minmax(0,1fr) 40px; align-items:center; gap:18px; }
 .image-lightbox[open] { display:grid; }
-.image-lightbox::backdrop { background:#000c; }
+.image-lightbox::backdrop { background:#000c; animation:image-backdrop-in .18s ease-out both; }
+.image-lightbox[data-motion-closing]::backdrop { animation:image-backdrop-out .12s ease-in both; }
+@keyframes image-backdrop-in { from { opacity:0; } to { opacity:1; } }
+@keyframes image-backdrop-out { from { opacity:1; } to { opacity:0; } }
+@media (prefers-reduced-motion:reduce) { .image-lightbox::backdrop,.image-lightbox[data-motion-closing]::backdrop { animation:none; } }
 .image-lightbox>img { max-width:100%; max-height:calc(100dvh - 160px); margin:auto; object-fit:contain; }
 .image-lightbox[data-gallery]>img { grid-column:2; grid-row:1; }
 .image-lightbox [data-image-viewer-step="-1"] { grid-column:1; grid-row:1; }

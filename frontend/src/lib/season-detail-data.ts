@@ -8,3 +8,9 @@ export function currentDetailSeason(seasons:DetailSeason[],watching=false) {
   const latest=watchedSeason??1;
   return regular.find(season=>season.season_number>=latest&&season.episodes?.some(episode=>episode.released&&!episode.watched))?.season_number ?? (watching?watchedSeason??null:null);
 }
+
+export function detailSeasonState(season:DetailSeason,current:number|null,watching:boolean) {
+  const watched=!!season.released_count&&season.watched_count>=season.released_count;
+  const progress=watching&&season.season_number===current&&!watched&&!!season.released_count;
+  return {watched,progress,label:watched?'Watched':progress?`${season.watched_count} / ${season.released_count} watched`:'Not watched'};
+}

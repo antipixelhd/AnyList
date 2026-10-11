@@ -12,6 +12,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-portrait { width:100%; border:0; padding:0; cursor:pointer; }
 .contributor-portrait:disabled { cursor:default; }
 .contributor-portrait:focus-visible { outline:2px solid var(--blue); outline-offset:4px; }
+.contributor-biography { scroll-margin-top:96px; }
 .contributor-portrait [data-contributor-portrait-fallback] { display:grid; place-items:center; }
 .contributor-portrait [data-contributor-portrait-fallback] .ui-icon { display:flex; }
 .is-studio .contributor-portrait { aspect-ratio:1; }

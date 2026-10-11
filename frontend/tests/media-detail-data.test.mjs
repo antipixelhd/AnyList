@@ -3,10 +3,10 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
-import {biographyPreview} from '../src/lib/contributor-page-data.ts';
+import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
-const context={biographyPreview,Intl,Date};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,durationLabel,detailDate,progressTotal,detailFacts,relationLabel,moneyLabel};',context);
+const context={Intl,Date,countryLabel};
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel};',context);
 const {api}=context;
 test('direct catalogue routes validate local IDs and reject ambiguous or oversized values',()=>{
   assert.equal(api.localMediaId('12'),12);
@@ -22,7 +22,19 @@ test('partial release dates remain stable and absent metadata is omitted',()=>{
   assert.equal(api.detailDate('1965'),'1965');assert.equal(api.detailDate('invalid'),'');
   assert.equal(api.durationLabel(167),'2h 47m');
   const facts=api.detailFacts(api.prepareDetail({type:'book',year:'1965',pages:896}));
-  assert.deepEqual(Array.from(facts,fact=>fact.label),['Format','First published','Pages']);
+  assert.deepEqual(Array.from(facts,fact=>fact.label),['First published','Pages']);
+});
+
+test('synopsis previews include multiple paragraphs and retain the full expanded text',()=>{
+  const short='First paragraph.\n\nA more detailed second paragraph.';
+  assert.equal(api.detailSynopsis(short).lead,short);
+  assert.equal(api.detailSynopsis(short).expandable,false);
+  const full=Array.from({length:160},(_,index)=>`word${index}${index===59?'\n\n':''}`).join(' ');
+  const result=api.detailSynopsis(full);
+  assert.equal(result.lead.split(/\s+/).length,120);
+  assert.equal(result.lead+result.rest,full);
+  assert.equal(result.expandable,true);
+  assert.equal(api.detailSynopsis(null).expandable,false);
 });
 test('cached game prices respect currency minor units and missing prices stay absent',()=>{
   assert.equal(api.moneyLabel({amountInt:799,currency:'EUR'}),'€7.99');

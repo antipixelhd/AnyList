@@ -38,6 +38,7 @@ function play(element: HTMLElement, entering: boolean, distance: number) {
 
 export function showDialog(dialog: HTMLDialogElement) {
   closing.set(dialog, ++sequence);
+  dialog.removeAttribute('data-motion-closing');
   dialog.style.removeProperty('pointer-events');
   if (!boundDialogs.has(dialog)) {
     boundDialogs.add(dialog);
@@ -63,6 +64,7 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   if (!dialog.open) return;
   const token = ++sequence;
   closing.set(dialog, token);
+  dialog.setAttribute('data-motion-closing','');
   dialog.style.pointerEvents = 'none';
   const control = play(dialog, false, 8);
   if (control) await control.finished.catch(() => {});
@@ -70,6 +72,7 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   stop(dialog);
   dialog.style.removeProperty('pointer-events');
   dialog.close(returnValue);
+  dialog.removeAttribute('data-motion-closing');
 }
 
 export function showMenu(menu: HTMLElement) {

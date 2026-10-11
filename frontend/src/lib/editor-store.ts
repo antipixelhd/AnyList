@@ -22,9 +22,11 @@ export class EditorStore {
   private reads = new Map<number, Promise<EditorTitle>>();
   private request: Transport;
   private changed: (title: EditorTitle) => void;
-  constructor(request: Transport, changed: (title: EditorTitle) => void = () => {}) {
+  private committed: (title:EditorTitle,patch:Record<string,any>|null) => void;
+  constructor(request: Transport, changed: (title: EditorTitle) => void = () => {}, committed:(title:EditorTitle,patch:Record<string,any>|null)=>void = () => {}) {
     this.request = request;
     this.changed = changed;
+    this.committed = committed;
   }
   scope(viewer: string) {
     if (this.viewer === viewer) return;
@@ -111,6 +113,7 @@ export class EditorStore {
     record.pending.push(operation);
     this.paint(record);
     const task = record.tail.catch(() => {}).then(async () => {
+      let succeeded=false;
       try {
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const id = await this.resolveId(record.title);
@@ -118,10 +121,12 @@ export class EditorStore {
         const saved = await this.request(`entry/${id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch)});
         record.committed = saved;
         record.stale = false;
+        succeeded=true;
         return saved;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);
+        if(succeeded&&viewer===this.viewer&&[...this.records.values()].includes(record))this.committed(record.title,patch);
       }
     });
     record.tail = task;
@@ -134,6 +139,7 @@ export class EditorStore {
     record.pending.push(operation);
     this.paint(record);
     const task = record.tail.catch(() => {}).then(async () => {
+      let succeeded=false;
       try {
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const id = await this.resolveId(record.title);
@@ -141,10 +147,12 @@ export class EditorStore {
         await this.request(`entry/${id}?confirmed=true`, {method:'DELETE'});
         record.committed = null;
         record.stale = false;
+        succeeded=true;
         return id;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);
+        if(succeeded&&viewer===this.viewer&&[...this.records.values()].includes(record))this.committed(record.title,null);
       }
     });
     record.tail = task;
@@ -204,6 +212,8 @@ export const editorStore = new EditorStore(async (path, options) => {
   return data;
 }, title => {
   document.dispatchEvent(new CustomEvent('anylist:editor-state', {detail:title}));
+}, (title,patch) => {
+  document.dispatchEvent(new CustomEvent('anylist:editor-committed', {detail:{title,patch}}));
 });
 
 export function seedEditorPage() {

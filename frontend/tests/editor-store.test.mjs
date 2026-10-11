@@ -10,6 +10,24 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
 
+test('commit notifications follow successful writes and removals, never optimistic or failed writes',async()=>{
+  let pending=deferred();const commits=[];
+  const store=new EditorStore(()=>pending.promise,()=>{},(title,patch)=>commits.push({entry:title.entry&&{...title.entry},patch}));
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  const first=store.write(title,{status:'completed'});
+  assert.equal(commits.length,0);
+  await turn();pending.resolve({status:'completed',progress:5});await first;
+  assert.equal(commits[0].entry.progress,5);
+  assert.deepEqual(commits[0].patch,{status:'completed'});
+  pending=deferred();const failed=store.write(title,{status:'watching'});
+  await turn();pending.reject(new Error('Unavailable'));await assert.rejects(failed);
+  assert.equal(commits.length,1);
+  assert.equal(title.entry.status,'completed');
+  pending=deferred();const removed=store.remove(title);
+  await turn();pending.resolve({});await removed;
+  assert.deepEqual(commits[1],{entry:null,patch:null});
+});
+
 test('seeded editor snapshots open without reads, preserve all fields and share the displayed poster', async () => {
   const calls=[];
   const store=new EditorStore(path => {calls.push(path);throw Error('unexpected read');});

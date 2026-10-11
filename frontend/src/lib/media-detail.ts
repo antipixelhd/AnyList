@@ -6,6 +6,7 @@ import { mountDetailImages } from './media-detail-images';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
 import {kindLabel,relationLabel} from './media-detail-data';
+import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
 
 let pageListeners: AbortController | undefined;
 export function mountMediaDetail() {
@@ -94,6 +95,17 @@ export function mountMediaDetail() {
   note?.addEventListener('input',()=>{noteDirty=true;},{signal});
   const paint = (state: EditorTitle) => {
     title = state;
+    const catalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
+    const watching=state.entry?.status==='watching';
+    const current=currentDetailSeason(catalogue,watching);
+    for(const season of catalogue){
+      const value=detailSeasonState(season,current,watching);
+      const indicator=root.querySelector<HTMLElement>(`[data-season-state="${season.season_number}"]`);
+      if(!indicator)continue;
+      const label=indicator.querySelector<HTMLElement>('[data-season-state-label]')!;
+      if(label.textContent!==value.label){label.textContent=value.label;reveal(indicator);}
+      indicator.dataset.watched=String(value.watched);
+    }
     if (favorite) {
       const active = !!state.entry?.favorite;
       favorite.dataset.favorite=String(active); favorite.setAttribute('aria-pressed',String(active));
@@ -108,8 +120,6 @@ export function mountMediaDetail() {
     root.querySelectorAll<HTMLElement>('[data-season-score]').forEach(score=>score.textContent=String(state.entry?.season_scores?.[score.dataset.seasonScore!] || '—'));
     const average=root.querySelector<HTMLInputElement>('[data-season-average]');
     if(average)average.checked=state.entry?.rating_mode==='average';
-    const showScore=root.querySelector<HTMLElement>('[data-season-show-score]');
-    if(showScore)showScore.textContent=`${state.entry?.score??'—'} / 10`;
     const rating = root.querySelector<HTMLElement>('[data-quick-rate-id]');
     if (rating) {
       const score = state.entry?.score || null;
@@ -179,10 +189,6 @@ export function mountMediaDetail() {
     paint(editorStore.seed({...data,editor_library:title?.editor_library}));
     for(const season of data.seasons||[]){
       const number=season.season_number;
-      const count=root.querySelector<HTMLElement>(`[data-season-count="${number}"]`);
-      if(count)count.textContent=season.released_count==null?'Episode metadata not loaded':`${season.watched_count} / ${season.released_count} watched`;
-      const toggle=root.querySelector<HTMLButtonElement>(`[data-season-progress="${number}"]`);
-      if(toggle){const complete=!!season.released_count&&season.watched_count>=season.released_count;toggle.dataset.watched=String(!complete);toggle.disabled=!season.released_count;toggle.firstChild!.textContent=complete?'Mark season unwatched ':'Mark season watched ';}
       for(const episode of season.episodes||[]){
         const row=root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);if(!row)continue;
         row.dataset.watched=String(episode.watched);
@@ -192,6 +198,11 @@ export function mountMediaDetail() {
     }
     paintEpisodeTitles();
   };
+  document.addEventListener('anylist:editor-committed',event=>{
+    const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
+    if(saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
+    void refreshSeasonState().catch(()=>{if(!signal.aborted)showToast('Reload to see your updated episode state.','error');});
+  },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{
     const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
     try{
@@ -202,10 +213,10 @@ export function mountMediaDetail() {
     }catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
     finally{button.disabled=false;button.removeAttribute('aria-busy');}
   },{signal}));
-  const request=async(path:string,body?:unknown)=>{
-    const response=await fetch(`/api/proxy/tracking/${path}`,{method:body?'PATCH':'POST',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  const request=async(path:string)=>{
+    const response=await fetch(`/api/proxy/tracking/${path}`,{signal,method:'POST'});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Unable to save this change.');
+    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Unable to refresh episode metadata.');
     return data;
   };
   root.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async event=>{
@@ -213,16 +224,6 @@ export function mountMediaDetail() {
     try{await request(`title/${info.id}/refresh-episodes`);location.reload();}
     catch(error){showToast((error as Error).message,'error');button.disabled=false;button.removeAttribute('aria-busy');}
   },{signal});
-  root.querySelectorAll<HTMLButtonElement>('[data-season-progress]').forEach(button=>button.addEventListener('click',async()=>{
-    button.disabled=true;
-    const body={watched:button.dataset.watched==='true',confirm_rollback:false};
-    try {
-      try{await request(`entry/${info.id}/season/${button.dataset.seasonProgress}`,body);}
-      catch(error){if(!(error as Error).message.includes('Confirm to continue'))throw error;if(!confirm((error as Error).message))return;body.confirm_rollback=true;await request(`entry/${info.id}/season/${button.dataset.seasonProgress}`,body);}
-      await refreshSeasonState();
-    }catch(error){showToast((error as Error).message,'error');}
-    finally{button.disabled=false;}
-  },{signal}));
   const mode=root.querySelector<HTMLDialogElement>('#season-mode');
   mode?.addEventListener('click',event=>{if(event.target===mode)void closeDialog(mode,'cancel');},{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-open-season-score]').forEach(button=>button.addEventListener('click',()=>{

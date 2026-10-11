@@ -1,5 +1,5 @@
 import type { EditorTitle } from './editor-store';
-import { biographyPreview } from './contributor-page-data';
+import {countryLabel} from './stats-overview-data';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
 export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; url: string | null; roles: string[]; characters: string[]};
@@ -37,7 +37,14 @@ export function detailDate(value?: string | null) {
   const date = new Date(value.slice(0, 10));
   return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en', {dateStyle:'medium',timeZone:'UTC'}).format(date);
 }
-export function detailSynopsis(value?: string | null) { return biographyPreview(value, 65); }
+export function detailSynopsis(value?: string | null) {
+  const full=(value||'').trim();
+  const words=[...full.matchAll(/\S+/g)];
+  const shortened=words.length>120;
+  const end=shortened?words[119].index!+words[119][0].length:full.length;
+  const lead=full.slice(0,end),rest=full.slice(end);
+  return {lead,rest,shortened,expandable:shortened};
+}
 export function progressTotal(media: DetailMedia) {
   if (media.type === 'movie') return 1;
   const seasons = media.seasons.filter(season => season.season_number > 0);
@@ -45,16 +52,16 @@ export function progressTotal(media: DetailMedia) {
     ? seasons.reduce((sum, season) => sum + Number(season.released_count || 0), 0) : media.episode_count || null;
 }
 export function detailFacts(media: DetailMedia) {
-  const facts: {label: string; value: string}[] = [{label:'Format',value:kindLabel[media.type]}];
+  const facts: {label: string; value: string}[] = [];
   const add = (label: string, value: unknown) => { if (value != null && value !== '' && value !== 0) facts.push({label,value:String(value)}); };
   add(media.type === 'book' ? 'First published' : 'Released', detailDate(media.release_date) || media.year);
-  add('Status',media.release_status);
+  add('Release status',media.release_status);
   if (media.type === 'movie') add('Runtime',durationLabel(media.runtime));
   if (media.type === 'series') {
     add('Episode runtime',durationLabel(media.episode_runtime)); add('Seasons',media.season_count); add('Episodes',media.episode_count);
   }
   add('Language',media.original_language?.toUpperCase());
-  add('Country',media.countries.join(', '));
+  add('Country',media.countries.map(countryLabel).join(', '));
   if (media.type === 'book') add('Pages',media.pages);
   if (media.type === 'game') add('Platforms',[...new Set(media.releases.map(release => release.platform).filter(Boolean))].join(', '));
   return facts;

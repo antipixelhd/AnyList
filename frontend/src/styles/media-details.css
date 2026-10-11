@@ -4,6 +4,8 @@
 .media-detail .lab-hero { overflow:visible; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
+.media-detail.concept-marquee[data-has-backdrop=false] .lab-hero { height:auto; }
+.media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { height:auto; padding-top:32px; }
 .media-detail .lab-hero-image,.media-detail .lab-hero-shade { pointer-events:none; }
 .media-detail .lab-hero-image { object-fit:cover; }
 .media-detail .media-cover-empty { display:grid; place-items:center; background:var(--panel); color:var(--blue); font-size:5rem; }
@@ -19,6 +21,11 @@
 .media-detail .media-tracking .media-action-row .status-split .button-primary { min-height:40px; background:var(--blue); color:var(--bg); }
 .media-detail .media-square { width:40px; height:40px; display:grid; place-items:center; flex-shrink:0; padding:0; border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--lab-muted); }
 .media-detail .media-square .ui-icon { width:15px; height:15px; }
+.media-detail .media-square { transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
+.media-detail :is(.media-square,.lab-season-rate,.lab-text-button,.lab-episode-check):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.media-detail :is(.lab-season-rate strong,.lab-text-button) { transition:color .18s ease; }
+.media-detail [data-detail-synopsis] { scroll-margin-top:96px; }
+.media-detail [data-detail-synopsis] [data-biography-text] { white-space:pre-line; }
 .media-detail .media-square[aria-pressed=true] { color:var(--blue); border-color:color-mix(in srgb,var(--blue) 40%,var(--border)); background:color-mix(in srgb,var(--blue) 12%,var(--panel)); }
 .media-detail .media-square[aria-pressed=true] svg { fill:currentColor; }
 .media-detail .media-favorite { color:#ef8db5; }
@@ -54,10 +61,18 @@
 .media-season-disclosure>summary::-webkit-details-marker { display:none; }
 .media-season-disclosure[open] .lab-season-expand .ui-icon { transform:rotate(180deg); }
 .media-season-disclosure .lab-season-expand { padding:6px 0; }
+.media-detail .lab-season-toolbar { justify-content:space-between; gap:12px; flex-wrap:nowrap; }
+.media-detail .lab-season-toolbar>span { width:auto; }
+.media-detail .media-season-state { display:inline-flex; align-items:center; gap:7px; font-variant-numeric:tabular-nums; }
+.media-season-state[data-watched=true] { color:var(--blue); }
+.media-season-state>.ui-icon { width:12px; height:12px; }
+.media-season-state[data-watched=false]>.ui-icon { display:none; }
+.media-detail .lab-season-rate { min-width:44px; min-height:44px; justify-content:center; }
 .media-detail .lab-season-card .lab-episode-list { animation:none; }
 .media-detail .lab-episode-copy { min-width:0; }
 .media-detail .lab-episode-copy h3 { overflow-wrap:anywhere; }
 .media-detail .lab-episode-check:disabled { opacity:.4; cursor:default; }
+.media-detail .lab-episode-check .ui-icon { transition:opacity .18s ease; }
 .media-scroll-reveal { translate:0 12px; opacity:.2; }
 @media (max-width:900px) {
   .media-detail .lab-game-offer { order:2; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
@@ -71,6 +86,8 @@
   .media-detail.concept-marquee .lab-hero-content { display:grid; grid-template-columns:108px minmax(0,1fr); align-items:start; gap:20px; height:auto; padding:145px 0 0; }
   .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:108px; height:162px; align-self:start; }
   .media-detail.concept-marquee .lab-heading { margin-top:39px; padding:0; }
+  .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { padding-top:28px; }
+  .media-detail.concept-marquee[data-has-backdrop=false] .lab-heading { margin-top:0; }
   .media-detail.concept-marquee .lab-heading h1 { font-size:3rem; line-height:1.12; margin:8px 0; }
   .media-detail.concept-marquee .lab-heading .lab-kicker { gap:7px; line-height:1.8; }
   .media-detail.concept-marquee .lab-tagline { font-size:1.2rem; }

@@ -4,6 +4,7 @@ import StatusControl from './StatusControl.astro';
 import Icon from './Icon.astro';
 import ImageLightbox from './ImageLightbox.astro';
 import MediaDetailSeasons from './MediaDetailSeasons.astro';
+import MediaDetailFacts from './MediaDetailFacts.astro';
 import MediaDetailPerson from './MediaDetailPerson.astro';
 import MediaDetailWork from './MediaDetailWork.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
@@ -38,13 +39,13 @@ const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.searc
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
 ---
 <Tracker title={title?.title||'Media'} preloadBodyFonts>
-{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-spoilers="false">
+{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-has-backdrop={String(!!backdrop)} data-spoilers="false">
   {signedIn&&trackable&&<script id="title-editor-data" type="application/json" set:html={encode({...title,editor_library:{available:!!library?.connections?.length,desired:library?.desired===true}})}/>}
   <header class="lab-hero">
     {backdrop&&<img class="lab-hero-image" src={backdrop.src} srcset={backdrop.srcset} sizes={backdrop.sizes} alt="" fetchpriority="high"/>}<div class="lab-hero-shade"></div>
     <div class="lab-hero-content">
       {poster?<button class="lab-hero-poster lab-poster-button media-cover" type="button" data-detail-gallery="posters" data-detail-image={poster.src} data-detail-caption={`${title.title} · Cover`} aria-label={`Expand ${title.title} cover`}><img class="lab-poster" src={poster.src} srcset={poster.srcset} sizes={poster.sizes} alt={`${title.title} cover`} fetchpriority="high"/></button>:<div class="lab-hero-poster lab-poster-button media-cover media-cover-empty" aria-hidden="true">{title.title.slice(0,1)}</div>}
-      <div class="lab-heading"><p class="lab-kicker"><span>{kindLabel[title.type]}</span>{title.year&&<span>{title.year}</span>}{creator&&<span>{creator}</span>}</p><h1>{title.title}</h1>{title.original_title&&title.original_title!==title.title&&<p class="media-original-title">{title.original_title}</p>}{title.tagline&&<p class="lab-tagline">{title.tagline}</p>}{!!title.genres.length&&<div class="lab-genres">{title.genres.slice(0,6).map(genre=>trackable?<a href={`/browse?type=${title.type}&genre=${encodeURIComponent(genre)}`}>{genre}</a>:<span>{genre}</span>)}</div>}</div>
+      <div class="lab-heading"><p class="lab-kicker"><span>{kindLabel[title.type]}</span>{title.year&&<span>{title.year}</span>}{creator&&<span>{creator}</span>}</p><h1>{title.title}</h1>{title.original_title&&title.original_title.trim().toLocaleLowerCase()!==title.title.trim().toLocaleLowerCase()&&<p class="media-original-title">{title.original_title}</p>}{title.tagline&&<p class="lab-tagline">{title.tagline}</p>}{!!title.genres.length&&<div class="lab-genres">{title.genres.slice(0,6).map(genre=>trackable?<a href={`/browse?type=${title.type}&genre=${encodeURIComponent(genre)}`}>{genre}</a>:<span>{genre}</span>)}</div>}</div>
       {backdrop&&<button class="lab-hero-art-button" type="button" data-detail-image={backdrop.src} data-detail-caption={`${title.title} · Main artwork`} aria-label="Expand artwork"><Icon name="zoom-in"/></button>}
     </div>
   </header>
@@ -56,7 +57,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         </>:<a class="lab-primary-button" href={login}>Sign in to add to your list <Icon name="plus"/></a>}
         {libraryError&&<p class="error-message" role="alert">{libraryError}</p>}
       </section>}
-      <section class="lab-facts"><h2>Information</h2><dl>{facts.map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}{title.organizations.map(person=><div><dt>{person.roles.join(', ')}</dt><dd>{person.url?<a href={person.url}>{person.name}</a>:person.name}</dd></div>)}{!!title.creators?.length&&<div><dt>Created by</dt><dd>{title.creators!.map(p=>p.name).join(', ')}</dd></div>}{!!title.networks?.length&&<div><dt>Networks</dt><dd>{title.networks!.map(p=>p.name).join(', ')}</dd></div>}</dl></section>
+      <section class="lab-facts"><h2>Information</h2><MediaDetailFacts facts={facts} title={title}/></section>
       {!!sources.length&&<nav class="lab-source-links" aria-label="Metadata sources">{[...new Map(sources.map(source=>[source.url,source])).values()].map(source=><a href={source.url} target="_blank" rel="noreferrer">{source.name}<Icon name="external"/></a>)}</nav>}
     </aside>
     <div class="lab-main">
@@ -65,8 +66,8 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         <div class="lab-panel" id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview" hidden={initialTab!=='overview'}>
           <div class="lab-overview-grid">
             <div class="lab-primary-column">
-              <section class="lab-story lab-module" data-detail-synopsis><div class="lab-section-title"><h2>Overview</h2></div><p data-biography-text>{synopsis.lead||'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{synopsis.expandable&&<button class="lab-text-button" type="button" data-biography-toggle aria-expanded="false">Read more</button>}</section>
-              <section class="lab-inline-facts lab-module"><h2>Information</h2><dl>{facts.map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}{title.organizations.map(person=><div><dt>{person.roles.join(', ')}</dt><dd>{person.url?<a href={person.url}>{person.name}</a>:person.name}</dd></div>)}</dl></section>
+              <section class="lab-story lab-module" data-detail-synopsis><div class="lab-section-title"><h2>Overview</h2></div><p id="detail-synopsis" data-biography-text>{synopsis.lead||'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{synopsis.expandable&&<button class="lab-text-button" type="button" data-biography-toggle aria-expanded="false" aria-controls="detail-synopsis">Read more</button>}<noscript><style>{`.media-detail [data-biography-rest][hidden] { display:inline!important; } .media-detail [data-biography-toggle],.media-detail [data-biography-ellipsis] { display:none!important; }`}</style></noscript></section>
+              <section class="lab-inline-facts lab-module"><h2>Information</h2><MediaDetailFacts facts={facts} title={title}/></section>
               {!!preview.length&&<section class="lab-people-preview lab-module"><div class="lab-section-title"><h2>{trackable?'Cast & crew':'Creators'}</h2><button class="lab-text-button" type="button" data-detail-open-tab="people">View all <Icon name="arrow-right"/></button></div><div class="lab-person-grid">{preview.map(person=><MediaDetailPerson person={person}/>)}</div></section>}
               {!!scenes.length&&<section class="lab-art-preview lab-module"><div class="lab-section-title"><h2>In the frame</h2></div><button class="lab-art-image" type="button" data-detail-image={scenes[0]} data-detail-caption={`${title.title} · Scene`} aria-label={`Expand ${title.title} scene`}><img src={scenes[0]} alt={`${title.title} scene`} loading="lazy"/></button></section>}
               {!!title.editions.length&&<section class="lab-module"><div class="lab-section-title"><h2>Editions</h2></div><div class="media-editions">{title.editions.map(edition=><article>{edition.image&&<img src={edition.image} alt="" loading="lazy"/>}<div><h3>{edition.name}</h3><p>{[edition.format,edition.language,edition.pages?`${edition.pages} pages`:null,detailDate(edition.release_date)].filter(Boolean).join(' · ')}</p></div></article>)}</div></section>}
