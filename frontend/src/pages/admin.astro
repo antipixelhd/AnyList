@@ -31,7 +31,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
   <div class="max-w-4xl mx-auto settings-stack">
 
-    <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <!-- ── Global Server Settings ── -->
     <section>
@@ -773,6 +772,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 </div>
 
 <script>
+  import { showMessage } from '../lib/settings-feedback';
   import { showOverlay, hideOverlay, showCollapsible, hideCollapsible } from '../lib/ui-motion';
   document.addEventListener('astro:page-load', () => {
   const appData = document.getElementById('app-data') as HTMLElement | null;
@@ -785,35 +785,6 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     if (s == null) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
-
-  // Floating toast, top-right, kept below the nav (mirrors settings.astro) -
-  // floored by the iOS safe-area inset (notch/status bar), not just a flat
-  // 16px, or it renders underneath it once the nav is out of view (#402).
-  function positionMessage(msg: HTMLElement) {
-    const nav = document.querySelector('nav');
-    const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
-    msg.style.top = `max(16px, calc(env(safe-area-inset-top, 0px) + 8px), ${navBottom + 12}px)`;
-  }
-
-  function showMessage(text: string, type: 'success' | 'error' = 'success') {
-    const msg = document.getElementById('js-message');
-    if (!msg) return;
-    msg.textContent = text;
-    msg.className = `fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border ${
-      type === 'success'
-        ? 'bg-zinc-900 border-green-500/50 text-green-400'
-        : 'bg-zinc-900 border-red-500/50 text-red-400'
-    }`;
-    positionMessage(msg);
-    msg.classList.remove('hidden');
-    if ((window as any)._messageTimeout) clearTimeout((window as any)._messageTimeout);
-    (window as any)._messageTimeout = setTimeout(() => msg.classList.add('hidden'), 4000);
-  }
-
-  window.addEventListener('scroll', () => {
-    const msg = document.getElementById('js-message');
-    if (msg && !msg.classList.contains('hidden')) positionMessage(msg);
-  }, { passive: true });
 
   function setConnStatus(id: string, state: 'checking' | 'connected' | 'disconnected') {
     const el = document.getElementById(id);

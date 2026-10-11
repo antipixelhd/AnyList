@@ -554,48 +554,9 @@ button:disabled {
   height:100%;
   background:linear-gradient(rgba(6, 13, 34, 0) 40%, rgba(6, 13, 34, 0.6))
 }
-.detail-layout {
-  max-width:var(--page-max-width);
-  margin:-125px auto 0;
-  padding:0 var(--page-gutter);
-  position:relative;
-  display:grid;
-  grid-template-columns:200px minmax(0,1fr);
-  gap:var(--content-column-gap)
-}
-.detail-poster {
-  width:100%;
-  border-radius:6px;
-  background:var(--panel)
-}
-.detail-body {
-  padding-top:165px
-}
-.detail-body h1 {
-  color:var(--bright);
-  font-size:var(--type-page-size);
-  font-weight:var(--type-page-weight)
-}
-.detail-body p {
-  max-width:850px
-}
 .detail-sidebar .button-primary {
   margin-top:18px;
   width:100%
-}
-.detail-facts {
-  background:var(--panel);
-  padding:20px;
-  margin-top:22px;
-  font-size:var(--type-label-size);
-  border-radius:5px
-}
-.detail-facts dt {
-  color:var(--muted);
-  margin-top:14px
-}
-.detail-facts dd {
-  margin:4px 0
 }
 .season-card {
   padding:20px;
@@ -614,13 +575,6 @@ button:disabled {
   border:1px solid var(--border);
   color:var(--text);
   border-radius:4px
-}
-.social-score {
-  padding:12px 20px;
-  background:var(--panel);
-  display:flex;
-  justify-content:space-between;
-  margin:8px 0
 }
 [hidden] {
   display:none!important
@@ -746,19 +700,6 @@ button:disabled {
   .page-footer span {
     display:none
   }
-  .detail-layout {
-    grid-template-columns:100px minmax(0,1fr);
-    gap:20px;
-    padding:0 16px;
-    margin-top:-45px
-  }
-  .detail-body {
-    padding-top:45px
-  }
-  .detail-body h1 {
-    font-size:var(--type-section-size);
-    font-weight:var(--type-page-weight)
-  }
   .detail-banner {
     height:210px;
     margin-top:0
@@ -766,9 +707,6 @@ button:disabled {
   .detail-sidebar .button-primary {
     padding:10px 4px;
     font-size:var(--type-meta-size)
-  }
-  .detail-facts {
-    padding:12px
   }
   .season-card {
     display:block

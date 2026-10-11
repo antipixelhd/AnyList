@@ -206,7 +206,7 @@ document.addEventListener('astro:page-load', () => {
     loadController = controller;
     const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
     if (cached) {
-      const image = button.closest('.browse-card, .entry-row, .quick-search-result')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.detail-poster');
+      const image = button.closest('.browse-card, .entry-row, .quick-search-result')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
       editorStore.warmArtwork(cached, image?.currentSrc || image?.src);
       populateEditor(cached);
       showDialog(dialog);
@@ -311,7 +311,7 @@ document.addEventListener('astro:page-load', () => {
     const button = (event.target as Element).closest<HTMLElement>('[data-edit-entry]');
     if (!button) return;
     const id = Number(button.dataset.editEntry);
-    const image = button.closest('.entry-row')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.detail-poster');
+    const image = button.closest('.entry-row')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
     const title = editorStore.find(id);
     if (title) editorStore.warmArtwork(title, image?.currentSrc || image?.src);
     else void editorStore.load(id).then(title => editorStore.warmArtwork(title, image?.currentSrc || image?.src)).catch(() => {});

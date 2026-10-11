@@ -1370,14 +1370,15 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     friends = []
     if viewer:
         entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media.id))).scalar_one_or_none()
-        rows = (await db.execute(select(TrackedEntry, User).join(User, User.id == TrackedEntry.user_id)
+        rows = (await db.execute(select(TrackedEntry, User, UserProfileData).join(User, User.id == TrackedEntry.user_id)
             .join(UserProfileData, UserProfileData.user_id == User.id)
             .join(Follow, Follow.following_id == User.id)
             .where(Follow.follower_id == viewer.id, UserProfileData.privacy_level == PrivacyLevel.public, TrackedEntry.media_id == media.id))).all()
-        for e, user in rows:
+        for e, user, profile in rows:
             score = effective_score(e.rating_mode, e.manual_score, e.season_scores)
             if score is not None:
-                friends.append({"username": user.username, "score": score, "status": e.status})
+                friends.append({"id": user.id, "username": user.username, "display_name": profile.display_name,
+                    "has_avatar": bool(profile.avatar_path), "score": score, "status": e.status})
     seasons = [dict(s) for s in (media.tmdb_data or {}).get("seasons", [])]
     episodes = await released_episodes(db, media)
     watched = set()
@@ -1389,7 +1390,11 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
         released = [e for e in episodes if e.season_number == season.get('season_number')]
         season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
         season['watched_count'] = sum(e.id in watched for e in released)
-    return {**tracking_projection.media_data(media), "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
+    from core.media_details import screen_work, work_details
+    from core.countries import screen_countries
+    details = await work_details(db, await screen_work(db, media))
+    details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
+    return {**tracking_projection.media_data(media), **details, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
             "seasons": seasons, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 

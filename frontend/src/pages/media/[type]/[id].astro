@@ -3,6 +3,7 @@ import {api} from '../../../lib/api';
 const {type,id}=Astro.params;
 const externalId=Number(id);
 if (!Number.isSafeInteger(externalId)||externalId<=0) return Astro.redirect('/browse',302);
+if (type==='game'||type==='book') return Astro.redirect(`/${type==='game'?'games':'books'}/${externalId}`,302);
 if (type==='movie') {
   return Astro.redirect(Astro.locals.user?`/discover-title?type=movie&id=${externalId}`:'/browse?type=movie',302);
 }

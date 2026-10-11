@@ -1,9 +1,9 @@
 <div class="route-progress" data-route-progress aria-hidden="true"></div>
-<div class="offline-toast" data-offline-toast role="status" aria-live="polite" hidden></div>
 
 <script>
   import { wirePasswordToggles } from '../lib/password-toggle';
   import { mutationFetch } from '../lib/mutation-fetch';
+  import { showToast as notify } from '../lib/toasts';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number };
@@ -50,12 +50,7 @@
   }
 
   function showToast(message: string) {
-    const toast = document.querySelector<HTMLElement>('[data-offline-toast]');
-    if (!toast) return;
-    toast.textContent = message;
-    toast.hidden = false;
-    window.clearTimeout(Number(toast.dataset.timer || 0));
-    toast.dataset.timer = String(window.setTimeout(() => { toast.hidden = true; }, 4200));
+    notify({message, kind:'warning', key:'navigation'});
   }
   window.anyListToast = showToast;
 
@@ -121,9 +116,7 @@
       input.removeAttribute('value');
     });
     clone.querySelectorAll('[data-route-progress]').forEach(element => element.classList.remove('visible','finishing'));
-    clone.querySelectorAll('[data-offline-toast]').forEach(element => {
-      element.setAttribute('hidden',''); element.textContent = '';
-    });
+    clone.querySelectorAll('[data-toast-host]').forEach(element => element.replaceChildren());
     return '<!doctype html>' + clone.outerHTML;
   }
 

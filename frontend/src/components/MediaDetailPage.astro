@@ -1,0 +1,109 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+import StatusControl from './StatusControl.astro';
+import Icon from './Icon.astro';
+import MediaDetailSeasons from './MediaDetailSeasons.astro';
+import MediaDetailPerson from './MediaDetailPerson.astro';
+import {statuses} from '../lib/tracker';
+import {scoreLabel} from '../lib/tracker';
+import {responsiveArtwork} from '../lib/responsive-artwork';
+import {prepareDetail, kindLabel, detailFacts, detailSynopsis, progressTotal, detailDate, relationLabel, moneyLabel} from '../lib/media-detail-data';
+import '../styles/media-details.css';
+const {media, library = null, libraryError = '', canUseLibrary = false, error = ''} = Astro.props;
+const title = media ? prepareDetail(media) : null;
+const signedIn = !!Astro.locals.user;
+const trackable = title && ['movie','series'].includes(title.type) && title.tracking_available !== false;
+const poster = responsiveArtwork(title?.poster, {size:'w500',sizes:'(max-width:650px) 104px, 200px',route:'direct'});
+const backdrop = responsiveArtwork(title?.backdrop, {size:'w1280',sizes:'100vw',route:'direct'});
+const facts = title ? detailFacts(title) : [];
+const synopsis = detailSynopsis(title?.overview);
+const total = title ? progressTotal(title) : null;
+const people = title ? [...title.people, ...title.organizations] : [];
+const cast = people.filter(person => person.kind === 'actor');
+const others = people.filter(person => person.kind !== 'actor');
+const preview = [...cast.slice(0,4), ...others.slice(0,4)];
+const artwork = [...new Set([...(title?.artwork || []), title?.backdrop].filter(Boolean))] as string[];
+const tabs = [{id:'overview',label:'Overview'}, ...(title?.type === 'series' ? [{id:'seasons',label:'Seasons'}] : []),
+  ...(people.length ? [{id:'people',label:trackable?'Cast & crew':'Creators'}] : []),
+  ...(artwork.length ? [{id:'artwork',label:'Artwork'}] : [])];
+const login = `/login?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`;
+const publicScore = title?.imdb_score ? {name:'IMDb',value:title.imdb_score} : title?.tmdb_score ? {name:'TMDB',value:title.tmdb_score} : null;
+const sources = [...(title?.sources || []),
+  ...(title?.tmdb_id ? [{name:'TMDB',url:`https://www.themoviedb.org/${title.type === 'series'?'tv':'movie'}/${title.tmdb_id}`}] : []),
+  ...(title?.imdb_id ? [{name:'IMDb',url:`https://www.imdb.com/title/${title.imdb_id}/`}] : [])];
+const price = title?.prices.find(row => moneyLabel(row.current));
+---
+<Tracker title={title?.title || 'Media'} preloadBodyFonts>
+  {title ? <article class="media-detail" data-media-detail data-media-kind={title.type}>
+    {signedIn && trackable && <script id="title-editor-data" type="application/json" set:html={JSON.stringify({...title,editor_library:{available:!!library?.connections?.length,desired:library?.desired===true}}).replaceAll('<','\\u003c')}/>}
+    <header class="media-hero">
+      {backdrop && <img class="media-backdrop" src={backdrop.src} srcset={backdrop.srcset} sizes={backdrop.sizes} alt="" fetchpriority="high"/>}
+      <div class="media-hero-shade"></div>
+      <div class="media-hero-content">
+        {poster ? <button class="media-cover" type="button" data-detail-image={poster.src} data-detail-caption={`${title.title} · Cover`} aria-label={`Expand ${title.title} cover`}><img src={poster.src} srcset={poster.srcset} sizes={poster.sizes} alt={`${title.title} cover`} fetchpriority="high"/></button> : <div class="media-cover media-cover-empty" aria-hidden="true">{title.title.slice(0,1)}</div>}
+        <div class="media-heading">
+          <p class="media-kicker"><span>{kindLabel[title.type]}</span>{title.year && <span>{title.year}</span>}{title.type === 'movie' && title.runtime && <span>{facts.find(f=>f.label==='Runtime')?.value}</span>}{publicScore && <span class="media-opening-score"><Icon name="star"/>{scoreLabel(publicScore.value)} <small>{publicScore.name}</small></span>}</p>
+          <h1>{title.title}</h1>
+          {title.original_title && title.original_title !== title.title && <p class="media-original-title">{title.original_title}</p>}
+          {title.tagline && <p class="media-tagline">{title.tagline}</p>}
+          {title.genres.length > 0 && <div class="media-genres">{title.genres.slice(0,6).map(genre => trackable ? <a href={`/browse?type=${title.type}&genre=${encodeURIComponent(genre)}`}>{genre}</a> : <span>{genre}</span>)}</div>}
+        </div>
+        <div class="media-action-area" hidden={!trackable}>
+          {trackable && <div class="media-action-row">
+            {signedIn ? <>
+              <StatusControl mediaId={title.id} status={title.entry?.status} type={title.type}/>
+              <button class="media-square" type="button" aria-label={title.entry?.favorite?'Remove from favorites':'Add to favorites'} title={title.entry?.favorite?'Remove from favorites':'Add to favorites'} aria-pressed={!!title.entry?.favorite} data-favorite-toggle data-media={title.id} data-favorite={String(!!title.entry?.favorite)} data-motion-press><Icon name="heart"/></button>
+              {canUseLibrary && <button class="media-square" type="button" title={library?.desired?'Remove from library':'Add to library'} aria-label={library?.desired?'Remove from library':'Add to library'} aria-pressed={!!library?.desired} data-library-toggle data-media={title.id} data-desired={String(!!library?.desired)} disabled={!library} data-motion-press><Icon name="list"/></button>}
+              <button class="media-personal-score" type="button" aria-label={`Rate ${title.title}. Current score: ${scoreLabel(title.entry?.score ?? null)}`} data-quick-rate-id={title.id} data-quick-rate-title={title.title} data-quick-rate-poster={poster?.src || ''} data-quick-rate-score={title.entry?.score??''} data-quick-rate-mode={title.entry?.rating_mode??'manual'} data-motion-press><Icon name="star"/><span><small>Your score</small><strong data-score-label>{scoreLabel(title.entry?.score ?? null)}</strong></span></button>
+            </> : <a class="button-primary media-sign-in" href={login}>Sign in to add to your list <Icon name="plus"/></a>}
+          </div>}
+          {signedIn && trackable && <div class="media-progress" data-detail-progress hidden={!title.entry}><span data-detail-progress-label>{title.type === 'movie' ? title.entry?.progress ? 'Watched' : 'Unwatched' : `${title.entry?.progress || 0}${total ? ` / ${total}` : ''} episodes watched`}</span>{title.type === 'series' && total && <progress data-detail-progress-bar value={title.entry?.progress || 0} max={total} aria-label="Episodes watched"/>}<button class="media-text-button" type="button" data-edit-entry={title.id}>Edit progress <Icon name="edit"/></button></div>}
+          {libraryError && <p class="error-message" role="alert">{libraryError}</p>}
+        </div>
+        {backdrop && <button class="media-expand-backdrop media-square" type="button" data-detail-image={backdrop.src} data-detail-caption={`${title.title} · Artwork`} aria-label="Expand artwork"><Icon name="zoom-in"/></button>}
+      </div>
+    </header>
+    <div class="media-detail-layout">
+      <aside class="media-information">
+        <h2>Information</h2><dl>{facts.map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
+          {title.organizations.map(person=><div><dt>{person.roles.join(', ')}</dt><dd>{person.url?<a href={person.url}>{person.name}</a>:person.name}</dd></div>)}
+          {!!title.creators?.length && <div><dt>Created by</dt><dd>{title.creators!.map(p=>p.name).join(', ')}</dd></div>}
+          {!!title.networks?.length && <div><dt>Networks</dt><dd>{title.networks!.map(p=>p.name).join(', ')}</dd></div>}
+        </dl>
+        {!!sources.length && <nav class="media-source-links" aria-label="Metadata sources">{[...new Map(sources.map(source=>[source.url,source])).values()].map(source=><a href={source.url} target="_blank" rel="noreferrer">{source.name}<Icon name="external"/></a>)}</nav>}
+      </aside>
+      <div class="media-detail-main">
+        <div class="media-detail-tabs" role="tablist" aria-label="Media details">{tabs.map((tab,i)=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={i===0} tabindex={i===0?0:-1} data-detail-tab={tab.id}>{tab.label}</button>)}</div>
+        <div data-detail-panels>
+          <div id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview">
+            <div class="media-overview-grid">
+              <div class="media-primary-column">
+                <section class="media-module media-synopsis" data-detail-synopsis><h2>Overview</h2><p data-biography-text>{synopsis.lead || 'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{synopsis.expandable && <button class="media-text-button" type="button" data-biography-toggle aria-expanded="false">Read more</button>}</section>
+                {!!title.friends.length && <section class="media-module"><div class="media-section-heading"><h2>People you follow</h2><span class="media-friends-mean"><Icon name="star"/>{scoreLabel(title.friends_average ?? null)}</span></div><div class="media-friends-grid">{title.friends.map(friend=><a class="media-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="media-friend-avatar" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><span><strong>{friend.display_name || friend.username}</strong><small>{statuses.find(([id])=>id===friend.status)?.[1] || friend.status}</small></span><b>{scoreLabel(friend.score)}</b></a>)}</div></section>}
+                {!!preview.length && <section class="media-module"><div class="media-section-heading"><h2>{trackable?'Cast & crew':'Creators'}</h2><button type="button" class="media-text-button" data-detail-open-tab="people">View all <Icon name="arrow-right"/></button></div><div class="media-people-preview">{preview.map(person=><MediaDetailPerson person={person}/>)}</div></section>}
+                {!!title.relations.length && <section class="media-module"><h2>Relations</h2><div class="media-relations">{title.relations.map(work=><a href={work.url}>{work.poster&&<img src={work.poster} alt="" loading="lazy"/>}<span><small>{relationLabel(work.relation,work.reverse)}</small><strong>{work.title}</strong><span>{kindLabel[work.type as keyof typeof kindLabel]}{work.year?` · ${work.year}`:''}</span></span></a>)}</div></section>}
+                {!!title.editions.length && <section class="media-module"><h2>Editions</h2><div class="media-editions">{title.editions.map(edition=><article>{edition.image&&<img src={edition.image} alt="" loading="lazy"/>}<div><h3>{edition.name}</h3><p>{[edition.format,edition.language,edition.pages?`${edition.pages} pages`:null,detailDate(edition.release_date)].filter(Boolean).join(' · ')}</p></div></article>)}</div></section>}
+                {!!title.releases.length && <section class="media-module"><h2>Releases</h2><div class="media-releases">{title.releases.map(release=><p><strong>{release.platform}</strong><span>{[release.region,detailDate(release.release_date)].filter(Boolean).join(' · ')}</span></p>)}</div></section>}
+              </div>
+              <div class="media-secondary-column">
+                {price && <section class="media-module media-game-price"><h2>Steam · {price.country}</h2><strong class="media-price-value">{moneyLabel(price.current)}</strong>{moneyLabel(price.historical_low)&&<p>Lowest <strong>{moneyLabel(price.historical_low)}</strong>{price.historical_low_at&&` · ${detailDate(price.historical_low_at)}`}</p>}<small>Updated {detailDate(price.fetched_at)}</small>{price.url&&<a class="button-primary" href={price.url} target="_blank" rel="noreferrer">View on Steam <Icon name="external"/></a>}</section>}
+                {[title.tmdb_score,title.imdb_score,title.rt_critic_score,title.rt_audience_score].some(value=>value!=null) && <section class="media-module media-provider-ratings"><h2>Ratings</h2>{[['IMDb',title.imdb_score],['TMDB',title.tmdb_score],['RT Critics',title.rt_critic_score],['RT Audience',title.rt_audience_score]].filter(([,value])=>value!=null).map(([name,value])=><div><span>{name}</span><strong>{String(name).startsWith('RT')?`${Math.round(Number(value))}%`:scoreLabel(Number(value))}</strong></div>)}</section>}
+                {signedIn && trackable && <section class="media-module media-notes"><div class="media-section-heading"><h2><label for="detail-note">Notes</label></h2><Icon name="comment"/></div><textarea id="detail-note" rows="4" placeholder="Something worth remembering…">{title.entry?.notes || ''}</textarea><button class="media-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></section>}
+              </div>
+            </div>
+          </div>
+          {title.type === 'series' && <section id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden><MediaDetailSeasons title={title} signedIn={signedIn}/></section>}
+          {!!people.length && <section id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden>{[...(cast.length?[{label:'Cast',rows:cast}]:[]),...(others.length?[{label:trackable?'Crew & studios':'Creators',rows:others}]:[])].map(group=><section class="media-module"><h2>{group.label}</h2><div class="media-full-people">{group.rows.map(person=><MediaDetailPerson person={person}/>)}</div></section>)}</section>}
+          {!!artwork.length && <section id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden><div class="media-artwork-grid">{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img src={url} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
+        </div>
+      </div>
+    </div>
+    <dialog class="media-lightbox" id="detail-lightbox" aria-labelledby="detail-lightbox-caption"><button class="media-square media-lightbox-close" type="button" data-detail-close-lightbox aria-label="Close artwork"><Icon name="close"/></button><button class="media-square" type="button" data-detail-image-step="-1" aria-label="Previous artwork"><Icon name="chevron-left"/></button><img data-detail-lightbox-image alt=""/><button class="media-square" type="button" data-detail-image-step="1" aria-label="Next artwork"><Icon name="chevron-right"/></button><p id="detail-lightbox-caption"></p></dialog>
+    <script id="media-detail-data" type="application/json" set:html={JSON.stringify({id:title.id,type:title.type,total,progress:title.entry?.progress||0}).replaceAll('<','\\u003c')}/>
+  </article> : <div class="page-width"><p class="error-message" role="alert">{error || 'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}
+</Tracker>
+<script>
+  import { mountMediaDetail } from '../lib/media-detail';
+  mountMediaDetail();
+  document.addEventListener('astro:page-load',mountMediaDetail);
+</script>

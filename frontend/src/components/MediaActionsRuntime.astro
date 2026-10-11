@@ -1,4 +1,5 @@
 <script>
+    import {showToast} from '../lib/toasts';
     // ── Card action bar ────────────────────────────────────────────────────────
     const API = '/api/proxy';
     const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
@@ -34,7 +35,7 @@
       } catch {
         if (err.message) msg = err.message;
       }
-      alert(msg);
+      showToast(msg,'error');
     }
 
     // ── Confirm dialog ─────────────────────────────────────────────────────────
@@ -1200,7 +1201,7 @@
         } catch { /* ignore */ }
 
       } else if (action === 'list') {
-        if (!tmdbId && !mediaId) { alert('Cannot add unmatched item to lists'); return; }
+        if (!tmdbId && !mediaId) { showToast('Cannot add unmatched item to lists','error'); return; }
         if (document.getElementById('list-popover')!.classList.contains('hidden') || _activeListBtn !== btn) {
           openListPopover(btn, tmdbId, mediaType, card.dataset.season || '', mediaId);
         } else {
@@ -1244,7 +1245,7 @@
               const query = tmdbId ? `tmdb_id=${tmdbId}` : `id=${mediaId}`;
               await apiFetch(`/media/collect?${query}&media_type=${mediaType}`, 'DELETE');
             } else {
-              if (!tmdbId && !mediaId) { alert('Cannot manually collect unmatched items'); return; }
+              if (!tmdbId && !mediaId) { showToast('Cannot manually collect unmatched items','error'); return; }
               const collectBody: Record<string, number | string> = { media_type: mediaType };
               if (tmdbId) collectBody.tmdb_id = Number(tmdbId);
               if (mediaId) collectBody.media_id = Number(mediaId);

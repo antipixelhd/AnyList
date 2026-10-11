@@ -259,6 +259,15 @@ async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, cur
     return result
 
 
+@router.get("/entities/{entity_id}/details")
+async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: Caller) -> dict:
+    from core.media_details import catalogue_title
+    work = await db.get(CatalogueEntity, entity_id)
+    if not work or work.kind not in ('game', 'book'):
+        raise HTTPException(404, "Game or book not found")
+    return await catalogue_title(db, work)
+
+
 @router.get("/entities/{entity_id}/{section}")
 async def related(
     entity_id: int,
