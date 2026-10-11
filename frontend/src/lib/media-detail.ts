@@ -18,6 +18,7 @@ export function mountMediaDetail() {
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
   if(info.relatedPending){
+    const icons=root.querySelector<HTMLTemplateElement>('[data-detail-work-icons]')!.content;
     void fetch(`/api/proxy/tracking/title/${info.id}/related`,{signal}).then(async response=>{
       if(!response.ok)return;
       const data=await response.json();
@@ -33,12 +34,14 @@ export function mountMediaDetail() {
           card.href=url.href;
           if(field==='relations')card.className='lab-related-card';
           if(work.poster){const image=document.createElement('img');image.src=work.poster;image.alt='';image.loading='lazy';card.append(image);}
-          else{const cover=document.createElement('span');cover.className='media-work-placeholder';cover.setAttribute('aria-hidden','true');card.append(cover);}
+          else card.append(icons.firstElementChild!.cloneNode(true));
           const copy=document.createElement('div');
           if(field==='relations'){const label=document.createElement('span');label.className='lab-relation-type';label.textContent=work.label||relationLabel(work.relation,work.reverse);copy.append(label);}
           const title=document.createElement('h3');title.textContent=work.title;
           const detail=document.createElement('p');detail.textContent=[kindLabel[work.type as keyof typeof kindLabel],work.year].filter(Boolean).join(' · ');
-          copy.append(title,detail);card.append(copy);return card;
+          copy.append(title,detail);card.append(copy);
+          if(field==='similar')card.append(icons.lastElementChild!.cloneNode(true));
+          return card;
         }).filter((card:HTMLAnchorElement|null):card is HTMLAnchorElement=>!!card);
         grid.replaceChildren(...cards);section.hidden=!cards.length;
         if(cards.length&&section.getBoundingClientRect().top<innerHeight&&section.getBoundingClientRect().bottom>0)reveal(section);

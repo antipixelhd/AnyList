@@ -90,6 +90,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
   </div>
   <dialog class="media-lightbox" id="detail-lightbox" aria-labelledby="detail-lightbox-caption"><button class="media-square media-lightbox-close" type="button" data-detail-close-lightbox aria-label="Close artwork"><Icon name="close"/></button><button class="media-square" type="button" data-detail-image-step="-1" aria-label="Previous artwork"><Icon name="chevron-left"/></button><img data-detail-lightbox-image alt=""/><button class="media-square" type="button" data-detail-image-step="1" aria-label="Next artwork"><Icon name="chevron-right"/></button><p id="detail-lightbox-caption"></p></dialog>
   <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,total,relatedPending:signedIn&&trackable&&title.related_pending})}/>
+  <template data-detail-work-icons><span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span><Icon name="arrow-right"/></template>
 </article>:<div class="page-width"><p class="error-message" role="alert">{error||'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}
 </Tracker>
 <script>
