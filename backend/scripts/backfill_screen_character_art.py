@@ -21,7 +21,8 @@ async def main():
         key = await settings_store.get_user_tvdb_key(db, None)
         if not key:
             raise RuntimeError('A server TVDB key is required')
-        providers = CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal), tvdb_key=key)
+        providers = CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal), tvdb_key=key,
+            tmdb_key=await settings_store.get_user_tmdb_key(db,None))
         if args.media_id is not None:
             media = await db.get(Media, args.media_id)
             if not media:

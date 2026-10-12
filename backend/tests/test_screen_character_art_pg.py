@@ -101,6 +101,32 @@ class CharacterArtTests(unittest.IsolatedAsyncioTestCase):
                 result=await fill_character_art(db,media,providers=SimpleNamespace(tvdb_key='fixture'))
             self.assertEqual(result['error'],'identity_conflict')
             self.assertFalse(any(p['character_image'] for p in (await work_details(db,work))['people']))
+            row=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==KIND))
+            row.next_attempt_at=datetime.utcnow()-timedelta(seconds=1);await db.commit()
+            with patch('core.screen_character_art.request_tvdb',AsyncMock(side_effect=self.replies())):
+                self.assertEqual((await fill_character_art(db,media,providers=SimpleNamespace(tvdb_key='fixture')))['state'],'ready')
+
+    async def test_imdb_person_bridge_upgrades_cached_payload_without_name_matching(self):
+        async with self.Session() as db:
+            media,work=await self.seed(db)
+            raw=self.replies()(None,'/movies/377/extended')
+            db.add(MetadataSnapshot(provider='tvdb',kind=KIND,external_id=str(media.id),entity_id=work.id,
+                payload={'native':377,'title':raw,'people':{
+                    '10':{'id':10,'remoteIds':[{'sourceName':'IMDB','id':'nm100'}]},
+                    '20':{'id':20,'remoteIds':[{'sourceName':'IMDB','id':'nm200'}]}}},
+                coverage={'version':1},expires_at=datetime.utcnow()+timedelta(days=7)))
+            await db.commit()
+            adapter=SimpleNamespace(tvdb_key='fixture',tmdb_key='fixture')
+            with patch('core.screen_character_art.request_tvdb',AsyncMock()) as tvdb, patch(
+                'core.screen_character_art.resolve_imdb_person',AsyncMock(side_effect=[100,200])) as bridge:
+                first=await fill_character_art(db,media,providers=adapter,person_limit=1)
+                self.assertEqual(first['state'],'partial');self.assertEqual(first['images'],1)
+                row=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==KIND))
+                row.next_attempt_at=datetime.utcnow()-timedelta(seconds=1);await db.commit()
+                second=await fill_character_art(db,media,providers=adapter,person_limit=1)
+                self.assertEqual(second['state'],'ready');self.assertEqual(second['images'],2)
+                self.assertEqual(bridge.await_count,2);tvdb.assert_not_awaited()
+            self.assertEqual(len((await work_details(db,work))['people']),2)
 
     async def test_score_quota_keeps_cache_and_blocks_repeat_calls_until_due(self):
         from core import external_scores, mdblist

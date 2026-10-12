@@ -77,6 +77,7 @@ class _PrivateRequests(logging.Filter):
                 "api.igdb.com",
                 "id.twitch.tv",
                 "api.hardcover.app",
+                "api.themoviedb.org",
             )
         )
 

@@ -1,5 +1,6 @@
 """Resumable, quota-aware TVDB role artwork, matched only by verified identities."""
 import uuid
+import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, or_, String
@@ -16,7 +17,7 @@ from models.base import MediaType
 from models.catalogue import CatalogueCredit, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
 
 KIND = 'character_art'
-VERSION = 1
+VERSION = 2
 
 
 def result(row, status, now=None):
@@ -28,6 +29,8 @@ async def cached_character_status(db, media_id):
         MetadataSnapshot.kind == KIND, MetadataSnapshot.external_id == str(media_id)))
     if row:
         state = catalogue.cached_refresh_status(row, datetime.now(timezone.utc).replace(tzinfo=None))
+        if state=='cached' and (row.coverage or {}).get('version')!=VERSION:
+            state=None
         return result(row, 'ready' if state == 'cached' else 'deferred' if state else 'pending')
     return {'state': 'pending', 'pending': True, 'error': None, 'retry_after': 0}
 
@@ -47,13 +50,22 @@ async def request_tvdb(providers, path):
     return raw.get('data') if isinstance(raw, dict) else None
 
 
+async def resolve_imdb_person(providers, imdb_id):
+    raw = await providers.http.request('tmdb','GET','https://api.themoviedb.org/3/find/'+imdb_id,
+        params={'api_key':providers.tmdb_key,'external_source':'imdb_id'})
+    candidates = {r['id'] for r in (raw or {}).get('person_results') or []
+                  if isinstance(r,dict) and type(r.get('id')) is int and r['id']>0}
+    return next(iter(candidates)) if len(candidates)==1 else None
+
+
 async def fill_character_art(db, media, user_id=None, *, providers=None, person_limit=8):
     work = await screen_work(db, media)
     if work is None:
         return {'state': 'unavailable', 'pending': False, 'retry_after': 0, 'error': None}
     if providers is None:
         providers = CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal),
-            tvdb_key=await settings_store.get_user_tvdb_key(db, user_id))
+            tvdb_key=await settings_store.get_user_tvdb_key(db, user_id),
+            tmdb_key=await settings_store.get_user_tmdb_key(db, user_id))
     if not providers.tvdb_key:
         return {'state': 'unavailable', 'pending': False, 'retry_after': 0, 'error': 'missing_key'}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -64,6 +76,8 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
     row = await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider == 'tvdb',
         MetadataSnapshot.kind == KIND, MetadataSnapshot.external_id == str(media.id)).with_for_update())
     state = catalogue.cached_refresh_status(row, now)
+    if state=='cached' and (row.coverage or {}).get('version')!=VERSION:
+        state=None
     if state:
         await db.commit()
         return result(row, 'ready' if state == 'cached' else 'deferred', now)
@@ -71,7 +85,8 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
     row.lease_until = now + timedelta(minutes=10)
     await db.commit()
     # Provider responses remain in the snapshot, not in canonical attributes.
-    payload = dict(row.payload or {}) if row.error_code or (row.coverage or {}).get('pending') else {}
+    expired=row.expires_at and row.expires_at<=now
+    payload = {} if expired or row.error_code=='identity_conflict' else dict(row.payload or {})
     try:
         ids = {i.namespace: i.external_id for i in await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id))}
         native = payload.get('native') or media.tvdb_id or ids.get('tvdb.' + work.kind)
@@ -118,12 +133,32 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
                     break
                 payload['people'][pid] = {}
             calls += 1
+        # Some TVDB performers have only an IMDb identity. Resolve that exact ID
+        # through TMDB instead of guessing from the name or role spelling.
+        for pid, person in list(payload['people'].items()):
+            remotes=person.get('remoteIds') or []
+            if person.get('_tmdb_resolved') or any(r.get('sourceName')=='TheMovieDB.com' for r in remotes):
+                continue
+            imdb=next((r.get('id') for r in remotes if r.get('sourceName')=='IMDB'),None)
+            if not isinstance(imdb,str) or not re.fullmatch(r'nm\d+',imdb) or not getattr(providers,'tmdb_key',None):
+                continue
+            if transient_error or calls>=person_limit:
+                pending=True
+                continue
+            calls+=1
+            try:
+                native_person=await resolve_imdb_person(providers,imdb)
+                payload['people'][pid]={**person,'_tmdb_resolved':True,'remoteIds':[*remotes,
+                    *([{'sourceName':'TheMovieDB.com','id':str(native_person)}] if native_person else [])]}
+            except ProviderError as error:
+                transient_error=error;pending=True
+                break
         await catalogue.write_lock(db)
         await db.refresh(row, with_for_update=True)
         if row.lease_token != token:
             await db.commit()
             return result(row, 'deferred')
-        count = 0
+        count, unmatched = 0, 0
         async with db.begin_nested():
             if native:
                 await catalogue.bind_identity(db, work.id, 'tvdb.' + work.kind, str(native), 'tvdb',
@@ -134,6 +169,7 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
                 roots = {mapping.entity_id for identity in credit['contributor']['identities']
                          if (mapping := await catalogue.resolve_identity(db, identity['namespace'], identity['external_id']))}
                 if len(roots) != 1 or not roots <= actor_ids:
+                    unmatched+=1
                     continue
                 actor_id = next(iter(roots))
                 for identity in credit['contributor']['identities']:
@@ -149,7 +185,8 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
                 count += 1
             await project_characters(db, work.id)
             row.payload = payload
-            row.coverage = {'version': VERSION, 'pending': pending, 'images': count, 'matched_by': 'verified_actor_ids'}
+            row.coverage = {'version': VERSION, 'pending': pending, 'images': count,
+                'available_images':len(cast),'unmatched_images':unmatched,'matched_by': 'verified_actor_ids'}
             row.fetched_at = now
             row.expires_at = None if pending else now + timedelta(days=7)
             row.next_attempt_at = now + timedelta(seconds=3) if pending else None
@@ -190,9 +227,10 @@ async def backfill_character_art(db, providers, *, limit=10):
         .where(Media.media_type.in_([MediaType.movie, MediaType.series]),
             select(CatalogueCredit.id).join(CatalogueLegacyLink, CatalogueLegacyLink.entity_id == CatalogueCredit.work_id)
                 .where(CatalogueLegacyLink.media_id == Media.id, CatalogueCredit.role == 'actor').exists(),
-            or_(MetadataSnapshot.id.is_(None),
-                (or_(MetadataSnapshot.expires_at.is_(None), MetadataSnapshot.expires_at <= now)) &
-                (or_(MetadataSnapshot.next_attempt_at.is_(None), MetadataSnapshot.next_attempt_at <= now))))
+            or_(MetadataSnapshot.id.is_(None), MetadataSnapshot.coverage['version'].as_integer().is_distinct_from(VERSION),
+                MetadataSnapshot.expires_at.is_(None), MetadataSnapshot.expires_at <= now),
+            or_(MetadataSnapshot.next_attempt_at.is_(None), MetadataSnapshot.next_attempt_at <= now),
+            or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now))
         .order_by(Media.id.desc()).limit(limit)))
     results = {'examined': len(rows), 'ready': 0, 'deferred': 0, 'images': 0}
     for media in rows:
