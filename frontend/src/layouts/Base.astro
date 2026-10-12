@@ -2,6 +2,7 @@
 import ShellControlsRuntime from "../components/ShellControlsRuntime.astro";
 import ToastRuntime from "../components/ToastRuntime.astro";
 import ResponsiveArtworkRuntime from "../components/ResponsiveArtworkRuntime.astro";
+import DateTimeRuntime from "../components/DateTimeRuntime.astro";
 import PlaybackRuntime from "../components/PlaybackRuntime.astro";
 import MediaActionsRuntime from "../components/MediaActionsRuntime.astro";
 import MediaRequestRuntime from "../components/MediaRequestRuntime.astro";
@@ -47,7 +48,6 @@ if (!user) {
   showAnonNavLinks = status.enable_logged_out_navigation;
 }
 const blurExplicit = Astro.cookies.get("blur_explicit")?.value !== "false";
-const use24h = Astro.cookies.get("time_format_24h")?.value === "true";
 
 const pathname = Astro.url.pathname;
 // Pre-fills the nav search box with the query already being viewed, so
@@ -569,8 +569,9 @@ const mobileGroups: MobileNavigationGroup[] = [
   <ShellControlsRuntime />
 
   <ResponsiveArtworkRuntime />
+  <DateTimeRuntime />
 
-  <PlaybackRuntime token={token} use24h={use24h} isAdmin={user?.is_admin === true} radarrCustomizeOnAdd={radarrCustomizeOnAdd} sonarrCustomizeOnAdd={sonarrCustomizeOnAdd} />
+  <PlaybackRuntime token={token} isAdmin={user?.is_admin === true} radarrCustomizeOnAdd={radarrCustomizeOnAdd} sonarrCustomizeOnAdd={sonarrCustomizeOnAdd} />
 
   <MediaActionsRuntime />
   <MediaRequestRuntime />

@@ -1,4 +1,5 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
+import { formatDate } from './date-time';
 import {
   isCategoryView,
   hasBrowseFilters,
@@ -318,9 +319,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (field(name).value && (name !== "min_score" || field(name).value !== "0")) {
         const label =
           name === "start"
-            ? `After ${field(name).value}`
+            ? `After ${formatDate(field(name).value)}`
             : name === "end"
-              ? `Before ${field(name).value}`
+              ? `Before ${formatDate(field(name).value)}`
               : name === "min_score" ? `${Number(field(name).value).toLocaleString()}+ TMDB score`
               : (field(name) as HTMLSelectElement).selectedOptions[0]
                   ?.textContent || field(name).value;

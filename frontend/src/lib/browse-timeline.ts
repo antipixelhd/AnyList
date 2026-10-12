@@ -1,4 +1,5 @@
 import { timelineGroups, type TimelineItem } from './browse-timeline-data';
+import { setLocalDateTime } from './date-time-dom';
 
 /** Keep the existing cards and month sections when pagination crosses a boundary. */
 export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, cards: HTMLElement[], items: Map<HTMLElement,T>) {
@@ -37,6 +38,7 @@ export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, 
         month.dataset.timelineMonth = group.key;
         const heading = document.createElement('h3');
         heading.textContent = group.label;
+        if (/^\d{4}-\d{2}$/.test(group.key) && !group.key.endsWith('-00')) setLocalDateTime(heading, group.key, 'month-name');
         const grid = document.createElement('div');
         grid.className = 'browse-grid';
         month.append(heading, grid);

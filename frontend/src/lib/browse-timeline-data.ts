@@ -1,12 +1,9 @@
+import { formatDateTime } from './date-time.ts';
 export type TimelineItem = {
   release_date?: string | null;
   year?: string;
   title: string;
 };
-const months = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 export function releaseGroup(item: TimelineItem) {
   const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(item.release_date || '');
@@ -20,7 +17,7 @@ export function releaseGroup(item: TimelineItem) {
   return {
     year,
     key: `${year || 'undated'}-${String(month).padStart(2, '0')}`,
-    label: month ? months[month - 1] : year ? 'Month not listed' : 'Release date not listed',
+    label: month ? formatDateTime(`${year}-${String(month).padStart(2, '0')}`, 'month-name') : year ? 'Month not listed' : 'Release date not listed',
     order: year ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` : '',
   };
 }

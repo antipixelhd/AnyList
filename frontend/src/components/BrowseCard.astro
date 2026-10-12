@@ -1,6 +1,7 @@
 ---
 import Icon from "./Icon.astro";
 import { responsiveArtwork } from "../lib/responsive-artwork";
+import { formatDate, requestDateLocale } from '../lib/date-time';
 const {
   item = { title: "", type: "movie" },
   signedIn = false,
@@ -130,7 +131,7 @@ const href = item.id
     </span>
   </div>
   {credits && <p class="browse-credit" data-work-credit title={[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}>{[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}</p>}
-  {credits && <time class="browse-work-date" datetime={item.release_date} data-work-date hidden={!item.release_date}>{item.release_date}</time>}
+  {credits && <time class="browse-work-date" datetime={item.release_date} data-local-date-time="date" data-work-date hidden={!item.release_date}>{formatDate(item.release_date,{locale:requestDateLocale(Astro.request.headers.get('accept-language'))})}</time>}
   </div>
   </div>
 </article>

@@ -1,4 +1,5 @@
 import { responsiveArtwork,type ArtworkRoute } from "./responsive-artwork";
+import { formatDateTime, timestamp } from './date-time';
 
 export async function tracker(path: string, token?: string) {
   const port = process.env.BACKEND_PORT ?? '7331';
@@ -81,8 +82,9 @@ export function activityAction(activity: any) {
 }
 
 export function activityTime(value: string, now = Date.now()) {
-  const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`;
-  const date = new Date(normalized);
+  const date = timestamp(value);
+  if (!date) return {datetime: '', label: 'Unknown', exact: ''};
+  const normalized = date.toISOString();
   const elapsed = Math.max(0, now - date.getTime());
   const minutes = Math.floor(elapsed / 60_000);
   const hours = Math.floor(elapsed / 3_600_000);
@@ -104,6 +106,6 @@ export function activityTime(value: string, now = Date.now()) {
   return {
     datetime: normalized,
     label,
-    exact: `${date.toLocaleString('en-GB', {dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'})} UTC`,
+    exact: formatDateTime(normalized, 'datetime'),
   };
 }

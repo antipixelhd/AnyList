@@ -19,6 +19,7 @@ Dont prefer bandade fixes but prefer concrete systems that fix the problem or im
 - Preserve complete domain data while rendering large collections progressively. Display limits should not become storage limits.
 - Keep reads focused, share concurrent requests, and reuse cached enrichment. Bound expensive work and keep it off the event loop on the shared VPS.
 - Make page initialization repeat-safe and clean up observers, timers, and requests when views change. Keep private caches scoped to the viewer.
+- Share browser-locale date/time formatting; keep calendar dates zone-free, timestamps local, and API/input values ISO.
 - Measure real bottlenecks before adding complexity; preserve correctness and distinguish preview lab results from production performance.
 
 ## Start with the task

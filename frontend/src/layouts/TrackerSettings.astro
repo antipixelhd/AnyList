@@ -16,6 +16,7 @@ import MotionRuntime from '../components/MotionRuntime.astro';
 import StyledSelectRuntime from '../components/StyledSelectRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
 import ToastRuntime from '../components/ToastRuntime.astro';
+import DateTimeRuntime from '../components/DateTimeRuntime.astro';
 import '../styles/settings-mobile-header.css';
 import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
@@ -72,6 +73,7 @@ const pathname = Astro.url.pathname;
     <StyledSelectRuntime />
     <ProfileThemeRuntime />
     <ToastRuntime />
+    <DateTimeRuntime />
     <noscript><style>.settings-nav { display: grid; } .settings-menu-toggle { display: none; }</style></noscript>
   </body>
 </html>

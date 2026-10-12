@@ -1,5 +1,6 @@
 import type { EditorTitle } from './editor-store';
 import {countryLabel} from './stats-overview-data';
+import {formatDate} from './date-time';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
 export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; characters: string[]};
@@ -86,10 +87,7 @@ export function durationLabel(minutes?: number | null) {
   return hours ? `${hours}h${rest ? ` ${rest}m` : ''}` : `${rest}m`;
 }
 export function detailDate(value?: string | null) {
-  if (!value) return '';
-  if (/^\d{4}$/.test(value)) return value;
-  const date = new Date(value.slice(0, 10));
-  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en', {dateStyle:'medium',timeZone:'UTC'}).format(date);
+  return formatDate(value?.slice(0, 10));
 }
 export function detailSynopsis(value?: string | null) {
   const full=(value||'').trim();

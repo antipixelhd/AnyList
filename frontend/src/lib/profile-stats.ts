@@ -1,3 +1,4 @@
+import { formatDateTime } from './date-time';
 import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ProfileStats } from './profile-stats-data';
@@ -86,9 +87,7 @@ function mountStats(root: HTMLElement) {
       tooltip: { backgroundColor: panel, titleColor: bright, bodyColor: bright, borderColor: border, borderWidth: 1, padding: 12, cornerRadius: 8, titleFont: { ...font, size: 12 }, bodyFont: { ...font, size: 12 }, usePointStyle: true },
     },
   } satisfies ChartOptions<'bar' | 'line'>;
-  const monthLabel = (month: string, full = false) => new Intl.DateTimeFormat('en', {
-    month: full ? 'long' : 'short', year: full ? 'numeric' : '2-digit', timeZone: 'UTC',
-  }).format(new Date(`${month}-01T00:00:00Z`));
+  const monthLabel = (month: string, full = false) => formatDateTime(month, full ? 'month' : 'month-short');
   function tableRows(selector: string, values: (string | number)[][]) {
     node(selector).replaceChildren(...values.map(values => {
       const row = document.createElement('tr');
@@ -169,7 +168,7 @@ function mountStats(root: HTMLElement) {
           x: { border: { display: false }, grid: { display: false }, ticks: { color: muted, font, maxTicksLimit: 7, maxRotation: 0, callback: (_value, index) => {
             const months = activityChart?.data.labels as string[] | undefined;
             if (!months?.[index]) return '';
-            return months.length > 12 ? monthLabel(months[index]) : new Intl.DateTimeFormat('en', { month: 'short', timeZone: 'UTC' }).format(new Date(`${months[index]}-01T00:00:00Z`));
+            return months.length > 12 ? monthLabel(months[index]) : formatDateTime(months[index], 'month-name-short');
           } } },
           y: { beginAtZero: true, border: { display: false }, grid: { color: border, tickLength: 0 }, ticks: { color: muted, font, precision: 0, maxTicksLimit: 5, padding: 10 } },
         } },

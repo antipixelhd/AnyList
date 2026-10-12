@@ -3,9 +3,10 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
+import {formatDate} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
-const context={Intl,Date,countryLabel};
+const context={Intl,Date,countryLabel,formatDate};
 runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation};',context);
 const {api}=context;
 

@@ -1,4 +1,5 @@
 <script>
+  import { formatDateTime, localToday } from '../lib/date-time';
     import {showToast} from '../lib/toasts';
     // ── Card action bar ────────────────────────────────────────────────────────
     const API = '/api/proxy';
@@ -713,7 +714,7 @@
       // Matches the backend's aired_denom logic (routers/shows.py get_show_season):
       // only count released episodes, unless none have aired yet, in which case
       // fall back to the full season total rather than dividing by zero.
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localToday();
       const isAired = (airDate: string) => !airDate || airDate <= today;
       const allCards = Array.from(epCards);
       const airedCards = allCards.filter(c => isAired(c.dataset.airDate || ''));
@@ -800,7 +801,7 @@
       // Air Date only makes sense for a single item with a known, already-
       // aired date - hidden entirely in bulk season/show mode, or when the
       // date isn't known or hasn't happened yet (#395).
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localToday();
       const airDateAvailable = !!_watchHistoryAirDate && _watchHistoryAirDate <= today;
       airDateBtn.className = inactiveClass;
       airDateBtn.classList.toggle('hidden', !airDateAvailable);
@@ -901,7 +902,7 @@
         } else {
           eventsEl.innerHTML = events.map(ev => {
             const fmt = ev.watched_at
-              ? new Date(ev.watched_at + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: !(window as any).__USE_24H__ })
+              ? formatDateTime(ev.watched_at, 'datetime')
               : 'Unknown date';
             return `<div class="flex items-center justify-between px-4 py-2.5 hover:bg-zinc-800/50 group">
               <span class="text-sm text-zinc-200">${esc(fmt)}</span>

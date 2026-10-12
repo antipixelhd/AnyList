@@ -1,3 +1,4 @@
+import { localToday } from './date-time';
 import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
 
 export type EditorTitle = {
@@ -107,7 +108,7 @@ export class EditorStore {
       entry = {...(entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
         season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null}), ...operation.patch};
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localToday();
       if (entry.status !== previous && entry.status === 'watching' && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
       if (entry.status !== previous && entry.status === 'completed' && !entry.finish_date && !('finish_date' in operation.patch)) entry.finish_date = today;
     }

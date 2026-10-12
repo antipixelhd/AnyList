@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {timelineGroups,releaseGroup} from '../src/lib/browse-timeline-data.ts';
+const monthName = (value) => new Intl.DateTimeFormat(undefined,{month:'long',timeZone:'UTC'}).format(new Date(`${value}-01T00:00:00Z`));
 import {browseLayout,browseRequestParams,isCategoryView} from '../src/lib/browse-view.ts';
 
 test('timeline requests retain every filter and use date ordering without mutating the grid sort',()=>{
@@ -15,7 +16,7 @@ test('timeline requests retain every filter and use date ordering without mutati
 });
 
 test('release groups use real month boundaries and never invent dates for partial metadata',()=>{
-  assert.equal(releaseGroup({title:'Leap day',release_date:'2024-02-29'}).label,'February');
+  assert.equal(releaseGroup({title:'Leap day',release_date:'2024-02-29'}).label,monthName('2024-02'));
   assert.equal(releaseGroup({title:'Invalid day',release_date:'2025-02-29'}).label,'Month not listed');
   assert.equal(releaseGroup({title:'Partial',year:'2020'}).key,'2020-00');
   assert.equal(releaseGroup({title:'Missing'}).label,'Release date not listed');
@@ -27,7 +28,7 @@ test('multiple pages share month and year groups, ordered newest first with unda
     {title:'Missing'},{title:'Partial',year:'2026'}];
   const groups=timelineGroups(items);
   assert.deepEqual(groups.map(year=>year.year),['2026','2025','']);
-  assert.deepEqual(groups[0].months.map(month=>month.label),['October','September','Month not listed']);
+  assert.deepEqual(groups[0].months.map(month=>month.label),[monthName('2026-10'),monthName('2026-09'),'Month not listed']);
   assert.deepEqual(groups[0].months[0].items.map(item=>item.title),['Later','October']);
   assert.equal(groups.flatMap(year=>year.months.flatMap(month=>month.items)).length,items.length);
   assert.equal(items[0].title,'Earlier');

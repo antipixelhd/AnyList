@@ -1,4 +1,5 @@
 import { statuses } from './tracker';
+import { formatDate } from './date-time';
 
 export type NotificationSnapshot = {
   results: any[];
@@ -18,12 +19,7 @@ function seasonLabel(event: any) {
 function seasonReleaseDate(event: any) {
   const value = event.payload?.release_date;
   if (!value) return '';
-  const date = String(value).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return String(value);
-  const parsed = new Date(`${date}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) ? date : new Intl.DateTimeFormat('en', {
-    year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
-  }).format(parsed);
+  return formatDate(String(value).slice(0, 10));
 }
 
 export const eventTitle = (event: any) => {
@@ -58,7 +54,8 @@ export const seasonArtworkFallback = (event: any) => Boolean(isSeasonReleaseNoti
 export const seasonArtworkRetry = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.artwork_retry);
 export const historyChanges = (event: any) => (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
 export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress', season: 'Season', episode: 'Episode', position: 'Playback position (ms)', duration: 'Duration (ms)' } as Record<string, string>)[field] || field;
-export const historyValue = (value: any) => value == null || value === '' ? 'Not set' : String(value);
+export const historyValue = (value: any, field?: string) => value == null || value === '' ? 'Not set'
+  : field === 'start_date' || field === 'finish_date' ? formatDate(String(value)) || 'Not set' : String(value);
 export const statusLabel = (value: string | null | undefined) => statuses.find(([status]) => status === value)?.[1] || value || 'Unknown';
 
 export const eventKey = (event: any) => `event:${event.id}`;

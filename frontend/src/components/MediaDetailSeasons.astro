@@ -1,7 +1,8 @@
 ---
 import Icon from './Icon.astro';
 import {responsiveArtwork} from '../lib/responsive-artwork';
-import {detailDate,durationLabel,type DetailMedia} from '../lib/media-detail-data';
+import LocalDateTime from './LocalDateTime.astro';
+import {durationLabel,type DetailMedia} from '../lib/media-detail-data';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from '../lib/season-detail-data';
 import {scoreLabel} from '../lib/tracker';
 const {title,signedIn}=Astro.props as {title:DetailMedia;signedIn:boolean};
@@ -20,7 +21,7 @@ const current=currentDetailSeason(seasons,title.entry?.status==='watching');
         <summary class="lab-season-toolbar"><span class="media-season-state" data-season-state={number} hidden={!signedIn} data-watched={String(state.watched)} data-motion-fade><Icon name="check"/><span data-season-state-label>{state.label}</span></span><span class="lab-season-expand">Episodes <Icon name="chevron-down"/></span></summary>
         <div class="lab-episode-list">{season.episodes?.length?season.episodes.map(episode=>{
           const image=responsiveArtwork(episode.image,{size:'w300',sizes:'(max-width:650px) 55px, 125px',route:Astro.locals.imageCacheEnabled?'proxy':'direct'});
-          return <article class="lab-episode" data-episode-row={episode.id} data-watched={String(episode.watched)}><span class="lab-episode-number">{String(episode.episode_number).padStart(2,'0')}</span>{image?<div class="lab-episode-image"><img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/></div>:<div class="lab-episode-image lab-episode-placeholder" aria-hidden="true"><Icon name="play"/></div>}<div class="lab-episode-copy"><h3 data-episode-title={episode.title} data-episode-number={episode.episode_number}>{episode.watched?episode.title:`Episode ${episode.episode_number}`}</h3><p>{[durationLabel(episode.runtime),detailDate(episode.air_date)].filter(Boolean).join(' · ')}</p></div>{signedIn&&<button class="lab-episode-check" type="button" data-watch-episode={episode.id} aria-pressed={episode.watched} aria-label={`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`} disabled={!episode.released||season.released_count==null} title={!episode.released?'Not released yet':season.released_count==null?'Refresh episode metadata':undefined}><Icon name="check"/></button>}</article>;
+          return <article class="lab-episode" data-episode-row={episode.id} data-watched={String(episode.watched)}><span class="lab-episode-number">{String(episode.episode_number).padStart(2,'0')}</span>{image?<div class="lab-episode-image"><img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/></div>:<div class="lab-episode-image lab-episode-placeholder" aria-hidden="true"><Icon name="play"/></div>}<div class="lab-episode-copy"><h3 data-episode-title={episode.title} data-episode-number={episode.episode_number}>{episode.watched?episode.title:`Episode ${episode.episode_number}`}</h3><p>{durationLabel(episode.runtime)}{episode.runtime&&episode.air_date?' · ':''}{episode.air_date&&<LocalDateTime value={episode.air_date}/>}</p></div>{signedIn&&<button class="lab-episode-check" type="button" data-watch-episode={episode.id} aria-pressed={episode.watched} aria-label={`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`} disabled={!episode.released||season.released_count==null} title={!episode.released?'Not released yet':season.released_count==null?'Refresh episode metadata':undefined}><Icon name="check"/></button>}</article>;
         }):<p class="section-empty">Episode metadata has not been loaded yet.</p>}</div>
       </details>
     </article>;

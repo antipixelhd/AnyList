@@ -31,6 +31,7 @@ import {
   statusLabel,
 } from "./notification-presentation";
 
+import { setLocalDateTime } from './date-time-dom';
 let pageListeners: AbortController | undefined;
 
 document.addEventListener("astro:page-load", () => {
@@ -263,9 +264,9 @@ function mountInbox(
         const label = document.createElement("small");
         label.textContent = historyLabel(change.field);
         const previous = document.createElement("span");
-        previous.textContent = historyValue(change.previous);
+        previous.textContent = historyValue(change.previous, change.field);
         const proposed = document.createElement("strong");
-        proposed.textContent = historyValue(change.proposed);
+        proposed.textContent = historyValue(change.proposed, change.field);
         row.append(label, previous);
         addArrow(row);
         row.append(proposed);
@@ -417,6 +418,10 @@ function mountInbox(
       eventTitle(event),
     );
     updateMessage(card, eventMessage(event));
+    if (event.kind === 'new_season_release_date' && event.payload?.release_date) {
+      const message = card.querySelector<HTMLElement>('.notice-content > p');
+      if (message) { message.dataset.datePrefix = 'Release date: '; setLocalDateTime(message, String(event.payload.release_date).slice(0,10)); }
+    }
     updateEventDetail(card, event);
     updateEventActions(card, event);
     return card;

@@ -10,6 +10,7 @@ interface Props {
   source?: string;
   badge?: string;
   message?: string;
+  messageDate?: string;
   image?: string | null;
   imageSizes?: string;
   dismissibleId?: number;
@@ -30,6 +31,7 @@ const {
   source,
   badge,
   message,
+  messageDate,
   image,
   imageSizes = '(max-width:460px) 46px, (max-width:760px) 54px, 72px',
   dismissibleId,
@@ -50,7 +52,7 @@ const imageSource = responsiveArtwork(image,{size:'w342',sizes:imageSizes,route:
   <div class="notice-content">
     {(source || badge) && <div class="notice-meta">{source && <span>{source}</span>}{badge && <strong>{badge}</strong>}</div>}
     <h2>{href ? <a href={href}>{title}</a> : title}</h2>
-    {message && <p>{message}</p>}
+    {message && <p data-local-date-time={messageDate?'date':undefined} data-date-value={messageDate} data-date-prefix={messageDate?'Release date: ':undefined}>{message}</p>}
     <slot name="detail" />
     <div class="notice-actions"><slot name="actions" /></div>
   </div>

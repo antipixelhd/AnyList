@@ -1,3 +1,4 @@
+import { formatTime } from './date-time';
 import { healthJobMessage, healthSummary, isHealthJobActive } from './data-health';
 import type { DataHealth, HealthAction, HealthJob } from './data-health';
 import { createContentTransition, mountDetailsMotion } from './content-motion';
@@ -56,7 +57,7 @@ export function mountDataHealth() {
     write('health-tracked', data.tracked_titles.toLocaleString());
     write('health-records', data.catalogue_records.toLocaleString());
     write('health-attention', String(summary.attention)); write('health-clear', String(summary.clear));
-    write('health-time', `Checked ${new Date(data.checked_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    write('health-time', `Checked ${formatTime(data.checked_at)}`);
     const checks = root!.querySelector<HTMLElement>('#health-checks')!;
     checks.replaceChildren();
     // Keep Astro's scoped styling on dynamically built nodes.

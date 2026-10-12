@@ -9,6 +9,7 @@ import { initializeScrollMotion } from './scroll-motion';
 import { cancelUiMotion, reveal } from './ui-motion';
 import { mountPortraitViewer } from './image-viewer';
 import {createPrediction,bindPredictivePagination} from './predictive-loading';
+import { setLocalDateTime } from './date-time-dom';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -139,7 +140,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       credit.textContent = [...item.characters,...item.roles.filter(role => !['Actor','Production'].includes(role))].join(' / ');
       credit.title = credit.textContent;
       const date = card.querySelector<HTMLTimeElement>('[data-work-date]')!;
-      date.hidden = !item.release_date; date.dateTime = item.release_date || ''; date.textContent = item.release_date;
+      date.hidden = !item.release_date; setLocalDateTime(date, item.release_date);
       const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
       image.hidden = !item.poster;
       if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'auto'});

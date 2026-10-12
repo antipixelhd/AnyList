@@ -1,5 +1,6 @@
 ---
 import Tracker from "../layouts/Tracker.astro";
+import { formatDate, requestDateLocale } from '../lib/date-time';
 import BrowseCard from "../components/BrowseCard.astro";
 import BrowseSkeleton from "../components/BrowseSkeleton.astro";
 import BrowseSelect from "../components/BrowseSelect.astro";
@@ -114,8 +115,9 @@ const scoreLimit = 10;
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
   .map((genre: any) => genre.name);
-if (params.get("start")) initialChips.push(`After ${params.get("start")}`);
-if (params.get("end")) initialChips.push(`Before ${params.get("end")}`);
+const dateLocale = requestDateLocale(Astro.request.headers.get('accept-language'));
+if (params.get("start")) initialChips.push(`After ${formatDate(params.get("start"),{locale:dateLocale})}`);
+if (params.get("end")) initialChips.push(`Before ${formatDate(params.get("end"),{locale:dateLocale})}`);
 const statusLabel = statusOptions.find(([id]) => id === params.get("status"))?.[1];
 if (statusLabel) initialChips.push(statusLabel);
 const providerLabel = facets.providers.find((provider: any) => String(provider.id) === params.get("provider"))?.name;
@@ -347,7 +349,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
             <div class="browse-timeline-months">
               {year.months.map(month => (
                 <section class="browse-timeline-month" data-timeline-month={month.key}>
-                  <h3>{month.label}</h3>
+                  <h3 data-local-date-time={/^\d{4}-\d{2}$/.test(month.key)&&!month.key.endsWith("-00")?"month-name":undefined} data-date-value={`${month.key}-01`}>{month.label}</h3>
                   <div class="browse-grid">
                     {month.items.map(item => <BrowseCard item={item} signedIn={signedIn} />)}
                   </div>
