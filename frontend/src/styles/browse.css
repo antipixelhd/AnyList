@@ -708,10 +708,6 @@
   margin: 20px 0;
   color: #f08892;
 }
-.browse-page[data-browse-arrivals-pending] :is(.browse-card-body, .browse-skeleton-body) {
-  scale: .92;
-  opacity: 0;
-}
 .browse-scroll-reveal {
   scale: .92;
   opacity: 0;

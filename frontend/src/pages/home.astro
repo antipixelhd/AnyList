@@ -8,6 +8,7 @@ import {responsiveArtwork} from '../lib/responsive-artwork';
 let activities:any[]=[],error='',seriesInProgress:any[]=[],upcomingSeasons:any[]=[],watchingCount:number|null=null;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
+const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
 const [activityResult,listResult,upcomingResult]=await Promise.allSettled([
   tracker('activity',Astro.locals.token),
   tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token),
@@ -27,14 +28,14 @@ const seriesCards=seriesInProgress.map((entry:any)=>({
   canIncrement:entry.released_episodes!==undefined&&entry.progress<entry.released_episodes,
   caughtUp:entry.released_episodes!==undefined&&entry.progress>=entry.released_episodes,
   latest:entry.latest_released_position?.replace(/(S\d+)(E\d+)/,'$1 $2')||'',
-  artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
+  artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:imageRoute}),
 }));
 const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
   ...entry,
   seasonNumber:Number(entry.season_number),
   releaseDate:String(entry.release_date||''),
   artworkFallback:entry.season_artwork_fallback===true,
-  artwork:responsiveArtwork(entry.season_poster_path||entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
+  artwork:responsiveArtwork(entry.season_poster_path||entry.poster,{size:'w185',sizes:'85px',route:imageRoute}),
 }));
 const formatReleaseDate=(value:string)=>{
   const [year,month,day]=value.split('-').map(Number);
@@ -281,7 +282,7 @@ document.addEventListener('astro:page-load',()=>{
     const cover=card.querySelector<HTMLAnchorElement>('.event-cover')!;
     cover.href=mediaHref;cover.setAttribute('aria-label',`View ${activity.media.title}`);
     const coverImage=cover.querySelector('img')!;const coverFallback=cover.querySelector<HTMLElement>('.cover-placeholder')!;
-    if(activity.media.poster){applyResponsiveArtwork(coverImage,activity.media.poster,{size:'w342',sizes:'(max-width:700px) 56px, 64px',route:'direct'});coverImage.alt='';coverFallback.hidden=true;}else{coverImage.removeAttribute('src');coverImage.removeAttribute('srcset');coverImage.removeAttribute('sizes');coverFallback.hidden=false;}
+    if(activity.media.poster){applyResponsiveArtwork(coverImage,activity.media.poster,{size:'w342',sizes:'(max-width:700px) 56px, 64px',route:'auto'});coverImage.alt='';coverFallback.hidden=true;}else{coverImage.removeAttribute('src');coverImage.removeAttribute('srcset');coverImage.removeAttribute('sizes');coverFallback.hidden=false;}
     const profileHref=`/user/${encodeURIComponent(activity.username)}`;
     const avatar=card.querySelector<HTMLAnchorElement>('.event-avatar')!;
     avatar.href=profileHref;avatar.setAttribute('aria-label',`View ${activity.display_name}'s profile`);

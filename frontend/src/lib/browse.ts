@@ -37,15 +37,12 @@ type Facet = { id: number | string; name: string };
 export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.enhanced = "";
   root.dataset.browseScripted = "";
-  // Start slots only after the native controls have finished their layout handoff.
-  // A repeated page-load event must not restart an already running entrance.
-  const animateInitial = !root.hasAttribute("data-browse-arrivals-ready");
+  // Server-rendered cards stay painted while controls enhance. Only new cards
+  // and later scroll entries need an entrance.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (signal.aborted || !root.isConnected) return;
-    root.setAttribute("data-browse-arrivals-ready", "");
-    root.removeAttribute("data-browse-arrivals-pending");
     initializeScrollMotion(root, signal, '.browse-card-body, .browse-skeleton-body', 'browse-scroll-reveal', {
-      animateInitial, downwardOnly: true, scaleEntrance: true, once: true,
+      animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true,
       appearedAttribute: 'data-browse-appeared',
     });
   }));
