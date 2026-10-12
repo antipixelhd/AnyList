@@ -35,6 +35,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   const mobileViewer=matchMedia('(max-width:650px)');
   let previewTimer:ReturnType<typeof setTimeout>|undefined;
   let previewInteracting=false;
+  let previewGesture:{x:number;y:number;moved:boolean}|undefined;
   const clearPreviewTimer=()=>{clearTimeout(previewTimer);previewTimer=undefined;};
   const revealPreviews=()=>{
     clearPreviewTimer();
@@ -44,13 +45,34 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       const focused=document.activeElement;
       if(focused?.matches(':focus-visible')&&(slots.contains(focused)||arrows.includes(focused as HTMLButtonElement)))return;
       lightbox.dataset.previewsHidden='true';
-    },3000);
+    },2000);
   };
-  lightbox.addEventListener('pointerdown',()=>{previewInteracting=true;revealPreviews();},{signal,passive:true});
-  const releasePreviews=()=>{previewInteracting=false;revealPreviews();};
+  lightbox.addEventListener('pointerdown',event=>{
+    previewInteracting=true;
+    previewGesture={x:event.clientX,y:event.clientY,moved:false};
+    clearPreviewTimer();
+  },{signal,passive:true});
+  lightbox.addEventListener('pointermove',event=>{
+    if(previewInteracting&&previewGesture&&Math.hypot(event.clientX-previewGesture.x,event.clientY-previewGesture.y)>8)previewGesture.moved=true;
+  },{signal,passive:true});
+  const releasePreviews=()=>{
+    if(!previewInteracting)return;
+    previewInteracting=false;
+    if(previewGesture?.moved)revealPreviews();
+  };
   window.addEventListener('pointerup',releasePreviews,{signal,passive:true});
-  window.addEventListener('pointercancel',releasePreviews,{signal,passive:true});
-  lightbox.addEventListener('click',revealPreviews,{signal});
+  window.addEventListener('pointercancel',()=>{
+    if(!previewInteracting)return;
+    if(previewGesture)previewGesture.moved=true;
+    releasePreviews();
+  },{signal,passive:true});
+  lightbox.addEventListener('click',event=>{
+    if(mobileViewer.matches&&(event.target as Element).closest('[data-image-viewer-track]')){
+      if(previewGesture?.moved)return;
+      if(lightbox.dataset.previewsHidden)revealPreviews();
+      else {clearPreviewTimer();lightbox.dataset.previewsHidden='true';}
+    }else revealPreviews();
+  },{signal});
   lightbox.addEventListener('focusin',revealPreviews,{signal});
   lightbox.addEventListener('focusout',revealPreviews,{signal});
   slots.addEventListener('scroll',revealPreviews,{signal,passive:true});
@@ -58,6 +80,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   lightbox.addEventListener('close',()=>{clearPreviewTimer();previewInteracting=false;delete lightbox.dataset.previewsHidden;},{signal});
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false));
+  let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;
     const rows=galleries[active],count=pending?10:rows.length;
@@ -76,6 +99,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       button.setAttribute('aria-current',String(current===index));watchThumbnail(button);return button;
     });
     reconcileGalleryChildren(slots,buttons);
+    const selected=buttons[current];
+    if(selected&&selected.dataset.slotKey!==followedSlot){
+      followedSlot=selected.dataset.slotKey;
+      const bounds=slots.getBoundingClientRect(),buttonBounds=selected.getBoundingClientRect();
+      slots.scrollTo({left:slots.scrollLeft+buttonBounds.left-bounds.left-(slots.clientWidth-buttonBounds.width)/2,
+        behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
+    }
   };
   const showImage=(index:number,animate=false,scroll=true)=>{
     const rows=galleries[active];
@@ -222,6 +252,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     lightbox.dataset.gallery=active;
     const url=button.dataset.detailImage!;
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
+    followedSlot=undefined;
     showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].indexOf(url)));void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
