@@ -222,7 +222,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         applyResponsiveArtwork(img, item.poster, {
           size: "w342",
           sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
-          route: "direct",
+          route:'auto',
         });
       prepareBrowsePoster(img, signal, readyPosters);
       const placeholder = card.querySelector<HTMLElement>(

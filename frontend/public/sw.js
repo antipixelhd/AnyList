@@ -44,7 +44,7 @@ self.addEventListener('fetch', (event) => {
 
   // Poster/backdrop images (incl. the RPDB rating-poster proxy) use native
   // HTTP caching, not the app-shell cache.
-  if (url.hostname === 'image.tmdb.org' || url.pathname.startsWith('/api/proxy/media/image/') || url.pathname.startsWith('/api/proxy/media/rating-poster/')) {
+  if (url.hostname === 'image.tmdb.org' || url.hostname === 'artworks.thetvdb.com' || url.pathname.startsWith('/api/proxy/media/image/') || url.pathname.startsWith('/api/proxy/media/rating-poster/')) {
     return; // fall through to browser default (native network/disk cache)
   }
 

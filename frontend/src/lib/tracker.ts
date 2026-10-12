@@ -1,4 +1,4 @@
-import { responsiveArtwork } from "./responsive-artwork";
+import { responsiveArtwork,type ArtworkRoute } from "./responsive-artwork";
 
 export async function tracker(path: string, token?: string) {
   const port = process.env.BACKEND_PORT ?? '7331';
@@ -14,10 +14,11 @@ export const statuses = [
   ['dropped', 'Dropped'], ['planning', 'Plan to Watch'],
 ];
 
-export function artwork(path: string | null, size = 'w342') {
+export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='auto') {
   if (!path) return '';
-  const image = responsiveArtwork(path, { size, route: 'direct' });
+  const image = responsiveArtwork(path, { size, route });
   if (!image) return '';
+  if(image.src.startsWith('/api/proxy/media/image/'))return image.src;
   try {
     const url = new URL(image.src);
     return url.protocol === 'https:' ? url.href : '';

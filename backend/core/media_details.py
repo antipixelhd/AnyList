@@ -2,6 +2,7 @@
 import re
 from urllib.parse import urlsplit
 from sqlalchemy import or_, select
+from sqlalchemy.orm import load_only
 
 from core.catalogue_normalize import image
 from core.media_images import provider_images, unique_images
@@ -39,11 +40,16 @@ async def screen_work(db, media):
         CatalogueEntity.kind == media.media_type.value, or_(*namespaces)).order_by(CatalogueEntity.id).limit(1))
 
 
-async def work_details(db, work):
+async def work_details(db, work, *, extras=True):
     if work is None:
         return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
         CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id)
+        .options(load_only(CatalogueCredit.id, CatalogueCredit.work_id, CatalogueCredit.contributor_id,
+            CatalogueCredit.provider, CatalogueCredit.role, CatalogueCredit.role_label, CatalogueCredit.position,
+            CatalogueCredit.character_label, CatalogueCredit.character_image_url, CatalogueCredit.screen_character_id),
+            load_only(CatalogueEntity.id, CatalogueEntity.kind, CatalogueEntity.name, CatalogueEntity.image_url,
+                CatalogueEntity.canonical_person_id))
         .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id))).all()
     people = {}
     organizations = {}
@@ -87,6 +93,8 @@ async def work_details(db, work):
         if row['kind'] == 'actor':
             row['character_images'] = list(dict.fromkeys(local_images.get(key, []) + alternative_images.get(key, [])))[:4]
             row['character_image'] = next(iter(row['character_images']), None)
+    if not extras:
+        return {'catalogue_id':work.id, 'people':list(people.values()), 'organizations':list(organizations.values())}
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
     posters = [work.image_url, *(attrs.get('posters') or [])]

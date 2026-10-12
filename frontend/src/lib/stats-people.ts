@@ -21,7 +21,7 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
   let overview: Overview | null = null;
   const query = <T extends HTMLElement = HTMLElement>(card: HTMLElement, selector: string) => card.querySelector<T>(selector)!;
   function setArtwork(link: HTMLElement, url: string | string[] | null, label: string, portrait = false) {
-    const options = { size: 'w185', sizes: portrait ? '(max-width:650px) 72px, 110px' : '(max-width:650px) 15vw, 70px', route: 'direct' } as const;
+    const options = { size: 'w185', sizes: portrait ? '(max-width:650px) 72px, 110px' : '(max-width:650px) 15vw, 70px', route:'auto' } as const;
     const sources = (Array.isArray(url) ? url : [url]).map(source => responsiveArtwork(source, options)).filter(source => source !== null);
     const signature = JSON.stringify(sources);
     if (link.dataset.artworkSources === signature) return;

@@ -39,14 +39,8 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
         slide.append(image,loading);
       }
       slide.setAttribute('aria-hidden',String(position!==index));
-      // Preload only adjacent images. Their elements survive metadata refreshes.
-      if(rows[position]&&Math.abs(position-index)===1){
-        const image=slide.querySelector('img')!;
-        if(!image.getAttribute('src')){
-          image.onload=()=>{if(signal.aborted)return;image.style.visibility='';slide!.querySelector<HTMLElement>('.image-viewer-slide-loading')!.hidden=true;};
-          image.src=rows[position];
-        }
-      }
+      // Only the selected image receives a source in the viewer. Keep visited
+      // elements attached so returning to them reuses the browser's cache.
       return slide;
     });
     reconcileGalleryChildren(track,slides);

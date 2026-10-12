@@ -170,7 +170,7 @@ function mountInbox(
       ? responsiveArtwork(imagePath, {
           size: "w342",
           sizes: "(max-width:460px) 46px, (max-width:760px) 54px, 72px",
-          route: "direct",
+          route:'auto',
         })
       : null;
     visual.classList.toggle("has-image", Boolean(image?.src));
@@ -179,7 +179,7 @@ function mountInbox(
       applyResponsiveArtwork(img, imagePath!, {
         size: "w342",
         sizes: "(max-width:460px) 46px, (max-width:760px) 54px, 72px",
-        route: "direct",
+        route:'auto',
       });
       img.alt = "";
       img.loading = "lazy";
@@ -338,7 +338,7 @@ function mountInbox(
         responsiveArtwork(event.media.poster, {
           size: "w185",
           sizes: "42px",
-          route: "direct",
+          route:'auto',
         })?.src || "";
       rate.dataset.quickRateScore = "";
     }

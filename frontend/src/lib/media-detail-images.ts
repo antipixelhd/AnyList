@@ -2,18 +2,19 @@ import {showDialog,reveal} from './ui-motion';
 import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer';
 import {detailBackground,type DetailLoadState} from './detail-background';
-import {responsiveArtwork} from './responsive-artwork';
-import {reconcileGalleryChildren,createGalleryThumbnailWatcher} from './detail-gallery-dom';
+import {responsiveArtwork,applyResponsiveArtwork,artworkIdentity} from './responsive-artwork';
+import {reconcileGalleryChildren,createGalleryThumbnailWatcher,createGalleryImageLoader} from './detail-gallery-dom';
 import {createDetailImageCarousel} from './detail-image-carousel';
 import {bindDetailImageDragDismiss} from './detail-image-dismiss';
+import {editorStore} from './editor-store';
 
 type Galleries = {posters:string[]; artwork:string[]};
-const imageKey=(url:string)=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
+const imageKey=artworkIdentity;
 export function uniqueDetailImages(values:unknown[]):string[] {
   const seen=new Set<string>();
   return values.filter((url):url is string=>{
-    if(typeof url!=='string'||!/^https?:\/\//.test(url))return false;
-    const key=url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
+    if(typeof url!=='string'||!(/^https?:\/\//.test(url)||url.startsWith('/api/proxy/media/image/')))return false;
+    const key=imageKey(url);
     if(seen.has(key))return false;
     seen.add(key);return true;
   }).slice(0,10);
@@ -32,6 +33,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   let loadingImage:string|undefined;
   const watchThumbnail=createGalleryThumbnailWatcher(signal,thumbnail=>{
     if(thumbnail.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
+  });
+  const loadThumbnail=createGalleryImageLoader(signal,button=>{
+    if(button.matches('.lab-gallery button,.lab-art-image'))watchLandscape(button as HTMLButtonElement);
+    watchThumbnail(button);
   });
   const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-image-viewer-step]')];
   const mobileViewer=matchMedia('(max-width:650px)');
@@ -92,13 +97,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       let button=existing.get(key);
       if(!button){
         button=document.createElement('button');button.type='button';button.dataset.slotKey=key;
-        if(rows[index]){const thumbnail=new Image();thumbnail.alt='';thumbnail.loading='lazy';thumbnail.src=responsiveArtwork(rows[index],{size:'w185',route:'direct'})?.src||rows[index];button.append(thumbnail);}
+        if(rows[index]){const thumbnail=new Image();thumbnail.alt='';thumbnail.dataset.gallerySrc=responsiveArtwork(rows[index],{size:'w185',route:'auto'})?.src||rows[index];button.append(thumbnail);}
         else button.className='detail-image-skeleton';
         button.addEventListener('click',()=>showImage(Number(button!.dataset.imageIndex),true),{signal});
       }
       button.dataset.imageIndex=String(index);
       button.setAttribute('aria-label',`${active==='posters'?'Poster':'Artwork'} ${index+1}${rows[index]?'':': loading'}`);
-      button.setAttribute('aria-current',String(current===index));watchThumbnail(button);return button;
+      button.setAttribute('aria-current',String(current===index));loadThumbnail(button);return button;
     });
     reconcileGalleryChildren(slots,buttons);
     const selected=buttons[current];
@@ -115,7 +120,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const previous=current;
     current=count?(index+count)%count:0;
     if(current!==previous)revealPreviews();
-    const url=rows[current],group=active;
+    const group=active;
+    const url=responsiveArtwork(rows[current],{size:group==='posters'?'w780':'w1280',route:'auto'})?.src;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=Number(arrow.dataset.imageViewerStep)<0?current===0:current>=count-1;});
@@ -131,12 +137,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     skeleton.hidden=false;skeleton.classList.toggle('detail-image-skeleton',pending||!!url);
     skeleton.textContent=!url&&!pending?'No images available.':'';
     if(!url)return;
-    const probe=new Image();probe.src=url;
+    const probe=new Image();probe.fetchPriority='high';probe.src=url;
     void probe.decode().then(()=>{
       if(version!==revision||signal.aborted)return;
       loadingImage=undefined;
       if(group==='artwork'&&probe.naturalWidth<=probe.naturalHeight){
-        galleries.artwork=galleries.artwork.filter(value=>value!==url);
+        galleries.artwork=galleries.artwork.filter(value=>imageKey(value)!==imageKey(url));
         showImage(Math.min(current,galleries.artwork.length-1));
         return;
       }
@@ -148,7 +154,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     }).catch(()=>{
       if(version!==revision||signal.aborted)return;
       loadingImage=undefined;
-      galleries[group]=galleries[group].filter(value=>value!==url);
+      galleries[group]=galleries[group].filter(value=>imageKey(value)!==imageKey(url));
       if(galleries[group].length)showImage(current);
       else {showImage(0);showToast('Unable to load this image. Retry the gallery.','error');}
     });
@@ -165,7 +171,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     };
     if(thumbnail.complete)inspect();else thumbnail.addEventListener('load',inspect,{signal,once:true});
   };
-  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(button=>{watchLandscape(button);watchThumbnail(button);});
+  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(loadThumbnail);
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
   const paintHero=(url:string|undefined)=>{
     if(!url)return;
@@ -179,7 +185,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     hero.onload=()=>{if(signal.aborted)return;hero.hidden=false;reveal(hero);};
     hero.onerror=()=>{hero.hidden=true;};
     if(sameImage)return;
-    const artwork=responsiveArtwork(url,{size:'w1280',sizes:'100vw',route:'direct'});
+    const artwork=responsiveArtwork(url,{size:'w1280',sizes:'100vw',route:'auto'});
     if(artwork?.srcset)hero.srcset=artwork.srcset;else hero.removeAttribute('srcset');
     hero.sizes=artwork?.sizes||'100vw';hero.src=artwork?.src||url;
   };
@@ -194,21 +200,22 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       if(cover&&primary){
         cover.dataset.detailImage=primary;
         const coverImage=cover.querySelector('img');
-        if(coverImage&&imageKey(coverImage.src)!==imageKey(primary)){coverImage.removeAttribute('srcset');coverImage.src=primary.replace('/original/','/w500/');}
+        if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
       const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
       if(galleries.artwork.length){
-        const currentKey=(data.backdrop||heroButton?.dataset.detailImage||'').replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
-        const preferred=galleries.artwork.find(url=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1')===currentKey)||galleries.artwork[0];
+        const currentKey=imageKey(data.backdrop||heroButton?.dataset.detailImage||'');
+        const preferred=galleries.artwork.find(url=>imageKey(url)===currentKey)||galleries.artwork[0];
         paintHero(preferred);
       }
+      editorStore.updateArtwork(info.id,{poster:primary,backdrop:heroButton?.dataset.detailImage});
       const preview=root.querySelector<HTMLButtonElement>('.lab-art-image');
       if(preview){
         if(galleries.artwork.length){
           const preferred=galleries.artwork.includes(preview.dataset.detailImage||'')?preview.dataset.detailImage!:galleries.artwork[0];
           preview.dataset.detailImage=preferred;
           const thumbnail=preview.querySelector('img');if(thumbnail){
-            const src=responsiveArtwork(preferred,{size:'w780',route:'direct'})?.src||preferred;
+            const src=responsiveArtwork(preferred,{size:'w780',route:'auto'})?.src||preferred;
             if(imageKey(thumbnail.src)!==imageKey(src))thumbnail.src=src;
             watchThumbnail(preview);
           }
@@ -223,10 +230,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
           let button=existing.get(url?imageKey(url):`pending:${index}`);
           if(!button){
             button=document.createElement('button');button.type='button';button.dataset.detailImage=url||'';
-            if(url){const thumbnail=document.createElement('img');thumbnail.src=responsiveArtwork(url,{size:'w500',route:'direct'})?.src||url;thumbnail.alt=`${name} artwork`;thumbnail.loading='lazy';button.append(thumbnail);watchLandscape(button);watchThumbnail(button);}
+            if(url){const thumbnail=document.createElement('img');thumbnail.dataset.gallerySrc=responsiveArtwork(url,{size:'w500',route:'auto'})?.src||url;thumbnail.alt=`${name} artwork`;button.append(thumbnail);}
             else button.className='detail-image-skeleton';
           }
-          button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);watchThumbnail(button);return button;
+          button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);loadThumbnail(button);return button;
         });
         reconcileGalleryChildren(grid,buttons);
       }
@@ -256,7 +263,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
     prepareViewer();
-    showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].indexOf(url)));void loadImages();
+    showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.

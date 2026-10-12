@@ -176,7 +176,7 @@ document.addEventListener('astro:page-load', () => {
     pendingScore = null;
     title.textContent = detail.title;
     if (detail.posterSrc) { poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.src = detail.posterSrc; }
-    else if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'direct'});
+    else if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'auto'});
     else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
     poster.hidden = !detail.poster && !detail.posterSrc;
     remove.hidden = savedScore == null || detail.ratingMode === 'average';

@@ -758,7 +758,7 @@ export const api = {
     getPublic: (userId: number, token?: string) =>
       get<PublicProfile>(`/profile/${userId}`, undefined, token),
     publicAccessStatus: () =>
-      get<{ enable_logged_out_navigation: boolean; disable_comments: boolean }>("/profile/public-access-status"),
+      get<{ enable_logged_out_navigation: boolean; disable_comments: boolean; image_cache_enabled: boolean }>("/profile/public-access-status"),
   },
 
   admin: {

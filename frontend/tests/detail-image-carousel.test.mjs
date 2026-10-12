@@ -41,7 +41,7 @@ test('metadata refreshes retain loaded slides and pending slots resolve without 
   assert.equal(loaded.image.src,'one');
   assert.equal(g.track.children[2].querySelector('img').src,undefined);
   g.paint(['one','two','three'],1);
-  assert.equal(g.track.children[2].querySelector('img').src,'three');
+  assert.equal(g.track.children[2].querySelector('img').src,undefined);
 });
 
 test('native swipe selection follows scroll position without forcing the row back',()=>{

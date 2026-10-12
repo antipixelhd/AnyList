@@ -2080,8 +2080,7 @@ async def serve_image(
     upstream = upstream_image_url(size, path)
 
     # Check settings
-    settings_stmt = select(GlobalSettings).where(GlobalSettings.id == 1)
-    gs = (await db.execute(settings_stmt)).scalar_one_or_none()
+    gs = await settings_store.get_global_settings(db)
 
     if not gs or not gs.image_cache_enabled:
         return RedirectResponse(upstream)

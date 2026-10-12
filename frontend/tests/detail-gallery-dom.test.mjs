@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {reconcileGalleryChildren,createGalleryThumbnailWatcher} from '../src/lib/detail-gallery-dom.ts';
+import {reconcileGalleryChildren,createGalleryThumbnailWatcher,createGalleryImageLoader} from '../src/lib/detail-gallery-dom.ts';
 
 function parent(nodes=[]){
   const root={children:nodes,moves:0,insertBefore(node,before){
@@ -53,4 +53,22 @@ test('navigation cancels readiness updates from an old gallery',()=>{
   createGalleryThumbnailWatcher(controller.signal,()=>ready++)(t.button);
   controller.abort();t.image.naturalWidth=780;t.image.dispatchEvent(new Event('load'));
   assert.equal(ready,0);
+});
+
+test('offscreen gallery thumbnails stay source-free until viewed and stop loading after teardown',()=>{
+  const previous=globalThis.IntersectionObserver;
+  let callback,disconnected=false;
+  globalThis.IntersectionObserver=class {
+    constructor(cb){callback=cb;}
+    observe(){} unobserve(){} disconnect(){disconnected=true;}
+  };
+  try {
+    const controller=new AbortController(),image={dataset:{gallerySrc:'https://example.test/thumbnail.jpg'}},button={querySelector:()=>image};
+    let loads=0;
+    const load=createGalleryImageLoader(controller.signal,()=>loads++);
+    load(button);callback([{target:button,isIntersecting:false}]);assert.equal(image.src,undefined);
+    callback([{target:button,isIntersecting:true}]);assert.equal(image.src,'https://example.test/thumbnail.jpg');assert.equal(loads,1);
+    const later={dataset:{gallerySrc:'https://example.test/later.jpg'}},other={querySelector:()=>later};
+    load(other);controller.abort();callback([{target:other,isIntersecting:true}]);assert.equal(later.src,undefined);assert.equal(disconnected,true);
+  }finally{if(previous===undefined)delete globalThis.IntersectionObserver;else globalThis.IntersectionObserver=previous;}
 });

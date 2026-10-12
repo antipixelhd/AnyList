@@ -186,3 +186,21 @@ test('cold backdrop decoding never changes the artwork chosen for an open editor
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
   } finally {globalThis.Image=previous;}
 });
+
+test('curated artwork updates preserve optimistic intent and ignore an old decode',async()=>{
+  const previous=globalThis.Image,old=deferred(),curated=deferred(),save=deferred();let images=0;
+  globalThis.Image=class {decode(){return images++===0?old.promise:curated.promise;}};
+  try {
+    const store=new EditorStore(()=>save.promise),title=store.seed({...draft(),id:7});
+    store.warmArtwork(title,'cached-poster');
+    const pending=store.write(title,{favorite:true});
+    store.updateArtwork(7,{poster:'/new-poster.jpg',backdrop:'/new-background.jpg'});
+    assert.equal(title.favorite,true);assert.equal(title.entry,null);
+    old.resolve();await turn();
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w342/new-poster.jpg');
+    curated.resolve();await turn();
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/new-background.jpg');
+    save.resolve({id:7,status:null,favorite:true});await pending;
+    assert.equal(title.poster,'/new-poster.jpg');assert.equal(title.favorite,true);
+  }finally{globalThis.Image=previous;}
+});

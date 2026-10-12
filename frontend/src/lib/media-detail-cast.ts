@@ -23,7 +23,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   });
   const warmed=new Set<string>();
   const warm=(people:DetailPerson[])=>people.slice(0,8).forEach(person=>{
-    const art=responsiveArtwork(person.character_image,{size:'w185',sizes:'57px',route:'direct'});
+    const art=responsiveArtwork(person.character_image,{size:'w185',sizes:'57px',route:'auto'});
     if(art&&!warmed.has(art.src)){
       warmed.add(art.src);const image=new Image();image.fetchPriority='low';image.onerror=()=>warmed.delete(art.src);image.src=art.src;
     }
@@ -44,13 +44,13 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     const active=()=>!signal.aborted&&signatures.get(card)===signature;
     const next=()=>{
       if(!active())return;
-      const art=responsiveArtwork(urls[index++],{size:'w185',sizes:'57px',route:'direct'});
+      const art=responsiveArtwork(urls[index++],{size:'w185',sizes:'57px',route:'auto'});
       if(!art){current?.remove();current=null;placeholder.hidden=false;delete holder.dataset.castLoading;return;}
       if(current?.getAttribute('src')===art.src&&(!current.complete||current.naturalWidth>0)) {
         current.onerror=next;current.hidden=false;placeholder.hidden=true;delete holder.dataset.castLoading;return;
       }
       if(character){holder.dataset.castLoading='';if(current)current.hidden=true;placeholder.hidden=true;}
-      const candidate=document.createElement('img');candidate.alt='';candidate.loading='lazy';candidate.dataset.castImagePending='';candidate.style.opacity='0';
+      const candidate=document.createElement('img');candidate.alt='';candidate.loading='lazy';candidate.fetchPriority='low';candidate.dataset.castImagePending='';candidate.style.opacity='0';
       const cleanup=()=>{candidate.onload=null;candidate.onerror=null;signal.removeEventListener('abort',cancel);if(pending.get(holder)===cancel)pending.delete(holder);};
       const cancel=()=>{cleanup();candidate.remove();};
       pending.set(holder,cancel);signal.addEventListener('abort',cancel,{once:true});
@@ -102,6 +102,15 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     cards.forEach((card,index)=>{if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);});
     [...container.children].filter(card=>!cards.includes(card as HTMLElement)).forEach(card=>card.remove());
   };
+  const deferred=new WeakMap<HTMLElement,DetailPerson[]>();
+  root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{
+    const data=section.querySelector('[data-credit-deferred]');
+    deferred.set(section,JSON.parse(data?.textContent||'[]'));data?.remove();
+    section.querySelector('[data-credit-toggle]')?.addEventListener('click',()=>{
+      fill(section.querySelector<HTMLElement>('[data-credit-rest]')!,deferred.get(section)||[]);
+      if(section.matches('[data-credit-section=cast]'))paint(section,mode);
+    },{signal});
+  });
   const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState;credits_status?:string})=>{
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
     if(!groups.cast.length&&['failed','deferred'].includes(data.credits_status||''))return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
@@ -111,7 +120,9 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       const people=rows[section.dataset.creditSection as keyof typeof rows]||[];
       const limit=Number(section.dataset.creditLimit||8);
       fill(section.querySelector<HTMLElement>('[data-credit-visible]')!,people.slice(0,limit));
-      fill(section.querySelector<HTMLElement>('[data-credit-rest]')!,people.slice(limit));
+      deferred.set(section,people.slice(limit));
+      const rest=section.querySelector<HTMLElement>('[data-credit-rest]')!;
+      if(rest.children.length)fill(rest,people.slice(limit));
       section.hidden=!people.length;
       const toggle=section.querySelector<HTMLButtonElement>('[data-credit-toggle]')!;toggle.hidden=people.length<=limit;
     });

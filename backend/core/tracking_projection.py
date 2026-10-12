@@ -29,6 +29,10 @@ def is_anime(media: Media) -> bool:
 
 def media_data(media):
     data = media.tmdb_data or {}
+    from core.media_images import screen_backdrop, IMAGE_POLICY_VERSION
+    backdrop = screen_backdrop(media)['backdrop'] or media.backdrop_path
+    gallery = data.get('_anylist_images') or {}
+    poster = gallery.get('primary_poster') if gallery.get('version') == IMAGE_POLICY_VERSION else None
     regular_seasons = [
         season
         for season in data.get("seasons", [])
@@ -38,8 +42,8 @@ def media_data(media):
         "id": media.id,
         "title": media.title,
         "type": media.media_type.value,
-        "poster": media.poster_path,
-        "backdrop": media.backdrop_path,
+        "poster": poster or media.poster_path,
+        "backdrop": backdrop,
         "overview": media.overview,
         "year": (media.release_date or "")[:4],
         "release_date": media.release_date,

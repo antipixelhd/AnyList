@@ -1463,7 +1463,7 @@ async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
     from core.media_details import screen_work, work_details
     credits = await fill_screen_credits(db, media, viewer.id)
     status = await fill_character_art(db, media, viewer.id)
-    details = await work_details(db, await screen_work(db, media))
+    details = await work_details(db, await screen_work(db, media), extras=False)
     return {'people': details['people'], 'organizations': details['organizations'],
             'credits_status': credits, 'character_status': status}
 
@@ -1506,11 +1506,10 @@ async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
         raise HTTPException(404, 'Title not found')
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):
         raise HTTPException(404, 'Title not found')
-    from core.media_details import screen_work, work_details
     from core.media_images import fill_screen_images, screen_images
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     await fill_screen_images(db, media, key)
-    data = screen_images(media, await work_details(db, await screen_work(db, media)))
+    data = screen_images(media, {})
     if not key:
         data['image_status'] = {'state': 'unavailable', 'error': 'missing_key', 'retry_after': 0}
     return data

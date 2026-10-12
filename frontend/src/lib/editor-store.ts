@@ -1,4 +1,4 @@
-import { responsiveArtwork } from './responsive-artwork';
+import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
 
 export type EditorTitle = {
   id: number | null; tmdb_id?: number | null; type: string; title: string;
@@ -199,17 +199,33 @@ export class EditorStore {
     const record = this.record(title)!;
     if (posterSrc) record.posterSrc = posterSrc;
     if (!title.backdrop || record.backdropSrc || typeof Image === 'undefined') return;
-    record.backdropSrc = responsiveArtwork(title.backdrop, {size:'w1280', route:'direct'})?.src;
+    record.backdropSrc = responsiveArtwork(title.backdrop, {size:'w1280', route:'auto'})?.src;
     if (!record.backdropSrc) return;
     const image = new Image();
-    image.src = record.backdropSrc;
-    void image.decode().then(() => { record.backdropReady = true; }).catch(() => {
-      record.backdropSrc = undefined;
+    const src=record.backdropSrc;
+    image.src = src;
+    void image.decode().then(() => { if(record.backdropSrc===src)record.backdropReady = true; }).catch(() => {
+      if(record.backdropSrc===src)record.backdropSrc = undefined;
     });
+  }
+  updateArtwork(id:number,artwork:{poster?:string;backdrop?:string}) {
+    const record=[...this.records.values()].find(record=>record.title.id===id);
+    if(!record)return;
+    if(artwork.poster){
+      if(artworkIdentity(record.title.poster||'')!==artworkIdentity(artwork.poster))record.posterSrc=undefined;
+      record.title.poster=artwork.poster;
+    }
+    if(artwork.backdrop){
+      if(artworkIdentity(record.title.backdrop||'')!==artworkIdentity(artwork.backdrop)){
+        record.backdropSrc=undefined;record.backdropReady=false;
+      }
+      record.title.backdrop=artwork.backdrop;
+      this.warmArtwork(record.title);
+    }
   }
   artwork(title: EditorTitle, posterSrc?: string) {
     const record = this.record(title)!;
-    const poster = posterSrc || record.posterSrc || responsiveArtwork(title.poster, {size:'w342', route:'direct'})?.src;
+    const poster = posterSrc || record.posterSrc || responsiveArtwork(title.poster, {size:'w342', route:'auto'})?.src;
     // Choose once before opening. Never swap artwork under an active editor.
     return {poster, backdrop: record.backdropReady ? record.backdropSrc : poster};
   }

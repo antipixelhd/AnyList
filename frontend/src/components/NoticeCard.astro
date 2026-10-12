@@ -41,7 +41,7 @@ const {
   artworkFallback = false,
   artworkRetry = false,
 } = Astro.props;
-const imageSource = responsiveArtwork(image,{size:'w342',sizes:imageSizes,route:'direct'});
+const imageSource = responsiveArtwork(image,{size:'w342',sizes:imageSizes,route:Astro.locals.imageCacheEnabled?'proxy':'direct'});
 ---
 <article class:list={['notice-card', `notice-${variant}`]} data-auto-seen={dismissibleId} data-notification-key={cardKey} data-notification-version={version} data-notification-kind={kind} data-notification-priority={priority} data-notification-state={state} data-season-artwork-fallback={artworkFallback} data-season-artwork-retry={artworkRetry}>
   <div class:list={['notice-visual', { 'has-image': !!imageSource?.src }]}>

@@ -41,6 +41,6 @@ const favorites: any[] = profile.favorites || [];
     </article>)}
   </section>
   {favorites.length > 0 && <section class="overview-favorites" aria-labelledby="profile-favorites"><div class="section-heading"><h2 id="profile-favorites">Favorites</h2><a class="overview-section-link" href={`${base}/favorites`} aria-label="All favorites"><Icon name="arrow-right"/></a></div>
-    <div class="favorite-posters">{favorites.map((item: any) => {const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width: 700px) 25vw, 130px', route:'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src ? <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}<span class="favorite-poster-title">{item.title}</span></a>})}</div>
+    <div class="favorite-posters">{favorites.map((item: any) => {const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width: 700px) 25vw, 130px', route:Astro.locals.imageCacheEnabled?'proxy':'direct'});return <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>{image?.src ? <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="favorite-poster-placeholder" aria-hidden="true"><Icon name="film"/></span>}<span class="favorite-poster-title">{item.title}</span></a>})}</div>
   </section>}
 </div>

@@ -85,6 +85,64 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(projected['poster'], data['poster'])
         self.assertEqual(projected['backdrop'], data['artwork'][0])
 
+    async def test_image_only_reads_skip_credits_and_people_reads_skip_unrelated_graphs(self):
+        await self.login()
+        with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value=None)),
+              patch('core.media_images.fill_screen_images',AsyncMock()),
+              patch('core.media_details.work_details',AsyncMock(side_effect=AssertionError('Image read loaded credits')))):
+            response=await self.client.get(f'/tracking/title/{self.media_id}/images')
+            self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            from core.media_details import screen_work
+            work=await screen_work(db,await db.get(Media,self.media_id))
+            with patch('core.media_related.catalogue_related',AsyncMock(side_effect=AssertionError('People read loaded relations'))):
+                people=await work_details(db,work,extras=False)
+            self.assertTrue(people['people']);self.assertNotIn('artwork',people)
+
+    async def test_disk_warming_includes_tracked_primary_artwork_only(self):
+        from core.image_cache import pre_cache_all_collected
+        async with self.Session() as db:
+            media=await db.get(Media,self.media_id)
+            media.poster_path='/old.jpg';media.backdrop_path='/old-background.jpg'
+            media.tmdb_data={'_anylist_images':{'version':IMAGE_POLICY_VERSION,
+                'primary_poster':'https://image.tmdb.org/t/p/original/primary.jpg',
+                'primary_backdrop':'https://image.tmdb.org/t/p/original/background.jpg',
+                'posters':['https://image.tmdb.org/t/p/original/extra.jpg'],
+                'artwork':['https://image.tmdb.org/t/p/original/background.jpg','https://image.tmdb.org/t/p/original/extra-art.jpg']}}
+            await db.commit()
+            with patch('core.image_cache.download_and_cache_image',AsyncMock()) as download,patch('core.image_cache.asyncio.sleep',AsyncMock()):
+                await pre_cache_all_collected(db)
+            warmed={(call.args[1],call.args[2]) for call in download.await_args_list}
+            self.assertEqual(warmed,{('w342','/primary.jpg'),('w1280','/background.jpg')})
+
+    async def test_optional_disk_image_route_serves_cached_bytes_and_disabled_mode_redirects(self):
+        import tempfile
+        from pathlib import Path
+        import httpx
+        from core import image_cache
+        from models import GlobalSettings
+        from routers.media import router as media_router
+        self.app.include_router(media_router,prefix='/media')
+        async with self.Session() as db:
+            settings=await db.get(GlobalSettings,1)
+            settings.image_cache_enabled=True;settings.image_cache_limit_gb=None;settings.enable_logged_out_navigation=True
+            await db.commit()
+        seen=[]
+        client=httpx.AsyncClient
+        def origin(request):
+            seen.append(str(request.url))
+            return httpx.Response(200,content=b'image-fixture',headers={'Content-Type':'image/jpeg'})
+        with tempfile.TemporaryDirectory() as directory,patch.object(image_cache.settings,'data_dir',Path(directory)),patch.object(image_cache.httpx,'AsyncClient',side_effect=lambda **kw:client(transport=httpx.MockTransport(origin),**kw)):
+            first=await self.client.get('/media/image/w300/still.jpg')
+            second=await self.client.get('/media/image/w300/still.jpg')
+            self.assertEqual(first.status_code,200,first.text);self.assertEqual(second.content,b'image-fixture')
+            self.assertIn('immutable',second.headers['Cache-Control']);self.assertEqual(len(seen),1)
+        async with self.Session() as db:
+            settings=await db.get(GlobalSettings,1);settings.image_cache_enabled=False;await db.commit()
+        redirect=await self.client.get('/media/image/w300/still.jpg')
+        self.assertTrue(redirect.is_redirect)
+        self.assertEqual(redirect.headers['Location'],'https://image.tmdb.org/t/p/w300/still.jpg')
+
     async def test_cold_background_load_skips_gallery_analysis_and_is_cached_for_first_render(self):
         await self.login()
         async with self.Session() as db:

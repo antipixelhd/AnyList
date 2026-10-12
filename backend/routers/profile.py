@@ -50,6 +50,7 @@ async def get_public_access_status(db: AsyncSession = Depends(get_db)):
         # was removed after the admin enabled it.
         "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation),
         "disable_comments": bool(gs and gs.disable_comments),
+        "image_cache_enabled": bool(gs and gs.image_cache_enabled),
         "show_anime": bool(gs and gs.show_anime),
     }
 

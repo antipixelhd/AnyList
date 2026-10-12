@@ -7,6 +7,26 @@ export function reconcileGalleryChildren(parent: HTMLElement, children: HTMLElem
   });
 }
 
+/** Browser lazy loading may fetch far beyond the viewport. Gallery variants
+ * get a source only when their preview actually intersects the visible area. */
+export function createGalleryImageLoader(signal:AbortSignal,start:(button:HTMLElement)=>void) {
+  const observer=new IntersectionObserver(entries=>{
+    for(const entry of entries){
+      if(!entry.isIntersecting)continue;
+      const button=entry.target as HTMLElement,image=button.querySelector<HTMLImageElement>('img');
+      observer.unobserve(button);
+      if(signal.aborted||!image?.dataset.gallerySrc)continue;
+      image.src=image.dataset.gallerySrc;delete image.dataset.gallerySrc;start(button);
+    }
+  },{rootMargin:'0px'});
+  signal.addEventListener('abort',()=>observer.disconnect(),{once:true});
+  return (button:HTMLElement)=>{
+    if(signal.aborted)return;
+    if(button.querySelector<HTMLImageElement>('img')?.dataset.gallerySrc)observer.observe(button);
+    else start(button);
+  };
+}
+
 /** A lazy image must retain a layout box to load; its skeleton covers the wait. */
 export function createGalleryThumbnailWatcher(signal: AbortSignal, ready:(image:HTMLImageElement)=>void) {
   const watched=new WeakMap<HTMLImageElement,{src:string;cleanup:()=>void}>();

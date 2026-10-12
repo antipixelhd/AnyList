@@ -3,6 +3,7 @@ import { displayPreferenceCookies } from "./lib/display-preferences";
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
+import {imageCacheEnabled} from './lib/image-cache-policy.server';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon.svg", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -185,6 +186,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
+  if (!isStaticAsset && !pathname.startsWith('/api/')) context.locals.imageCacheEnabled=await imageCacheEnabled();
   const response = await next();
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);

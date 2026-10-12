@@ -7,7 +7,7 @@ function applyResponsiveImages(root: ParentNode) {
     applyResponsiveArtwork(img, img.dataset.artworkPath, {
       size: 'w185',
       sizes: '32px',
-      route: 'direct',
+      route:'auto',
     });
   });
 }
@@ -133,7 +133,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
         applyResponsiveArtwork(selectedPoster, selectedPosterPath, {
           size: 'w185',
           sizes: '40px',
-          route: 'direct',
+          route:'auto',
         });
       }
       (modal.querySelector('#remap-selected-title') as HTMLElement).textContent = btn.dataset.title ?? '';

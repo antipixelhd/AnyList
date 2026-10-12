@@ -141,7 +141,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       date.hidden = !item.release_date; date.dateTime = item.release_date || ''; date.textContent = item.release_date;
       const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
       image.hidden = !item.poster;
-      if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'direct'});
+      if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'auto'});
       const placeholder = card.querySelector<HTMLElement>('.browse-placeholder')!;
       placeholder.hidden = !!item.poster; placeholder.textContent = item.title.slice(0,1);
       if (!item.id && !item.tmdb_id) card.querySelector('.browse-actions')?.remove();

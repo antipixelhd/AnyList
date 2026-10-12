@@ -76,7 +76,7 @@ document.addEventListener('astro:page-load', () => {
     const artwork = responsiveArtwork(item.poster, {
       size: 'w92',
       sizes: '(max-width: 650px) 52px, 48px',
-      route: 'direct',
+      route:'auto',
     });
     if (artwork?.src) {
       const poster = document.createElement('img');
