@@ -30,6 +30,9 @@ export function contributorYear(work: Pick<ContributorWork, 'release_date' | 'ye
   const year = (work.release_date || work.year || '').slice(0,4);
   return /^[0-9]{4}$/.test(year) ? year : 'Undated';
 }
+export function contributorMediaLabel(type: string) {
+  return ({movie:'Movie',series:'Series',game:'Game',book:'Book'} as Record<string,string>)[type] || '';
+}
 export function workHref(work: BrowseItem & {href?:string|null}) {
   return work.id ? `/title/${work.id}` : work.tmdb_id ? `/discover-title?type=${work.type}&id=${work.tmdb_id}` : work.href || null;
 }

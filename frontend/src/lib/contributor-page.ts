@@ -1,5 +1,5 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, sameBrowseTitle } from './browse-card-actions';
-import { contributorParams, contributorYear, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
+import { contributorParams, contributorYear, contributorMediaLabel, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
 import { editorStore } from './editor-store';
 import { applyResponsiveArtwork } from './responsive-artwork';
 import { prepareBrowsePoster } from './browse-loading';
@@ -140,7 +140,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       credit.textContent = [...item.characters,...item.roles.filter(role => !['Actor','Production'].includes(role))].join(' / ');
       credit.title = credit.textContent;
       const date = card.querySelector<HTMLTimeElement>('[data-work-date]')!;
-      date.hidden = !item.release_date; setLocalDateTime(date, item.release_date);
+      date.hidden = !item.release_date; setLocalDateTime(date, item.release_date, 'month-day');
+      card.querySelector<HTMLElement>('[data-work-type]')!.textContent = contributorMediaLabel(item.type);
       const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
       image.hidden = !item.poster;
       if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'auto'});

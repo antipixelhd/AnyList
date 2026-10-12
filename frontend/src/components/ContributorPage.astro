@@ -45,7 +45,7 @@ if (data) {
 }
 ---
 <Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)}>
-  {data ? <article class="contributor-page" data-contributor-page data-view={view} data-endpoint={endpoint}>
+  {data ? <article class="contributor-page" data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-endpoint={endpoint}>
     <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
@@ -72,8 +72,11 @@ if (data) {
           </header>
           <form method="get" class="contributor-filters" data-contributor-filters>
             <input type="hidden" name="view" value={view} />
-            <label><span>Media</span><select name="media_type"><option value="all" selected={!params.has('media_type')}>All media</option><option value="movie" selected={params.get('media_type') === 'movie'}>Movies</option><option value="series" selected={params.get('media_type') === 'series'}>Series</option></select></label>
-            {signedIn && <><label><span>List</span><select name="list_scope"><option value="all" selected={!params.has('list_scope')}>All titles</option><option value="in" selected={params.get('list_scope') === 'in'}>In my list</option><option value="out" selected={params.get('list_scope') === 'out'}>Not in my list</option></select></label><label><span>Status</span><select name="status"><option value="" selected={!params.has('status')}>Any status</option>{statuses.map(([id,label]) => <option value={id} selected={params.get('status') === id}>{label}</option>)}</select></label></>}
+            {signedIn && <>
+              <label class="contributor-status"><span>Status</span><select name="status"><option value="" selected={!params.has('status')}>Any status</option>{statuses.map(([id,label]) => <option value={id} selected={params.get('status') === id}>{label}</option>)}</select></label>
+              <fieldset class="contributor-filter-switch"><legend>List</legend><div>{[['all','All','All titles'],['in','In','In my list'],['out','Out','Not in my list']].map(([value,label,description])=><label title={description}><input type="radio" name="list_scope" value={value} checked={(params.get('list_scope')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
+            </>}
+            <fieldset class="contributor-filter-switch"><legend>Media</legend><div>{[['all','All','All media'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(params.get('media_type')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>

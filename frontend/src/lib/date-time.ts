@@ -1,5 +1,5 @@
 /** Display only: API values and native date/datetime inputs remain ISO. */
-export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'month' | 'month-short' | 'month-name' | 'month-name-short';
+export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'month' | 'month-short' | 'month-name' | 'month-name-short' | 'month-day';
 export type DateTimeContext = { locale?: string | string[]; timeZone?: string };
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const styles: Record<DateTimeStyle, Intl.DateTimeFormatOptions> = {
@@ -11,6 +11,7 @@ const styles: Record<DateTimeStyle, Intl.DateTimeFormatOptions> = {
   'month-short': { month: 'short', year: '2-digit' },
   'month-name': { month: 'long' },
   'month-name-short': { month: 'short' },
+  'month-day': { month: 'long', day: 'numeric' },
 };
 export const isDateTimeStyle = (value: string): value is DateTimeStyle => Object.hasOwn(styles, value);
 
@@ -39,6 +40,7 @@ export function formatDateTime(value: string | number | Date | null | undefined,
   if (style === 'date' && typeof value === 'string' && /^\d{4}-\d{2}$/.test(value)) return formatDateTime(value, 'month', context);
   const source = typeof value === 'string' ? value : '';
   const raw = calendar && source.length > 10 && timestamp(source) ? source.slice(0,10) : source;
+  if (style === 'month-day' && /^\d{4}-\d{2}$/.test(raw)) return formatDateTime(raw, 'month-name', context);
   const date = calendar ? calendarDate(style.startsWith('month') && /^\d{4}-\d{2}$/.test(raw) ? `${raw}-01` : raw) : timestamp(value);
   if (!date) return '';
   // UTC here preserves a calendar day; real instants use the viewer's zone.

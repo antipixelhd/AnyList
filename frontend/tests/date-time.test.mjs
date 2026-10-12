@@ -8,6 +8,14 @@ test('calendar dates follow German, US and British ordering with a complete year
   assert.equal(formatDate('2026-03-04', {locale:'en-GB'}), '04/03/2026');
 });
 
+test('timeline month/day labels respect locale and omit the year without inventing missing days', () => {
+  assert.equal(formatDateTime('2026-03-04','month-day',{locale:'de-DE'}),'4. März');
+  assert.equal(formatDateTime('2026-03-04','month-day',{locale:'en-US'}),'March 4');
+  assert.equal(formatDateTime('2026-03','month-day',{locale:'de-DE'}),'März');
+  assert.equal(formatDateTime('2026','month-day',{locale:'de-DE'}),'');
+  assert.equal(formatDateTime('2026-02-30','month-day',{locale:'de-DE'}),'');
+});
+
 test('calendar dates never shift with the viewer zone, including birthdays and leap days', () => {
   for (const timeZone of ['America/Los_Angeles','Pacific/Kiritimati','Europe/Berlin']) {
     assert.equal(formatDate('2024-02-29', {locale:'de-DE',timeZone}), '29.02.2024');
