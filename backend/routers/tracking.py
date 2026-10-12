@@ -1490,17 +1490,19 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 
 @router.get('/title/{media_id}/people')
 async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                       viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+                       viewer: Annotated[User, Depends(get_current_user)],
+                       characters: Annotated[bool, Query()] = False) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, 'Title not found')
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):
         raise HTTPException(404, 'Title not found')
     from core.media_credits import fill_screen_credits
-    from core.screen_character_art import fill_character_art
+    from core.screen_character_art import cached_character_status, fill_character_art
     from core.media_details import screen_work, work_details
     credits = await fill_screen_credits(db, media, viewer.id)
-    status = await fill_character_art(db, media, viewer.id)
+    # Actor credits must not wait for optional TVDB role-art enrichment.
+    status = await fill_character_art(db, media, viewer.id) if characters else await cached_character_status(db, media.id)
     details = await work_details(db, await screen_work(db, media), extras=False)
     return {'people': details['people'], 'organizations': details['organizations'],
             'credits_status': credits, 'character_status': status}

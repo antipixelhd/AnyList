@@ -1,7 +1,8 @@
 import { createContentTransition } from './content-motion';
 import { detailCastPresentation, detailCredits, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
-import { detailBackground, type DetailLoadState } from './detail-background';
+import { type DetailLoadState } from './detail-background';
+import { detailPeopleLoading } from './detail-people-loading';
 import {createProgressiveCredits} from './progressive-credits';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
@@ -21,13 +22,6 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     node.hidden=!error;
     node.replaceChildren(document.createTextNode(error));
     if(error){const button=document.createElement('button');button.type='button';button.className='lab-text-button';button.textContent='Retry';button.dataset.detailPeopleRetry='';node.append(' ',button);}
-  });
-  const warmed=new Set<string>();
-  const warm=(people:DetailPerson[])=>people.slice(0,8).forEach(person=>{
-    const art=responsiveArtwork(person.character_image,{size:'w185',sizes:'57px',route:'auto'});
-    if(art&&!warmed.has(art.src)){
-      warmed.add(art.src);const image=new Image();image.fetchPriority='low';image.onerror=()=>warmed.delete(art.src);image.src=art.src;
-    }
   });
 
   function artwork(card: HTMLElement, urls: string[], waiting=false, character=false) {
@@ -51,7 +45,8 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
         current.onerror=next;current.hidden=false;placeholder.hidden=true;delete holder.dataset.castLoading;return;
       }
       if(character){holder.dataset.castLoading='';if(current)current.hidden=true;placeholder.hidden=true;}
-      const candidate=document.createElement('img');candidate.alt='';candidate.loading='lazy';candidate.fetchPriority='low';candidate.dataset.castImagePending='';candidate.style.opacity='0';
+      const primary=!!card.closest('[data-credit-preview]')&&!character;
+      const candidate=document.createElement('img');candidate.alt='';candidate.loading=primary?'eager':'lazy';candidate.fetchPriority=primary?'auto':'low';candidate.dataset.castImagePending='';candidate.style.opacity='0';
       const cleanup=()=>{candidate.onload=null;candidate.onerror=null;signal.removeEventListener('abort',cancel);if(pending.get(holder)===cancel)pending.delete(holder);};
       const cancel=()=>{cleanup();candidate.remove();};
       pending.set(holder,cancel);signal.addEventListener('abort',cancel,{once:true});
@@ -81,10 +76,6 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   root.querySelectorAll<HTMLButtonElement>('[data-cast-mode]').forEach(control=>control.setAttribute('aria-pressed',String(control.dataset.castMode===mode)));
   containers.forEach(container=>paint(container,mode));
   status();
-  const warmTimer=setTimeout(()=>{
-    if(!signal.aborted)warm([...root.querySelectorAll<HTMLElement>('[data-credit-preview] [data-cast-person]')].map(card=>JSON.parse(card.dataset.castPerson!)));
-  },1200);
-  signal.addEventListener('abort',()=>clearTimeout(warmTimer),{once:true});
 
   const fill=(container:HTMLElement,people:DetailPerson[])=>{
     const old=new Map([...container.querySelectorAll<HTMLElement>('[data-person-id]')].map(card=>[`${card.dataset.personKind}:${card.dataset.personId}`,card]));
@@ -131,19 +122,18 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     });
     metadataPending=data.character_status.pending===true||['partial','pending','deferred'].includes(data.character_status.state||'');
     containers.forEach(container=>paint(container,mode));
-    // Warm only the preview's character art, after primary portraits were painted.
-    warm(groups.preview);
     status();return data.character_status;
   };
-  const background=detailBackground(`/api/proxy/tracking/title/${info.id}/people`,signal,update,(state,message)=>{
-    error=state==='retry'?message||'Character data is temporarily unavailable. Retrying automatically.':'';status();
-  });
-  if(info.backgroundAvailable)background.start();
+  const background=detailPeopleLoading(info.id,signal,update,(state,message)=>{
+    error=state==='retry'?message||'People data is temporarily unavailable. Retrying automatically.':'';status();
+  },()=>mode==='characters');
+  if(info.backgroundAvailable)background.start(!root.querySelector('[data-credit-preview] [data-person-id]'));
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-cast-mode]');
     if((event.target as Element).closest('[data-detail-people-retry]')){void background.retry();return;}
     if(!button||button.dataset.castMode===mode)return;
     mode=button.dataset.castMode==='characters'?'characters':'actors';
+    if(mode==='characters'&&metadataPending&&info.backgroundAvailable)void background.characters();
     root.querySelectorAll<HTMLButtonElement>('[data-cast-mode]').forEach(control=>control.setAttribute('aria-pressed',String(control.dataset.castMode===mode)));
     const selected=mode;
     transitions.forEach((transition,container)=>void transition(()=>paint(container,selected)));
