@@ -2,12 +2,15 @@ import os
 import unittest
 from io import BytesIO
 import random
+from copy import deepcopy
+from unittest.mock import patch
 
 os.environ.setdefault('SECRET_KEY', 'test-only-secret')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
 from PIL import Image, ImageDraw
 from core.media_image_analysis import fingerprint, same_composition, select_variants
+from core import media_image_analysis
 
 
 def fixture(seed=1, shift=0, title=False):
@@ -57,3 +60,25 @@ class ImageAnalysisTests(unittest.TestCase):
     def test_each_gallery_stops_at_ten_images(self):
         rows = [{'url':str(i),'language':'en','votes':i} for i in range(15)]
         self.assertEqual(len(select_variants(rows)), 10)
+
+    def test_normalized_comparison_and_python_310_fallback_preserve_matches(self):
+        base = fingerprint(fixture())
+        adjusted = {**base, 'gray': [round(value*.5+60) for value in base['gray']]}
+        cases = [(base, adjusted, True), (base, fingerprint(fixture(shift=20)), True),
+                 (base, fingerprint(fixture(seed=7)), False),
+                 (base, {**base, 'color':[255,255,255]}, False),
+                 ({**base, 'gray':[40]*768}, base, False), (base, None, False)]
+        for first, second, expected in cases:
+            self.assertEqual(same_composition(first, second), expected)
+        with patch.object(media_image_analysis, '_sumprod', media_image_analysis._fallback_sumprod):
+            for first, second, expected in cases:
+                self.assertEqual(same_composition(first, second), expected)
+
+    def test_comparison_features_do_not_mutate_cached_fingerprints_or_rows(self):
+        base = fingerprint(fixture())
+        rows = [{'url':'primary','primary':True,'analysis':base},
+                {'url':'copy','analysis':fingerprint(fixture(title=True))},
+                {'url':'other','analysis':fingerprint(fixture(seed=7))}]
+        before = deepcopy(rows)
+        self.assertEqual(select_variants(rows), ['primary','other'])
+        self.assertEqual(rows, before)

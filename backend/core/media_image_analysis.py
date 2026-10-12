@@ -1,7 +1,11 @@
 """Bounded thumbnail analysis; originals are never modified or downloaded."""
 import asyncio
+from dataclasses import dataclass
+from functools import cached_property
 from io import BytesIO
 import json
+import math
+from operator import mul
 import re
 from urllib.parse import urlsplit
 import uuid
@@ -32,33 +36,65 @@ def fingerprint(content):
         'centering': round(abs(center_x - .5) + abs(center_y - .5), 4)}
 
 
-def same_composition(a, b):
+def _fallback_sumprod(first, second):
+    return sum(map(mul, first, second))
+
+
+_sumprod = getattr(math, 'sumprod', _fallback_sumprod)
+
+
+def _window_stats(pixels):
+    total = sum(pixels)
+    return pixels, total, _sumprod(pixels, pixels) - total * total / len(pixels)
+
+
+@dataclass
+class _Composition:
+    gray: tuple
+    color: list
+    center: tuple
+
+    @cached_property
+    def windows(self):
+        # Each selected thumbnail's translated windows are shared by every
+        # comparison in this gallery, then released with the selection call.
+        return [_window_stats(tuple(self.gray[(y+dy)*32+x+dx]
+                    for y in range(6, 18) for x in range(8, 24)))
+                for dy in range(-4, 5) for dx in range(-4, 5)]
+
+
+def _prepare_composition(analysis):
+    if not analysis or len(analysis.get('gray', [])) != 768:
+        return None
+    gray = tuple(analysis['gray'])
+    return _Composition(gray, analysis['color'],
+                        _window_stats(tuple(gray[y*32+x] for y in range(6, 18) for x in range(8, 24))))
+
+
+def _same_composition(a, b):
     """Match translations of the central photograph, tolerating title overlays.
 
     Contrast-normalized comparison rejects unrelated similarly dark scenes.
     It deliberately favors false negatives over collapsing different artwork.
     """
-    if not a or not b or len(a.get('gray', [])) != 768 or len(b.get('gray', [])) != 768:
+    if not a or not b:
         return False
-    if sum(abs(x-y) for x, y in zip(a['color'], b['color'])) / 3 > 28:
+    if sum(abs(x-y) for x, y in zip(a.color, b.color)) / 3 > 28:
         return False
-    first = [a['gray'][y*32+x] for y in range(6, 18) for x in range(8, 24)]
-    mean_a = sum(first) / len(first)
-    centered = [value-mean_a for value in first]
-    energy_a = sum(value*value for value in centered)
+    first, total_a, energy_a = a.center
     if energy_a < 192 * 30:
         return False
-    for dy in range(-4, 5):
-        for dx in range(-4, 5):
-            second = [b['gray'][(y+dy)*32+x+dx] for y in range(6, 18) for x in range(8, 24)]
-            mean_b = sum(second) / len(second)
-            energy_b = sum((value-mean_b)**2 for value in second)
-            if energy_b < 192 * 30:
-                continue
-            correlation = sum(x*(y-mean_b) for x, y in zip(centered, second)) / (energy_a*energy_b)**.5
-            if correlation >= .965:
-                return True
+    for second, total_b, energy_b in b.windows:
+        if energy_b < 192 * 30:
+            continue
+        covariance = _sumprod(first, second) - total_a * total_b / len(first)
+        if covariance / (energy_a*energy_b)**.5 >= .965:
+            return True
     return False
+
+
+def same_composition(a, b):
+    return _same_composition(_prepare_composition(a), _prepare_composition(b))
 
 
 async def inspect_image(url, client):
@@ -113,8 +149,16 @@ def variant_selection(rows):
         return (not row.get('primary'), row.get('language') != 'en', analysis.get('centering', 1),
                 -row.get('width', 0), -row.get('votes', 0))
     selected, replacements = [], {}
+    compositions = {}
+    def composition(row):
+        analysis = row.get('analysis')
+        key = id(analysis)
+        if key not in compositions:
+            compositions[key] = _prepare_composition(analysis)
+        return compositions[key]
     for row in sorted(rows, key=quality):
-        duplicate = next((other for other in selected if same_composition(row.get('analysis'), other.get('analysis'))), None)
+        prepared = composition(row)
+        duplicate = next((other for other in selected if _same_composition(prepared, composition(other))), None)
         if duplicate:
             replacements[row['url']] = duplicate['url']
         else:
