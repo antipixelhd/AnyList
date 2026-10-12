@@ -23,8 +23,16 @@ class TrackingCatalogueScheduleTests(unittest.TestCase):
 
     def _media(self, refreshed_at):
         return SimpleNamespace(
-            tmdb_data={"tracking_catalogue_refreshed_at": refreshed_at}
+            tmdb_data={"tracking_catalogue_refreshed_at": refreshed_at,'tracking_episode_details_version':1}
         )
+
+    def test_older_catalogues_are_refreshed_once_for_episode_artwork(self):
+        now=datetime(2026,9,19,12,tzinfo=timezone.utc)
+        media=self._media(now.isoformat())
+        media.tmdb_data.pop('tracking_episode_details_version')
+        self.assertFalse(tracking_catalogue_is_fresh(media,'Ended',now))
+        media.tmdb_data['tracking_episode_details_version']=1
+        self.assertTrue(tracking_catalogue_is_fresh(media,'Ended',now))
 
     def test_active_show_refreshes_daily(self):
         now = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)

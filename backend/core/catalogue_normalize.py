@@ -253,7 +253,9 @@ def normalize_tmdb(raw, kind):
         if r.get("id"):
             doc["relationships"].append(
                 {
-                    "target": entity(kind, f"tmdb.{kind}", r),
+                    "target": entity(kind, f"tmdb.{kind}", r,
+                        artwork=f'https://image.tmdb.org/t/p/w500{r["poster_path"]}' if r.get('poster_path') else None,
+                        attributes={'release_date':r.get('release_date') or r.get('first_air_date'), 'adult':bool(r.get('adult'))}),
                     "relation": "recommendation",
                 }
             )
@@ -436,9 +438,11 @@ def normalize_igdb(raw):
                     "game",
                     "igdb.game",
                     parent if isinstance(parent, dict) else {"id": parent},
+                    artwork=parent.get('cover') if isinstance(parent, dict) else None,
+                    attributes={'release_date':date(parent.get('first_release_date'))} if isinstance(parent, dict) else {},
                 )
                 if parent
-                else entity("game", "igdb.game", r)
+                else entity("game", "igdb.game", r, artwork=r.get('cover'), attributes={'release_date':date(r.get('first_release_date'))})
             )
             if parent:
                 target["identities"].append(identity("igdb.game", r["id"]))

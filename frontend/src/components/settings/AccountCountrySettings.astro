@@ -1,0 +1,43 @@
+---
+interface Props {country: string | null; countries: {code:string;name:string}[]}
+const {country,countries}=Astro.props;
+---
+<section class="settings-card" data-account-country>
+  <h2 class="section-headline"><label for="account-country">Country</label></h2>
+  <div class="space-y-2">
+    <div class="flex items-center gap-3">
+      <select id="account-country" aria-describedby="account-country-help account-country-status" class="min-w-0 flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors">
+        <option value="" selected={!country}>Worldwide</option>
+        {countries.map(value=><option value={value.code} selected={country===value.code}>{value.name}</option>)}
+      </select>
+      <button type="button" data-country-save class="button-primary px-4 py-3 text-sm shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Save</button>
+    </div>
+    <p id="account-country-help" class="text-xs text-zinc-500">The cinema filter uses theatrical releases in this country.</p>
+    <p id="account-country-status" class="setting-save-state" role="status" aria-live="polite"></p>
+  </div>
+</section>
+<script>
+  function setupCountry(){
+    const root=document.querySelector<HTMLElement>('[data-account-country]');
+    if(!root||root.dataset.initialized)return;
+    root.dataset.initialized='true';
+    const select=root.querySelector('select')!;
+    const save=root.querySelector<HTMLButtonElement>('[data-country-save]')!;
+    const status=root.querySelector<HTMLElement>('[role="status"]')!;
+    let saved=select.value;
+    select.addEventListener('change',()=>{save.disabled=select.value===saved;status.textContent='';});
+    save.addEventListener('click',async()=>{
+      const requested=select.value;
+      save.disabled=true;select.disabled=true;status.textContent='Saving…';status.dataset.state='saving';
+      try{
+        const token=document.getElementById('app-data')?.dataset.token||'';
+        const response=await fetch('/api/proxy/profile/me',{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({country:requested||null})});
+        if(!response.ok)throw new Error('Could not save country.');
+        saved=(await response.json()).country||'';select.value=saved;
+        status.textContent='Saved';status.dataset.state='saved';
+      }catch(error){status.textContent=error instanceof Error?error.message:'Could not save country.';status.dataset.state='error';}
+      finally{select.disabled=false;save.disabled=select.value===saved;}
+    });
+  }
+  document.addEventListener('astro:page-load',setupCountry);
+</script>

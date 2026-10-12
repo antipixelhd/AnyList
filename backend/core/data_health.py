@@ -142,7 +142,7 @@ async def enqueue(db, user_id, action):
         job.status = SyncStatus.failed
         job.error_message = 'interrupted'
     job = SyncJob(user_id=user_id, source='tmdb', job_type=JOB_TYPE, status=SyncStatus.pending,
-                  total_items=1 if action == 'statistics' else 2 if action == 'characters' else 5,
+                  total_items=1 if action == 'statistics' else 2 if action == 'characters' else 6,
                   processed_items=0, stats={'action': action, 'results': {}},
                   created_at=utcnow(), updated_at=utcnow())
     db.add(job)

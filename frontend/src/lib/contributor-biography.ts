@@ -17,6 +17,9 @@ export function mountContributorBiography(root: HTMLElement, signal: AbortSignal
     const start = text.getBoundingClientRect().height;
     animation?.cancel();
     expanded = !expanded;
+    if (!expanded && root.getBoundingClientRect().top < 0) {
+      root.scrollIntoView({block:'start',behavior:reduced.matches?'auto':'smooth'});
+    }
     button.setAttribute('aria-expanded', String(expanded));
     button.textContent = expanded ? 'Read less' : 'Read more';
     rest.hidden = !expanded; ellipsis.hidden = expanded || !shortened;

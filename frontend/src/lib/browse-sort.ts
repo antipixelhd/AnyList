@@ -18,14 +18,15 @@ export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, cha
   const sync = (searching = currentSearching, motion = true, filtered = currentFiltered) => {
     currentSearching = searching;
     currentFiltered = filtered;
-    const sorted = primary.value !== 'all' || filtered || searching;
-    const entering = resultsControl.hidden && sorted;
+    const timeline = root.dataset?.browseView === 'timeline';
+    const sorted = timeline || primary.value !== 'all' || filtered || searching;
+    const entering = resultsControl.hidden && sorted && !timeline;
     root.toggleAttribute('data-browse-sorted', sorted);
     primaryControl.hidden = sorted;
-    resultsControl.hidden = !sorted;
+    resultsControl.hidden = !sorted || timeline;
     results.value = sorted && primary.value === 'all' ? 'popular' : primary.value;
     for (const select of [primary, results]) {
-      select.disabled = searching;
+      select.disabled = searching || timeline;
       for (const option of select.options) {
         option.textContent = searching && option.selected ? 'Relevance' : names.get(option.value) || option.value;
       }

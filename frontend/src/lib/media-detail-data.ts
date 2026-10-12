@@ -1,28 +1,83 @@
 import type { EditorTitle } from './editor-store';
-import { biographyPreview } from './contributor-page-data';
+import {countryLabel} from './stats-overview-data';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; url: string | null; roles: string[]; characters: string[]};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; characters: string[]};
+export function detailCastPresentation(person: DetailPerson, mode: 'actors' | 'characters') {
+  const character = person.characters.filter(Boolean).join(' / ');
+  return {primary: mode === 'characters' && character ? character : person.name,
+    secondary: mode === 'characters' ? character ? person.name : '' : character || person.roles.join(', '),
+    images: [...new Set((mode === 'characters' ? [person.character_image, ...(person.character_images || []), person.image] : [person.image]).filter((url):url is string=>!!url))]};
+}
 export type DetailMedia = EditorTitle & {
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
-  people: DetailPerson[]; organizations: DetailPerson[]; artwork: string[]; relations: any[];
+  people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
+  character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
+  image_status?: {state:string;error?:string|null;retry_after?:number};
+  scores_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
   tmdb_score?: number | null; imdb_score?: number | null; rt_critic_score?: number | null; rt_audience_score?: number | null;
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
 };
 export const kindLabel = {movie:'Movie', series:'Series', game:'Game', book:'Book'};
+export function detailWorkCaption(work: {type?: MediaKind; genres?: string[]; year?: string}, similar = false) {
+  return [similar ? work.genres?.find(genre => typeof genre === 'string' && genre.trim())?.trim() : work.type ? kindLabel[work.type] : null, work.year].filter(Boolean).join(' · ');
+}
+const nameKey=(name:string)=>name.trim().toLocaleLowerCase().replace(/\s+/g,' ');
+const roleText=(person:DetailPerson)=>[...person.roles,...(person.role_codes||[])].join(' ');
+export function detailCredits(media:DetailMedia) {
+  const position=(person:DetailPerson)=>person.position??Number.MAX_SAFE_INTEGER;
+  const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b));
+  const priority=(person:DetailPerson)=>{
+    const roles=[...person.roles,...(person.role_codes||[])];
+    const ranks=[/^(director|creator|showrunner)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author)$/i,/^executive producer$/i,/^(producer|developer)$/i,/^(cinematographer|director of photography|composer|original music composer)$/i];
+    const rank=ranks.findIndex(pattern=>roles.some(role=>pattern.test(role.trim())));
+    return rank<0?ranks.length:rank;
+  };
+  const crew=media.people.filter(person=>person.kind!=='actor').sort((a,b)=>priority(a)-priority(b)||position(a)-position(b));
+  const companies=new Map<string,DetailPerson>();
+  for(const person of media.organizations.filter(person=>/producer|production|studio|developer|publisher/i.test(roleText(person)))){
+    const key=nameKey(person.name),previous=companies.get(key);
+    companies.set(key,previous?{...previous,url:previous.url||person.url,image:previous.image||person.image,
+      roles:[...new Set([...previous.roles,...person.roles])],role_codes:[...new Set([...(previous.role_codes||[]),...(person.role_codes||[])])]}:person);
+  }
+  const studios=[...companies.values()];
+  return {cast,principal:crew.filter(person=>priority(person)<5),supporting:crew.filter(person=>priority(person)>=5),studios,
+    preview:cast.length?cast.slice(0,8):crew.slice(0,8)};
+}
+export function detailOrganizationFacts(media:DetailMedia) {
+  const groups:{label:string;rows:{name:string;url?:string|null}[]}[]=[];
+  const seen=new Set<string>();
+  const add=(label:string,rows:{name:string;url?:string|null}[])=>{
+    const unique=rows.filter(row=>{const key=nameKey(row.name);if(!key||seen.has(key))return false;seen.add(key);return true;});
+    if(unique.length)groups.push({label,rows:unique});
+  };
+  add('Created by',media.creators||[]);
+  // The title's primary TMDB networks take precedence over alternate regional
+  // broadcasters/distributors from catalogue enrichment (e.g. YouTube rentals).
+  const networks=media.organizations.filter(person=>/broadcaster|network/i.test(roleText(person)));
+  add('Network',media.networks?.length?media.networks.map(network=>({name:network.name,url:networks.find(row=>nameKey(row.name)===nameKey(network.name))?.url})):networks);
+  const production=detailCredits(media).studios;
+  if(media.type==='book')add('Publisher',production);
+  else if(media.type==='game'){
+    add('Developer',production.filter(person=>/developer/i.test(roleText(person))));
+    add('Publisher',production.filter(person=>/publisher/i.test(roleText(person))));
+  }else add('Studios',production);
+  return groups;
+}
 export function localMediaId(value: string | undefined) {
   return /^[1-9][0-9]{0,9}$/.test(value || '') && Number(value) <= 2147483647 ? Number(value) : null;
 }
 export function prepareDetail(raw: Record<string, any>): DetailMedia {
   const detail: Record<string, any> = {...raw, entry:raw.entry || null};
-  for (const field of ['genres','seasons','friends','people','organizations','artwork','relations','sources','editions','releases','prices','countries']) {
+  for (const field of ['genres','seasons','friends','people','organizations','posters','artwork','relations','similar','sources','editions','releases','prices','countries']) {
     detail[field] = Array.isArray(raw[field]) ? raw[field] : [];
   }
+  detail.similar=detail.similar.filter((work:any)=>work.type===raw.type);
   return detail as DetailMedia;
 }
 export function durationLabel(minutes?: number | null) {
@@ -36,7 +91,14 @@ export function detailDate(value?: string | null) {
   const date = new Date(value.slice(0, 10));
   return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en', {dateStyle:'medium',timeZone:'UTC'}).format(date);
 }
-export function detailSynopsis(value?: string | null) { return biographyPreview(value, 65); }
+export function detailSynopsis(value?: string | null) {
+  const full=(value||'').trim();
+  const words=[...full.matchAll(/\S+/g)];
+  const shortened=words.length>120;
+  const end=shortened?words[119].index!+words[119][0].length:full.length;
+  const lead=full.slice(0,end),rest=full.slice(end);
+  return {lead,rest,shortened,expandable:shortened};
+}
 export function progressTotal(media: DetailMedia) {
   if (media.type === 'movie') return 1;
   const seasons = media.seasons.filter(season => season.season_number > 0);
@@ -44,7 +106,7 @@ export function progressTotal(media: DetailMedia) {
     ? seasons.reduce((sum, season) => sum + Number(season.released_count || 0), 0) : media.episode_count || null;
 }
 export function detailFacts(media: DetailMedia) {
-  const facts: {label: string; value: string}[] = [{label:'Format',value:kindLabel[media.type]}];
+  const facts: {label: string; value: string}[] = [];
   const add = (label: string, value: unknown) => { if (value != null && value !== '' && value !== 0) facts.push({label,value:String(value)}); };
   add(media.type === 'book' ? 'First published' : 'Released', detailDate(media.release_date) || media.year);
   add('Status',media.release_status);
@@ -53,7 +115,7 @@ export function detailFacts(media: DetailMedia) {
     add('Episode runtime',durationLabel(media.episode_runtime)); add('Seasons',media.season_count); add('Episodes',media.episode_count);
   }
   add('Language',media.original_language?.toUpperCase());
-  add('Country',media.countries.join(', '));
+  add('Country',media.countries.map(countryLabel).join(', '));
   if (media.type === 'book') add('Pages',media.pages);
   if (media.type === 'game') add('Platforms',[...new Set(media.releases.map(release => release.platform).filter(Boolean))].join(', '));
   return facts;
@@ -61,7 +123,8 @@ export function detailFacts(media: DetailMedia) {
 export function relationLabel(relation: string, reverse = false) {
   const labels: Record<string, [string,string]> = {dlc:['DLC for','DLC'],expansion:['Expansion of','Expansion'],
     standalone_expansion:['Expansion of','Standalone expansion'],remake:['Remake of','Remake'],remaster:['Remaster of','Remaster'],
-    port:['Port of','Port'],version:['Version of','Version'],series_member:['Series','Series'],recommendation:['Related','Related']};
+    port:['Port of','Port'],version:['Version of','Version'],series_member:['Series','Series'],recommendation:['Related','Related'],
+    adaptation:['Adaptation of','Adaptation'],based_on:['Source','Adaptation'],prequel:['Prequel to','Sequel'],sequel:['Sequel to','Prequel'],spin_off:['Spin-off of','Spin-off'],shared_universe:['Shared universe','Shared universe']};
   return labels[relation]?.[reverse ? 1 : 0] || 'Related';
 }
 export function moneyLabel(value: {currency?: string; amount?: number; amountInt?: number} | null | undefined) {

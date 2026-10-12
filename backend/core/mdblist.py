@@ -41,6 +41,10 @@ _DAILY_LIMIT_MARKER = "daily api limit"
 class MDBListAPIError(RuntimeError):
     """Raised when MDBList rejects or cannot complete a request."""
 
+    def __init__(self, message: str, *, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 class MDBListDailyLimitError(MDBListAPIError):
     """Raised when MDBList's daily quota is spent - not retryable within the run."""
@@ -67,6 +71,7 @@ async def _request(
     ignore_statuses: set[int] | None = None,
     rate_limit_retries: int = _RATE_LIMIT_RETRIES,
     max_wait: float = _RATE_LIMIT_MAX_WAIT,
+    defer_long_cooldown: bool = False,
 ) -> dict[str, Any]:
     query = dict(params or {})
     query["apikey"] = api_key
@@ -93,8 +98,11 @@ async def _request(
                     raise MDBListDailyLimitError(
                         f"MDBList {method} {path} failed (429): {body[:500]}"
                     )
+                wait = _retry_after(response)
+                if defer_long_cooldown and wait is not None and wait > max_wait:
+                    raise MDBListAPIError('MDBList provider cooldown', retry_after=wait)
                 if attempt < rate_limit_retries:
-                    delay = min(max_wait, _retry_after(response) or _RATE_LIMIT_BACKOFF * (2**attempt))
+                    delay = min(max_wait, wait or _RATE_LIMIT_BACKOFF * (2**attempt))
                     logger.info(
                         "MDBList rate-limited on %s %s; waiting %.1fs (attempt %d/%d)",
                         method, path, delay, attempt + 1, rate_limit_retries,
@@ -150,6 +158,7 @@ async def get_catalog_rating(
         f"/rating/{media_type}/{source}",
         api_key,
         payload={"ids": [tmdb_id], "provider": "tmdb"},
+        defer_long_cooldown=True,
     )
     candidates: list[tuple[Any, bool]] = [(result, False)]
     for key in ("results", "ratings"):

@@ -9,6 +9,10 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-sidebar { margin-top:-130px; position:relative; }
 .contributor-portrait { aspect-ratio:2/3; display:grid; place-items:center; background:var(--panel); border-radius:8px; overflow:hidden; box-shadow:0 16px 36px #0003; color:var(--muted); font-size:64px; }
 .contributor-portrait img { width:100%; height:100%; object-fit:cover; }
+.contributor-portrait { width:100%; border:0; padding:0; cursor:pointer; }
+.contributor-portrait:disabled { cursor:default; }
+.contributor-portrait:focus-visible { outline:2px solid var(--blue); outline-offset:4px; }
+.contributor-biography { scroll-margin-top:96px; }
 .contributor-portrait [data-contributor-portrait-fallback] { display:grid; place-items:center; }
 .contributor-portrait [data-contributor-portrait-fallback] .ui-icon { display:flex; }
 .is-studio .contributor-portrait { aspect-ratio:1; }

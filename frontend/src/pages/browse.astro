@@ -4,6 +4,7 @@ import BrowseCard from "../components/BrowseCard.astro";
 import BrowseSkeleton from "../components/BrowseSkeleton.astro";
 import BrowseSelect from "../components/BrowseSelect.astro";
 import Icon from "../components/Icon.astro";
+import {timelineGroups} from '../lib/browse-timeline-data';
 import { tracker } from "../lib/tracker";
 import "../styles/browse.css";
 import { releaseYearBounds } from "../lib/browse-ranges";
@@ -12,9 +13,14 @@ import {
   genreSelectionLabel,
   browseRequestParams,
   sectionHref,
+  browseLayout,
 } from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
+const view = browseLayout(params);
+if(params.get('sort')==='newest')params.delete('sort');
+params.set('view',view);
 const type = params.get("type") === "series" ? "series" : "movie";
+if(type==='series'||!['1','true'].includes(params.get('cinema')||''))params.delete('cinema');
 params.delete("type");
 params.set("media_type", type);
 params.delete("page");
@@ -43,6 +49,9 @@ if (responses[0].status === "fulfilled") {
   } else payload = responses[0].value;
 } else error = "Unable to load titles. Check your filters and try again.";
 if (responses[1].status === "fulfilled") facets = responses[1].value;
+const cinemaCountry = facets.cinema_country;
+const cinemaScope = cinemaCountry ? new Intl.DisplayNames(['en'],{type:'region'}).of(cinemaCountry) || cinemaCountry : 'Worldwide';
+const cinemaLabel = `Cinema release · ${cinemaScope}`;
 const selectedGenres = (params.get("genres") || "").split(",");
 const statusOptions =
   type === "movie"
@@ -83,8 +92,24 @@ const hasSort = !categories;
 const resultsSort = hasSort ? browseRequestParams(params).get('sort') : 'all';
 const sortOptions = [
   ['all', 'All categories'], ['trending', 'IMDb trending'], ['popular', 'IMDb votes'],
-  ['score', 'IMDb rating'], ['newest', 'Newest'], ['oldest', 'Oldest'], ['title', 'Title'],
+  ['score', 'IMDb rating'], ['oldest', 'Oldest'], ['title', 'Title'],
 ];
+const viewHref = (view: string) => {
+  const values = new URLSearchParams(Astro.url.search);
+  if (values.get('sort') === 'newest') values.delete('sort');
+  if (view === 'timeline') values.set('view', view);
+  else values.delete('view');
+  return `/browse${values.size ? '?' + values : ''}`;
+};
+const typeHref = (type: string) => {
+  const values = new URLSearchParams(viewHref(view).split('?')[1] || '');
+  values.delete('genres');
+  values.delete('status');
+  values.delete('cinema');
+  if (type === 'series') values.set('type', type);
+  else values.delete('type');
+  return `/browse${values.size ? '?' + values : ''}`;
+};
 const voteLimit = Math.max(10000, minVotes);
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
@@ -97,34 +122,40 @@ const providerLabel = facets.providers.find((provider: any) => String(provider.i
 if (providerLabel) initialChips.push(providerLabel);
 if (minVotes !== 250) initialChips.push(`${minVotes.toLocaleString()}+ votes`);
 if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”`);
+if(params.has('cinema'))initialChips.push(cinemaLabel);
 ---
 
 <Tracker title="Browse">
 
-  <div class="page-width browse-page" data-browse-page data-browse-sorted={hasSort ? '' : undefined} data-browse-chips={initialChips.length ? '' : undefined}>
+  <div class="page-width browse-page" data-browse-page data-browse-view={view} data-browse-sorted={hasSort ? '' : undefined} data-browse-chips={initialChips.length ? '' : undefined}>
     <script is:inline data-astro-rerun>
       document.currentScript.parentElement.dataset.browseScripted = "";
       document.currentScript.parentElement.dataset.browseArrivalsPending = "";
     </script>
     <header class="browse-header">
       <h1>Browse</h1>
+      <div class="browse-header-controls">
       <nav aria-label="Media type" class="browse-types">
         <a
-          href="/browse"
+          href={typeHref('movie')}
           data-browse-type="movie"
           aria-current={type === "movie" ? "page" : undefined}
         >
           Movies
         </a>
         <a
-          href="/browse?type=series"
+          href={typeHref('series')}
           data-browse-type="series"
           aria-current={type === "series" ? "page" : undefined}
         >
           Series
         </a>
       </nav>
-
+      <nav class="browse-view-switch" aria-label="Browse layout">
+        <a href={viewHref('grid')} data-browse-layout="grid" aria-current={view==='grid'?'page':undefined}><Icon name="grid"/><span>Grid</span></a>
+        <a href={viewHref('timeline')} data-browse-layout="timeline" aria-current={view==='timeline'?'page':undefined}><Icon name="calendar"/><span>Timeline</span></a>
+      </nav>
+      </div>
     </header>
     <form
       id="browse-filters"
@@ -133,6 +164,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
       data-browse-form
     >
       <input type="hidden" name="type" value={type} />
+      <input type="hidden" name="view" value={view} />
       <div class="browse-search-row">
         <label class="browse-search">
           <span>Search</span>
@@ -152,6 +184,10 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
           </div>
         </label>
       </div>
+      <label class="browse-cinema-toggle" data-browse-cinema data-cinema-label={cinemaLabel} hidden={type!=='movie'} title={cinemaLabel}>
+        <input type="checkbox" name="cinema" value="1" checked={params.has('cinema')} aria-label={`Has cinema release · ${cinemaScope}`}/>
+        <Icon name="film"/>
+      </label>
       <div class="browse-controls" id="browse-controls">
         <label class="browse-sort" data-browse-primary-sort hidden={hasSort}>
           <span>Sort</span>
@@ -260,7 +296,7 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
         ))}
         {!!initialChips.length && <button type="button" data-reset>Clear all</button>}
       </div>
-      <label class="browse-results-sort" hidden={!hasSort}>
+      <label class="browse-results-sort" hidden={!hasSort||view==='timeline'}>
         <Icon name="sort" />
         <BrowseSelect aria-label="Sort results" data-browse-results-sort valueLabel={params.get('q')?.trim() ? 'Relevance' : sortOptions.find(([id]) => id === resultsSort)?.[1]}>
           {sortOptions.map(([id, label]) => (
@@ -305,8 +341,22 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
           </section>
         ))}
       </div>
-      <div class="browse-grid" data-browse-results hidden={categories}>
-        {payload.results.map((item: any) => (
+      <div class={view==='timeline'?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
+        {view === 'timeline' ? timelineGroups<any>(payload.results).map(year => (
+          <section class="browse-timeline-year" data-timeline-year={year.year}>
+            <h2 class="browse-timeline-year-label">{year.year || 'Undated'}</h2>
+            <div class="browse-timeline-months">
+              {year.months.map(month => (
+                <section class="browse-timeline-month" data-timeline-month={month.key}>
+                  <h3>{month.label}</h3>
+                  <div class="browse-grid">
+                    {month.items.map(item => <BrowseCard item={item} signedIn={signedIn} />)}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        )) : payload.results.map((item: any) => (
           <BrowseCard item={item} signedIn={signedIn} />
         ))}
       </div>
@@ -318,6 +368,19 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
       >
         <div class="browse-grid browse-skeletons" data-skeleton-grid>
           {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
+        </div>
+        <div class="browse-timeline" data-skeleton-timeline hidden>
+          <section class="browse-timeline-year">
+            <h2 class="browse-timeline-year-label"><span class="skeleton-block" style="width:2.4ch;height:1lh"></span></h2>
+            <div class="browse-timeline-months">
+              <section class="browse-timeline-month">
+                <h3><span class="skeleton-block" style="width:8ch;height:1lh"></span></h3>
+                <div class="browse-grid browse-skeletons">
+                  {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
+                </div>
+              </section>
+            </div>
+          </section>
         </div>
         <div class="browse-sections" data-skeleton-sections hidden>
           {["Trending now", "Newest", "All-time popular", "Highest rated"].map(title => (

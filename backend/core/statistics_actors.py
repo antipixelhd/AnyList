@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from core.statistics_genres import poster
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 from models.title_credits import TitleCredits
-from core.screen_characters import character_images
+from core.screen_characters import character_images, role_image_candidates
 
 
 async def load_actors(db, facts, *, show_anime=True):
@@ -25,8 +25,7 @@ async def load_actors(db, facts, *, show_anime=True):
             from core.statistics_facts import anime
             candidates = [i for i in candidates if not anime(i['attributes'])]
         current = poster(credit.character_image_url)
-        alternatives = list(dict.fromkeys(([current] if current else []) + [i['url'] for i in candidates if i['work_id'] == credit.work_id]
-            + [i['url'] for i in candidates if i['work_id'] != credit.work_id]))[:4]
+        alternatives = role_image_candidates(credit, candidates)
         by_work[credit.work_id].append({"key": f"catalogue:{person.id}", "label": person.name,
             "image": poster(person.image_url), "character": credit.character_label,
             "character_image": current, "character_images": alternatives, "character_id": character_id,

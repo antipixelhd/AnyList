@@ -126,6 +126,12 @@ async def get_profile(
     return resp
 
 
+@router.get('/me/countries')
+async def account_countries(current_user: Annotated[User, Depends(get_current_user)]) -> list[dict[str,str]]:
+    import pycountry
+    return sorted([{'code':country.alpha_2,'name':country.name} for country in pycountry.countries],key=lambda row:row['name'])
+
+
 @router.patch("/me", response_model=schemas.UserProfileResponse)
 async def update_profile(
     body: schemas.UserProfileUpdate,

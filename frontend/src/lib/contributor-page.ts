@@ -7,9 +7,11 @@ import { mountContributorBiography } from './contributor-biography';
 import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { initializeScrollMotion } from './scroll-motion';
 import { cancelUiMotion, reveal } from './ui-motion';
+import { mountPortraitViewer } from './image-viewer';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
+  mountPortraitViewer(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
   const switchView = createContentTransition(region, signal);
@@ -47,6 +49,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const portrait = root.querySelector<HTMLImageElement>('.contributor-portrait img');
   const missingPortrait = () => {
     if (portrait) portrait.hidden = true;
+    root.querySelector<HTMLButtonElement>('[data-portrait-image]')!.disabled = true;
     root.querySelector<HTMLElement>('[data-contributor-portrait-fallback]')!.hidden = false;
   };
   portrait?.addEventListener('error', missingPortrait, {signal});

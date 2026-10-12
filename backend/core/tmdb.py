@@ -128,10 +128,13 @@ async def _get(
             async with httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT)) as client:
                 r = await client.get(url, headers=headers or {}, params=params)
                 if r.status_code == 429:
-                    wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
+                    from core.catalogue_providers import retry_after_seconds
+                    wait = retry_after_seconds(r.headers.get("Retry-After", ''), 2 ** (attempt + 1))
                     last_exc = httpx.HTTPStatusError(
                         "429 Too Many Requests", request=r.request, response=r
                     )
+                    if wait > 5:
+                        raise last_exc
                     await asyncio.sleep(wait)
                     continue
                 r.raise_for_status()
@@ -557,6 +560,14 @@ async def get_company(company_id: int, api_key: str = None) -> dict:
 async def get_company_images(company_id: int, api_key: str = None) -> dict:
     """Company logo variants with dimensions; cached separately from details."""
     return await _get(f"{TMDB_BASE}/company/{company_id}/images", headers=get_headers(api_key))
+
+
+async def get_title_images(tmdb_id: int, kind: str, api_key: str = None) -> dict:
+    if kind not in ('movie', 'series'):
+        raise ValueError('Unsupported screen media kind')
+    endpoint = 'movie' if kind == 'movie' else 'tv'
+    return await _get(f"{TMDB_BASE}/{endpoint}/{tmdb_id}/images", headers=get_headers(api_key),
+                      params={'include_image_language': 'en,null'})
 
 
 async def get_person_profile(person_id: int, api_key: str = None) -> dict:

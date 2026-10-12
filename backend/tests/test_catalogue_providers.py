@@ -120,6 +120,19 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         providers._tokens.clear()
         providers._token_locks.clear()
 
+    async def test_imdb_character_person_lookup_uses_access_token_and_rejects_ambiguity(self):
+        from core.screen_character_art import resolve_imdb_person
+        def handle(request):
+            self.assertEqual(request.headers['Authorization'],'Bearer fixture-access-token')
+            self.assertNotIn('api_key',request.url.params)
+            self.assertEqual(request.url.params['external_source'],'imdb_id')
+            return httpx.Response(200,json={'person_results':[{'id':100}]} if request.url.path.endswith('nm100')
+                else {'person_results':[{'id':100},{'id':200}]})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            adapter=providers.CatalogueProviders(providers.ProviderHTTP(client),tmdb_key='fixture-access-token')
+            self.assertEqual(await resolve_imdb_person(adapter,'nm100'),100)
+            self.assertIsNone(await resolve_imdb_person(adapter,'nm200'))
+
     async def test_steam_only_low_date_and_unchanged_link(self):
         requests = []
 
@@ -318,6 +331,12 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
                     "itad", "GET", "https://api.isthereanydeal.com/test"
                 )
             self.assertEqual(ctx.exception.retry_after, 300)
+            # A different title must share the cooldown rather than hit the provider again.
+            with self.assertRaises(providers.ProviderError) as cooled:
+                await providers.ProviderHTTP(client).request(
+                    'itad', 'GET', 'https://api.isthereanydeal.com/another-title'
+                )
+            self.assertGreater(cooled.exception.retry_after, 290)
 
     async def test_pagination_is_bounded_and_coverage_explicit(self):
         adapter = providers.CatalogueProviders()

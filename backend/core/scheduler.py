@@ -605,6 +605,10 @@ async def _show_metadata_refresher():
                 from core.catalogue_providers import CatalogueProviders, ProviderHTTP
                 country_coverage = await backfill_legacy_countries(db, api_key, tvdb_api_key=tvdb_key)
                 log.info("Country metadata backfill: %s", country_coverage)
+                from core.cinema_releases import backfill_cinema_releases
+                cinema_coverage=await backfill_cinema_releases(db,CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal),tmdb_key=api_key),limit=50)
+                log.info('Cinema release backfill: %s',cinema_coverage)
                 catalogue_countries = await backfill_catalogue_countries(db, CatalogueProviders(
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
                 ))
@@ -619,6 +623,10 @@ async def _show_metadata_refresher():
                 character_images = await backfill_tvmaze_images(db, CatalogueProviders(
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key))
                 log.info("Character metadata backfill: %s; TVmaze images: %s", character_coverage, character_images)
+                from core.screen_character_art import backfill_character_art
+                tvdb_characters = await backfill_character_art(db, CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key))
+                log.info("TVDB character artwork backfill: %s", tvdb_characters)
                 from core.studio_artwork import backfill_studio_artwork
                 studio_artwork = await backfill_studio_artwork(db, api_key, limit=25)
                 log.info("Studio logo banner backfill: %s", studio_artwork)

@@ -111,6 +111,14 @@ async def character_images(db, ids):
     return result
 
 
+def role_image_candidates(credit, candidates):
+    """Prefer this title's portrayal before the same actor/role elsewhere."""
+    current = image(credit.character_image_url)
+    return list(dict.fromkeys(([current] if current else [])
+        + [i['url'] for i in candidates if i['work_id'] == credit.work_id]
+        + [i['url'] for i in candidates if i['work_id'] != credit.work_id]))[:4]
+
+
 async def character_detail(db, character_id):
     row = await db.get(ScreenCharacter, character_id)
     if not row:

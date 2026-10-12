@@ -292,7 +292,7 @@ class CatalogueRelationship(Base):
             "source_id <> target_id", name="ck_catalogue_relationship_distinct"
         ),
         CheckConstraint(
-            "relation IN ('dlc','expansion','standalone_expansion','remake','remaster','port','version','series_member','recommendation')",
+            "relation IN ('dlc','expansion','standalone_expansion','remake','remaster','port','version','series_member','recommendation','adaptation','based_on','prequel','sequel','spin_off','shared_universe')",
             name="ck_catalogue_relationship_type",
         ),
         Index("ix_catalogue_relationship_target", "target_id", "relation"),

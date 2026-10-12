@@ -19,9 +19,19 @@ test("browse starts with categories, while searches, filters and explicit sorts 
     "provider=8",
     "sort=popular",
     "sort=trending",
+    "cinema=1",
   ]) {
     assert.equal(isCategoryView(new URLSearchParams(query)), false, query);
   }
+});
+
+test('cinema filter survives timeline, search, genre and pagination parameters',()=>{
+  const values=new URLSearchParams('cinema=1&view=timeline&q=Arrival&genres=18&page=3&source=remote');
+  const request=browseRequestParams(values);
+  assert.equal(request.get('cinema'),'1');assert.equal(request.get('sort'),'newest');
+  assert.equal(request.get('q'),'Arrival');assert.equal(request.get('genres'),'18');
+  assert.equal(request.get('page'),'3');assert.equal(request.get('source'),'remote');
+  assert.equal(isCategoryView(values),false);
 });
 
 test('vote thresholds survive full-result requests and section links', () => {

@@ -1,0 +1,213 @@
+"""Separate poster variants from landscape artwork; cache provider lookups."""
+from datetime import datetime, timedelta, timezone
+import asyncio
+import re
+import httpx
+import logging
+from weakref import WeakValueDictionary
+
+from sqlalchemy import func, literal, update
+from sqlalchemy.dialects.postgresql import JSONB
+
+from core.catalogue_normalize import image
+from models import Media
+
+IMAGE_POLICY_VERSION = 4
+_fills = WeakValueDictionary()
+_backdrop_fills = WeakValueDictionary()
+logger = logging.getLogger(__name__)
+
+
+def image_key(url):
+    return re.sub(r'(https://image\.tmdb\.org/t/p/)[^/]+/', r'\1', url)
+
+
+def unique_images(values):
+    result, seen = [], set()
+    for value in values:
+        url = image(value)
+        if url and image_key(url) not in seen:
+            seen.add(image_key(url))
+            result.append(url)
+    return result[:10]
+
+
+def tmdb_image_url(path):
+    if isinstance(path, str) and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path):
+        return 'https://image.tmdb.org/t/p/original' + path
+    return image(path)
+
+
+def image_candidates(raw, provider='tmdb'):
+    result = {'posters': [], 'artwork': []}
+    if not isinstance(raw, dict):
+        return result
+    for field, target in [('posters', 'posters'), ('backdrops', 'artwork')]:
+        for row in raw.get(field) or []:
+            if not isinstance(row, dict):
+                continue
+            if row.get('iso_639_1') not in ('en', None):
+                continue
+            # Only an explicit null language establishes textless artwork.
+            if field == 'backdrops' and ('iso_639_1' not in row or row['iso_639_1'] is not None):
+                continue
+            ratio = row.get('aspect_ratio')
+            if ratio is None and all(isinstance(row.get(field), (int, float)) and row[field] > 0 for field in ('height', 'width')):
+                ratio = row['width'] / row['height']
+            if isinstance(ratio, (int, float)) and (ratio >= 1 if field == 'posters' else ratio <= 1):
+                continue
+            path = row.get('file_path')
+            url = tmdb_image_url(path) if provider == 'tmdb' else image(path)
+            if url:
+                result[target].append({'url': url, 'language': row.get('iso_639_1'),
+                    'width': row.get('width') or 0, 'votes': row.get('vote_count') or 0})
+    for field, rows in result.items():
+        if field == 'posters' and any(row['language'] == 'en' for row in rows):
+            rows = [row for row in rows if row['language'] == 'en']
+        seen = set()
+        result[field] = [row for row in sorted(rows, key=lambda row: (row['language'] != 'en', -row['votes'], -row['width']))
+            if not (image_key(row['url']) in seen or seen.add(image_key(row['url'])))][:60]
+    return result
+
+
+def provider_images(raw, provider='tmdb'):
+    return {field: [row['url'] for row in rows] for field, rows in image_candidates(raw, provider).items()}
+
+
+def screen_backdrop(media):
+    data=media.tmdb_data or {}
+    gallery=data.get('_anylist_images') or {}
+    cache=data.get('_anylist_backdrop') or {}
+    if gallery.get('version')==IMAGE_POLICY_VERSION:
+        artwork=unique_images(gallery.get('artwork') or [])
+        preferred=gallery.get('primary_backdrop') or ''
+        return {'backdrop':next((url for url in artwork if image_key(url)==image_key(preferred)),next(iter(artwork),None)),
+            'background_status':{'state':'ready'}}
+    retry=0
+    try:retry=max(0,int((datetime.fromisoformat(cache.get('retry_after',''))-datetime.now(timezone.utc)).total_seconds())+1)
+    except (ValueError,TypeError):pass
+    return {'backdrop':image(cache.get('image')) if cache.get('version')==IMAGE_POLICY_VERSION else None,
+        'background_status':{'state':'deferred' if retry else 'ready' if cache.get('version')==IMAGE_POLICY_VERSION else 'pending',
+            'error':cache.get('last_error') if retry else None,'retry_after':retry}}
+
+
+async def fill_screen_backdrop(db,media,api_key):
+    """Choose one textless hero from metadata; never download/inspect a gallery."""
+    lock=_backdrop_fills.setdefault(media.id,asyncio.Lock())
+    async with lock:
+        await db.refresh(media)
+        if ((media.tmdb_data or {}).get('_anylist_images') or {}).get('version')==IMAGE_POLICY_VERSION:return
+        if not api_key or not media.tmdb_id:return
+        cache=dict((media.tmdb_data or {}).get('_anylist_backdrop') or {})
+        if screen_backdrop(media)['background_status']['retry_after']:return
+        now=datetime.now(timezone.utc)
+        try:
+            if cache.get('version')==IMAGE_POLICY_VERSION and datetime.fromisoformat(cache.get('expires_at',''))>now:return
+        except (ValueError,TypeError):pass
+        from core import tmdb
+        try:
+            raw=await tmdb.get_title_images(media.tmdb_id,media.media_type.value,api_key)
+            if raw.get('id')!=media.tmdb_id or not isinstance(raw.get('backdrops'),list):raise ValueError('Invalid image response')
+            candidates=provider_images(raw)['artwork']
+            primary=tmdb_image_url((media.tmdb_data or {}).get('backdrop_path') or media.backdrop_path)
+            selected=next((url for url in candidates if primary and image_key(url)==image_key(primary)),next(iter(candidates),None))
+            cache={'image':selected,'version':IMAGE_POLICY_VERSION,'fetched_at':now.isoformat(),'expires_at':(now+timedelta(days=30)).isoformat()}
+        except Exception as error:
+            logger.warning('Background artwork failed for media %s (%s)',media.id,type(error).__name__)
+            delay=600
+            if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429:
+                from core.catalogue_providers import retry_after_seconds
+                delay=max(delay,retry_after_seconds(error.response.headers.get('Retry-After',''),delay))
+            cache.update(retry_after=(now+timedelta(seconds=delay)).isoformat(),last_error='rate_limited' if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429 else 'unavailable')
+        await db.execute(update(Media).where(Media.id==media.id).values(
+            tmdb_data=func.coalesce(Media.tmdb_data,literal({},type_=JSONB)).op('||')({'_anylist_backdrop':cache})))
+        await db.commit();await db.refresh(media)
+
+
+def screen_images(media, details):
+    cache = (media.tmdb_data or {}).get('_anylist_images') or {}
+    retry = 0
+    try:
+        retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)
+    except (TypeError, ValueError):
+        pass
+    status = {'state': 'deferred' if retry else 'ready' if cache.get('version') == IMAGE_POLICY_VERSION else 'pending',
+              'error': cache.get('last_error') if retry else None, 'retry_after': retry}
+    primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
+    if cache.get('version') == IMAGE_POLICY_VERSION:
+        primary = image(cache.get('primary_poster')) or primary
+        posters = unique_images([primary, *(cache.get('posters') or [])])
+        artwork = unique_images(cache.get('artwork') or [])
+        preferred = cache.get('primary_backdrop') or ''
+        backdrop = next((url for url in artwork if image_key(url) == image_key(preferred)), next(iter(artwork), None))
+        return {'poster': primary or next(iter(posters), None), 'backdrop': backdrop,
+                'posters': posters, 'artwork': artwork,
+                'image_replacements': cache.get('replacements') or {}, 'image_status': status}
+    # Never paint the old unfiltered gallery while a new policy is being filled.
+    backdrop=screen_backdrop(media)['backdrop']
+    return {'poster': primary, 'backdrop': backdrop, 'posters': unique_images([primary]),
+            'artwork': unique_images([backdrop]), 'image_replacements': {}, 'image_status': status}
+
+
+async def fill_screen_images(db, media, api_key):
+    lock = _fills.setdefault(media.id, asyncio.Lock())
+    async with lock:
+        await db.refresh(media)
+        await _fill_screen_images(db, media, api_key)
+
+
+async def _fill_screen_images(db, media, api_key):
+    if not api_key or not media.tmdb_id:
+        return
+    cache = dict((media.tmdb_data or {}).get('_anylist_images') or {})
+    now = datetime.now(timezone.utc)
+    fields = ['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION else []
+    if cache.get('retry_version') == IMAGE_POLICY_VERSION:
+        fields.append('retry_after')
+    for field in fields:
+        try:
+            if datetime.fromisoformat(cache.get(field, '')) > now:
+                return
+        except (ValueError, TypeError):
+            pass
+    from core import tmdb
+    try:
+        fetch_primary = tmdb.get_movie_light if media.media_type.value == 'movie' else tmdb.get_show_light
+        raw, defaults = await asyncio.gather(
+            tmdb.get_title_images(media.tmdb_id, media.media_type.value, api_key),
+            fetch_primary(media.tmdb_id, api_key, language='en-US'))
+        if raw.get('id') != media.tmdb_id or not all(isinstance(raw.get(field), list) for field in ('posters', 'backdrops')):
+            raise ValueError('Invalid image response')
+        if defaults.get('id') != media.tmdb_id:
+            raise ValueError('Invalid primary image response')
+        from core.media_image_analysis import inspect_image, select_galleries
+        candidates = image_candidates(raw)
+        primary = tmdb_image_url(defaults.get('poster_path'))
+        if primary:
+            primary_row = next((row for row in candidates['posters'] if image_key(row['url']) == image_key(primary)),
+                               {'url': primary, 'language': 'en', 'width': 0, 'votes': 0})
+            primary_row['primary'] = True
+            candidates['posters'] = [primary_row, *(row for row in candidates['posters'] if image_key(row['url']) != image_key(primary))]
+        async with httpx.AsyncClient() as client:
+            for rows in candidates.values():
+                analyses = await asyncio.gather(*(inspect_image(row['url'], client) for row in rows))
+                for row, analysis in zip(rows, analyses):
+                    row['analysis'] = analysis
+        selections = await select_galleries(candidates)
+        selected = {field: selection['images'] for field, selection in selections.items()}
+        selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
+        cache = {**selected, 'primary_poster': primary, 'primary_backdrop': tmdb_image_url(defaults.get('backdrop_path')),
+                 'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
+    except Exception as error:
+        logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)
+        delay = 600
+        if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429:
+            from core.catalogue_providers import retry_after_seconds
+            delay = max(delay, retry_after_seconds(error.response.headers.get('Retry-After', ''), delay))
+        cache['retry_after'] = (now + timedelta(seconds=delay)).isoformat()
+        cache['retry_version'] = IMAGE_POLICY_VERSION
+        cache['last_error'] = 'rate_limited' if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429 else 'unavailable'
+    await db.execute(update(Media).where(Media.id == media.id).values(
+        tmdb_data=func.coalesce(Media.tmdb_data, literal({}, type_=JSONB)).op('||')({'_anylist_images': cache})))
+    await db.commit()
+    await db.refresh(media)
