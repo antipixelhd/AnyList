@@ -184,6 +184,10 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
           </div>
         </label>
       </div>
+      <label class="browse-cinema-toggle" data-browse-cinema data-cinema-label={cinemaLabel} hidden={type!=='movie'} title={cinemaLabel}>
+        <input type="checkbox" name="cinema" value="1" checked={params.has('cinema')} aria-label={`Has cinema release · ${cinemaScope}`}/>
+        <Icon name="film"/>
+      </label>
       <div class="browse-controls" id="browse-controls">
         <label class="browse-sort" data-browse-primary-sort hidden={hasSort}>
           <span>Sort</span>
@@ -234,15 +238,11 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
             ))}
           </BrowseSelect>
         </label>
-        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || params.has('cinema') || minVotes !== 250 || region !== "US")}>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minVotes !== 250 || region !== "US")}>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
             <Icon name="sliders" />
           </summary>
           <div class="browse-secondary-filters" id="browse-secondary-filters" data-motion-fade>
-            <label class="browse-cinema-toggle" data-browse-cinema data-cinema-label={cinemaLabel} hidden={type!=='movie'}>
-              <input type="checkbox" name="cinema" value="1" checked={params.has('cinema')} aria-label={`Has cinema release · ${cinemaScope}`}/>
-              <Icon name="film"/><span>{cinemaLabel}</span>
-            </label>
             <label class="browse-filter browse-streaming">
               <span>Streaming on</span>
               <select name="provider">
