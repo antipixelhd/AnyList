@@ -4,9 +4,11 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 
 from core.catalogue_normalize import image
+from core.media_images import provider_images, unique_images
+from core.screen_characters import character_images, role_image_candidates
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
-    CatalogueLegacyLink, CatalogueRelationship, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
+    CatalogueLegacyLink, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
 )
 
 
@@ -39,12 +41,17 @@ async def screen_work(db, media):
 
 async def work_details(db, work):
     if work is None:
-        return {'people': [], 'organizations': [], 'artwork': [], 'relations': [], 'sources': []}
+        return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
         CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id)
         .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id).limit(500))).all()
     people = {}
     organizations = {}
+    billing = {}
+    images = await character_images(db, {credit.screen_character_id for credit, _ in credits
+        if credit.role == 'actor' and credit.screen_character_id})
+    local_images = {}
+    alternative_images = {}
     studio_ids = {contributor.id for credit, contributor in credits if credit.role == 'producer'}
     for credit, contributor in credits:
         actor = credit.role == 'actor'
@@ -56,52 +63,49 @@ async def work_details(db, work):
             group[key] = {'id': contributor.id, 'kind': kind, 'name': contributor.name,
                 'image': image(contributor.image_url), 'url': f'/{path}/catalogue:{contributor.id}'
                 if kind != 'studio' or (work.kind in ('movie', 'series') and contributor.id in studio_ids) else None,
-                'roles': [], 'characters': []}
+                'roles': [], 'role_codes': [], 'position': credit.position, 'characters': []}
         row = group[key]
+        if credit.position is not None:
+            candidate = (0 if credit.provider == 'tmdb' else 1, credit.position)
+            if key not in billing or candidate < billing[key]:
+                billing[key] = candidate
+                row['position'] = credit.position
+        if credit.role not in row['role_codes']:
+            row['role_codes'].append(credit.role)
         role = credit.role_label or credit.role.replace('_', ' ').title()
         if role not in row['roles']:
             row['roles'].append(role)
         if credit.character_label and credit.character_label not in row['characters']:
             row['characters'].append(credit.character_label)
+        if actor:
+            local_images.setdefault(key, []).extend([url] if (url := image(credit.character_image_url)) else [])
+            alternative_images.setdefault(key, []).extend(role_image_candidates(credit, images.get(credit.screen_character_id, [])))
+    for key, row in people.items():
+        if row['kind'] == 'actor':
+            row['character_images'] = list(dict.fromkeys(local_images.get(key, []) + alternative_images.get(key, [])))[:4]
+            row['character_image'] = next(iter(row['character_images']), None)
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
+    posters = [work.image_url, *(attrs.get('posters') or [])]
+    if work.kind in ('movie', 'series'):
+        # Untagged legacy URLs cannot establish the requested image language.
+        artwork, posters = [], []
     snapshots = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id == work.id)
         .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6)))
     sources = []
     for snapshot in snapshots:
         raw = snapshot.payload or {}
         images = raw.get('images') or {}
-        if isinstance(images, dict):
-            for backdrop in images.get('backdrops') or []:
-                if isinstance(backdrop, dict):
-                    path = backdrop.get('file_path')
-                    url = f'https://image.tmdb.org/t/p/w1280{path}' if snapshot.provider == 'tmdb' and isinstance(path, str) and re.fullmatch(r'/[A-Za-z0-9_.-]+\.(jpg|png|webp)', path) else image(path)
-                    if url:
-                        artwork.append(url)
-        if url := public_url(raw.get('homepage') or raw.get('url')):
-            sources.append({'name': snapshot.provider.upper(), 'url': url})
-    relations = []
-    edges = list(await db.scalars(select(CatalogueRelationship).where(or_(
-        CatalogueRelationship.source_id == work.id, CatalogueRelationship.target_id == work.id))
-        .order_by(CatalogueRelationship.id).limit(60)))
-    ids = {edge.target_id if edge.source_id == work.id else edge.source_id for edge in edges}
-    related = {row.id: row for row in await db.scalars(select(CatalogueEntity).where(CatalogueEntity.id.in_(ids)))} if ids else {}
-    legacy = dict((await db.execute(select(CatalogueLegacyLink.entity_id, CatalogueLegacyLink.media_id)
-        .where(CatalogueLegacyLink.entity_id.in_(ids)))).all()) if ids else {}
-    seen = set()
-    for edge in edges:
-        target = related.get(edge.target_id if edge.source_id == work.id else edge.source_id)
-        if target is None or target.kind not in ('movie', 'series', 'game', 'book') or (target.id, edge.relation) in seen:
-            continue
-        seen.add((target.id, edge.relation))
-        url = f'/title/{legacy[target.id]}' if target.id in legacy else (
-            f'/{"games" if target.kind == "game" else "books"}/{target.id}' if target.kind in ('game', 'book') else None)
-        if url:
-            relations.append({'id': target.id, 'title': target.name, 'type': target.kind, 'poster': image(target.image_url),
-                'year': str((target.attributes or {}).get('release_date') or '')[:4],
-                'relation': edge.relation, 'reverse': edge.target_id == work.id, 'url': url})
+        variants = provider_images(images, snapshot.provider) if snapshot.provider == 'tmdb' or work.kind not in ('movie', 'series') else {'posters': [], 'artwork': []}
+        posters.extend(variants['posters'])
+        artwork.extend(variants['artwork'])
+        homepage = public_url(raw.get('homepage'))
+        if url := homepage or public_url(raw.get('url')):
+            sources.append({'name': 'Official website' if homepage else snapshot.provider.upper(), 'url': url})
+    from core.media_related import catalogue_related
+    related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
-        'artwork': list(dict.fromkeys(artwork))[:30], 'relations': relations,
+        'posters': unique_images(posters), 'artwork': unique_images(artwork), **related,
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
@@ -118,6 +122,7 @@ async def catalogue_title(db, work):
         editions = [{'id': edition.entity_id, 'name': entity.name, 'image': image(entity.image_url),
             'release_date': edition.release_date, 'language': edition.language, 'format': edition.format,
             'pages': edition.pages} for edition, entity in rows]
+        details['posters'] = unique_images([*details['posters'], *(row['image'] for row in editions)])
     if work.kind == 'game':
         releases = [{'platform': release.platform_name, 'region': release.region, 'release_date': release.release_date}
             for release in await db.scalars(select(GameRelease).where(GameRelease.work_id == work.id)

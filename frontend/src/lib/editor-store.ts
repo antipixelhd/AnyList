@@ -4,6 +4,7 @@ export type EditorTitle = {
   id: number | null; tmdb_id?: number | null; type: string; title: string;
   poster?: string | null; backdrop?: string | null;
   entry: Record<string, any> | null;
+  favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
 };
 type RecordState = {
@@ -12,6 +13,7 @@ type RecordState = {
   importing?: Promise<number>; stale?: boolean;
   posterSrc?: string; backdropSrc?: string; backdropReady?: boolean;
   libraryCommitted?: EditorTitle['editor_library']; libraryPending: {desired: boolean}[];
+  favoriteCommitted: boolean;
 };
 type Transport = (path: string, options?: RequestInit) => Promise<any>;
 
@@ -22,9 +24,11 @@ export class EditorStore {
   private reads = new Map<number, Promise<EditorTitle>>();
   private request: Transport;
   private changed: (title: EditorTitle) => void;
-  constructor(request: Transport, changed: (title: EditorTitle) => void = () => {}) {
+  private committed: (title:EditorTitle,patch:Record<string,any>|null) => void;
+  constructor(request: Transport, changed: (title: EditorTitle) => void = () => {}, committed:(title:EditorTitle,patch:Record<string,any>|null)=>void = () => {}) {
     this.request = request;
     this.changed = changed;
+    this.committed = committed;
   }
   scope(viewer: string) {
     if (this.viewer === viewer) return;
@@ -44,13 +48,14 @@ export class EditorStore {
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
         Object.assign(existing.title, title);
         existing.committed = title.entry;
+        existing.favoriteCommitted = title.favorite ?? !!title.entry?.favorite;
         existing.stale = false;
         existing.libraryCommitted = title.editor_library;
       }
       return existing.title;
     }
     const record: RecordState = {title: {...title}, committed: title.entry, pending: [], tail: Promise.resolve(),
-      libraryCommitted:title.editor_library, libraryPending:[]};
+      libraryCommitted:title.editor_library, libraryPending:[], favoriteCommitted:title.favorite ?? !!title.entry?.favorite};
     this.records.set(this.key(title), record);
     return record.title;
   }
@@ -91,8 +96,11 @@ export class EditorStore {
   }
   private paint(record: RecordState) {
     let entry = record.committed;
+    let favorite = record.favoriteCommitted;
     for (const operation of record.pending) {
-      if (operation.patch === null) { entry = null; continue; }
+      if (operation.patch === null) { entry = null; favorite=false; continue; }
+      if ('favorite' in operation.patch) favorite=operation.patch.favorite;
+      if (!entry && Object.keys(operation.patch).length===1 && 'favorite' in operation.patch) continue;
       const previous = entry?.status;
       entry = {...(entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
         season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null}), ...operation.patch};
@@ -101,6 +109,8 @@ export class EditorStore {
       if (entry.status !== previous && entry.status === 'watching' && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
       if (entry.status !== previous && entry.status === 'completed' && !entry.finish_date && !('finish_date' in operation.patch)) entry.finish_date = today;
     }
+    if(entry)entry={...entry,favorite};
+    record.title.favorite=favorite;
     record.title.entry = entry;
     if ([...this.records.values()].includes(record)) this.changed(record.title);
   }
@@ -111,17 +121,21 @@ export class EditorStore {
     record.pending.push(operation);
     this.paint(record);
     const task = record.tail.catch(() => {}).then(async () => {
+      let succeeded=false;
       try {
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const id = await this.resolveId(record.title);
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const saved = await this.request(`entry/${id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch)});
-        record.committed = saved;
+        record.committed = saved.status ? saved : null;
+        record.favoriteCommitted = saved.favorite ?? record.favoriteCommitted;
         record.stale = false;
+        succeeded=true;
         return saved;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);
+        if(succeeded&&viewer===this.viewer&&[...this.records.values()].includes(record))this.committed(record.title,patch);
       }
     });
     record.tail = task;
@@ -134,17 +148,21 @@ export class EditorStore {
     record.pending.push(operation);
     this.paint(record);
     const task = record.tail.catch(() => {}).then(async () => {
+      let succeeded=false;
       try {
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const id = await this.resolveId(record.title);
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         await this.request(`entry/${id}?confirmed=true`, {method:'DELETE'});
         record.committed = null;
+        record.favoriteCommitted = false;
         record.stale = false;
+        succeeded=true;
         return id;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);
+        if(succeeded&&viewer===this.viewer&&[...this.records.values()].includes(record))this.committed(record.title,null);
       }
     });
     record.tail = task;
@@ -204,6 +222,8 @@ export const editorStore = new EditorStore(async (path, options) => {
   return data;
 }, title => {
   document.dispatchEvent(new CustomEvent('anylist:editor-state', {detail:title}));
+}, (title,patch) => {
+  document.dispatchEvent(new CustomEvent('anylist:editor-committed', {detail:{title,patch}}));
 });
 
 export function seedEditorPage() {

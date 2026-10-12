@@ -9,9 +9,24 @@ function view(visibleCards) {
   const region = { dataset: {}, querySelectorAll: () => cards };
   const skeletonGrid = {hidden: false, querySelectorAll: selector => skeleton.querySelectorAll(selector)};
   const skeletonSections = {hidden: true, querySelectorAll: selector => skeleton.querySelectorAll(selector)};
-  const skeleton = { hidden: true, querySelectorAll: () => [], querySelector: selector => selector === '[data-skeleton-grid]' ? skeletonGrid : skeletonSections };
-  return { region, skeleton, skeletonGrid, skeletonSections, loading: createBrowseLoading(region, skeleton) };
+  const skeletonTimeline = {hidden: true, querySelectorAll: selector => skeleton.querySelectorAll(selector)};
+  const skeleton = { hidden: true, querySelectorAll: () => [], querySelector: selector => selector === '[data-skeleton-grid]' ? skeletonGrid : selector === '[data-skeleton-timeline]' ? skeletonTimeline : skeletonSections };
+  return { region, skeleton, skeletonGrid, skeletonSections, skeletonTimeline, loading: createBrowseLoading(region, skeleton) };
 }
+
+test('timeline loading and pagination use timeline slots, and switching views restores grid slots',()=>{
+  const v=view([]);
+  for(const append of [false,true]){
+    v.loading.show(append,false,true);
+    assert.equal(v.skeletonTimeline.hidden,false);
+    assert.equal(v.skeletonGrid.hidden,true);
+    assert.equal(v.skeletonSections.hidden,true);
+    v.loading.finish();
+  }
+  v.loading.show();
+  assert.equal(v.skeletonTimeline.hidden,true);
+  assert.equal(v.skeletonGrid.hidden,false);
+});
 
 test("category and grid refreshes keep existing cards visible without skeletons", () => {
   for (const count of [24, 30]) {

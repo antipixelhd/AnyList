@@ -14,7 +14,7 @@ function sorting(initial = 'all', initialFilters) {
   results.closest = () => resultsControl;
   const attributes = new Set();
   const nodes = {'[data-browse-sort]': primary, '[data-browse-results-sort]': results, '[data-browse-primary-sort]': primaryControl, '[data-browse-form]': initialFilters};
-  const root = {querySelector: selector => nodes[selector], toggleAttribute: (name, on) => on ? attributes.add(name) : attributes.delete(name)};
+  const root = {dataset: {browseView: 'grid'}, querySelector: selector => nodes[selector], toggleAttribute: (name, on) => on ? attributes.add(name) : attributes.delete(name)};
   let changed = 0, entrances = 0;
   const signal = new AbortController();
   const NativeFormData = globalThis.FormData;
@@ -25,7 +25,7 @@ function sorting(initial = 'all', initialFilters) {
   let sync;
   try { sync = initializeBrowseSort(root, signal.signal, () => changed++, () => entrances++); }
   finally { globalThis.FormData = NativeFormData; }
-  return {primary, results, primaryControl, resultsControl, attributes, signal, sync, changed: () => changed, entrances: () => entrances};
+  return {root, primary, results, primaryControl, resultsControl, attributes, signal, sync, changed: () => changed, entrances: () => entrances};
 }
 
 test('choosing a sort moves the control to results and keeps one canonical sort value', () => {
@@ -95,4 +95,21 @@ test('filtered reload hydrates directly into results without changing layout or 
     assert.equal(s.entrances(), 0);
     assert.equal(s.results.disabled, !!values.q);
   }
+});
+
+test('timeline hides ordering controls and restores the selected grid sort on return', () => {
+  const s = sorting('score');
+  s.root.dataset.browseView = 'timeline';
+  s.sync();
+  s.sync(false, true, true);
+  assert.equal(s.primaryControl.hidden, true);
+  assert.equal(s.resultsControl.hidden, true);
+  assert.equal(s.results.disabled, true);
+  assert.equal(s.entrances(), 0);
+  s.root.dataset.browseView = 'grid';
+  s.sync(false, true, false);
+  assert.equal(s.resultsControl.hidden, false);
+  assert.equal(s.results.disabled, false);
+  assert.equal(s.results.value, 'score');
+  assert.equal(s.entrances(), 1);
 });

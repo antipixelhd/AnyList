@@ -160,6 +160,8 @@ async def run_job(job_id, *, factory=AsyncSessionLocal, bind=engine):
                             return {key: legacy.get(key, 0) + canonical.get(key, 0) for key in ('examined', 'recovered', 'unresolved', 'failed')}
                         await step('Country metadata', countries)
                         await step('Character artwork', lambda: backfill_tvmaze_images(db, providers, limit=10))
+                        from core.screen_character_art import backfill_character_art
+                        await step('TVDB character artwork', lambda: backfill_character_art(db, providers, limit=10))
                     if action in ('metadata', 'characters'):
                         await step('Character links', lambda: backfill_screen_characters(db, limit=100))
                 if action == 'characters':

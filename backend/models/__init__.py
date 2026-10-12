@@ -31,7 +31,7 @@ from .title_credits import TitleCredits
 from .calendar_cache import UserCalendarCache
 from .plex_pending_push import PlexPendingPush
 from .oauth_device import OAuthDeviceGrant
-from .tracking import TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, TrackingSeasonReleaseObservation, SyncReview, StreamBaseline, CloudBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction, WebPushSubscription
+from .tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, TrackingSeasonReleaseObservation, SyncReview, StreamBaseline, CloudBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction, WebPushSubscription
 from .streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from .netflix_import import NetflixImportSession
 from .watch_intent import WatchIntent
@@ -87,7 +87,7 @@ __all__ = [
     "NetflixImportSession",
     "WatchIntent",
     "TitleCredits", "UserCalendarCache",
-    "TrackedEntry", "TrackingActivity", "TrackingDeletion", "TrackingPreferences",
+    "MediaFavorite", "TrackedEntry", "TrackingActivity", "TrackingDeletion", "TrackingPreferences",
     "SyncReview", "StreamBaseline",
     "CatalogueEntity", "CatalogueIdentity", "CatalogueLegacyLink", "CatalogueShowLink",
     "BookEdition", "GameRelease", "CatalogueCredit", "ScreenCharacter", "CharacterAppearance",

@@ -1,0 +1,10 @@
+---
+import Icon from './Icon.astro';
+import {detailWorkCaption, relationLabel} from '../lib/media-detail-data';
+const {work, similar = false} = Astro.props;
+---
+<a href={work.url} class={similar ? undefined : 'lab-related-card'}>
+  {work.poster ? <img src={work.poster} alt="" loading="lazy"/> : <span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span>}
+  <div>{!similar && <span class="lab-relation-type">{work.label || relationLabel(work.relation,work.reverse)}</span>}<h3>{work.title}</h3><p>{detailWorkCaption(work,similar)}</p></div>
+  {similar && <Icon name="arrow-right"/>}
+</a>

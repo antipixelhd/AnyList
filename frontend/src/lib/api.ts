@@ -752,6 +752,7 @@ export const api = {
   },
 
   profile: {
+    countries: (token: string) => get<{code:string;name:string}[]>("/profile/me/countries", undefined, token),
     get: (token: string) =>
       get<UserPreferences>("/profile/me", undefined, token),
     getPublic: (userId: number, token?: string) =>

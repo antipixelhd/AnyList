@@ -446,6 +446,14 @@ class UserProfileUpdate(BaseModel):
 
     bio: Optional[str] = Field(default=None, max_length=5000)
     country: Optional[str] = None
+    @field_validator('country')
+    @classmethod
+    def validate_country(cls, value: str | None) -> str | None:
+        if value is None:return None
+        from core.countries import country_code
+        if len(value.strip())!=2 or not (code:=country_code(value)):
+            raise ValueError('Choose a valid country')
+        return code
     streaming_services: Optional[list[str]] = None
     metadata_language: Optional[str] = None
     privacy_level: Optional[PrivacyLevel] = None

@@ -2,7 +2,7 @@ import { editorStore, type EditorTitle } from './editor-store';
 
 export type BrowseItem = {
   id: number | null; tmdb_id: number | null; type: string; title: string;
-  poster?: string | null; backdrop?: string | null; year?: string;
+  poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
   list_status?: string | null; score?: number | null; rating_mode?: string;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];
 };

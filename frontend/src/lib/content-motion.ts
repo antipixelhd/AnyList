@@ -37,6 +37,7 @@ export function mountDetailsMotion(details: HTMLDetailsElement, signal: AbortSig
     details.style.removeProperty('overflow');
   };
   summary.addEventListener('click', event => {
+    if (event.target instanceof Element && event.target.closest('button,a,input,select,textarea,label')) return;
     event.preventDefault();
     const start = details.getBoundingClientRect().height;
     animation?.cancel();

@@ -1,0 +1,15 @@
+---
+import Icon from './Icon.astro';
+import '../styles/image-lightbox.css';
+interface Props { id:string; gallery?:boolean; imageKind?:'logo' }
+const {id,gallery=false,imageKind}=Astro.props;
+---
+<dialog class="image-lightbox" id={id} aria-labelledby={`${id}-caption`} data-image-viewer data-image-kind={imageKind}>
+  <button class="image-viewer-button image-viewer-close" type="button" data-image-viewer-close aria-label="Close image viewer"><Icon name="close"/></button>
+  {gallery&&<button class="image-viewer-button" type="button" data-image-viewer-step="-1" aria-label="Previous image"><Icon name="chevron-left"/></button>}
+  <img data-image-viewer-image alt=""/>
+  {gallery&&<div class="image-viewer-loading detail-image-skeleton" data-image-viewer-loading hidden aria-label="Loading image" role="status"></div>}
+  {gallery&&<button class="image-viewer-button" type="button" data-image-viewer-step="1" aria-label="Next image"><Icon name="chevron-right"/></button>}
+  <p id={`${id}-caption`}></p>
+  {gallery&&<><div class="image-viewer-slots" data-image-viewer-slots></div><div class="detail-load-status" data-image-viewer-status hidden></div></>}
+</dialog>

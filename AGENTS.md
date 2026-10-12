@@ -6,6 +6,7 @@ if you make changes to the database apply the migration before ending the turn
 
 Avoid cluttering UIs with excessive micro-copy, subtitles, helper text, badges, and tiny metadata. Prefer clean layouts with strong hierarchy, spacing, and obvious controls. If text is not necessary for understanding or action, leave it out.
 For UI use subtle motion where possible that stays consistent with the rest of the design language
+Do not use outlines for active or focused UI states; use color and background changes instead.
 
 Dont prefer bandade fixes but prefer concrete systems that fix the problem or implement the features
 
