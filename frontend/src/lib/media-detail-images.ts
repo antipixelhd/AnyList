@@ -32,6 +32,31 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(thumbnail.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
   });
   const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-image-viewer-step]')];
+  const mobileViewer=matchMedia('(max-width:650px)');
+  let previewTimer:ReturnType<typeof setTimeout>|undefined;
+  let previewInteracting=false;
+  const clearPreviewTimer=()=>{clearTimeout(previewTimer);previewTimer=undefined;};
+  const revealPreviews=()=>{
+    clearPreviewTimer();
+    delete lightbox.dataset.previewsHidden;
+    if(!mobileViewer.matches||!lightbox.open||previewInteracting)return;
+    previewTimer=setTimeout(()=>{
+      const focused=document.activeElement;
+      if(focused?.matches(':focus-visible')&&(slots.contains(focused)||arrows.includes(focused as HTMLButtonElement)))return;
+      lightbox.dataset.previewsHidden='true';
+    },3000);
+  };
+  lightbox.addEventListener('pointerdown',()=>{previewInteracting=true;revealPreviews();},{signal,passive:true});
+  const releasePreviews=()=>{previewInteracting=false;revealPreviews();};
+  window.addEventListener('pointerup',releasePreviews,{signal,passive:true});
+  window.addEventListener('pointercancel',releasePreviews,{signal,passive:true});
+  lightbox.addEventListener('click',revealPreviews,{signal});
+  lightbox.addEventListener('focusin',revealPreviews,{signal});
+  lightbox.addEventListener('focusout',revealPreviews,{signal});
+  slots.addEventListener('scroll',revealPreviews,{signal,passive:true});
+  mobileViewer.addEventListener('change',revealPreviews,{signal});
+  lightbox.addEventListener('close',()=>{clearPreviewTimer();previewInteracting=false;delete lightbox.dataset.previewsHidden;},{signal});
+  signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false));
   const paintSlots=()=>{
     if(!lightbox.open)return;
@@ -55,7 +80,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   const showImage=(index:number,animate=false,scroll=true)=>{
     const rows=galleries[active];
     const count=pending?10:rows.length;
+    const previous=current;
     current=count?(index+count)%count:0;
+    if(current!==previous)revealPreviews();
     const url=rows[current],group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
@@ -195,7 +222,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     lightbox.dataset.gallery=active;
     const url=button.dataset.detailImage!;
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
-    showDialog(lightbox);showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].indexOf(url)));void loadImages();
+    showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].indexOf(url)));void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
