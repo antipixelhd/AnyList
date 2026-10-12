@@ -334,7 +334,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         field("q").value = "";
       });
     if((field('cinema') as HTMLInputElement).checked&&field('type').value==='movie')
-      add('Cinema release',()=>{(field('cinema') as HTMLInputElement).checked=false;});
+      add(find<HTMLElement>('[data-browse-cinema]').dataset.cinemaLabel || 'Cinema release',()=>{(field('cinema') as HTMLInputElement).checked=false;});
     if (chips.childElementCount) {
       const reset = document.createElement("button");
       reset.type = "button";

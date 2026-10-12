@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
 from core.catalog_search import DEFAULT_MIN_VOTES, stored_vote_count, title_vote_count
-from core.cinema_releases import theatrical_dates, has_cinema_release
+from core.cinema_releases import theatrical_dates, theatrical_country_dates, has_cinema_release
 from models import Media
 from models.base import MediaType
 
@@ -170,12 +170,14 @@ def metadata_fields(data):
     if isinstance(data.get('theatrical_release_dates'),list) or (
         isinstance(releases,dict) and isinstance(releases.get('results'),list)):
         fields['theatrical_release_dates']=theatrical_dates(data)
+    countries=theatrical_country_dates(data)
+    if isinstance(countries,dict):fields['theatrical_release_dates_by_country']=countries
     return fields
 
 
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
-    min_votes=0, cinema=False,
+    min_votes=0, cinema=False, cinema_country=None,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_count.gte"] = min_votes
@@ -209,6 +211,7 @@ def remote_params(
         )
     if cinema and media_type=='movie':
         params.update(with_release_type='2|3', **{'release_date.lte':date.today().isoformat()})
+        if cinema_country:params['region']=cinema_country
     return params
 
 
@@ -225,14 +228,15 @@ def local_query(
     sort,
     show_anime,
     mdblist_key=None,
-    min_votes=0, cinema=False,
+    min_votes=0, cinema=False, cinema_country=None,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
     )
     data = Media.tmdb_data
     if cinema and media_type=='movie':
-        query=query.where(data['theatrical_release_dates'][0].astext<=date.today().isoformat())
+        dates=data['theatrical_release_dates_by_country'][cinema_country] if cinema_country else data['theatrical_release_dates']
+        query=query.where(dates[0].astext<=date.today().isoformat())
     if not show_anime:
         animated = or_(
             data["genres"].contains(["Animation"]),
@@ -356,10 +360,10 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, cinema=False):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, cinema=False, cinema_country=None):
     if item.get("adult"):
         return False
-    if cinema and media_type=='movie' and not has_cinema_release(item):
+    if cinema and media_type=='movie' and not has_cinema_release(item,cinema_country):
         return False
     if title_vote_count(item) < min_votes:
         return False

@@ -20,7 +20,7 @@ from core.browse import (
 )
 from db import get_db
 from dependencies import get_current_user, get_optional_user
-from models import Media, User
+from models import Media, User, UserProfileData
 from models.base import MediaType
 from models.tracking import TrackedEntry
 from routers.tracking import browse_ids, router
@@ -37,6 +37,33 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_country_cinema_evidence_cannot_fall_back_to_other_countries(self):
+        from core.cinema_releases import has_cinema_release
+        # The Runner: digital in Germany/US, theatrical in other territories.
+        raw={'release_dates':{'results':[
+            {'iso_3166_1':'DE','release_dates':[{'type':4,'release_date':'2020-01-01'}]},
+            {'iso_3166_1':'US','release_dates':[{'type':4,'release_date':'2020-01-01'}]},
+            {'iso_3166_1':'RU','release_dates':[{'type':3,'release_date':'2020-01-01'}]},
+            {'iso_3166_1':'GB','release_dates':[{'type':2,'release_date':'2099-01-01'}]}]}}
+        stored=metadata_fields(raw)
+        for evidence in (raw,stored):
+            self.assertTrue(has_cinema_release(evidence))
+            self.assertTrue(has_cinema_release(evidence,'RU'))
+            for country in ('DE','US','GB','FR'):self.assertFalse(has_cinema_release(evidence,country))
+        self.assertFalse(has_cinema_release({'theatrical_release_dates':['2020-01-01']},'DE'))
+        filters={**FILTERS,'cinema':True,'cinema_country':'DE','sort':'newest','provider':8,'region':'US'}
+        params=remote_params('movie',page=1,**filters)
+        self.assertEqual(params['region'],'DE');self.assertEqual(params['watch_region'],'US')
+        self.assertFalse(matches(raw,media_type='movie',**{k:v for k,v in filters.items() if k!='sort'}))
+
+    def test_account_country_validation_preserves_partial_update(self):
+        from schemas import UserProfileUpdate
+        from pydantic import ValidationError
+        self.assertEqual(UserProfileUpdate(country='de').model_dump(exclude_unset=True),{'country':'DE'})
+        self.assertEqual(UserProfileUpdate(country=None).model_dump(exclude_unset=True),{'country':None})
+        for value in ('XX','Germany','','123'):
+            with self.assertRaises(ValidationError):UserProfileUpdate(country=value)
+
     def test_cinema_requires_past_theatrical_evidence_in_any_country(self):
         predicate={k:v for k,v in FILTERS.items() if k!='sort'}
         def item(types):
@@ -444,6 +471,40 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         second=await self.client.get('/tracking/browse?cinema=1&genres=18&provider=8&sort=popular&source=local&page=2')
         self.assertEqual([r['id'] for r in second.json()['results']],[m.id for m in self.movies[2::2]][24:])
         self.assertFalse(second.json()['has_more'])
+
+    async def test_cinema_uses_account_country_in_grid_timeline_and_paging(self):
+        profile=UserProfileData(user_id=self.viewer.id,country='DE')
+        self.db.add(profile)
+        for index,movie in enumerate(self.movies):
+            movie.tmdb_data={**movie.tmdb_data,'theatrical_release_dates':['2020-01-01'],
+                'theatrical_release_dates_by_country':{'US':['2020-01-01'],'DE':
+                    ['2099-01-01'] if index==0 else ['2020-01-01'] if index%2==0 else []}}
+        await self.db.flush()
+        expected=[m.id for m in self.movies[2::2]]
+        for sort in ('popular','newest'):
+            found=[]
+            for page in (1,2):
+                response=await self.client.get('/tracking/browse',params={'cinema':1,'sort':sort,'page':page,'source':'local'})
+                self.assertEqual(response.status_code,200,response.text)
+                found.extend(row['id'] for row in response.json()['results'])
+            self.assertEqual(set(found),set(expected))
+        profile.country=None;await self.db.flush()
+        response=await self.client.get('/tracking/browse?cinema=1&source=local&sort=popular')
+        self.assertEqual(len(response.json()['results']),24)
+        self.assertIn(self.movies[0].id,[row['id'] for row in response.json()['results']])
+
+    async def test_account_country_save_preserves_other_profile_settings(self):
+        from routers.profile import update_profile,account_countries
+        from schemas import UserProfileUpdate
+        profile=UserProfileData(user_id=self.viewer.id,country='US',bio='Preserved biography',profile_color='#ff5599',apply_site_wide=True)
+        self.db.add(profile);await self.db.flush()
+        updated=await update_profile(UserProfileUpdate(country='de'),current_user=self.viewer,db=self.db)
+        self.assertEqual(updated.country,'DE');self.assertEqual(updated.bio,'Preserved biography')
+        self.assertEqual(updated.profile_color,'#ff5599');self.assertTrue(updated.apply_site_wide)
+        options=await account_countries(self.viewer)
+        self.assertIn({'code':'DE','name':'Germany'},options)
+        updated=await update_profile(UserProfileUpdate(country=None),current_user=self.viewer,db=self.db)
+        self.assertIsNone(updated.country)
 
     async def test_category_previews_match_view_all_and_keep_viewer_state_private(self):
         self.movies[2].release_date = date.today().isoformat()

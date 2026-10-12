@@ -973,6 +973,8 @@
 .browse-cinema-toggle:has(input:checked) { color:var(--blue); background:color-mix(in srgb,var(--blue) 10%,var(--bg)); border-color:color-mix(in srgb,var(--blue) 35%,var(--border)); }
 .browse-cinema-toggle:focus-within { outline:2px solid var(--blue); outline-offset:3px; }
 .browse-cinema-toggle input { accent-color:var(--blue); width:16px; height:16px; margin:0; }
+.browse-cinema-toggle :is(input,svg) { flex-shrink:0; }
+.browse-cinema-toggle span { min-width:0; overflow-wrap:anywhere; }
 .browse-cinema-toggle[hidden] { display:none; }
 @media(prefers-reduced-motion:reduce) { .browse-cinema-toggle { transition:none; } }
 

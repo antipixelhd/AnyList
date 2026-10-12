@@ -1175,6 +1175,13 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
             "activity":[{"month":month,**counts} for month,counts in sorted(activity.items())]}
 
 
+async def account_cinema_country(db, viewer):
+    if viewer is None:return None
+    from core.countries import country_code
+    value=await db.scalar(select(UserProfileData.country).where(UserProfileData.user_id==viewer.id))
+    return country_code(value) if isinstance(value,str) else None
+
+
 @router.get('/browse/facets')
 async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
@@ -1196,7 +1203,8 @@ async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
     options = [{'id': i, 'name': GENRES[i]} for i in sorted(allowed, key=lambda i: GENRES[i])]
     options.extend({'id': value, 'name': value[5:]} for value in browse_genres(genres) if isinstance(value, str))
-    return {'genres': options, 'providers': providers, 'notice': notice}
+    return {'genres': options, 'providers': providers, 'notice': notice,
+        'cinema_country':await account_cinema_country(db,viewer)}
 
 
 def browse_genres(value: str) -> list[int | str]:
@@ -1265,7 +1273,8 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, min_votes=min_votes, cinema=cinema and media_type=='movie')
+            status=status, provider=provider, region=region, sort=sort, min_votes=min_votes, cinema=cinema and media_type=='movie',
+            cinema_country=await account_cinema_country(db,viewer) if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
 
