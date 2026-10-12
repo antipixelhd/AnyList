@@ -3,6 +3,7 @@ import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer';
 import {detailBackground,type DetailLoadState} from './detail-background';
 import {responsiveArtwork} from './responsive-artwork';
+import {reconcileGalleryChildren,createGalleryThumbnailWatcher} from './detail-gallery-dom';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=(url:string)=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
@@ -27,34 +28,53 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
   let active:keyof Galleries='artwork',current=0,revision=0;
+  let loadingImage:string|undefined;
+  const watchThumbnail=createGalleryThumbnailWatcher(signal,thumbnail=>{
+    if(thumbnail.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
+  });
   const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-image-viewer-step]')];
   const paintSlots=()=>{
     if(!lightbox.open)return;
     const rows=galleries[active],count=pending?10:rows.length;
-    slots.replaceChildren(...Array.from({length:count},(_,index)=>{
-      const button=document.createElement('button');button.type='button';button.setAttribute('aria-label',`${active==='posters'?'Poster':'Artwork'} ${index+1}${rows[index]?'':': loading'}`);button.setAttribute('aria-current',String(current===index));
-      if(rows[index]){const thumbnail=new Image();thumbnail.alt='';thumbnail.loading='lazy';thumbnail.src=responsiveArtwork(rows[index],{size:'w185',route:'direct'})?.src||rows[index];button.append(thumbnail);}
-      else button.className='detail-image-skeleton';
-      button.addEventListener('click',()=>showImage(index),{signal});return button;
-    }));
+    const existing=new Map([...slots.querySelectorAll<HTMLButtonElement>('button')].map(button=>[button.dataset.slotKey,button]));
+    const buttons=Array.from({length:count},(_,index)=>{
+      const key=`${active}:${rows[index]?imageKey(rows[index]):`pending:${index}`}`;
+      let button=existing.get(key);
+      if(!button){
+        button=document.createElement('button');button.type='button';button.dataset.slotKey=key;
+        if(rows[index]){const thumbnail=new Image();thumbnail.alt='';thumbnail.loading='lazy';thumbnail.src=responsiveArtwork(rows[index],{size:'w185',route:'direct'})?.src||rows[index];button.append(thumbnail);}
+        else button.className='detail-image-skeleton';
+        button.addEventListener('click',()=>showImage(Number(button!.dataset.imageIndex)),{signal});
+      }
+      button.dataset.imageIndex=String(index);
+      button.setAttribute('aria-label',`${active==='posters'?'Poster':'Artwork'} ${index+1}${rows[index]?'':': loading'}`);
+      button.setAttribute('aria-current',String(current===index));watchThumbnail(button);return button;
+    });
+    reconcileGalleryChildren(slots,buttons);
   };
   const showImage=(index:number)=>{
     const rows=galleries[active];
     const count=pending?10:rows.length;
     current=count?(index+count)%count:0;
-    const version=++revision;
     const url=rows[current],group=active;
-    image.style.visibility='hidden';
-    skeleton.hidden=false;skeleton.classList.toggle('detail-image-skeleton',pending||!!url);
-    skeleton.textContent=!url&&!pending?'No images available.':'';
     caption.textContent=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}${pending?'':` of ${rows.length}`}`;
     arrows.forEach(arrow=>arrow.hidden=count<2);
     paintSlots();
+    if(url&&imageKey(image.src)===imageKey(url)&&image.complete&&image.naturalWidth>0){
+      if(loadingImage)revision++;
+      loadingImage=undefined;skeleton.hidden=true;image.style.visibility='';image.alt=caption.textContent!;return;
+    }
+    const requestKey=url?`${group}:${imageKey(url)}`:undefined;
+    if(requestKey&&loadingImage===requestKey)return;
+    const version=++revision;loadingImage=requestKey;
+    image.style.visibility='hidden';
+    skeleton.hidden=false;skeleton.classList.toggle('detail-image-skeleton',pending||!!url);
+    skeleton.textContent=!url&&!pending?'No images available.':'';
     if(!url)return;
-    if(image.src===url&&image.complete&&image.naturalWidth>0){skeleton.hidden=true;image.style.visibility='';return;}
     const probe=new Image();probe.src=url;
     void probe.decode().then(()=>{
       if(version!==revision||signal.aborted)return;
+      loadingImage=undefined;
       if(group==='artwork'&&probe.naturalWidth<=probe.naturalHeight){
         galleries.artwork=galleries.artwork.filter(value=>value!==url);
         showImage(Math.min(current,galleries.artwork.length-1));
@@ -68,6 +88,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       reveal(image);
     }).catch(()=>{
       if(version!==revision||signal.aborted)return;
+      loadingImage=undefined;
       galleries[group]=galleries[group].filter(value=>value!==url);
       if(galleries[group].length)showImage(current);
       else {showImage(0);showToast('Unable to load this image. Retry the gallery.','error');}
@@ -84,17 +105,6 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       }
     };
     if(thumbnail.complete)inspect();else thumbnail.addEventListener('load',inspect,{signal,once:true});
-  };
-  const watchThumbnail=(button:HTMLButtonElement)=>{
-    const thumbnail=button.querySelector<HTMLImageElement>('img');
-    if(!thumbnail||thumbnail.hidden)return;
-    if(thumbnail.complete&&thumbnail.naturalWidth)return;
-    button.classList.add('detail-image-skeleton');thumbnail.style.opacity='0';
-    thumbnail.addEventListener('load',()=>{
-      button.classList.remove('detail-image-skeleton');thumbnail.style.removeProperty('opacity');
-      if(button.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
-    },{signal,once:true});
-    thumbnail.addEventListener('error',()=>button.classList.remove('detail-image-skeleton'),{signal,once:true});
   };
   root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(button=>{watchLandscape(button);watchThumbnail(button);});
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
@@ -140,33 +150,32 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
           preview.dataset.detailImage=preferred;
           const thumbnail=preview.querySelector('img');if(thumbnail){
             const src=responsiveArtwork(preferred,{size:'w780',route:'direct'})?.src||preferred;
-            if(imageKey(thumbnail.src)===imageKey(src)&&thumbnail.complete&&thumbnail.naturalWidth){preview.classList.remove('detail-image-skeleton');thumbnail.hidden=false;}
-            else {
-              thumbnail.hidden=true;preview.classList.add('detail-image-skeleton');
-              thumbnail.onload=()=>{if(signal.aborted)return;thumbnail.hidden=false;preview.classList.remove('detail-image-skeleton');reveal(thumbnail);};
-              thumbnail.onerror=()=>{preview.classList.remove('detail-image-skeleton');thumbnail.hidden=true;};
-              thumbnail.src=src;
-            }
+            if(imageKey(thumbnail.src)!==imageKey(src))thumbnail.src=src;
+            watchThumbnail(preview);
           }
         }else {preview.classList.toggle('detail-image-skeleton',pending);const thumbnail=preview.querySelector('img');if(thumbnail)thumbnail.hidden=true;}
       }
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
-        const existing=new Map([...grid.querySelectorAll<HTMLButtonElement>('[data-detail-image]')].map(button=>[button.dataset.detailImage,button]));
+        const existing=new Map([...grid.querySelectorAll<HTMLButtonElement>('[data-detail-image]')].map((button,index)=>[
+          button.dataset.detailImage?imageKey(button.dataset.detailImage):`pending:${index}`,button]));
         const buttons=Array.from({length:pending?10:galleries.artwork.length},(_,index)=>{
           const url=galleries.artwork[index];
-          let button=existing.get(url);
+          let button=existing.get(url?imageKey(url):`pending:${index}`);
           if(!button){
             button=document.createElement('button');button.type='button';button.dataset.detailImage=url||'';
             if(url){const thumbnail=document.createElement('img');thumbnail.src=responsiveArtwork(url,{size:'w500',route:'direct'})?.src||url;thumbnail.alt=`${name} artwork`;thumbnail.loading='lazy';button.append(thumbnail);watchLandscape(button);watchThumbnail(button);}
             else button.className='detail-image-skeleton';
           }
-          button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);return button;
+          button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);watchThumbnail(button);return button;
         });
-        grid.replaceChildren(...buttons);
+        reconcileGalleryChildren(grid,buttons);
       }
       const preferred=data.image_replacements?.[selected]||selected;
-      if(lightbox.open)showImage(preferred?Math.max(0,galleries[active].indexOf(preferred)):Math.min(current,Math.max(0,galleries[active].length-1)));
+      if(lightbox.open){
+        const index=preferred?galleries[active].findIndex(url=>imageKey(url)===imageKey(preferred)):-1;
+        showImage(index>=0?index:Math.min(current,Math.max(0,(pending?10:galleries[active].length)-1)));
+      }
       return data.image_status;
   };
   const resource=detailBackground(`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
@@ -193,7 +202,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   if(info.heroAvailable){
     const background=detailBackground<{backdrop?:string;background_status?:DetailLoadState}>(
       `/api/proxy/tracking/title/${info.id}/background`,signal,data=>{
-        if(data.backdrop)applyImages({...galleries,artwork:uniqueDetailImages([data.backdrop,...galleries.artwork]),
+        if(data.backdrop)applyImages({...galleries,artwork:uniqueDetailImages([...galleries.artwork,data.backdrop]),
           backdrop:data.backdrop,image_status:{state:pending?'pending':'ready'}});
         return data.background_status;
       },()=>{});
