@@ -1,6 +1,6 @@
 # Working rules
 
-Commit changes you for completed features or tests, leave partial edits open until the user confirms them
+Commit changes for completed features, tests, verifications etc, leave specific smaller edits requested by the user open until the user confirms them
 
 if you make changes to the database apply the migration before ending the turn
 
@@ -17,7 +17,6 @@ Dont prefer bandade fixes but prefer concrete systems that fix the problem or im
 - Reuse canonical image identities, responsive URLs, and decoded images across views; prefer native browser image caching.
 - Load extra gallery images only when exposed or selected. Optional disk caching should stay bounded and favor primary images over extras.
 - Preserve complete domain data while rendering large collections progressively. Display limits should not become storage limits.
-- Resolve people through verified identities and show works for meaningful credited roles; incidental acknowledgments should not populate works timelines.
 - Keep reads focused, share concurrent requests, and reuse cached enrichment. Bound expensive work and keep it off the event loop on the shared VPS.
 - Make page initialization repeat-safe and clean up observers, timers, and requests when views change. Keep private caches scoped to the viewer.
 - Measure real bottlenecks before adding complexity; preserve correctness and distinguish preview lab results from production performance.
@@ -36,9 +35,6 @@ Search a relevant section only when a requirement or past decision is unclear.
 Do not read the entire STATUS.md or phase plans by default.
 
 ## Testing
-
-For Linux Codex Cloud tasks, use `bash ops/cloud/setup.sh` for installation,
-`bash ops/cloud/start.sh` for services, and `bash ops/cloud/check.sh` for checks.
 Tests use a separate disposable database. Never point tests at a preview or
 production DB. Keep `.env.providers` and `.cloud-runtime` out of Git and logs;
 server metadata keys are private environment defaults, not database seed data.
