@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, or_, String
 from sqlalchemy.dialects.postgresql import insert
 
-from core import catalogue, settings_store, tvdb
+from core import catalogue, settings_store, tvdb, tmdb
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError, retry_after_seconds
 from core.catalogue_normalize import normalize_tvdb
 from core.media_details import screen_work
@@ -52,7 +52,7 @@ async def request_tvdb(providers, path):
 
 async def resolve_imdb_person(providers, imdb_id):
     raw = await providers.http.request('tmdb','GET','https://api.themoviedb.org/3/find/'+imdb_id,
-        params={'api_key':providers.tmdb_key,'external_source':'imdb_id'})
+        headers=tmdb.get_headers(providers.tmdb_key),params={'external_source':'imdb_id'})
     candidates = {r['id'] for r in (raw or {}).get('person_results') or []
                   if isinstance(r,dict) and type(r.get('id')) is int and r['id']>0}
     return next(iter(candidates)) if len(candidates)==1 else None

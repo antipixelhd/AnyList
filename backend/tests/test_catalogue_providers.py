@@ -120,6 +120,19 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         providers._tokens.clear()
         providers._token_locks.clear()
 
+    async def test_imdb_character_person_lookup_uses_access_token_and_rejects_ambiguity(self):
+        from core.screen_character_art import resolve_imdb_person
+        def handle(request):
+            self.assertEqual(request.headers['Authorization'],'Bearer fixture-access-token')
+            self.assertNotIn('api_key',request.url.params)
+            self.assertEqual(request.url.params['external_source'],'imdb_id')
+            return httpx.Response(200,json={'person_results':[{'id':100}]} if request.url.path.endswith('nm100')
+                else {'person_results':[{'id':100},{'id':200}]})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            adapter=providers.CatalogueProviders(providers.ProviderHTTP(client),tmdb_key='fixture-access-token')
+            self.assertEqual(await resolve_imdb_person(adapter,'nm100'),100)
+            self.assertIsNone(await resolve_imdb_person(adapter,'nm200'))
+
     async def test_steam_only_low_date_and_unchanged_link(self):
         requests = []
 

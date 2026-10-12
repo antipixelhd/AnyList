@@ -293,6 +293,7 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
             job=await db.get(SyncJob,job_id)
             self.assertEqual(job.status,SyncStatus.completed)
             self.assertEqual(job.processed_items,6)
+            self.assertEqual(job.total_items,6)
             self.assertEqual(job.errors,1)
 
     async def test_unnamed_voice_credits_are_unavailable_metadata_not_broken_links(self):
