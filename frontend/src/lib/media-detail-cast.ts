@@ -2,6 +2,7 @@ import { createContentTransition } from './content-motion';
 import { detailCastPresentation, detailCredits, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { detailBackground, type DetailLoadState } from './detail-background';
+import {createProgressiveCredits} from './progressive-credits';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
@@ -102,13 +103,17 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     cards.forEach((card,index)=>{if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);});
     [...container.children].filter(card=>!cards.includes(card as HTMLElement)).forEach(card=>card.remove());
   };
-  const deferred=new WeakMap<HTMLElement,DetailPerson[]>();
+  const deferred=new WeakMap<HTMLElement,ReturnType<typeof createProgressiveCredits<DetailPerson>>>();
   root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{
     const data=section.querySelector('[data-credit-deferred]');
-    deferred.set(section,JSON.parse(data?.textContent||'[]'));data?.remove();
-    section.querySelector('[data-credit-toggle]')?.addEventListener('click',()=>{
-      fill(section.querySelector<HTMLElement>('[data-credit-rest]')!,deferred.get(section)||[]);
+    const list=createProgressiveCredits<DetailPerson>(section.querySelector<HTMLElement>('[data-credit-rest]')!,signal,people=>{
+      fill(section.querySelector<HTMLElement>('[data-credit-rest]')!,people);
       if(section.matches('[data-credit-section=cast]'))paint(section,mode);
+    });
+    deferred.set(section,list);list.replace(JSON.parse(data?.textContent||'[]'));data?.remove();
+    const toggle=section.querySelector('[data-credit-toggle]');
+    toggle?.addEventListener('click',()=>{
+      list.toggle(toggle.getAttribute('aria-expanded')!=='true');
     },{signal});
   });
   const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState;credits_status?:string})=>{
@@ -120,9 +125,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       const people=rows[section.dataset.creditSection as keyof typeof rows]||[];
       const limit=Number(section.dataset.creditLimit||8);
       fill(section.querySelector<HTMLElement>('[data-credit-visible]')!,people.slice(0,limit));
-      deferred.set(section,people.slice(limit));
-      const rest=section.querySelector<HTMLElement>('[data-credit-rest]')!;
-      if(rest.children.length)fill(rest,people.slice(limit));
+      deferred.get(section)?.replace(people.slice(limit));
       section.hidden=!people.length;
       const toggle=section.querySelector<HTMLButtonElement>('[data-credit-toggle]')!;toggle.hidden=people.length<=limit;
     });
