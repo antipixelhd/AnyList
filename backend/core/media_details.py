@@ -61,8 +61,12 @@ async def work_details(db, work, *, extras=True):
     studio_ids = {contributor.id for credit, contributor in credits if credit.role == 'producer'}
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
+    from core.screen_cast import complete_cast_works, preferred_cast
+    if work.kind in ('movie', 'series'):
+        credits = preferred_cast([(credit, canonical[person.id]) for credit, person in credits],
+                                 await complete_cast_works(db, {work.id}))
     for credit, contributor in credits:
-        contributor = canonical[contributor.id]
+        contributor = canonical.get(contributor.id, contributor)
         actor = credit.role == 'actor'
         kind = 'studio' if contributor.kind == 'organization' else 'actor' if actor else 'staff'
         group = organizations if kind == 'studio' else people

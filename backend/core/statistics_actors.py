@@ -20,8 +20,10 @@ async def load_actors(db, facts, *, show_anime=True):
     images = await character_images(db, {c.screen_character_id for c, _ in credits if getattr(c, 'screen_character_id', None)})
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
+    from core.screen_cast import complete_cast_works, preferred_cast
+    credits = preferred_cast([(credit, canonical[person.id]) for credit, person in credits],
+                             await complete_cast_works(db, entity_ids))
     for credit, person in credits:
-        person = canonical[person.id]
         character_id = getattr(credit, 'screen_character_id', None)
         candidates = images.get(character_id, [])
         if not show_anime:
@@ -46,9 +48,6 @@ async def load_actors(db, facts, *, show_anime=True):
         CatalogueIdentity.namespace == "tmdb.person", CatalogueIdentity.external_id.in_(person_ids)))} if person_ids else {}
     for title in titles:
         actors = list(by_work.get(title["entity_id"], []))
-        primary = {a["key"] for a in actors if a["provider"] == "tmdb"}
-        if primary:
-            actors = [a for a in actors if a["provider"] == "tmdb" or a["key"] in primary]
         # Reduced legacy credits are only a fallback; never duplicate or replace
         # the complete canonical actor/role list for a title.
         if not actors:

@@ -12,6 +12,56 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cast_completeness_uses_historical_payload_without_dropping_partial_fallback(self):
+        from core.screen_cast import complete_cast_works
+        from models.catalogue import MetadataSnapshot
+        async with self.Session() as db:
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            snapshot = MetadataSnapshot(provider='tmdb', kind='movie', external_id='cast-coverage',
+                entity_id=work.id, coverage={'credits_complete':False},
+                payload={'credits':{'cast':[], 'crew':[]}})
+            db.add(snapshot); await db.commit()
+            self.assertIn(work.id, await complete_cast_works(db, {work.id}))
+            snapshot.payload = {'credits':{'cast':[]}}
+            await db.commit()
+            self.assertNotIn(work.id, await complete_cast_works(db, {work.id}))
+            snapshot.kind = 'series'
+            snapshot.payload = {'credits':{'cast':[], 'crew':[]}}
+            await db.commit()
+            self.assertNotIn(work.id, await complete_cast_works(db, {work.id}))
+            snapshot.payload = {'aggregate_credits':{'cast':[], 'crew':[]}}
+            await db.commit()
+            self.assertIn(work.id, await complete_cast_works(db, {work.id}))
+
+    async def test_unlinked_tvdb_cast_uses_tmdb_profile_and_keeps_role_artwork(self):
+        from core.media_details import work_details
+        from core.statistics_actors import load_actors
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            original = await db.scalar(select(CatalogueCredit).where(
+                CatalogueCredit.work_id == work.id, CatalogueCredit.contributor_id == person.id,
+                CatalogueCredit.role == 'actor'))
+            original.provider = 'tmdb'
+            original.character_image_url = None
+            alias = CatalogueEntity(kind='person', name=person.name, attributes={})
+            db.add(alias); await db.flush()
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=alias.id, provider='tvdb',
+                source_key='unlinked-role', role='actor', character_label=original.character_label,
+                character_image_url='https://example.test/role.jpg'))
+            await db.commit()
+            details = await work_details(db, work, extras=False)
+            actors = [p for p in details['people'] if p['kind'] == 'actor']
+            self.assertEqual(len(actors), 1)
+            self.assertEqual(actors[0]['id'], person.id)
+            self.assertEqual(actors[0]['character_image'], 'https://example.test/role.jpg')
+            self.assertEqual(actors[0]['url'], f'/actors/catalogue:{person.id}')
+            facts = [{'listed':True, 'entity_id':work.id, 'media':[], 'kind':'movie'}]
+            await load_actors(db, facts)
+            self.assertEqual({a['key'] for a in facts[0]['actors']}, {f'catalogue:{person.id}'})
+            self.assertTrue(any(a['character_image'] == 'https://example.test/role.jpg' for a in facts[0]['actors']))
+            self.assertIsNone(alias.canonical_person_id)
+
     async def test_account_result_filters_apply_to_works_and_preserve_cached_credits(self):
         from models import UserProfileData
         self.vote_floor.stop()

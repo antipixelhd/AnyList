@@ -80,10 +80,11 @@ class ActorTests(unittest.TestCase):
 class ActorLoadingTests(unittest.IsolatedAsyncioTestCase):
     async def test_primary_cast_and_verified_artwork_merge_without_name_matching(self):
         db = AsyncMock()
+        db.scalars.return_value = [10]
         credits = MagicMock()
-        credits.all.return_value = [(Row(work_id=10, character_label="Alice", character_image_url=None, provider="tmdb", position=0), Row(id=1, name="Actor", image_url=None)),
-            (Row(work_id=10, character_label="Alice", character_image_url="https://example.test/role.jpg", provider="tvdb", position=0), Row(id=1, name="Actor", image_url=None)),
-            (Row(work_id=10, character_label="Alice", character_image_url=None, provider="tvdb", position=0), Row(id=2, name="Actor", image_url=None))]
+        credits.all.return_value = [(Row(work_id=10, role='actor', character_label="Alice", character_image_url=None, provider="tmdb", position=0), Row(id=1, name="Actor", image_url=None)),
+            (Row(work_id=10, role='actor', character_label="Alice", character_image_url="https://example.test/role.jpg", provider="tvdb", position=0), Row(id=1, name="Actor", image_url=None)),
+            (Row(work_id=10, role='actor', character_label="Alice", character_image_url=None, provider="tvdb", position=0), Row(id=2, name="Actor", image_url=None))]
         db.execute.return_value = credits
         fact = title(1, listed=True, entity_id=10, media=[])
         await load_actors(db, [fact])
