@@ -12,6 +12,78 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_verified_person_backfill_unifies_old_urls_credits_and_role_artwork(self):
+        from core.person_identity_backfill import backfill_person_identities
+        from core.media_details import work_details
+        from core.screen_characters import project_characters
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            alias = CatalogueEntity(kind='person', name=person.name, attributes={})
+            db.add(alias); await db.flush()
+            alias_id = alias.id
+            db.add_all([CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='77', source='tmdb'),
+                        CatalogueIdentity(entity_id=alias.id, namespace='tvdb.person', external_id='88', source='tvdb')])
+            work_id = await db.scalar(select(CatalogueEntity.id).where(CatalogueEntity.kind == 'movie'))
+            db.add_all([CatalogueCredit(work_id=work_id, contributor_id=alias.id, provider='tvdb', source_key='alias-director', role='contributor', role_label='Director'),
+                        CatalogueCredit(work_id=work_id, contributor_id=alias.id, provider='tvdb', source_key='alias-cast', role='actor', character_label='Fixture Character', character_image_url='https://example.test/role.jpg')])
+            await db.flush(); await project_characters(db, work_id); await db.commit()
+            before = list((await db.execute(select(CatalogueCredit.id, CatalogueCredit.contributor_id, CatalogueCredit.screen_character_id).order_by(CatalogueCredit.id))).all())
+            raw = {'id':88, 'remoteIds':[{'sourceName':'TheMovieDB.com', 'id':'77'}]}
+            with patch('core.person_identity_backfill.tvdb.get_person', AsyncMock(return_value=raw)) as fetch:
+                result = await backfill_person_identities(db, 'fixture')
+                self.assertEqual((result['bridged'], result['aliases'], result['failed']), (1,1,0))
+                self.assertEqual((await backfill_person_identities(db, 'fixture'))['examined'], 0)
+                fetch.assert_awaited_once()
+            self.assertEqual((await db.get(CatalogueEntity, alias_id)).canonical_person_id, self.person_id)
+            self.assertEqual(before, list((await db.execute(select(CatalogueCredit.id, CatalogueCredit.contributor_id, CatalogueCredit.screen_character_id).order_by(CatalogueCredit.id))).all()))
+            details = await work_details(db, await db.get(CatalogueEntity, work_id))
+            self.assertEqual({p['id'] for p in details['people']}, {self.person_id})
+            actor = next(p for p in details['people'] if p['kind'] == 'actor')
+            self.assertIn('https://example.test/role.jpg', actor['character_images'])
+        old = (await self.request('staff', f'catalogue:{alias_id}')).json()
+        canonical = (await self.request('staff')).json()
+        self.assertEqual(old['key'], f'catalogue:{self.person_id}')
+        self.assertEqual(old['works'], canonical['works'])
+        self.assertEqual(old['works'][0]['roles'], ['Director'])
+
+    async def test_person_backfill_rejects_mismatched_provider_ids_and_contradictory_links(self):
+        from core.person_identity_backfill import backfill_person_identities
+        async with self.Session() as db:
+            alias = CatalogueEntity(kind='person', name='Similar name', attributes={})
+            db.add(alias); await db.flush()
+            db.add_all([CatalogueIdentity(entity_id=alias.id, namespace='tvdb.person', external_id='88', source='tvdb'),
+                        CatalogueIdentity(entity_id=alias.id, namespace='tmdb.person', external_id='99', source='tmdb'),
+                        CatalogueIdentity(entity_id=self.person_id, namespace='tmdb.person', external_id='77', source='tmdb')])
+            await db.commit()
+            for raw in ({'id':89, 'remoteIds':[{'sourceName':'TheMovieDB.com','id':'77'}]},
+                        {'id':88, 'remoteIds':[{'sourceName':'TheMovieDB.com','id':'77'}]}):
+                with patch('core.person_identity_backfill.tvdb.get_person', AsyncMock(return_value=raw)):
+                    self.assertEqual((await backfill_person_identities(db, 'fixture', native=88))['failed'],1)
+                await db.refresh(alias)
+                self.assertIsNone(alias.canonical_person_id)
+                self.assertEqual(await db.scalar(select(CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='tvdb.person')), alias.id)
+
+    async def test_non_work_roles_filter_local_and_remote_before_merging_and_pagination(self):
+        async with self.Session() as db:
+            for index, role in enumerate(('Thanks','Original Idea','Director')):
+                work = CatalogueEntity(kind='movie', name=f'Credit {index}', attributes={'release_date':f'202{index}-01-01'})
+                db.add(work); await db.flush()
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=self.person_id, provider='tmdb', source_key=f'job-{index}', role='contributor', role_label=role))
+            await db.commit()
+        local = (await self.request('staff')).json()
+        self.assertEqual([w['title'] for w in local['works']], ['Credit 2'])
+        self.key_mock.return_value = 'fixture'
+        raw = {'id':77,'name':'Person','combined_credits':{'crew':[
+            {'id':100,'media_type':'movie','title':'Thanks only','job':'Special Thanks'},
+            {'id':101,'media_type':'movie','title':'Idea only','job':'Idea'},
+            {'id':102,'media_type':'movie','title':'Directed','job':'Director'}], 'cast':[
+            {'id':103,'media_type':'movie','title':'Uncredited','character':'Man (uncredited)'},
+            {'id':104,'media_type':'movie','title':'Archive','character':'Self (archive footage)'},
+            {'id':105,'media_type':'movie','title':'Credited','character':'Named role'}]}}
+        with patch('core.contributor_details.tmdb.get_person', AsyncMock(return_value=raw)):
+            self.assertEqual([w['title'] for w in (await self.request('staff','tmdb:77')).json()['works']], ['Directed'])
+            self.assertEqual([w['title'] for w in (await self.request('actor','tmdb:77')).json()['works']], ['Credited'])
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
         self.keys = patch('core.contributor_details.settings_store.get_user_tmdb_key', AsyncMock(return_value=None))

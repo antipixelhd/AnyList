@@ -744,17 +744,23 @@ class CatalogueProviders:
         async with self.http.lane("tvdb"):
             raw = await (tvdb.get_movie(id, self.tvdb_key) if kind == "movie" else tvdb.get_series(id, self.tvdb_key))
         # Verify cross-provider people by authoritative IDs, never by names.
-        # Bound the fan-out to twelve principal cast members per title.
+        # Include principal crew as well as cast so filmmakers receive the same
+        # verified identity bridge. Bound optional enrichment per title.
         people = {}
+        counts = {True: 0, False: 0}
         for member in sorted(raw.get("characters") or [], key=lambda p: p.get("sort") or 0):
             pid = member.get("peopleId") or member.get("personId")
-            if not pid or str(pid) in people or member.get("type") != 3:
+            if not pid or str(pid) in people:
                 continue
-            if len(people) >= 12:
-                break
+            acting = member.get('type') == 3
+            if counts[acting] >= 12:
+                continue
+            counts[acting] += 1
             try:
                 async with self.http.lane("tvdb"):
                     people[str(pid)] = await tvdb.get_person(int(pid), self.tvdb_key)
+                    if str(people[str(pid)].get('id')) != str(pid):
+                        people[str(pid)] = {}
             except Exception:
                 people[str(pid)] = {}  # Retain title credits when optional people enrichment fails.
         raw = {**raw, "_people": people}

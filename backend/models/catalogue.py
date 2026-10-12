@@ -47,12 +47,17 @@ class CatalogueEntity(Base):
             name="ck_catalogue_kind",
         ),
         Index("ix_catalogue_kind_name", "kind", "name"),
+        CheckConstraint("canonical_person_id IS NULL OR (kind = 'person' AND canonical_person_id <> id)", name="ck_catalogue_person_alias"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None] = mapped_column(Text)
+    # Preserve old contributor URLs and credits after a verified person bridge.
+    canonical_person_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalogue_entities.id", ondelete="RESTRICT"), index=True
+    )
     # Normalized descriptive fields only. Provider responses live in snapshots.
     attributes: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"

@@ -13,6 +13,7 @@ from core.browse import GENRES, anime_visible
 from core.countries import country_codes
 from core.statistics_genres import poster
 from core.statistics_staff import ACTING, role_label, role_order
+from core.credit_roles import work_credit
 from core.tracking_editor import attach_editor_context
 from models import Media
 from models.base import MediaType
@@ -83,11 +84,13 @@ async def known_works(db, entity, native, kind, viewer):
     work_identities = defaultdict(dict)
     own = set(await db.scalars(select(TrackedEntry.media_id).where(TrackedEntry.user_id == viewer.id))) if viewer else set()
     if entity:
+        person_ids = select(CatalogueEntity.id).where(or_(CatalogueEntity.id == entity.id, CatalogueEntity.canonical_person_id == entity.id)).correlate(None)
         credits = list((await db.execute(select(CatalogueCredit, CatalogueEntity).join(
             CatalogueEntity, CatalogueEntity.id == CatalogueCredit.work_id).where(
-            CatalogueCredit.contributor_id == entity.id, CatalogueEntity.kind.in_(("movie", "series")),
+            CatalogueCredit.contributor_id.in_(person_ids), CatalogueEntity.kind.in_(("movie", "series")),
         ).order_by(CatalogueEntity.id, CatalogueCredit.id))).all())
-        credits = [(c, w) for c, w in credits if (c.role == "producer" if kind == "studio" else accepted_role(kind, is_actor(c)))]
+        credits = [(c, w) for c, w in credits if (c.role == "producer" if kind == "studio" else
+                   accepted_role(kind, is_actor(c)) and work_credit(role_label(c), c.character_label if is_actor(c) else None))]
         ids = {w.id for _, w in credits}
         identities = list(await db.scalars(select(CatalogueIdentity).where(
             CatalogueIdentity.entity_id.in_(ids), CatalogueIdentity.namespace.in_(("tmdb.movie", "tmdb.series", "tvdb.movie", "tvdb.series")),
@@ -142,6 +145,9 @@ async def known_works(db, entity, native, kind, viewer):
                 for field in fields:
                     matches += [(p, {"cast": "Actor", "directors": "Director", "writers": "Writer", "studios": "Production"}[field]) for p in getattr(cached_row, field) or [] if isinstance(p, dict) and positive_id(p.get("id")) == native]
             matches += [(p, "Production" if kind == "studio" else "Creator") for p in (media.tmdb_data or {}).get(metadata_field) or [] if kind != "actor" and isinstance(p, dict) and positive_id(p.get("id")) == native]
+            matches = [(p, role) for p, role in matches if kind == 'studio' or work_credit(role, p.get('character'))]
+            if not matches:
+                continue
             item = tracking_projection.media_data(media)
             rows.append({**item, "key": f"{media.media_type.value}:{media.tmdb_id or 'local-' + str(media.id)}",
                 "roles": [role for _, role in matches], "characters": [p["character"] for p, role in matches if role == "Actor" and p.get("character")], "_metadata": {**(media.tmdb_data or {}), "adult": media.adult or (media.tmdb_data or {}).get("adult", False)}})
@@ -230,6 +236,10 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         return None
     if entity and entity.kind != expected_kind:
         return None
+    if entity and entity.canonical_person_id:
+        entity = await db.get(CatalogueEntity, entity.canonical_person_id)
+        if not entity or entity.kind != expected_kind:
+            return None
     identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == entity.id))) if entity else []
     if entity:
         native = next((positive_id(i.external_id) for i in identities if i.namespace == f"tmdb.{provider_kind}"), None)
@@ -254,6 +264,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
                 if kind != "studio":
                     field = "cast" if kind == "actor" else "crew"
                     remote = [item for raw in (profile.get("combined_credits") or {}).get(field) or []
+                              if work_credit('Actor' if kind == 'actor' else raw.get('job'), raw.get('character'))
                               if not (kind == "staff" and str(raw.get("job", "")).casefold() in ACTING)
                               and (item := remote_work(raw, None, acting=kind == "actor"))]
         except Exception:

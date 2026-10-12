@@ -11,11 +11,11 @@ from core.catalogue_providers import CatalogueProviders, ProviderHTTP
 from core.media_details import screen_work
 from models.base import MediaType
 from models.media import Media
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueLegacyLink, MetadataSnapshot
+from models.catalogue import CatalogueEntity, CatalogueLegacyLink, MetadataSnapshot
 from db import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
-VERSION = 1
+VERSION = 2
 
 
 async def fill_screen_credits(db, media, user_id=None, *, providers=None):
@@ -40,11 +40,6 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None):
                 {'media_id': media.id, 'entity_id': work.id}, ['media_id'])
             await db.commit()
             linked = True
-        roles = list(await db.scalars(select(CatalogueCredit.role).join(CatalogueEntity,
-            CatalogueEntity.id == CatalogueCredit.contributor_id).where(
-            CatalogueCredit.work_id == work.id, CatalogueEntity.kind == 'person')))
-        if 'actor' in roles and any(role != 'actor' for role in roles):
-            return 'updated' if linked else 'complete'
     if providers is None:
         providers = CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal),
             tmdb_key=await settings_store.get_user_tmdb_key(db, user_id),
@@ -70,6 +65,12 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None):
                 result = 'cached'
                 continue
             if status == 'cached' and snapshot.payload:
+                await catalogue.write_lock(db)
+                await db.refresh(snapshot, with_for_update=True)
+                if catalogue.cached_refresh_status(snapshot, datetime.now(timezone.utc).replace(tzinfo=None)) != 'cached':
+                    await db.commit()
+                    result = 'deferred'
+                    continue
                 doc = (normalize_tmdb if provider == 'tmdb' else normalize_tvdb)(snapshot.payload, kind)
                 if not any(i['namespace'] == f'{provider}.{kind}' and i['external_id'] == str(native)
                            for i in doc['work']['identities']):

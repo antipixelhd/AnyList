@@ -53,7 +53,10 @@ async def work_details(db, work):
     local_images = {}
     alternative_images = {}
     studio_ids = {contributor.id for credit, contributor in credits if credit.role == 'producer'}
+    from core.person_identities import canonical_people
+    canonical = await canonical_people(db, [person for _, person in credits])
     for credit, contributor in credits:
+        contributor = canonical[contributor.id]
         actor = credit.role == 'actor'
         kind = 'studio' if contributor.kind == 'organization' else 'actor' if actor else 'staff'
         group = organizations if kind == 'studio' else people

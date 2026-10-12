@@ -18,6 +18,9 @@ async def fill_document(db, document, provider):
     await catalogue.write_lock(db)
 
     async def prepare(values):
+        if values['kind'] == 'person':
+            from core.person_identities import reconcile_person_identities
+            await reconcile_person_identities(db, values.get('identities', []), provider)
         roots = {mapping.entity_id for identity in values.get('identities', [])
                  if (mapping := await catalogue.resolve_identity(db, identity['namespace'], identity['external_id']))}
         if len(roots) > 1:

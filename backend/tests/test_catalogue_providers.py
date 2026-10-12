@@ -98,6 +98,23 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tvdb_principal_staff_and_cast_receive_verified_person_cross_references(self):
+        from core import tvdb
+        raw={'id':1,'name':'Movie','characters':[
+            {'id':1,'peopleId':88,'personName':'Director','peopleType':'Director','type':1,'sort':1},
+            {'id':2,'peopleId':89,'personName':'Actor','peopleType':'Actor','type':3,'sort':2}]}
+        async def profile(native,key):
+            return {'id':native,'remoteIds':[{'sourceName':'TheMovieDB.com','id':str(native+100)}]}
+        adapter=providers.CatalogueProviders(providers.ProviderHTTP(),tvdb_key='fixture')
+        with patch.object(tvdb,'get_movie',AsyncMock(return_value=raw)), patch.object(tvdb,'get_person',AsyncMock(side_effect=profile)) as fetch:
+            doc,_=await adapter.detail('tvdb','movie','1')
+            self.assertEqual(fetch.await_count,2)
+            self.assertEqual({tuple((i['namespace'],i['external_id']) for i in c['contributor']['identities']) for c in doc['credits']},
+                {(('tvdb.person','88'),('tmdb.person','188')), (('tvdb.person','89'),('tmdb.person','189'))})
+        with patch.object(tvdb,'get_movie',AsyncMock(return_value=raw)), patch.object(tvdb,'get_person',AsyncMock(return_value={'id':999,'remoteIds':[{'sourceName':'TheMovieDB.com','id':'525'}]})):
+            doc,_=await adapter.detail('tvdb','movie','1')
+            self.assertTrue(all(len(c['contributor']['identities'])==1 for c in doc['credits']))
+
     def setUp(self):
         self.keys = patch.multiple(
             settings,

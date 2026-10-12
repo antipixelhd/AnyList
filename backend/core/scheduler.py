@@ -618,6 +618,9 @@ async def _show_metadata_refresher():
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
                 ))
                 log.info("Actor metadata backfill: %s", actor_coverage)
+                from core.person_identity_backfill import backfill_person_identities
+                person_identities = await backfill_person_identities(db, tvdb_key, limit=50)
+                log.info('Verified person identity backfill: %s', person_identities)
                 from core.character_backfill import backfill_screen_characters, backfill_tvmaze_images
                 character_coverage = await backfill_screen_characters(db)
                 character_images = await backfill_tvmaze_images(db, CatalogueProviders(

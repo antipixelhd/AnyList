@@ -89,6 +89,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 ).upgrade()
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
                 importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
+                importlib.import_module("migrations.versions.mt045_verified_person_aliases").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)

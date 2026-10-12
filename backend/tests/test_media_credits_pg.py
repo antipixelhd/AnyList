@@ -24,6 +24,43 @@ def movie_payload(native=1492640, *, empty=False):
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_person_filmography_backfill_filters_jobs_and_never_imports_personal_media(self):
+        from core.person_works_backfill import backfill_person_works
+        profile={'id':124,'combined_credits':{'crew':[
+            {'id':10001,'media_type':'movie','job':'Director'},
+            {'id':10001,'media_type':'movie','job':'Producer'},
+            {'id':10002,'media_type':'movie','job':'Special Thanks'},
+            {'id':10003,'media_type':'movie','job':'Idea'}]}}
+        self.reply(movie_payload(10001))
+        with patch('core.person_works_backfill.tmdb.get_person',AsyncMock(return_value=profile)):
+            async with self.Session() as db:
+                before=await db.scalar(select(func.count()).select_from(Media))
+                result=await backfill_person_works(db,self.providers,124)
+                self.assertEqual((result['examined'],result['updated'],result['failed']),(1,1,0))
+                self.assertEqual(await db.scalar(select(func.count()).select_from(Media)),before)
+                second=await backfill_person_works(db,self.providers,124)
+                self.assertEqual(second['failed'],0)
+        self.providers.detail.assert_awaited_once()
+
+    async def test_existing_cast_and_one_crew_member_do_not_hide_missing_cached_director(self):
+        from core.media_credits import VERSION
+        from core import catalogue
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+            raw = movie_payload()
+            raw['credits']['crew'].append({'id':125,'name':'Christopher Nolan','job':'Director','credit_id':'missing-nolan'})
+            partial = {**raw, 'credits':{**raw['credits'], 'crew':raw['credits']['crew'][:1]}}
+            work = await catalogue.ingest_document(db, normalize_tmdb(partial,'movie'),'tmdb')
+            db.add(CatalogueLegacyLink(media_id=media.id,entity_id=work.id))
+            db.add(MetadataSnapshot(provider='tmdb',kind='movie',external_id=str(media.tmdb_id),entity_id=work.id,
+                payload=raw,coverage={'detail_credits_version':VERSION-1},fetched_at=datetime.utcnow(),expires_at=datetime.utcnow()+timedelta(days=7)))
+            await db.commit()
+            self.assertEqual(await fill_screen_credits(db,media,providers=self.providers),'updated')
+            details = await work_details(db,work)
+            self.assertIn('Christopher Nolan',[person['name'] for person in details['people']])
+            self.assertEqual(await fill_screen_credits(db,media,providers=self.providers),'cached')
+        self.providers.detail.assert_not_awaited()
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
         self.providers = SimpleNamespace(tmdb_key='fixture', tvdb_key=None,
@@ -51,7 +88,7 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({p['name'] for p in details['people']}, {'Lead Actor', 'Director'})
             self.assertEqual(details['people'][0]['characters'], ['Ted'])
             self.assertIsNotNone(await db.get(CatalogueLegacyLink, media.id))
-            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'complete')
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'cached')
             self.assertIsNone(await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == media.id)))
         self.providers.detail.assert_awaited_once()
 
@@ -157,9 +194,13 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_complete_identity_match_restores_missing_bridge_without_fetching(self):
         from core.catalogue import ingest_document
+        from core.media_credits import VERSION
         async with self.Session() as db:
             media = await self.new_movie(db)
             work = await ingest_document(db, normalize_tmdb(movie_payload(), 'movie'), 'tmdb')
+            db.add(MetadataSnapshot(provider='tmdb',kind='movie',external_id=str(media.tmdb_id),entity_id=work.id,
+                payload=movie_payload(),coverage={'detail_credits_version':VERSION},
+                fetched_at=datetime.utcnow(),expires_at=datetime.utcnow()+timedelta(days=7)))
             await db.commit()
             self.assertIsNone(await db.get(CatalogueLegacyLink, media.id))
             self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'updated')

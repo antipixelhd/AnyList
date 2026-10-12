@@ -187,6 +187,9 @@ async def upsert_entity(db, values, source):
     ids = values.get("identities") or []
     if not ids:
         raise IdentityConflict("Canonical records require an identity")
+    if values['kind'] == 'person':
+        from core.person_identities import reconcile_person_identities
+        await reconcile_person_identities(db, ids, source)
     matches = set()
     for x in ids:
         validate_identity(x["namespace"], x["external_id"], values["kind"])
