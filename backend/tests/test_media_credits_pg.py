@@ -24,6 +24,37 @@ def movie_payload(native=1492640, *, empty=False):
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cached_portrait_backfill_is_identity_matched_bounded_and_idempotent(self):
+        from scripts.backfill_person_portraits import backfill
+        from core import catalogue
+        async with self.Session() as db:
+            raw=movie_payload()
+            raw['credits']['cast'][0]['profile_path']='/portrait.jpg'
+            work=await catalogue.ingest_document(db,normalize_tmdb(raw,'movie'),'tmdb')
+            actor=await db.scalar(select(CatalogueEntity).join(CatalogueIdentity).where(
+                CatalogueIdentity.namespace=='tmdb.person',CatalogueIdentity.external_id=='123'))
+            actor.image_url='https://artworks.thetvdb.com/banners/person/portrait.jpg'
+            actor.field_sources={**actor.field_sources,'image_url':'tvdb'}
+            db.add(MetadataSnapshot(provider='tmdb',kind='movie',external_id=str(raw['id']),entity_id=work.id,payload=raw))
+            await db.commit()
+            dry=await backfill(db,apply=False)
+            self.assertEqual(dry['updated'],1)
+            self.assertIn('thetvdb.com',actor.image_url)
+            applied=await backfill(db,apply=True)
+            self.assertEqual(applied['updated'],1)
+            self.assertEqual(actor.image_url,'https://image.tmdb.org/t/p/original/portrait.jpg')
+            self.assertEqual((await backfill(db,apply=True))['updated'],0)
+            from core.catalogue_additive import fill_document
+            actor.image_url='https://artworks.thetvdb.com/banners/person/portrait.jpg'
+            actor.field_sources={**actor.field_sources,'image_url':'tvdb'};await db.commit()
+            await fill_document(db,normalize_tmdb(raw,'movie'),'tmdb');await db.commit()
+            self.assertEqual(actor.image_url,'https://image.tmdb.org/t/p/original/portrait.jpg')
+            actor.image_url='https://artworks.thetvdb.com/banners/person/selected.jpg'
+            actor.field_sources={**actor.field_sources,'image_url':'tvdb'}
+            actor.protected_fields=['image_url'];await db.commit()
+            self.assertEqual((await backfill(db,apply=True))['updated'],0)
+            self.assertTrue(actor.image_url.endswith('/selected.jpg'))
+
     async def test_large_crews_do_not_truncate_the_director_from_movie_details(self):
         async with self.Session() as db:
             work=await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie'))

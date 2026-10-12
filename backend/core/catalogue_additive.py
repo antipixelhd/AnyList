@@ -10,6 +10,7 @@ async def fill_document(db, document, provider):
 
     Lock before comparing fields. Known values, protected fields, source credits,
     and all personal facts are preserved, including credits absent from a reply.
+    Unprotected TVDB default portraits may adopt the preferred TMDB image.
     Conflicting provider identities still fail rather than merge roots by name.
     """
     doc = deepcopy(document)
@@ -30,7 +31,8 @@ async def fill_document(db, document, provider):
             if row.kind != values['kind']:
                 raise catalogue.IdentityConflict('Identity kind requires review')
             for field in ('name', 'description', 'image_url'):
-                if catalogue.has_value(getattr(row, field)):
+                if catalogue.has_value(getattr(row, field)) and not (
+                        field == 'image_url' and catalogue.preferred_person_portrait(row, values.get(field), provider)):
                     values[field] = None
             values['attributes'] = {key: value for key, value in values.get('attributes', {}).items()
                                    if not catalogue.has_value((row.attributes or {}).get(key))}

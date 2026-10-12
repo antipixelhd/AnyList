@@ -137,6 +137,15 @@ def placeholder_name(values):
     }
 
 
+def preferred_person_portrait(row, value, source):
+    """Prefer the responsive TMDB portrait only over a known TVDB default."""
+    return (row.kind == 'person' and source == 'tmdb' and isinstance(value, str)
+            and value.startswith('https://image.tmdb.org/t/p/')
+            and (row.field_sources or {}).get('image_url') == 'tvdb'
+            and (row.image_url or '').startswith('https://artworks.thetvdb.com/')
+            and 'image_url' not in (row.protected_fields or []))
+
+
 def merge_fields(row, values, source):
     sources = dict(row.field_sources or {})
     protected = set(row.protected_fields or [])
@@ -150,10 +159,14 @@ def merge_fields(row, values, source):
             continue
         old = getattr(row, field)
         old_source = sources.get(field)
+        if (field == 'image_url' and row.kind == 'person' and source == 'tvdb'
+                and (old or '').startswith('https://image.tmdb.org/t/p/')):
+            continue
         placeholder = field == "name" and ":" in (old or "") and not old_source
         if (
             not old
             or placeholder
+            or (field == 'image_url' and preferred_person_portrait(row, value, source))
             or (
                 old_source
                 and source_rank(row.kind, source) >= source_rank(row.kind, old_source)
