@@ -42,7 +42,10 @@
 .media-progress progress::-webkit-progress-value { background:var(--blue); }
 .media-progress progress::-moz-progress-bar { background:var(--blue); }
 .media-text-button { border:0; background:none; padding:0; color:var(--blue); display:inline-flex; align-items:center; gap:7px; font-size:var(--type-label-size); cursor:pointer; }
-.media-expand-backdrop { position:absolute; top:20px; right:0; background:#152333a0; color:var(--bright); }
+.media-expand-backdrop { position:absolute; top:20px; right:0; border:0; background:transparent; color:#d4e0ea99; transition:background-color .18s ease,color .18s ease; }
+.media-expand-backdrop .ui-icon { width:15px; height:15px; filter:drop-shadow(0 1px 2px #0008); }
+.media-expand-backdrop:hover,.media-detail .media-expand-backdrop:focus-visible { outline:none; background:#15233380; color:var(--bright); }
+@media (prefers-reduced-motion:reduce) { .media-expand-backdrop { transition:none; } }
 .media-detail-layout { display:grid; grid-template-columns:200px minmax(0,1fr); gap:48px; padding-block:28px 60px; }
 .media-information { min-width:0; font-size:var(--type-label-size); }
 .media-information h2 { font-size:var(--type-label-size); }
