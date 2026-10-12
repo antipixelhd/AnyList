@@ -18,17 +18,31 @@ function gallery(reduced=false) {
     fire(name){this.listeners.get(name)?.();}
     scrollTo(options){this.scrolled=options;this.scrollLeft=options.left;}
   }
-  const controller=new AbortController(),selected=[],frames=[];
+  const controller=new AbortController(),selected=[],prepared=[],frames=[];
   let observer;
   const context={document:{createElement:tag=>new Element(tag)},matchMedia:()=>({matches:reduced}),
     requestAnimationFrame:callback=>(frames.push(callback),frames.length),cancelAnimationFrame:()=>{},
     ResizeObserver:class {constructor(callback){observer=this;this.callback=callback;} observe(){} disconnect(){this.disconnected=true;}},reconcileGalleryChildren};
   const source=readFileSync(new URL('../src/lib/detail-image-carousel.ts',import.meta.url),'utf8');
   runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.create=createDetailImageCarousel;',context);
-  const track=new Element(),render=context.create(track,controller.signal,index=>selected.push(index));
+  const track=new Element(),render=context.create(track,controller.signal,index=>selected.push(index),index=>prepared.push(index));
   const paint=(rows,index=0,scroll=true,animate=false,total=rows.length)=>render(rows,url=>url,total,index,'Artwork',scroll,animate);
-  return {track,paint,selected,controller,resize:()=>observer.callback(),observer:()=>observer,flush:()=>frames.splice(0).forEach(callback=>callback())};
+  return {track,paint,selected,prepared,controller,resize:()=>observer.callback(),observer:()=>observer,flush:()=>frames.splice(0).forEach(callback=>callback())};
 }
+
+test('swipes prepare the exposed slide before selection without touching unseen neighbors',()=>{
+  const g=gallery();g.paint(['one','two','three']);
+  assert.deepEqual(g.prepared,[]);
+  g.track.scrollLeft=40;g.track.fire('scroll');g.flush();
+  assert.deepEqual(g.selected,[]);assert.deepEqual(g.prepared,[0,1]);
+  assert.equal(g.track.children[2].querySelector('img').src,undefined);
+});
+
+test('preview jumps do not prepare intermediate slides during smooth navigation',()=>{
+  const g=gallery();g.paint(['one','two','three'],2,true,true);
+  g.track.scrollLeft=40;g.track.fire('scroll');g.flush();
+  assert.deepEqual(g.prepared,[]);
+});
 
 test('metadata refreshes retain loaded slides and pending slots resolve without replacing cached images',()=>{
   const g=gallery();
