@@ -5,6 +5,7 @@ import {detailBackground,type DetailLoadState} from './detail-background';
 import {responsiveArtwork} from './responsive-artwork';
 import {reconcileGalleryChildren,createGalleryThumbnailWatcher} from './detail-gallery-dom';
 import {createDetailImageCarousel} from './detail-image-carousel';
+import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=(url:string)=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
@@ -21,6 +22,7 @@ export function uniqueDetailImages(values:unknown[]):string[] {
 export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) {
   const lightbox=root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
+  const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
   const name=root.querySelector('.lab-heading h1')!.textContent!;
   const galleries:Galleries={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[])};
   let pending=!!info.imagesAvailable&&info.imageStatus?.state!=='ready';
@@ -253,6 +255,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const url=button.dataset.detailImage!;
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
+    prepareViewer();
     showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].indexOf(url)));void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
