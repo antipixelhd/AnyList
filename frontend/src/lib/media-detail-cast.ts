@@ -2,7 +2,7 @@ import { createContentTransition } from './content-motion';
 import { detailCastPresentation, detailCredits, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
-import { detailPeopleLoading } from './detail-people-loading';
+import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
 import {createProgressiveCredits} from './progressive-credits';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
@@ -23,6 +23,18 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     node.replaceChildren(document.createTextNode(error));
     if(error){const button=document.createElement('button');button.type='button';button.className='lab-text-button';button.textContent='Retry';button.dataset.detailPeopleRetry='';node.append(' ',button);}
   });
+  const warmed=new Set<string>();
+  const warm=()=>{
+    if(mode!=='actors'||signal.aborted)return;
+    root.querySelectorAll<HTMLElement>('[data-credit-preview] [data-cast-person]').forEach(card=>{
+      const person=JSON.parse(card.dataset.castPerson!) as DetailPerson;
+      const art=responsiveArtwork(person.character_image,{size:'w185',sizes:'57px',route:'auto'});
+      if(!art||warmed.has(art.src))return;
+      warmed.add(art.src);
+      const image=new Image();image.fetchPriority='low';image.onerror=()=>warmed.delete(art.src);
+      if(art.srcset)image.srcset=art.srcset;if(art.sizes)image.sizes=art.sizes;image.src=art.src;
+    });
+  };
 
   function artwork(card: HTMLElement, urls: string[], waiting=false, character=false) {
     const holder=card.querySelector<HTMLElement>('.media-person-art')!;
@@ -126,7 +138,8 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   };
   const background=detailPeopleLoading(info.id,signal,update,(state,message)=>{
     error=state==='retry'?message||'People data is temporarily unavailable. Retrying automatically.':'';status();
-  },()=>mode==='characters');
+  },{selected:()=>mode==='characters',needed:()=>metadataPending,
+    primaryReady:()=>waitForDetailPortraits([...root.querySelectorAll<HTMLImageElement>('[data-credit-preview] img')],signal),warm});
   if(info.backgroundAvailable)background.start(!root.querySelector('[data-credit-preview] [data-person-id]'));
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-cast-mode]');
