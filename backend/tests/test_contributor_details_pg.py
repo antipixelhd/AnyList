@@ -12,6 +12,28 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_account_vote_floor_filters_works_and_preserves_cached_credits(self):
+        from models import UserProfileData
+        self.vote_floor.stop()
+        await self.login()
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.minimum_votes = 250
+            for i, votes in enumerate((249, 250, 500)):
+                work = CatalogueEntity(kind='movie', name=f'Votes {votes}', attributes={'vote_count': votes, 'release_date': f'202{i}-01-01'})
+                db.add(work); await db.flush()
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=self.person_id, provider='tmdb', source_key=f'votes-{votes}', role='actor'))
+            await db.commit()
+            count = await db.scalar(select(func.count()).select_from(CatalogueCredit))
+        data = (await self.request()).json()
+        self.assertEqual([row['title'] for row in data['works']], ['Votes 500', 'Votes 250'])
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.minimum_votes = 0
+            await db.commit()
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit)), count)
+        self.assertEqual((await self.request()).json()['total'], 4)
+
     async def test_verified_person_backfill_unifies_old_urls_credits_and_role_artwork(self):
         from core.person_identity_backfill import backfill_person_identities
         from core.media_details import work_details
@@ -86,6 +108,9 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
+        self.vote_floor = patch('core.contributor_details.minimum_votes', AsyncMock(return_value=0))
+        self.vote_floor.start()
+        self.addCleanup(self.vote_floor.stop)
         self.keys = patch('core.contributor_details.settings_store.get_user_tmdb_key', AsyncMock(return_value=None))
         self.key_mock = self.keys.start()
         self.addCleanup(self.keys.stop)

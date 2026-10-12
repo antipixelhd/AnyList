@@ -19,8 +19,8 @@ export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSigna
   const year = form.querySelector<HTMLElement>("[data-year-range]")!;
   const lower = year.querySelector<HTMLInputElement>("[data-range-lower]")!;
   const upper = year.querySelector<HTMLInputElement>("[data-range-upper]")!;
-  const votes = form.elements.namedItem("min_votes") as HTMLInputElement;
-  const voteRange = votes.closest<HTMLElement>("[data-vote-range]")!;
+  const score = form.elements.namedItem("min_score") as HTMLInputElement;
+  const scoreRange = score.closest<HTMLElement>("[data-score-range]")!;
   const min = Number(lower.min), max = Number(upper.max);
   const paint = () => {
     const bounds = releaseYearBounds(start.value, end.value, min, max);
@@ -33,8 +33,8 @@ export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSigna
     year.style.setProperty("--range-end", `${(bounds.upper - min) / (max - min) * 100}%`);
     year.querySelector("output")!.textContent = start.value || end.value
       ? `${bounds.lower} – ${bounds.upper}` : "Any year";
-    voteRange.style.setProperty("--range-end", `${Number(votes.value) / Number(votes.max) * 100}%`);
-    voteRange.querySelector("output")!.textContent = Number(votes.value).toLocaleString();
+    scoreRange.style.setProperty("--range-end", `${Number(score.value) / Number(score.max) * 100}%`);
+    scoreRange.querySelector("output")!.textContent = Number(score.value).toLocaleString();
   };
   for (const input of [lower, upper]) {
     input.addEventListener("input", () => {
@@ -46,7 +46,7 @@ export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSigna
     }, { signal });
     input.addEventListener("change", () => start.dispatchEvent(new Event("change", { bubbles: true })), { signal });
   }
-  votes.addEventListener("input", paint, { signal });
+  score.addEventListener("input", paint, { signal });
   paint();
   return paint;
 }

@@ -8,6 +8,16 @@ from sqlalchemy import Float, func
 DEFAULT_MIN_VOTES = 250
 
 
+async def minimum_votes(db, viewer):
+    """One preference read per request; provider caches remain user-independent."""
+    from sqlalchemy import select
+    from models.profile import UserProfileData
+    if viewer is None:
+        return DEFAULT_MIN_VOTES
+    value = await db.scalar(select(UserProfileData.minimum_votes).where(UserProfileData.user_id == viewer.id))
+    return DEFAULT_MIN_VOTES if value is None else value
+
+
 def title_vote_count(item: dict) -> int:
     """Prefer IMDb votes when available, otherwise use the TMDB count."""
     votes = item.get("imdb_votes")

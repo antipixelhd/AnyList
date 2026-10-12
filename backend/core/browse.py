@@ -95,7 +95,7 @@ def section_specs(today=None):
 
 async def browse_sections(
     db, viewer, *, media_type, region, show_anime, key, mdblist_key=None,
-    min_votes=DEFAULT_MIN_VOTES,
+    min_votes=DEFAULT_MIN_VOTES, min_score=0,
 ):
     specs = section_specs()
     filters = [
@@ -108,6 +108,7 @@ async def browse_sections(
                 provider=None,
                 region=region,
                 min_votes=min_votes,
+                min_score=min_score,
             ),
             **values,
         }
@@ -152,7 +153,7 @@ async def browse_sections(
             **full_filters,
         )
         sections.append(
-            {"title": title, "filters": {**values, "min_votes": str(min_votes)}, "results": page["results"][:6]}
+            {"title": title, "filters": {**values, "min_score": f'{min_score:g}'}, "results": page["results"][:6]}
         )
         if page.get("notice"):
             notices.append(page["notice"])
@@ -177,10 +178,11 @@ def metadata_fields(data):
 
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
-    min_votes=0, cinema=False, cinema_country=None,
+    min_votes=0, min_score=0, cinema=False, cinema_country=None,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_count.gte"] = min_votes
+    params["vote_average.gte"] = min_score
     if media_type == "series":
         params["sort_by"] = (
             params["sort_by"]
@@ -228,7 +230,7 @@ def local_query(
     sort,
     show_anime,
     mdblist_key=None,
-    min_votes=0, cinema=False, cinema_country=None,
+    min_votes=0, min_score=0, cinema=False, cinema_country=None,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
@@ -348,6 +350,8 @@ def local_query(
         popular=votes.desc().nulls_last(),
         trending=rank.asc().nulls_last(),
     )
+    if min_score:
+        query = query.where(func.coalesce(data["vote_average"].astext.cast(Float), Media.tmdb_rating, 0) >= min_score)
     if min_votes:
         query = query.where(stored_vote_count(data, imdb_votes=votes) >= min_votes)
     if not term:
@@ -360,10 +364,12 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, cinema=False, cinema_country=None):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, min_score=0, cinema=False, cinema_country=None):
     if item.get("adult"):
         return False
     if cinema and media_type=='movie' and not has_cinema_release(item,cinema_country):
+        return False
+    if float(item.get("vote_average") or 0) < min_score:
         return False
     if title_vote_count(item) < min_votes:
         return False

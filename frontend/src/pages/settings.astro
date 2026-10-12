@@ -1,6 +1,5 @@
 ---
 import AccountNameSettings from "../components/settings/AccountNameSettings.astro";
-import AccountCountrySettings from "../components/settings/AccountCountrySettings.astro";
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import Icon from "../components/Icon.astro";
 import { api } from "../lib/api";
@@ -8,7 +7,6 @@ import type { TotpBackupCode } from "../lib/api";
 
 const { token } = Astro.locals;
 const me = await api.auth.me(token!);
-const [profile,countries] = await Promise.all([api.profile.get(token!),api.profile.countries(token!)]);
 const security = await api.auth.accountSecurity(token!);
 let backupCodes: TotpBackupCode[] = [];
 if (me.totp_enabled) {
@@ -32,7 +30,6 @@ if (me.totp_enabled) {
 
     <div class="settings-stack">
       <AccountNameSettings username={me.username} />
-      <AccountCountrySettings country={profile.country} countries={countries} />
 
       <!-- Security -->
       <section id="2fa-section">

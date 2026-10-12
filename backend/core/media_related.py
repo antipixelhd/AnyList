@@ -10,6 +10,7 @@ from sqlalchemy import func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core.catalogue_normalize import image
+from core.catalog_search import title_vote_count
 from models import Media
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueRelationship
 
@@ -68,12 +69,14 @@ async def catalogue_related(db, work):
         .where(CatalogueLegacyLink.entity_id.in_(targets)))).all()) if targets else {}
     identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id.in_(targets)))) if targets else []
     native = {(row.entity_id, row.namespace): row.external_id for row in identities}
+    vote_counts = {}
     for kind in ('movie', 'series'):
         by_native = {int(value):entity_id for (entity_id, namespace), value in native.items() if namespace == 'tmdb.' + kind and value.isdecimal()}
         if by_native:
             from models.base import MediaType
             for media in await db.scalars(select(Media).where(Media.media_type == MediaType(kind), Media.tmdb_id.in_(by_native))):
                 links[by_native[media.tmdb_id]] = media.id
+                vote_counts[by_native[media.tmdb_id]] = title_vote_count(media.tmdb_data or {})
 
     def card(target):
         if target.kind not in ('movie', 'series', 'game', 'book') or target.id == work.id or (target.attributes or {}).get('adult'):
@@ -93,7 +96,8 @@ async def catalogue_related(db, work):
             return None
         return {'id':target.id, 'title':target.name, 'type':target.kind, 'poster':image(target.image_url),
             'year':str((target.attributes or {}).get('release_date') or '')[:4],
-            'genres':genre_names((target.attributes or {}).get('genres')), 'url':url}
+            'genres':genre_names((target.attributes or {}).get('genres')), 'url':url,
+            'vote_count':vote_counts.get(target.id, title_vote_count(target.attributes or {}))}
 
     relations, similar, seen = [], [], set()
     for edge in edges:
@@ -129,7 +133,7 @@ def related_pending(media):
         ('recommendations' not in data and 'recommendations' not in cache)))
 
 
-async def screen_related(db, media, details):
+async def screen_related(db, media, details, *, min_votes=0):
     data = media.tmdb_data or {}
     cache = data.get('_anylist_related') or {}
     kind = media.media_type.value
@@ -150,6 +154,7 @@ async def screen_related(db, media, details):
             'poster':tmdb_image(raw.get('poster_path')), 'year':str(raw.get('release_date') or raw.get('first_air_date') or '')[:4],
             'genres':genre_names(raw.get('genres'), raw.get('genre_ids')) or genre_names(
                 (local_rows[native].tmdb_data or {}).get('genres') if native in local_rows else None),
+            'vote_count':title_vote_count({**(local_rows[native].tmdb_data or {} if native in local_rows else {}), **raw}),
             'url':f'/title/{locals_[native]}' if native in locals_ else f'/discover-title?type={kind}&id={native}'}
 
     relations = list(details.get('relations') or [])
@@ -161,7 +166,8 @@ async def screen_related(db, media, details):
                 relations.append(row)
     relations = unique(relations)
     excluded = {(row['type'], row['url']) for row in relations}
-    similar = unique([row for raw in recommendations if isinstance(raw, dict) and (row := card(raw))] + list(details.get('similar') or []), excluded)[:12]
+    candidates = [row for raw in recommendations if isinstance(raw, dict) and (row := card(raw))] + list(details.get('similar') or [])
+    similar = unique([row for row in candidates if title_vote_count(row) >= min_votes], excluded)[:12]
     retry = 0
     try:
         retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)

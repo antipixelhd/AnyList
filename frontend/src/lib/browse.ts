@@ -107,7 +107,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       "status",
       "provider",
       "region",
-      "min_votes",
+      "min_score",
     ]) {
       const value = field(name).value.trim();
       if (value) values.set(name, value);
@@ -119,7 +119,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     return values;
   };
   const requestPath = (values: URLSearchParams) => isCategoryView(values)
-    ? `browse/sections?${new URLSearchParams({media_type: values.get('media_type')!, region: values.get('region')!, min_votes: values.get('min_votes')!})}`
+    ? `browse/sections?${new URLSearchParams({media_type: values.get('media_type')!, region: values.get('region')!, min_score: values.get('min_score')!})}`
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
   initialValues.set('page', '1');
@@ -132,7 +132,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if (field("type").value === "series") values.set("type", "series");
     if (values.get("region") === "US") values.delete("region");
     if (values.get("sort") === "all") values.delete("sort");
-    if (values.get("min_votes") === "250") values.delete("min_votes");
+    if (values.get("min_score") === "0") values.delete("min_score");
     history.replaceState(
       history.state,
       "",
@@ -314,18 +314,18 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           if (input) input.checked = false;
           syncGenres();
         });
-    for (const name of ["start", "end", "status", "provider", "min_votes"])
-      if (field(name).value && (name !== "min_votes" || field(name).value !== "250")) {
+    for (const name of ["start", "end", "status", "provider", "min_score"])
+      if (field(name).value && (name !== "min_score" || field(name).value !== "0")) {
         const label =
           name === "start"
             ? `After ${field(name).value}`
             : name === "end"
               ? `Before ${field(name).value}`
-              : name === "min_votes" ? `${Number(field(name).value).toLocaleString()}+ votes`
+              : name === "min_score" ? `${Number(field(name).value).toLocaleString()}+ TMDB score`
               : (field(name) as HTMLSelectElement).selectedOptions[0]
                   ?.textContent || field(name).value;
         add(label, () => {
-          field(name).value = name === "min_votes" ? "250" : "";
+          field(name).value = name === "min_score" ? "0" : "";
           field(name).dispatchEvent(new Event("input", { bubbles: true }));
         });
       }
@@ -511,7 +511,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       field(name).dispatchEvent(new Event("input", { bubbles: true })),
     );
     sort.value = "all";
-    field("min_votes").value = "250";
+    field("min_score").value = "0";
     syncGenres();
     changed();
   }
@@ -597,7 +597,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         syncGenres();
       } else if (
-        !["status", "provider", "region", "start", "end", "min_votes", "cinema"].includes(target.name)
+        !["status", "provider", "region", "start", "end", "min_score", "cinema"].includes(target.name)
       )
         return;
       if (target.name === "region") void loadFacets();

@@ -21,6 +21,7 @@ class UserProfileData(Base):
     bio                 : Mapped[Optional[str]]        = mapped_column(String(5000))
     background_url      : Mapped[Optional[str]]        = mapped_column(String(2048))
     country             : Mapped[Optional[str]]        = mapped_column(String(2))
+    minimum_votes       : Mapped[int]                  = mapped_column(Integer, default=250, server_default="250", nullable=False)
     movie_genres        : Mapped[Optional[list[str]]]  = mapped_column(JSONB)
     show_genres         : Mapped[Optional[list[str]]]  = mapped_column(JSONB)
     disliked_genres     : Mapped[Optional[list[str]]]  = mapped_column(JSONB)

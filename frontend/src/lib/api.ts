@@ -281,6 +281,7 @@ export interface PersonalDataSelection {
 }
 
 export interface UserPreferences {
+  minimum_votes?: number;
   background_url?: string | null;
   profile_color: string;
   apply_site_wide: boolean;

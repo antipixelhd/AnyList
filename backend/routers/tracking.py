@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import DEFAULT_MIN_VOTES, fuzzy_remote_terms, is_close_title_match, stored_vote_count, title_vote_count
+from core.catalog_search import minimum_votes, fuzzy_remote_terms, is_close_title_match, stored_vote_count, title_vote_count
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1232,7 +1232,7 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
-async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), min_votes: Annotated[int, Query(ge=0, le=1000000)] = DEFAULT_MIN_VOTES, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
@@ -1242,7 +1242,7 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
     )
     try:
         return await sections(db, viewer, media_type=media_type, region=region,
-                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, min_votes=min_votes)
+                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, min_votes=await minimum_votes(db, viewer), min_score=min_score)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
@@ -1253,7 +1253,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'finished', 'cancelled', 'upcoming', 'released'] = '',
                  provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
                  sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
-                 min_votes: Annotated[int, Query(ge=0, le=1000000)] = DEFAULT_MIN_VOTES,
+                 min_score: Annotated[float, Query(ge=0, le=10)] = 0,
                  cinema: Annotated[bool, Query()] = False,
                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
@@ -1273,7 +1273,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, min_votes=min_votes, cinema=cinema and media_type=='movie',
+            status=status, provider=provider, region=region, sort=sort, min_votes=await minimum_votes(db, viewer), min_score=min_score, cinema=cinema and media_type=='movie',
             cinema_country=await account_cinema_country(db,viewer) if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
@@ -1283,8 +1283,9 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)
     show_anime=await anime_is_visible(db)
+    min_votes = await minimum_votes(db, viewer)
     term = q.strip()[:200]
-    query = select(Media).where(Media.media_type == MediaType(media_type), stored_vote_count(Media.tmdb_data) >= DEFAULT_MIN_VOTES)
+    query = select(Media).where(Media.media_type == MediaType(media_type), stored_vote_count(Media.tmdb_data) >= min_votes)
     if term:
         similarity = func.similarity(Media.title, term)
         query = query.where(or_(Media.title.ilike(f"%{term}%"), similarity >= 0.2)).order_by(similarity.desc(), Media.title)
@@ -1321,7 +1322,7 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 for item in remote_results:
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
-                    if item['id'] in known or item.get('adult') or title_vote_count(item) < DEFAULT_MIN_VOTES or (not show_anime and tracking_projection.is_anime(candidate)):
+                    if item['id'] in known or item.get('adult') or title_vote_count(item) < min_votes or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
                         'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
@@ -1419,7 +1420,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     details = await work_details(db, await screen_work(db, media))
     details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
     from core.media_related import screen_related
-    details = await screen_related(db, media, details)
+    details = await screen_related(db, media, details, min_votes=await minimum_votes(db, viewer))
     from core.media_images import screen_images
     details.update(screen_images(media, details))
     from core.screen_character_art import cached_character_status
@@ -1444,7 +1445,7 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
     from core.media_related import catalogue_related, fill_screen_related, screen_related
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     await fill_screen_related(db, media, key)
-    data = await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)))
+    data = await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)), min_votes=await minimum_votes(db, viewer))
     if not key:
         data['related_status'] = {'state':'unavailable','retry_after':0,'error':'missing_key'}
     return data

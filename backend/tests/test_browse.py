@@ -37,6 +37,21 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_tmdb_score_does_not_use_imdb_score(self):
+        predicate = {k: v for k, v in FILTERS.items() if k != 'sort'}
+        self.assertFalse(matches({'vote_average': 7.4, 'imdb_score': 9}, media_type='movie', min_score=7.5, **predicate))
+        self.assertTrue(matches({'vote_average': 7.5, 'imdb_score': 1}, media_type='movie', min_score=7.5, **predicate))
+        self.assertEqual(remote_params('movie', page=1, **{**FILTERS, 'sort': 'newest', 'min_score': 7.5})['vote_average.gte'], 7.5)
+
+    def test_account_vote_floor_validation(self):
+        from schemas import UserProfileUpdate
+        from pydantic import ValidationError
+        for value in (0, 250, 1000000):
+            self.assertEqual(UserProfileUpdate(minimum_votes=value).model_dump(exclude_unset=True), {'minimum_votes': value})
+        for value in (-1, 1000001, None, 2.5):
+            with self.assertRaises(ValidationError):
+                UserProfileUpdate(minimum_votes=value)
+
     def test_country_cinema_evidence_cannot_fall_back_to_other_countries(self):
         from core.cinema_releases import has_cinema_release
         # The Runner: digital in Germany/US, theatrical in other territories.
@@ -328,15 +343,18 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_browse_and_sections_share_default_custom_zero_and_validation(self):
+    async def test_browse_score_is_separate_from_account_vote_floor(self):
         for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
             with patch(target, AsyncMock(return_value={"results": []})) as browse:
-                for params, expected in [({}, 250), ({"min_votes": 500}, 500), ({"min_votes": 0}, 0)]:
-                    response = await self.client.get(f"/tracking/{endpoint}", params=params)
-                    self.assertEqual(response.status_code, 200, response.text)
-                    self.assertEqual(browse.await_args.kwargs["min_votes"], expected)
-                for value in [-1, 1000001, "invalid"]:
-                    response = await self.client.get(f"/tracking/{endpoint}", params={"min_votes": value})
+                for floor in [0, 250, 500]:
+                    with patch("routers.tracking.minimum_votes", AsyncMock(return_value=floor)):
+                        for score in [0, 7.5, 10]:
+                            response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": score, "min_votes": 0})
+                            self.assertEqual(response.status_code, 200, response.text)
+                            self.assertEqual(browse.await_args.kwargs["min_votes"], floor)
+                            self.assertEqual(browse.await_args.kwargs["min_score"], score)
+                for value in [-1, 10.1, "invalid"]:
+                    response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": value})
                     self.assertEqual(response.status_code, 422)
 
     async def test_quick_search_filters_remote_and_local_queries_on_backend_only(self):
@@ -357,6 +375,18 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database"
 )
 class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_saved_vote_floor_applies_to_browse_and_catalog_with_tmdb_only_score(self):
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        await update_profile(UserProfileUpdate(minimum_votes=1000), current_user=self.owner, db=self.db)
+        for endpoint in ('browse', 'catalog'):
+            response = await self.client.get(f'/tracking/{endpoint}')
+            self.assertEqual([row['id'] for row in response.json()['results']], [self.movies[0].id])
+        await update_profile(UserProfileUpdate(minimum_votes=0), current_user=self.owner, db=self.db)
+        response = await self.client.get('/tracking/browse', params={'min_score': 8.99})
+        self.assertEqual({row['id'] for row in response.json()['results']}, {self.movies[0].id, self.movies[1].id})
+        self.assertGreater(self.movies[0].tmdb_rating, self.movies[0].imdb_rating)
+
     async def asyncSetUp(self):
         self.engine = create_async_engine(os.environ["TRACKING_TEST_DATABASE_URL"])
         self.connection = await self.engine.connect()
@@ -515,7 +545,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         sections = response.json()["sections"]
         self.assertEqual(len(sections), 4)
-        self.assertEqual(sections[0]["filters"], {"sort": "trending", "min_votes": "250"})
+        self.assertEqual(sections[0]["filters"], {"sort": "trending", "min_score": "0"})
         for section in sections:
             full = (
                 await self.client.get("/tracking/browse", params=section["filters"])

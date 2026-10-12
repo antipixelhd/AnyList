@@ -445,6 +445,7 @@ class UserProfileUpdate(BaseModel):
         return value
 
     bio: Optional[str] = Field(default=None, max_length=5000)
+    minimum_votes: int = Field(default=250, ge=0, le=1000000)
     country: Optional[str] = None
     @field_validator('country')
     @classmethod
@@ -468,6 +469,7 @@ class UserProfileUpdate(BaseModel):
         return value.lower()
 
 class UserProfileResponse(BaseModel):
+    minimum_votes: int = 250
     background_url: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None

@@ -4,10 +4,10 @@ import {timelineGroups,releaseGroup} from '../src/lib/browse-timeline-data.ts';
 import {browseLayout,browseRequestParams,isCategoryView} from '../src/lib/browse-view.ts';
 
 test('timeline requests retain every filter and use date ordering without mutating the grid sort',()=>{
-  const values=new URLSearchParams('view=timeline&media_type=series&sort=score&genres=18&provider=8&region=DE&min_votes=0&q=story&page=3&source=remote');
+  const values=new URLSearchParams('view=timeline&media_type=series&sort=score&genres=18&provider=8&region=DE&min_score=0&q=story&page=3&source=remote');
   const request=browseRequestParams(values,'2026-10-11');
   assert.equal(isCategoryView(values),false);assert.equal(request.get('sort'),'newest');assert.equal(request.get('end'),'2026-10-11');
-  for(const key of ['media_type','genres','provider','region','min_votes','q','page','source'])assert.equal(request.get(key),values.get(key));
+  for(const key of ['media_type','genres','provider','region','min_score','q','page','source'])assert.equal(request.get(key),values.get(key));
   assert.equal(request.has('view'),false);assert.equal(values.get('sort'),'score');
   assert.equal(browseLayout(new URLSearchParams('sort=newest')),'timeline');
   for(const query of ['view=timeline&status=upcoming','view=timeline&start=2027-01-01'])assert.equal(browseRequestParams(new URLSearchParams(query),'2026-10-11').has('end'),false);

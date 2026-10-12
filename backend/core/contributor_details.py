@@ -11,6 +11,7 @@ from sqlalchemy import or_, select
 from core import settings_store, tmdb, tracking_projection
 from core.browse import GENRES, anime_visible
 from core.countries import country_codes
+from core.catalog_search import minimum_votes, title_vote_count
 from core.statistics_genres import poster
 from core.statistics_staff import ACTING, role_label, role_order
 from core.credit_roles import work_credit
@@ -58,6 +59,7 @@ def merge_works(rows):
             aliases[external] = key
         for field in ("roles", "characters"):
             item[field] = sorted(set(item[field]) | set(row.get(field) or []), key=lambda label: (role_order(label), label))
+        item["_metadata"] = {**(row.get("_metadata") or {}), **(item.get("_metadata") or {})}
         for field in ("id", "poster", "backdrop", "release_date", "year"):
             if not item.get(field) and row.get(field):
                 item[field] = row[field]
@@ -154,7 +156,7 @@ async def known_works(db, entity, native, kind, viewer):
     return merge_works(rows)
 
 
-async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope):
+async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope, min_votes=0):
     positions = [0, 1, 0, 1, 0]
     if cursor:
         parsed = json.loads(cursor)
@@ -190,12 +192,13 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
                         break
                     requests += 1
                     response = await (tmdb.discover_movies if media == "movie" else tmdb.discover_shows)(
-                        page=provider_page, with_companies=native, vote_count_min=0,
+                        page=provider_page, with_companies=native, vote_count_min=min_votes,
                         sort_by="primary_release_date.desc" if media == "movie" else "first_air_date.desc", api_key=provider_key)
                     raw_rows = response.get("results") or []
                     candidates = [remote_work(r, media) for r in raw_rows]
                     await attach_editor_context(db, viewer, [r for r in candidates if r])
                     candidates = [r if r and (r["type"], r["tmdb_id"]) not in known_external
+                                  and title_vote_count(r["_metadata"]) >= min_votes
                                   and anime_visible(r["_metadata"], show_anime)
                                   and (list_scope != "out" or not r.get("list_status")) else None for r in candidates]
                     buffers[buffer_key] = (candidates, provider_page < min(response.get("total_pages") or 1, 500))
@@ -299,7 +302,9 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     show_anime = True if settings is None else settings.show_anime
     local = [r for r in local if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
     remote = [r for r in remote if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
-    all_known = merge_works(local + (remote if kind != "studio" else []))
+    min_votes = await minimum_votes(db, viewer)
+    all_known = [r for r in merge_works(local + (remote if kind != "studio" else []))
+                 if title_vote_count(r.get("_metadata") or {}) >= min_votes]
     for row in all_known + remote:
         row.update(entry=None, list_status=None, score=None, rating_mode="manual")
     await attach_editor_context(db, viewer, all_known)
@@ -320,7 +325,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             async with asyncio.timeout(12):
                 works, has_more, next_cursor = await studio_timeline(db, viewer, all_known, native, provider_key,
                     media_type=media_type, list_scope=list_scope, show_anime=show_anime, cursor=cursor,
-                    scope=f"{key}:{media_type}:{list_scope}")
+                    scope=f"{key}:{media_type}:{list_scope}:{min_votes}", min_votes=min_votes)
             result_source = "provider"
             total = None  # Local and provider pages overlap; never invent a combined total.
         except (ValueError, json.JSONDecodeError):
