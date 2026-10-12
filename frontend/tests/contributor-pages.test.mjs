@@ -4,9 +4,10 @@ import { contributorParams, contributorYear, workHref } from '../src/lib/contrib
 
 test('contributor filters whitelist scopes and never send viewer IDs', () => {
   const input = new URLSearchParams('media_type=series&list_scope=in&status=completed&page=2&view=grid&user_id=99&cursor=abc&source=provider');
-  assert.equal(contributorParams(input,true).toString(),'media_type=series&list_scope=in&status=completed&page=2&cursor=abc&source=provider');
+  assert.equal(contributorParams(input,true).toString(),'media_type=series&list_scope=in&page=2&cursor=abc&source=provider');
   assert.equal(contributorParams(input,false).toString(),'media_type=series&page=2&cursor=abc&source=provider');
   assert.equal(contributorParams(new URLSearchParams('media_type=person&list_scope=x&status=x&page=-2&source=x'),true).toString(),'');
+  assert.equal(contributorParams(new URLSearchParams('list_scope=out&status=completed'),true).toString(),'');
 });
 test('timeline groups dates and preserves internal, discover and provider destinations', () => {
   assert.equal(contributorYear({release_date:'2026-06-01',year:'2020'}),'2026');

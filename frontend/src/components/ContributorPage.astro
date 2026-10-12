@@ -4,7 +4,7 @@ import Icon from './Icon.astro';
 import ImageLightbox from './ImageLightbox.astro';
 import BrowseCard from './BrowseCard.astro';
 import LocalDateTime from './LocalDateTime.astro';
-import { tracker, artwork, statuses } from '../lib/tracker';
+import { tracker, artwork } from '../lib/tracker';
 import { metadataKey } from '../lib/catalogue-key';
 import { personAge, personDate } from '../lib/person-page-data';
 import { countryLabel } from '../lib/stats-overview-data';
@@ -72,11 +72,8 @@ if (data) {
           </header>
           <form method="get" class="contributor-filters" data-contributor-filters>
             <input type="hidden" name="view" value={view} />
-            {signedIn && <>
-              <label class="contributor-status"><span>Status</span><select name="status"><option value="" selected={!params.has('status')}>Any status</option>{statuses.map(([id,label]) => <option value={id} selected={params.get('status') === id}>{label}</option>)}</select></label>
-              <fieldset class="contributor-filter-switch"><legend>List</legend><div>{[['all','All','All titles'],['in','In','In my list'],['out','Out','Not in my list']].map(([value,label,description])=><label title={description}><input type="radio" name="list_scope" value={value} checked={(params.get('list_scope')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
-            </>}
             <fieldset class="contributor-filter-switch"><legend>Media</legend><div>{[['all','All','All media'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(params.get('media_type')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
+            {signedIn && <label class="contributor-list-toggle"><input class="sr-only" type="checkbox" role="switch" name="list_scope" value="in" checked={params.get('list_scope')==='in'} aria-label="Only titles in my list"/><span><Icon name="list"/><span>In my list</span><span class="contributor-toggle-track" aria-hidden="true"><span></span></span></span></label>}
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>

@@ -74,10 +74,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     }, {signal});
   });
   const showError = (message: string) => { error.textContent = message; error.hidden = false; error.setAttribute('data-motion-fade',''); reveal(error); };
-  const visible = (item: ContributorWork) =>
-    (params.get('list_scope') !== 'in' || !!item.list_status) &&
-    (params.get('list_scope') !== 'out' || !item.list_status) &&
-    (!params.get('status') || params.get('status') === item.list_status);
+  const visible = (item: ContributorWork) => params.get('list_scope') !== 'in' || !!item.list_status;
   const updateEmpty = () => {
     region.querySelectorAll<HTMLElement>('[data-contributor-year]').forEach(group => {
       group.hidden = ![...group.querySelectorAll<HTMLElement>('[data-browse-card]')].some(card => !card.hidden);

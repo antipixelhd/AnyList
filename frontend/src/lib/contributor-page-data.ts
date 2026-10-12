@@ -17,9 +17,7 @@ export function contributorParams(search: URLSearchParams, signedIn: boolean) {
   const type = search.get('media_type');
   if (type === 'movie' || type === 'series') params.set('media_type', type);
   const list = search.get('list_scope');
-  if (signedIn && (list === 'in' || list === 'out')) params.set('list_scope', list);
-  const status = search.get('status');
-  if (signedIn && ['watching','completed','planning','paused','dropped'].includes(status || '')) params.set('status', status!);
+  if (signedIn && list === 'in') params.set('list_scope', list);
   const page = Number(search.get('page'));
   if (Number.isInteger(page) && page > 1 && page <= 500) params.set('page', String(page));
   if (search.get('cursor')) params.set('cursor', search.get('cursor')!.slice(0,400));
