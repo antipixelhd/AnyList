@@ -448,7 +448,14 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_data = {'belongs_to_collection':{'id':10}, 'protected_fixture':'keep'}
             await db.commit()
         collection = {'id':10,'name':'Fixture collection','parts':[{'id':99,'title':'Current','release_date':'2020-01-01'}, {'id':55,'title':'Earlier','release_date':'2010-01-01'}]}
-        recommendations = {'results':[{'id':55,'title':'Earlier'}, {'id':78,'title':'Low vote movie','vote_count':249}, {'id':77,'title':'Another movie','vote_count':250,'poster_path':'/cover.jpg','genre_ids':[878,28,999999]}, {'id':66,'name':'A series','media_type':'tv'}, {'id':99,'title':'Current'}, {'id':88,'title':'Adult','adult':True}]}
+        recommendations = {'results':[{'id':55,'title':'Earlier'}, {'id':79,'title':'Short movie','vote_count':500,'runtime':2},
+            {'id':80,'title':'Documentary','vote_count':500,'genre_ids':[99]}, {'id':78,'title':'Low vote movie','vote_count':249},
+            {'id':77,'title':'Another movie','vote_count':250,'runtime':30,'poster_path':'/cover.jpg','genre_ids':[878,28,999999]},
+            {'id':66,'name':'A series','media_type':'tv'}, {'id':99,'title':'Current'}, {'id':88,'title':'Adult','adult':True}]}
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.excluded_categories = [99]
+            await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-only')),
                 patch('core.tmdb.get_collection',new=AsyncMock(return_value=collection)) as fetch_collection,
                 patch('core.tmdb.get_movie_recommendations',new=AsyncMock(return_value=recommendations)) as fetch_recommendations):
@@ -464,9 +471,11 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
                 profile.minimum_votes = 0
+                profile.minimum_movie_runtime = 0
+                profile.excluded_categories = []
                 await db.commit()
             unfiltered = (await self.client.get(f'/tracking/title/{self.media_id}/related')).json()
-            self.assertEqual([row['title'] for row in unfiltered['similar']], ['Low vote movie', 'Another movie'])
+            self.assertEqual([row['title'] for row in unfiltered['similar']], ['Short movie', 'Documentary', 'Low vote movie', 'Another movie'])
             self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/related')).status_code,200)
             fetch_collection.assert_awaited_once(); fetch_recommendations.assert_awaited_once()
         async with self.Session() as db:

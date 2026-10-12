@@ -446,6 +446,16 @@ class UserProfileUpdate(BaseModel):
 
     bio: Optional[str] = Field(default=None, max_length=5000)
     minimum_votes: int = Field(default=250, ge=0, le=1000000)
+    minimum_movie_runtime: int = Field(default=30, ge=0, le=1440)
+    excluded_categories: list[int] = Field(default_factory=list, max_length=7)
+
+    @field_validator('excluded_categories')
+    @classmethod
+    def validate_excluded_categories(cls, value):
+        from core.catalog_search import EXCLUDABLE_CATEGORIES
+        if not set(value).issubset(EXCLUDABLE_CATEGORIES):
+            raise ValueError('Choose valid result categories')
+        return sorted(set(value))
     country: Optional[str] = None
     @field_validator('country')
     @classmethod
@@ -470,6 +480,8 @@ class UserProfileUpdate(BaseModel):
 
 class UserProfileResponse(BaseModel):
     minimum_votes: int = 250
+    minimum_movie_runtime: int = 30
+    excluded_categories: list[int] = Field(default_factory=list)
     background_url: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None

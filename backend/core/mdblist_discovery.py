@@ -132,6 +132,7 @@ def normalize(item, kind):
         "origin_country": [str(item.get("country") or "").upper()],
         "adult": bool(item.get("adult")),
         "genre_ids": sorted(set(genre_ids)),
+        "runtime": _number(item.get("runtime")),
         "vote_average": tmdb_rating / 10 if tmdb_rating is not None else None,
         "imdb_score": _number(imdb.get("value"), 10),
         "imdb_votes": int(_number(imdb.get("votes")) or 0),

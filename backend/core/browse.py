@@ -7,7 +7,7 @@ from sqlalchemy import Float, and_, func, literal, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
-from core.catalog_search import DEFAULT_MIN_VOTES, stored_vote_count, title_vote_count
+from core.catalog_search import DEFAULT_MIN_VOTES, matches_result_filters, apply_result_filters, known_result_metadata
 from core.cinema_releases import theatrical_dates, theatrical_country_dates, has_cinema_release
 from models import Media
 from models.base import MediaType
@@ -95,7 +95,7 @@ def section_specs(today=None):
 
 async def browse_sections(
     db, viewer, *, media_type, region, show_anime, key, mdblist_key=None,
-    min_votes=DEFAULT_MIN_VOTES, min_score=0,
+    min_votes=DEFAULT_MIN_VOTES, min_score=0, min_runtime=0, excluded_genres=(),
 ):
     specs = section_specs()
     filters = [
@@ -109,6 +109,7 @@ async def browse_sections(
                 region=region,
                 min_votes=min_votes,
                 min_score=min_score,
+                min_runtime=min_runtime, excluded_genres=excluded_genres,
             ),
             **values,
         }
@@ -178,7 +179,7 @@ def metadata_fields(data):
 
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
-    min_votes=0, min_score=0, cinema=False, cinema_country=None,
+    min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_count.gte"] = min_votes
@@ -189,6 +190,12 @@ def remote_params(
             .replace("primary_release_date", "first_air_date")
             .replace("title", "name")
         )
+    if excluded_genres:
+        allowed = MOVIE_GENRES if media_type == "movie" else TV_GENRES
+        excluded = sorted(set(excluded_genres) & allowed)
+        if excluded: params["without_genres"] = ",".join(map(str, excluded))
+    if media_type == "movie" and min_runtime:
+        params["with_runtime.gte"] = min_runtime
     if genres:
         params["with_genres"] = ",".join(map(str, genres))
     field = "primary_release_date" if media_type == "movie" else "first_air_date"
@@ -230,7 +237,7 @@ def local_query(
     sort,
     show_anime,
     mdblist_key=None,
-    min_votes=0, min_score=0, cinema=False, cinema_country=None,
+    min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
@@ -352,8 +359,8 @@ def local_query(
     )
     if min_score:
         query = query.where(func.coalesce(data["vote_average"].astext.cast(Float), Media.tmdb_rating, 0) >= min_score)
-    if min_votes:
-        query = query.where(stored_vote_count(data, imdb_votes=votes) >= min_votes)
+    query = apply_result_filters(query, data, media_type, min_votes=min_votes, min_runtime=min_runtime,
+                                 excluded_genres=excluded_genres, runtime=Media.runtime, imdb_votes=votes)
     if not term:
         if sort == "score":
             query = query.where(score > 0)
@@ -364,14 +371,14 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, min_score=0, cinema=False, cinema_country=None):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None):
     if item.get("adult"):
         return False
     if cinema and media_type=='movie' and not has_cinema_release(item,cinema_country):
         return False
     if float(item.get("vote_average") or 0) < min_score:
         return False
-    if title_vote_count(item) < min_votes:
+    if not matches_result_filters(item, media_type, min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres):
         return False
     ids = set(item.get("genre_ids", [])) | {
         g["id"] for g in item.get("genres", []) if isinstance(g, dict) and g.get("id")
@@ -512,7 +519,8 @@ async def remote_page(
             items=await asyncio.gather(*(theatrical(item) for item in data.get('results',[])))
             predicate={k:v for k,v in filters.items() if k!='sort'}
             return data,[item for item in items if matches(item,media_type=media_type,**predicate)]
-        return data, data.get("results", [])
+        return data, [item for item in data.get('results', []) if matches_result_filters(
+            item, media_type, min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
     search = tmdb.search_movies if media_type == "movie" else tmdb.search_shows
     data = await search(term, page=page, api_key=key)
     items = data.get("results", [])
@@ -673,6 +681,11 @@ async def browse_page(
             if ids
             else []
         )
+        remote_metadata = {item['id']: item for item in items}
+        known_metadata = {m.tmdb_id: known_result_metadata(remote_metadata.get(m.tmdb_id, {}), m) for m in known}
+        results = [row for row in results if row['tmdb_id'] not in known_metadata or matches_result_filters(
+            known_metadata[row['tmdb_id']], media_type, min_votes=filters.get('min_votes', 0),
+            min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
         mapping = {m.tmdb_id: m.id for m in known}
         for row in results:
             row["id"] = row.get("id") or mapping.get(row["tmdb_id"])

@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import minimum_votes, fuzzy_remote_terms, is_close_title_match, stored_vote_count, title_vote_count
+from core.catalog_search import result_filters, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1242,7 +1242,7 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
     )
     try:
         return await sections(db, viewer, media_type=media_type, region=region,
-                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, min_votes=await minimum_votes(db, viewer), min_score=min_score)
+                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **(await result_filters(db, viewer)), min_score=min_score)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
@@ -1273,7 +1273,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, min_votes=await minimum_votes(db, viewer), min_score=min_score, cinema=cinema and media_type=='movie',
+            status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)), min_score=min_score, cinema=cinema and media_type=='movie',
             cinema_country=await account_cinema_country(db,viewer) if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
@@ -1283,9 +1283,10 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)
     show_anime=await anime_is_visible(db)
-    min_votes = await minimum_votes(db, viewer)
+    filters = await result_filters(db, viewer)
     term = q.strip()[:200]
-    query = select(Media).where(Media.media_type == MediaType(media_type), stored_vote_count(Media.tmdb_data) >= min_votes)
+    query = apply_result_filters(select(Media).where(Media.media_type == MediaType(media_type)),
+                                 Media.tmdb_data, media_type, runtime=Media.runtime, **filters)
     if term:
         similarity = func.similarity(Media.title, term)
         query = query.where(or_(Media.title.ilike(f"%{term}%"), similarity >= 0.2)).order_by(similarity.desc(), Media.title)
@@ -1319,10 +1320,15 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                         if is_close_title_match(term, item.get('title') or item.get('name') or '')
                     ]
                 known = {m.tmdb_id for m in rows if m.tmdb_id}
+                remote_ids = [item['id'] for item in remote_results if isinstance(item.get('id'), int)]
+                cached = {m.tmdb_id: m for m in await db.scalars(select(Media).where(
+                    Media.media_type == MediaType(media_type), Media.tmdb_id.in_(remote_ids)))} if remote_ids else {}
                 for item in remote_results:
+                    if item.get('id') in cached:
+                        item = known_result_metadata(item, cached[item['id']])
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
-                    if item['id'] in known or item.get('adult') or title_vote_count(item) < min_votes or (not show_anime and tracking_projection.is_anime(candidate)):
+                    if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
                         'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
@@ -1420,7 +1426,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     details = await work_details(db, await screen_work(db, media))
     details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
     from core.media_related import screen_related
-    details = await screen_related(db, media, details, min_votes=await minimum_votes(db, viewer))
+    details = await screen_related(db, media, details, **(await result_filters(db, viewer)))
     from core.media_images import screen_images
     details.update(screen_images(media, details))
     from core.screen_character_art import cached_character_status
@@ -1445,7 +1451,7 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
     from core.media_related import catalogue_related, fill_screen_related, screen_related
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     await fill_screen_related(db, media, key)
-    data = await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)), min_votes=await minimum_votes(db, viewer))
+    data = await screen_related(db, media, await catalogue_related(db, await screen_work(db, media)), **(await result_filters(db, viewer)))
     if not key:
         data['related_status'] = {'state':'unavailable','retry_after':0,'error':'missing_key'}
     return data

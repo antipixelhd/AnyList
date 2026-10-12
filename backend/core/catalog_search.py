@@ -1,21 +1,76 @@
 """Shared catalogue vote thresholds and conservative remote typo recovery."""
 
 import re
+import math
 from difflib import SequenceMatcher
 
 from sqlalchemy import Float, func
 
 DEFAULT_MIN_VOTES = 250
+EXCLUDABLE_CATEGORIES = {99, 10402, 10770, 10763, 10764, 10766, 10767}
 
 
-async def minimum_votes(db, viewer):
-    """One preference read per request; provider caches remain user-independent."""
+async def result_filters(db, viewer):
+    """Read all account result filters together; never partition provider caches."""
     from sqlalchemy import select
     from models.profile import UserProfileData
+    defaults = dict(min_votes=DEFAULT_MIN_VOTES, min_runtime=30, excluded_genres=[])
     if viewer is None:
-        return DEFAULT_MIN_VOTES
-    value = await db.scalar(select(UserProfileData.minimum_votes).where(UserProfileData.user_id == viewer.id))
-    return DEFAULT_MIN_VOTES if value is None else value
+        return defaults
+    row = (await db.execute(select(UserProfileData.minimum_votes, UserProfileData.minimum_movie_runtime,
+                                  UserProfileData.excluded_categories).where(UserProfileData.user_id == viewer.id))).first()
+    if row is None:
+        return defaults
+    return dict(min_votes=row.minimum_votes, min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
+
+
+def title_runtime(item):
+    try:
+        value = float(item.get('runtime') or 0)
+        return value if value > 0 and math.isfinite(value) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def known_result_metadata(item, media):
+    saved = media.tmdb_data or {}
+    merged = {**saved, **item, 'runtime': title_runtime(item) or media.runtime or saved.get('runtime')}
+    if item.get('genre_ids') is not None and 'genres' not in item:
+        merged.pop('genres', None)
+    return merged
+
+
+def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excluded_genres=()):
+    from core.browse import GENRES
+    if title_vote_count(item) < min_votes:
+        return False
+    runtime = title_runtime(item)
+    if media_type == 'movie' and runtime is not None and runtime < min_runtime:
+        return False
+    ids = set(item.get('genre_ids') or [])
+    names = set()
+    for genre in item.get('genres') or []:
+        if isinstance(genre, dict):
+            ids.add(genre.get('id'))
+            genre = genre.get('name')
+        if isinstance(genre, str):
+            names.add(genre.casefold())
+    return not any(native in ids or GENRES.get(native, '').casefold() in names for native in excluded_genres)
+
+
+def apply_result_filters(query, data, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), runtime=None, imdb_votes=None):
+    from sqlalchemy import or_
+    from core.browse import GENRES
+    if min_votes:
+        query = query.where(stored_vote_count(data, imdb_votes=imdb_votes) >= min_votes)
+    if media_type == 'movie' and min_runtime:
+        duration = func.nullif(func.coalesce(runtime, data['runtime'].astext.cast(Float)), 0)
+        query = query.where(or_(duration.is_(None), duration >= min_runtime))
+    for native in excluded_genres:
+        excluded = or_(data['genre_ids'].contains([native]), data['genres'].contains([{'id': native}]),
+                       data['genres'].contains([GENRES[native]]), data['genres'].contains([{'name': GENRES[native]}]))
+        query = query.where(~func.coalesce(excluded, False))
+    return query
 
 
 def title_vote_count(item: dict) -> int:

@@ -464,6 +464,8 @@ async def discover_movies(
     with_companies: int | None = None,
     api_key: str = None,
     language: str | None = None,
+    excluded_genre_ids: list[int] | tuple[int, ...] = (),
+    minimum_runtime: int = 0,
 ) -> dict:
     params: dict = {
         "page": page,
@@ -471,6 +473,13 @@ async def discover_movies(
         "include_adult": "false",
         "vote_count.gte": vote_count_min if vote_count_min is not None else 50,
     }
+    if excluded_genre_ids:
+        from core.browse import MOVIE_GENRES
+        allowed = MOVIE_GENRES
+        excluded = sorted(set(excluded_genre_ids) & allowed)
+        if excluded: params["without_genres"] = ",".join(map(str, excluded))
+    if minimum_runtime:
+        params["with_runtime.gte"] = minimum_runtime
     if genre_ids:
         params["with_genres"] = "|".join(str(g) for g in genre_ids)
     elif genre_id:
@@ -510,6 +519,8 @@ async def discover_shows(
     with_companies: int | None = None,
     api_key: str = None,
     language: str | None = None,
+    excluded_genre_ids: list[int] | tuple[int, ...] = (),
+    minimum_runtime: int = 0,
 ) -> dict:
     params: dict = {
         "page": page,
@@ -517,6 +528,11 @@ async def discover_shows(
         "include_adult": "false",
         "vote_count.gte": vote_count_min if vote_count_min is not None else 50,
     }
+    if excluded_genre_ids:
+        from core.browse import TV_GENRES
+        allowed = TV_GENRES
+        excluded = sorted(set(excluded_genre_ids) & allowed)
+        if excluded: params["without_genres"] = ",".join(map(str, excluded))
     if genre_ids:
         params["with_genres"] = "|".join(str(g) for g in genre_ids)
     elif genre_id:

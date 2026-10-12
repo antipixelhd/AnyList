@@ -347,7 +347,7 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
         for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
             with patch(target, AsyncMock(return_value={"results": []})) as browse:
                 for floor in [0, 250, 500]:
-                    with patch("routers.tracking.minimum_votes", AsyncMock(return_value=floor)):
+                    with patch("routers.tracking.result_filters", AsyncMock(return_value={"min_votes":floor,"min_runtime":30,"excluded_genres":[]})):
                         for score in [0, 7.5, 10]:
                             response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": score, "min_votes": 0})
                             self.assertEqual(response.status_code, 200, response.text)
@@ -375,6 +375,29 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database"
 )
 class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_and_categories_apply_before_paging_and_cached_shorts_cannot_reappear_remotely(self):
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        self.movies[0].runtime=2
+        self.movies[1].runtime=30
+        self.movies[2].tmdb_data={**self.movies[2].tmdb_data,'genres':[{'id':99,'name':'Documentary'}]}
+        await self.db.flush()
+        await update_profile(UserProfileUpdate(minimum_votes=0,excluded_categories=[99,10764]),current_user=self.owner,db=self.db)
+        pages=[(await self.client.get('/tracking/browse',params={'page':page})).json()['results'] for page in (1,2,3)]
+        ids=[row['id'] for page in pages for row in page]
+        self.assertEqual(len(ids),53)
+        self.assertNotIn(self.movies[0].id,ids);self.assertNotIn(self.movies[2].id,ids)
+        self.assertIn(self.movies[1].id,ids)
+        self.key_patch.stop()
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
+             patch('core.tmdb.search_movies',AsyncMock(return_value={'results':[{'id':self.movies[0].tmdb_id,'title':'Remote short','vote_count':500}],'total_pages':1})):
+            for endpoint in ('catalog','browse'):
+                response=await self.client.get(f'/tracking/{endpoint}',params={'q':'Unmatched query'})
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertEqual(response.json()['results'],[])
+        await update_profile(UserProfileUpdate(minimum_movie_runtime=0,excluded_categories=[]),current_user=self.owner,db=self.db)
+        self.assertEqual(len((await self.client.get('/tracking/catalog')).json()['results']),55)
+
     async def test_saved_vote_floor_applies_to_browse_and_catalog_with_tmdb_only_score(self):
         from routers.profile import update_profile
         from schemas import UserProfileUpdate

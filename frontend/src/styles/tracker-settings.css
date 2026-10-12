@@ -89,6 +89,7 @@ body.settings-app {
 .settings-app .localization-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .settings-app .chip { border-radius: 4px; padding: 10px 16px; background: var(--field); color: var(--text); border-color: var(--border); }
 .settings-app .chip[aria-pressed="true"] { color: var(--blue); background: color-mix(in srgb, var(--blue) 12%, var(--field)); border-color: var(--blue); }
+.settings-app [data-excluded-category]:focus-visible { background: color-mix(in srgb, var(--blue) 22%, var(--field)); }
 .settings-app .push-notification-setting { gap: 24px; flex-wrap: wrap; }
 .settings-app .push-notification-setting > span { flex: 1 1 220px; }
 .settings-app #background-preview[hidden] { display: none; }

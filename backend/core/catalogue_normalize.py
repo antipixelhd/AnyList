@@ -257,7 +257,7 @@ def normalize_tmdb(raw, kind):
                     "target": entity(kind, f"tmdb.{kind}", r,
                         artwork=f'https://image.tmdb.org/t/p/w500{r["poster_path"]}' if r.get('poster_path') else None,
                         attributes={'release_date':r.get('release_date') or r.get('first_air_date'), 'adult':bool(r.get('adult')),
-                                    **{k: r[k] for k in ('vote_count', 'vote_average') if r.get(k) is not None}}),
+                                    **{k: r[k] for k in ('vote_count', 'vote_average', 'runtime', 'genres', 'genre_ids') if r.get(k) is not None}}),
                     "relation": "recommendation",
                 }
             )
