@@ -1246,6 +1246,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
                  sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
                  min_votes: Annotated[int, Query(ge=0, le=1000000)] = DEFAULT_MIN_VOTES,
+                 cinema: Annotated[bool, Query()] = False,
                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
@@ -1264,7 +1265,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, min_votes=min_votes)
+            status=status, provider=provider, region=region, sort=sort, min_votes=min_votes, cinema=cinema and media_type=='movie')
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
 

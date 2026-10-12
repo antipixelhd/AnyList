@@ -20,6 +20,7 @@ const view = browseLayout(params);
 if(params.get('sort')==='newest')params.delete('sort');
 params.set('view',view);
 const type = params.get("type") === "series" ? "series" : "movie";
+if(type==='series'||!['1','true'].includes(params.get('cinema')||''))params.delete('cinema');
 params.delete("type");
 params.set("media_type", type);
 params.delete("page");
@@ -101,6 +102,7 @@ const typeHref = (type: string) => {
   const values = new URLSearchParams(viewHref(view).split('?')[1] || '');
   values.delete('genres');
   values.delete('status');
+  values.delete('cinema');
   if (type === 'series') values.set('type', type);
   else values.delete('type');
   return `/browse${values.size ? '?' + values : ''}`;
@@ -117,6 +119,7 @@ const providerLabel = facets.providers.find((provider: any) => String(provider.i
 if (providerLabel) initialChips.push(providerLabel);
 if (minVotes !== 250) initialChips.push(`${minVotes.toLocaleString()}+ votes`);
 if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”`);
+if(params.has('cinema'))initialChips.push('Cinema release');
 ---
 
 <Tracker title="Browse">
@@ -228,11 +231,15 @@ if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”
             ))}
           </BrowseSelect>
         </label>
-        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minVotes !== 250 || region !== "US")}>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || params.has('cinema') || minVotes !== 250 || region !== "US")}>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
             <Icon name="sliders" />
           </summary>
           <div class="browse-secondary-filters" id="browse-secondary-filters" data-motion-fade>
+            <label class="browse-cinema-toggle" data-browse-cinema hidden={type!=='movie'}>
+              <input type="checkbox" name="cinema" value="1" checked={params.has('cinema')} aria-label="Has cinema release"/>
+              <Icon name="film"/><span>Cinema release</span>
+            </label>
             <label class="browse-filter browse-streaming">
               <span>Streaming on</span>
               <select name="provider">

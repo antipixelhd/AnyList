@@ -605,6 +605,10 @@ async def _show_metadata_refresher():
                 from core.catalogue_providers import CatalogueProviders, ProviderHTTP
                 country_coverage = await backfill_legacy_countries(db, api_key, tvdb_api_key=tvdb_key)
                 log.info("Country metadata backfill: %s", country_coverage)
+                from core.cinema_releases import backfill_cinema_releases
+                cinema_coverage=await backfill_cinema_releases(db,CatalogueProviders(
+                    ProviderHTTP(session_factory=AsyncSessionLocal),tmdb_key=api_key),limit=50)
+                log.info('Cinema release backfill: %s',cinema_coverage)
                 catalogue_countries = await backfill_catalogue_countries(db, CatalogueProviders(
                     ProviderHTTP(session_factory=AsyncSessionLocal), tmdb_key=api_key, tvdb_key=tvdb_key,
                 ))

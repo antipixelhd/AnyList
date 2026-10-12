@@ -113,6 +113,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (value) values.set(name, value);
     }
     values.set("media_type", field("type").value);
+    if(field('type').value==='movie'&&(field('cinema') as HTMLInputElement).checked)values.set('cinema','1');
     values.set("sort", sort.value);
     if(field('view').value==='timeline')values.set('view','timeline');
     return values;
@@ -144,7 +145,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if(link.dataset.browseLayout===field('view').value)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
     });
     root.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
-      const target=new URLSearchParams(values);target.delete('genres');target.delete('status');
+      const target=new URLSearchParams(values);target.delete('genres');target.delete('status');target.delete('cinema');
       if(link.dataset.browseType==='series')target.set('type','series');else target.delete('type');
       link.href=`${location.pathname}${target.size?'?'+target:''}`;
     });
@@ -332,6 +333,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       add(`“${field("q").value.trim()}”`, () => {
         field("q").value = "";
       });
+    if((field('cinema') as HTMLInputElement).checked&&field('type').value==='movie')
+      add('Cinema release',()=>{(field('cinema') as HTMLInputElement).checked=false;});
     if (chips.childElementCount) {
       const reset = document.createElement("button");
       reset.type = "button";
@@ -491,6 +494,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     void load(false, debounce);
   }
   function clear() {
+    (field('cinema') as HTMLInputElement).checked=false;
     for (const name of [
       "q",
       "genres",
@@ -593,7 +597,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         syncGenres();
       } else if (
-        !["status", "provider", "region", "start", "end", "min_votes"].includes(target.name)
+        !["status", "provider", "region", "start", "end", "min_votes", "cinema"].includes(target.name)
       )
         return;
       if (target.name === "region") void loadFacets();
@@ -621,6 +625,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           event.preventDefault();
           if (field("type").value === link.dataset.browseType) return;
           field("type").value = link.dataset.browseType!;
+          (field('cinema') as HTMLInputElement).checked=false;
+          find<HTMLElement>('[data-browse-cinema]').hidden=field('type').value!=='movie';
           root
             .querySelectorAll("[data-browse-type]")
             .forEach((a) => a.removeAttribute("aria-current"));

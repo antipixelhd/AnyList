@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
 from core.catalog_search import DEFAULT_MIN_VOTES, stored_vote_count, title_vote_count
+from core.cinema_releases import theatrical_dates, has_cinema_release
 from models import Media
 from models.base import MediaType
 
@@ -160,16 +161,21 @@ async def browse_sections(
 
 def metadata_fields(data):
     """Stored in existing JSONB so imports and refreshes retain discovery fields."""
-    return {
+    fields = {
         "popularity": data.get("popularity"),
         "vote_count": data.get("vote_count"),
         "watch_providers": (data.get("watch/providers") or {}).get("results", {}),
     }
+    releases=data.get('release_dates')
+    if isinstance(data.get('theatrical_release_dates'),list) or (
+        isinstance(releases,dict) and isinstance(releases.get('results'),list)):
+        fields['theatrical_release_dates']=theatrical_dates(data)
+    return fields
 
 
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
-    min_votes=0,
+    min_votes=0, cinema=False,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_count.gte"] = min_votes
@@ -201,6 +207,8 @@ def remote_params(
             watch_region=region,
             with_watch_monetization_types="flatrate|free|ads",
         )
+    if cinema and media_type=='movie':
+        params.update(with_release_type='2|3', **{'release_date.lte':date.today().isoformat()})
     return params
 
 
@@ -217,12 +225,14 @@ def local_query(
     sort,
     show_anime,
     mdblist_key=None,
-    min_votes=0,
+    min_votes=0, cinema=False,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
     )
     data = Media.tmdb_data
+    if cinema and media_type=='movie':
+        query=query.where(data['theatrical_release_dates'][0].astext<=date.today().isoformat())
     if not show_anime:
         animated = or_(
             data["genres"].contains(["Animation"]),
@@ -346,8 +356,10 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, cinema=False):
     if item.get("adult"):
+        return False
+    if cinema and media_type=='movie' and not has_cinema_release(item):
         return False
     if title_vote_count(item) < min_votes:
         return False
@@ -405,14 +417,14 @@ async def imdb_page(
         media_type, filters["sort"], mdblist_key
     )
     semaphore = asyncio.Semaphore(6)
-    needs_details = filters["provider"]
+    needs_details = filters["provider"] or (media_type=='movie' and filters.get('cinema'))
     get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
     predicate = {k: v for k, v in filters.items() if k != "sort"}
     if needs_details and not key:
         raise ValueError("A TMDB key is needed for streaming filters")
 
     # Apply cached date/genre/status/adult/anime filters across the full feed first.
-    basic = {**predicate, "provider": None}
+    basic = {**predicate, "provider": None, 'cinema':False}
     candidates = [
         row
         for row in rows
@@ -482,6 +494,14 @@ async def remote_page(
             headers=tmdb.get_headers(key),
             params=remote_params(media_type, page=page, **filters),
         )
+        if media_type=='movie' and filters.get('cinema'):
+            semaphore=asyncio.Semaphore(6)
+            async def theatrical(item):
+                async with semaphore:
+                    return await tmdb.get_movie(item['id'],api_key=key)
+            items=await asyncio.gather(*(theatrical(item) for item in data.get('results',[])))
+            predicate={k:v for k,v in filters.items() if k!='sort'}
+            return data,[item for item in items if matches(item,media_type=media_type,**predicate)]
         return data, data.get("results", [])
     search = tmdb.search_movies if media_type == "movie" else tmdb.search_shows
     data = await search(term, page=page, api_key=key)
@@ -500,7 +520,7 @@ async def remote_page(
         ]
         # Corrections form one finite result set, never repeat page one during scrolling.
         data = {"total_pages": 1}
-    needs_details = filters["status"] or filters["provider"]
+    needs_details = filters["status"] or filters["provider"] or (media_type=='movie' and filters.get('cinema'))
     if needs_details:
         semaphore = asyncio.Semaphore(6)
         get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
@@ -624,7 +644,8 @@ async def browse_page(
                     "tmdb_score": item.get("vote_average"),
                     "imdb_score": item.get("imdb_score"),
                     "imdb_id": item.get("imdb_id"),
-                    "genres": [GENRES.get(i, "") for i in item.get("genre_ids", [])],
+                    "genres": [GENRES.get(i, "") for i in item.get("genre_ids", [])]
+                        or [g.get('name','') for g in item.get('genres',[]) if isinstance(g,dict)],
                 }
             )
         ids = [r["tmdb_id"] for r in results if r.get("tmdb_id")]

@@ -37,6 +37,27 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_cinema_requires_past_theatrical_evidence_in_any_country(self):
+        predicate={k:v for k,v in FILTERS.items() if k!='sort'}
+        def item(types):
+            return {'release_dates':{'results':[{'iso_3166_1':'GB','release_dates':types}]}}
+        for kind in (2,3):
+            self.assertTrue(matches(item([{'type':kind,'release_date':'2020-01-01T00:00:00Z'}]),media_type='movie',cinema=True,**predicate))
+        for rows in ([{'type':4,'release_date':'2020-01-01'}],[{'type':1,'release_date':'2020-01-01'}],
+                     [{'type':3,'release_date':'2099-01-01'}],[{'type':3,'release_date':'invalid'}],[]):
+            self.assertFalse(matches(item(rows),media_type='movie',cinema=True,**predicate))
+        self.assertTrue(matches(item([{'type':4,'release_date':'2020-01-01'},{'type':2,'release_date':'2021-01-01'}]),media_type='movie',cinema=True,**predicate))
+        self.assertTrue(matches({},media_type='series',cinema=True,**predicate))
+        params=remote_params('movie',page=2,cinema=True,**{**FILTERS,'sort':'newest'})
+        self.assertEqual(params['with_release_type'],'2|3');self.assertNotIn('region',params)
+        self.assertEqual(params['release_date.lte'],date.today().isoformat())
+
+    def test_stored_cinema_dates_are_sorted_deduplicated_and_keep_future_evidence(self):
+        self.assertNotIn('theatrical_release_dates',metadata_fields({'title':'Partial metadata'}))
+        result=metadata_fields({'release_dates':{'results':[{'iso_3166_1':'GB','release_dates':[
+            {'type':3,'release_date':'2099-01-01'},{'type':2,'release_date':'2020-01-01'},
+            {'type':3,'release_date':'2020-01-01T00:00:00Z'},{'type':4,'release_date':'2019-01-01'}]}]}})
+        self.assertEqual(result['theatrical_release_dates'],['2020-01-01','2099-01-01'])
     def test_browse_sections_include_only_the_four_discovery_categories(self):
         self.assertEqual(
             [title for title, _ in section_specs()],
@@ -155,6 +176,27 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cinema_feed_keeps_rank_order_and_fills_pages_after_filtering(self):
+        rows=[{'id':i,'type':'movie','imdb_id':f'tt{i}','imdb_score':8,'imdb_votes':1000} for i in range(1,61)]
+        async def detail(identifier,api_key):
+            return {'id':identifier,'release_dates':{'results':[{'iso_3166_1':'JP','release_dates':[
+                {'type':3 if identifier%2==0 else 4,'release_date':'2020-01-01'}]}]}}
+        with patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(rows,False))),patch(
+            'core.tmdb.get_movie',AsyncMock(side_effect=detail)):
+            first,items=await remote_page('','movie','fixture',{**FILTERS,'cinema':True},1,mdblist_key='fixture')
+            second,more=await remote_page('','movie','fixture',{**FILTERS,'cinema':True},2,mdblist_key='fixture')
+        self.assertEqual([r['id'] for r in items],list(range(2,49,2)))
+        self.assertEqual([r['id'] for r in more],list(range(50,61,2)))
+        self.assertTrue(first['has_more']);self.assertFalse(second['has_more'])
+
+    async def test_cinema_search_excludes_future_digital_and_unknown_releases(self):
+        async def detail(identifier,api_key):
+            return {'id':identifier,'release_dates':{'results':[{'release_dates':[
+                {'type':3 if identifier!=2 else 4,'release_date':'2099-01-01' if identifier==3 else '2020-01-01'}]}]}}
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'results':[{'id':i} for i in range(1,4)],'total_pages':1})),patch(
+            'core.tmdb.get_movie',AsyncMock(side_effect=detail)):
+            _,items=await remote_page('title','movie','fixture',{**FILTERS,'cinema':True},1)
+        self.assertEqual([r['id'] for r in items],[1])
     async def test_vote_floor_is_applied_before_feed_pagination_and_survives_detail_fetch(self):
         rows = [{"id": i, "imdb_id": f"tt{i}", "imdb_score": 8, "imdb_votes": 249 if i < 30 else 250} for i in range(60)]
         async def detail(identifier, api_key):
@@ -389,6 +431,19 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         await self.transaction.rollback()
         await self.connection.close()
         await self.engine.dispose()
+
+    async def test_cinema_local_filter_intersects_genres_streaming_and_pagination(self):
+        for index,movie in enumerate(self.movies):
+            movie.tmdb_data={**movie.tmdb_data,'theatrical_release_dates':
+                ['2099-01-01'] if index==0 else ['2020-01-01'] if index%2==0 else []}
+        await self.db.flush()
+        first=await self.client.get('/tracking/browse?cinema=1&genres=18&provider=8&sort=popular')
+        self.assertEqual(first.status_code,200,first.text)
+        self.assertEqual([r['id'] for r in first.json()['results']],[m.id for m in self.movies[2::2]][:24])
+        self.assertTrue(first.json()['has_more'])
+        second=await self.client.get('/tracking/browse?cinema=1&genres=18&provider=8&sort=popular&source=local&page=2')
+        self.assertEqual([r['id'] for r in second.json()['results']],[m.id for m in self.movies[2::2]][24:])
+        self.assertFalse(second.json()['has_more'])
 
     async def test_category_previews_match_view_all_and_keep_viewer_state_private(self):
         self.movies[2].release_date = date.today().isoformat()
