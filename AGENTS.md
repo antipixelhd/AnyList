@@ -10,6 +10,18 @@ Do not use outlines for active or focused UI states; use color and background ch
 
 Dont prefer bandade fixes but prefer concrete systems that fix the problem or implement the features
 
+## Architecture direction
+
+- Prioritize the next interaction: metadata, user state, primary poster and background first; detail portraits and character art next; optional galleries on demand.
+- Keep optimistic state shared and stable. Background enrichment should preserve pending writes, selected artwork, and already usable content.
+- Reuse canonical image identities, responsive URLs, and decoded images across views; prefer native browser image caching.
+- Load extra gallery images only when exposed or selected. Optional disk caching should stay bounded and favor primary images over extras.
+- Preserve complete domain data while rendering large collections progressively. Display limits should not become storage limits.
+- Resolve people through verified identities and show works for meaningful credited roles; incidental acknowledgments should not populate works timelines.
+- Keep reads focused, share concurrent requests, and reuse cached enrichment. Bound expensive work and keep it off the event loop on the shared VPS.
+- Make page initialization repeat-safe and clean up observers, timers, and requests when views change. Keep private caches scoped to the viewer.
+- Measure real bottlenecks before adding complexity; preserve correctness and distinguish preview lab results from production performance.
+
 ## Start with the task
 
 Read only the source files and documentation needed for the requested change.
