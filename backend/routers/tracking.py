@@ -1341,6 +1341,37 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
     return {"results": results, "notice": notice}
 
 
+@router.get('/catalog/{media_type}/{tmdb_id}/preview')
+async def catalog_preview(
+    media_type: Literal['movie', 'series'],
+    tmdb_id: Annotated[int, Path(gt=0, le=2147483647)],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+):
+    from core import tmdb
+    from core.browse import GENRES
+    await catalog_access(db, viewer)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    if not key:
+        raise HTTPException(409, 'A TMDB key is required to load this title')
+    response.headers['Cache-Control'] = 'private, no-store'
+    try:
+        raw = await (tmdb.get_movie_light if media_type == 'movie' else tmdb.get_show_light)(tmdb_id, api_key=key)
+    except Exception:
+        raise HTTPException(502, 'Title metadata is temporarily unavailable') from None
+    if raw.get('id') != tmdb_id or raw.get('adult') or (
+        not await anime_is_visible(db) and tracking_projection.is_anime(
+            type('Candidate', (), {'tmdb_data': raw})())
+    ):
+        raise HTTPException(404, 'Title not found')
+    date = raw.get('release_date') or raw.get('first_air_date') or ''
+    return {'id':None,'tmdb_id':tmdb_id,'type':media_type,'title':raw.get('title') or raw.get('name'),
+            'overview':raw.get('overview'),'poster':raw.get('poster_path'),'backdrop':raw.get('backdrop_path'),
+            'runtime':raw.get('runtime'),'release_date':date,'year':date[:4], 'tmdb_score':raw.get('vote_average'),
+            'genres':[g.get('name') or GENRES.get(g.get('id'), '') for g in raw.get('genres') or []]}
+
+
 @router.post("/catalog/{media_type}/{tmdb_id}")
 async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     from core.enrichment import create_media_safely, enrich_media

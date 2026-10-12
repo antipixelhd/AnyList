@@ -1,4 +1,5 @@
 import { editorStore, type EditorTitle } from './editor-store';
+import {predictionAllowed} from './predictive-loading';
 
 export type BrowseItem = {
   id: number | null; tmdb_id: number | null; type: string; title: string;
@@ -33,16 +34,27 @@ export function bindBrowseCardActions<T extends BrowseItem>(
   onUpdate: (item: T) => void, onError: (message: string) => void,
 ) {
   const titleFor = (item: T) => editorStore.get({...item, entry:item.entry ?? null});
+  let warmTimer:ReturnType<typeof setTimeout>|undefined;
+  let warmCard:HTMLElement|undefined;
+  const clearWarm=()=>{clearTimeout(warmTimer);warmCard=undefined;};
   const warm = (event: Event) => {
+    if(event instanceof PointerEvent&&event.pointerType!=='mouse')return;
     const card = (event.target as Element).closest<HTMLElement>('[data-browse-card]');
     const item = card && items.get(card);
-    if (item && card && card.querySelector('[data-browse-action]')) {
-      const image = card.querySelector<HTMLImageElement>('[data-poster]');
-      editorStore.warmArtwork(titleFor(item), image?.currentSrc || image?.src);
+    if (item && card && card.querySelector('[data-browse-action]')&&warmCard!==card) {
+      clearWarm();warmCard=card;
+      warmTimer=setTimeout(()=>{
+        if(signal.aborted||!card.isConnected||!predictionAllowed())return;
+        const image = card.querySelector<HTMLImageElement>('[data-poster]');
+        editorStore.warmArtwork(titleFor(item), image?.currentSrc || image?.src);
+      },180);
     }
   };
   region.addEventListener('pointerover', warm, {signal});
   region.addEventListener('focusin', warm, {signal});
+  region.addEventListener('pointerout',event=>{if(warmCard&&!warmCard.contains((event as PointerEvent).relatedTarget as Node|null))clearWarm();},{signal});
+  region.addEventListener('focusout',clearWarm,{signal});
+  signal.addEventListener('abort',clearWarm,{once:true});
   document.addEventListener('anylist:editor-state', event => {
     const title = (event as CustomEvent<EditorTitle>).detail;
     const item = [...items.values()].find(item => sameBrowseTitle(item, title));

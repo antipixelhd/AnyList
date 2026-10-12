@@ -12,6 +12,7 @@ import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
@@ -79,6 +80,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let displayedCategories = !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
   const responseCache = createBrowseCache<Payload | SectionsPayload>();
+  const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
+  document.addEventListener('anylist:cache-invalidated',()=>{prediction.cancel();responseCache.clear();},{signal});
   const facetCache = createBrowseCache<typeof facets>();
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
@@ -399,6 +402,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       region.setAttribute("aria-busy", "false");
       return;
     }
+    if(!append)prediction.cancel();
     const values = params();
     const categoryView = isCategoryView(values);
     values.set("page", String(append ? payload.page + 1 : 1));
@@ -434,7 +438,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        response = await json(path, {signal: current.signal}) as Payload | SectionsPayload;
+        response = await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload | SectionsPayload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
         responseCache.set(path, response);
         await loadingView.settle(current.signal);
@@ -733,6 +737,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const sentinel = find<HTMLElement>("[data-browse-sentinel]");
   let sentinelNearEnd = false;
   let paginationFrame = 0;
+  let predictionScrollY=scrollY;
   const canAutoLoad = () => !signal.aborted && !displayedCategories &&
     !loading && !suspended && payload.has_more;
   const autoLoadMore = () => {
@@ -748,9 +753,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   observer.observe(sentinel);
   window.addEventListener("scroll", () => {
+    const down=scrollY>predictionScrollY;predictionScrollY=scrollY;
     paginationDemand.advance(scrollY, canAutoLoad());
     if (!paginationFrame) paginationFrame = requestAnimationFrame(() => {
       paginationFrame = 0;
+      if(down&&canAutoLoad()&&paginationPosition(region.getBoundingClientRect(),innerHeight).predict){
+        const next=params();next.set('page',String(payload.page+1));next.set('source',payload.source);
+        const path=requestPath(next);if(!responseCache.get(path))prediction.prefetch(path);
+      }
       autoLoadMore();
     });
   }, { passive: true, signal });

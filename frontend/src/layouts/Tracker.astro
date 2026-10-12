@@ -16,7 +16,7 @@ import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
 import ToastRuntime from '../components/ToastRuntime.astro';
 import { profileColor, themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
-const {title = 'AnyList', favicon = '/favicon.svg', listLanding = false, ownerProfileColor, ownerIsViewer = false, preloadBodyFonts = false} = Astro.props;
+const {title = 'AnyList', favicon = '/favicon.svg', listLanding = false, ownerProfileColor, ownerIsViewer = false, preloadBodyFonts = false, predictionArtwork = []} = Astro.props;
 const viewerTheme = await viewerProfileTheme(Astro.locals.token);
 const ownerColor = ownerProfileColor ? profileColor(ownerProfileColor) : undefined;
 const activeColor = ownerColor ?? (viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined);
@@ -35,5 +35,6 @@ const activeColor = ownerColor ?? (viewerTheme.applySiteWide ? viewerTheme.profi
   <StyledSelectRuntime />
   <ProfileThemeRuntime />
   <ToastRuntime />
+  <script id="page-prediction" type="application/json" set:html={JSON.stringify({user:String(Astro.locals.user?.id ?? 'anonymous'),artwork:predictionArtwork}).replaceAll('<','\\u003c')} />
   <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
 </body></html>

@@ -8,6 +8,7 @@ import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { initializeScrollMotion } from './scroll-motion';
 import { cancelUiMotion, reveal } from './ui-motion';
 import { mountPortraitViewer } from './image-viewer';
+import {createPrediction,bindPredictivePagination} from './predictive-loading';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -155,21 +156,35 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   root.querySelector<HTMLElement>('[data-contributor-next]')!.hidden = true;
   more.hidden = !data.has_more;
-  more.addEventListener('click', async () => {
-    if (more.disabled) return;
-    more.disabled = true; more.textContent = 'Loading…'; error.hidden = true;
-    const query = new URLSearchParams(params);
-    query.set('page', String(data.page + 1)); query.set('source', data.source);
-    if (data.next_cursor) query.set('cursor', data.next_cursor); else query.delete('cursor');
-    try {
-      const response = await fetch(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`, {signal,cache:'no-store'});
-      if (!response.ok) throw new Error('Unable to load more works. Please try again.');
-      const next: ContributorPage = await response.json();
-      if (signal.aborted) return;
+  const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{
+    const response=await fetch(path,{signal:requestSignal,cache:'no-store'});
+    if(!response.ok)throw new Error('Unable to load more works. Please try again.');
+    return response.json();
+  };
+  const prediction=createPrediction<ContributorPage>(requestPage,signal);
+  document.addEventListener('anylist:cache-invalidated',prediction.cancel,{signal});
+  const nextPath=()=>{
+    const query=new URLSearchParams(params);
+    query.set('page',String(data.page+1));query.set('source',data.source);
+    if(data.next_cursor)query.set('cursor',data.next_cursor);else query.delete('cursor');
+    return `/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
+  };
+  const loadMore=async()=>{
+    if(more.disabled||!data.has_more||signal.aborted)return;
+    more.disabled=true;more.textContent='Loading…';error.hidden=true;
+    try{
+      const path=nextPath();
+      const next=await prediction.consume(path,signal)??await requestPage(path,signal);
+      if(signal.aborted)return;
       append(next.works);
-      data.page = next.page; data.source = next.source; data.next_cursor = next.next_cursor; data.has_more = next.has_more;
-      more.hidden = !data.has_more;
-    } catch (cause) { if (!signal.aborted) showError(cause instanceof Error ? cause.message : 'Unable to load more works.'); }
-    finally { if (!signal.aborted) { more.disabled = false; more.textContent = 'Load more'; } }
-  }, {signal});
+      data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
+      more.hidden=!data.has_more;
+    }catch(cause){if(!signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load more works.');}
+    finally{if(!signal.aborted){more.disabled=false;more.textContent='Load more';}}
+  };
+  more.addEventListener('click',()=>void loadMore(),{signal});
+  form.addEventListener('submit',prediction.cancel,{signal});
+  bindPredictivePagination(region,signal,()=>data.has_more&&!more.disabled&&error.hidden,
+    ()=>prediction.prefetch(nextPath()),()=>void loadMore());
+
 }

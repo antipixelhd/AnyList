@@ -10,6 +10,17 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
 
+test('predicted metadata preserves pending list edits and existing artwork',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0},favorite:true});
+  const write=store.write(title,{status:'watching'});
+  store.warmMetadata({...draft(),overview:'Preview',runtime:120,poster:'/different.jpg',entry:null,favorite:false});
+  assert.equal(title.entry.status,'watching');assert.equal(title.favorite,true);
+  assert.equal(title.poster,'/poster.jpg');assert.equal(title.overview,'Preview');
+  await turn();pending.resolve({status:'watching',progress:1});await write;
+  assert.equal(title.entry.progress,1);assert.equal(title.runtime,120);
+});
+
 test('favorites preserve absent list membership and roll back independently on errors',async()=>{
   let pending=deferred();
   const store=new EditorStore(()=>pending.promise);

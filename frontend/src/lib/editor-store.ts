@@ -6,6 +6,8 @@ export type EditorTitle = {
   entry: Record<string, any> | null;
   favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
+  overview?:string|null; runtime?:number|null; release_date?:string|null; year?:string;
+  genres?:string[]; tmdb_score?:number|null;
 };
 type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
@@ -207,6 +209,16 @@ export class EditorStore {
     void image.decode().then(() => { if(record.backdropSrc===src)record.backdropReady = true; }).catch(() => {
       if(record.backdropSrc===src)record.backdropSrc = undefined;
     });
+  }
+  warmMetadata(title:EditorTitle) {
+    const record=this.record(title);
+    if(!record)return this.seed({...title,entry:null});
+    Object.assign(record.title,Object.fromEntries(['title','overview','runtime','release_date','year','genres','tmdb_score']
+      .filter(field=>(title as any)[field]!=null).map(field=>[field,(title as any)[field]])));
+    // Metadata warming must preserve selected artwork and trigger no image requests.
+    record.title.poster ||= title.poster;
+    record.title.backdrop ||= title.backdrop;
+    return record.title;
   }
   updateArtwork(id:number,artwork:{poster?:string;backdrop?:string}) {
     const record=[...this.records.values()].find(record=>record.title.id===id);
