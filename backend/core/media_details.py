@@ -101,17 +101,21 @@ async def work_details(db, work, *, extras=True):
     if work.kind in ('movie', 'series'):
         # Untagged legacy URLs cannot establish the requested image language.
         artwork, posters = [], []
-    snapshots = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id == work.id)
-        .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6)))
+    # Details need image variants and public source links, not the provider's
+    # complete credits/episode response. Keep large snapshot payloads in SQL.
+    snapshots = (await db.execute(select(MetadataSnapshot.provider,
+        MetadataSnapshot.payload['images'].label('images'),
+        MetadataSnapshot.payload['homepage'].astext.label('homepage'),
+        MetadataSnapshot.payload['url'].astext.label('url')).where(MetadataSnapshot.entity_id == work.id)
+        .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
     sources = []
     for snapshot in snapshots:
-        raw = snapshot.payload or {}
-        images = raw.get('images') or {}
+        images = snapshot.images or {}
         variants = provider_images(images, snapshot.provider) if snapshot.provider == 'tmdb' or work.kind not in ('movie', 'series') else {'posters': [], 'artwork': []}
         posters.extend(variants['posters'])
         artwork.extend(variants['artwork'])
-        homepage = public_url(raw.get('homepage'))
-        if url := homepage or public_url(raw.get('url')):
+        homepage = public_url(snapshot.homepage)
+        if url := homepage or public_url(snapshot.url):
             sources.append({'name': 'Official website' if homepage else snapshot.provider.upper(), 'url': url})
     from core.media_related import catalogue_related
     related = await catalogue_related(db, work)

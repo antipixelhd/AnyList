@@ -8,6 +8,7 @@ import {createDetailImageCarousel} from './detail-image-carousel';
 import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
+import {detailSceneArtwork} from './detail-artwork';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
@@ -222,8 +223,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
           const preferred=galleries.artwork.includes(preview.dataset.detailImage||'')?preview.dataset.detailImage!:galleries.artwork[0];
           preview.dataset.detailImage=preferred;
           const thumbnail=preview.querySelector('img');if(thumbnail){
-            const src=responsiveArtwork(preferred,{size:'w780',route:'auto'})?.src||preferred;
-            if(imageKey(thumbnail.src)!==imageKey(src))thumbnail.src=src;
+            const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+            const heroArt=hero?{src:hero.src,srcset:hero.srcset||undefined,sizes:hero.sizes||undefined}:null;
+            const art=detailSceneArtwork(preferred,heroArt);
+            if(art){if(art.srcset)thumbnail.srcset=art.srcset;else thumbnail.removeAttribute('srcset');if(art.sizes)thumbnail.sizes=art.sizes;else thumbnail.removeAttribute('sizes');if(thumbnail.getAttribute('src')!==art.src)thumbnail.src=art.src;}
             watchThumbnail(preview);
           }
         }else {preview.classList.toggle('detail-image-skeleton',pending);const thumbnail=preview.querySelector('img');if(thumbnail)thumbnail.hidden=true;}

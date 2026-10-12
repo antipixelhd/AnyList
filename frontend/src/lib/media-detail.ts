@@ -8,16 +8,22 @@ import {detailBackground,type DetailLoadState} from './detail-background';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
+import {detailWorkArtwork} from './detail-artwork';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
 
 let pageListeners: AbortController | undefined;
+let mountedRoot: HTMLElement | null = null;
 export function mountMediaDetail() {
-  pageListeners?.abort();
   const root = document.querySelector<HTMLElement>('[data-media-detail]');
+  // The initial module and Astro's page-load event can both arrive for the
+  // same document. Preserve deferred credits, pending reads and loaded images.
+  if(root && root === mountedRoot && pageListeners && !pageListeners.signal.aborted)return;
+  pageListeners?.abort();
+  mountedRoot = root;
   if (!root) return;
   pageListeners = new AbortController();
   const {signal} = pageListeners;
-  document.addEventListener('astro:before-swap', () => pageListeners?.abort(), {signal,once:true});
+  document.addEventListener('astro:before-swap', () => {pageListeners?.abort();mountedRoot=null;}, {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
   mountDetailCast(root,signal,info);
@@ -54,7 +60,12 @@ export function mountMediaDetail() {
           if(url.origin!==location.origin&&url.protocol!=='https:')return null;
           card.href=url.href;
           if(field==='relations')card.className='lab-related-card';
-          if(work.poster){const image=document.createElement('img');image.src=work.poster;image.alt='';image.loading='lazy';card.append(image);}
+          if(work.poster){
+            const image=document.createElement('img');image.alt='';image.loading='lazy';image.fetchPriority='low';
+            const art=detailWorkArtwork(work.poster,field==='similar');
+            if(art){if(art.srcset)image.srcset=art.srcset;if(art.sizes)image.sizes=art.sizes;image.src=art.src;}
+            card.append(image);
+          }
           else card.append(icons.firstElementChild!.cloneNode(true));
           const copy=document.createElement('div');
           if(field==='relations'){const label=document.createElement('span');label.className='lab-relation-type';label.textContent=work.label||relationLabel(work.relation,work.reverse);copy.append(label);}
