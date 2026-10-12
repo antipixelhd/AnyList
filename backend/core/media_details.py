@@ -44,7 +44,7 @@ async def work_details(db, work):
         return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
         CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id)
-        .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id).limit(500))).all()
+        .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id))).all()
     people = {}
     organizations = {}
     billing = {}

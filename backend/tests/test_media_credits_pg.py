@@ -24,6 +24,19 @@ def movie_payload(native=1492640, *, empty=False):
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_large_crews_do_not_truncate_the_director_from_movie_details(self):
+        async with self.Session() as db:
+            work=await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie'))
+            person=await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='person'))
+            db.add_all([CatalogueCredit(work_id=work.id,contributor_id=person.id,provider='tmdb',source_key=f'crew-{index}',role='contributor',role_label='Crew') for index in range(550)])
+            director=CatalogueEntity(kind='person',name='Christopher Nolan',attributes={})
+            db.add(director);await db.flush()
+            db.add(CatalogueCredit(work_id=work.id,contributor_id=director.id,provider='tmdb',source_key='late-director',role='director',role_label='Director'))
+            await db.commit()
+            people=(await work_details(db,work))['people']
+            nolan=next(person for person in people if person['name']=='Christopher Nolan')
+            self.assertEqual(nolan['roles'],['Director'])
+
     async def test_person_filmography_backfill_filters_jobs_and_never_imports_personal_media(self):
         from core.person_works_backfill import backfill_person_works
         profile={'id':124,'combined_credits':{'crew':[
