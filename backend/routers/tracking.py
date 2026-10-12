@@ -1344,8 +1344,7 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: i
         except Exception:
             await db.rollback()
             raise HTTPException(502, 'Unable to load title metadata; try again later')
-    from core.media_credits import fill_screen_credits
-    await fill_screen_credits(db, media, viewer.id)
+    # Optional credits use the detail page's background endpoint after redirect.
     return {'id':media.id}
 
 

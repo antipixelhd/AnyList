@@ -133,7 +133,7 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(data['people']), 2)
         self.providers.detail.assert_awaited_once()
 
-    async def test_import_populates_credits_before_returning_new_title(self):
+    async def test_import_returns_new_title_before_optional_credits_and_background_fills_them(self):
         self.reply(movie_payload())
         async with self.Session() as db:
             self.viewer = await db.get(User, self.user_id)
@@ -147,6 +147,9 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
               patch('core.media_credits.CatalogueProviders', return_value=self.providers)):
             response = await self.client.post('/tracking/catalog/movie/1492640')
             self.assertEqual(response.status_code, 200)
+            self.providers.detail.assert_not_awaited()
+            extra = await self.client.get(f'/tracking/title/{response.json()["id"]}/people')
+            self.assertEqual(extra.status_code,200,extra.text)
         async with self.Session() as db:
             media = await db.get(Media, response.json()['id'])
             self.assertEqual(len((await work_details(db, await screen_work(db, media)))['people']), 2)
