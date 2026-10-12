@@ -84,8 +84,8 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 @container contributor-works (max-width:450px) { .contributor-works-grid.browse-grid { --browse-title-size:12px; --browse-meta-size:11px; gap:22px 10px; } }
 @container contributor-works (min-width:650px) {
   .contributor-page[data-view=timeline] .contributor-year-works { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .contributor-page[data-view=timeline] .browse-card-body { grid-template-columns:76px minmax(0,1fr); gap:16px; }
-  .contributor-page[data-view=timeline] .browse-card-title h2 { font-size:17px; }
+  .contributor-page[data-view=timeline] .browse-card-body { grid-template-columns:94px minmax(0,1fr); gap:20px; }
+  .contributor-page[data-view=timeline] .browse-card-title h2 { font-size:19px; }
 }
 @media(max-width:760px) {
   .contributor-banner { height:210px; }
