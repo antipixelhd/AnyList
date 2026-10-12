@@ -87,9 +87,6 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
   .contributor-page[data-view=timeline] .browse-card-body { grid-template-columns:76px minmax(0,1fr); gap:16px; }
   .contributor-page[data-view=timeline] .browse-card-title h2 { font-size:17px; }
 }
-@container contributor-works (min-width:1050px) {
-  .contributor-page[data-view=timeline] .contributor-year-works { grid-template-columns:repeat(3,minmax(0,1fr)); }
-}
 @media(max-width:760px) {
   .contributor-banner { height:210px; }
   .contributor-layout { grid-template-columns:minmax(0,1fr); gap:30px; }
