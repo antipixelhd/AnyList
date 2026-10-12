@@ -14,6 +14,7 @@ from models import Media
 
 IMAGE_POLICY_VERSION = 4
 _fills = WeakValueDictionary()
+_backdrop_fills = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 
 
@@ -73,6 +74,56 @@ def provider_images(raw, provider='tmdb'):
     return {field: [row['url'] for row in rows] for field, rows in image_candidates(raw, provider).items()}
 
 
+def screen_backdrop(media):
+    data=media.tmdb_data or {}
+    gallery=data.get('_anylist_images') or {}
+    cache=data.get('_anylist_backdrop') or {}
+    if gallery.get('version')==IMAGE_POLICY_VERSION:
+        artwork=unique_images(gallery.get('artwork') or [])
+        preferred=gallery.get('primary_backdrop') or ''
+        return {'backdrop':next((url for url in artwork if image_key(url)==image_key(preferred)),next(iter(artwork),None)),
+            'background_status':{'state':'ready'}}
+    retry=0
+    try:retry=max(0,int((datetime.fromisoformat(cache.get('retry_after',''))-datetime.now(timezone.utc)).total_seconds())+1)
+    except (ValueError,TypeError):pass
+    return {'backdrop':image(cache.get('image')) if cache.get('version')==IMAGE_POLICY_VERSION else None,
+        'background_status':{'state':'deferred' if retry else 'ready' if cache.get('version')==IMAGE_POLICY_VERSION else 'pending',
+            'error':cache.get('last_error') if retry else None,'retry_after':retry}}
+
+
+async def fill_screen_backdrop(db,media,api_key):
+    """Choose one textless hero from metadata; never download/inspect a gallery."""
+    lock=_backdrop_fills.setdefault(media.id,asyncio.Lock())
+    async with lock:
+        await db.refresh(media)
+        if ((media.tmdb_data or {}).get('_anylist_images') or {}).get('version')==IMAGE_POLICY_VERSION:return
+        if not api_key or not media.tmdb_id:return
+        cache=dict((media.tmdb_data or {}).get('_anylist_backdrop') or {})
+        if screen_backdrop(media)['background_status']['retry_after']:return
+        now=datetime.now(timezone.utc)
+        try:
+            if cache.get('version')==IMAGE_POLICY_VERSION and datetime.fromisoformat(cache.get('expires_at',''))>now:return
+        except (ValueError,TypeError):pass
+        from core import tmdb
+        try:
+            raw=await tmdb.get_title_images(media.tmdb_id,media.media_type.value,api_key)
+            if raw.get('id')!=media.tmdb_id or not isinstance(raw.get('backdrops'),list):raise ValueError('Invalid image response')
+            candidates=provider_images(raw)['artwork']
+            primary=tmdb_image_url((media.tmdb_data or {}).get('backdrop_path') or media.backdrop_path)
+            selected=next((url for url in candidates if primary and image_key(url)==image_key(primary)),next(iter(candidates),None))
+            cache={'image':selected,'version':IMAGE_POLICY_VERSION,'fetched_at':now.isoformat(),'expires_at':(now+timedelta(days=30)).isoformat()}
+        except Exception as error:
+            logger.warning('Background artwork failed for media %s (%s)',media.id,type(error).__name__)
+            delay=600
+            if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429:
+                from core.catalogue_providers import retry_after_seconds
+                delay=max(delay,retry_after_seconds(error.response.headers.get('Retry-After',''),delay))
+            cache.update(retry_after=(now+timedelta(seconds=delay)).isoformat(),last_error='rate_limited' if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429 else 'unavailable')
+        await db.execute(update(Media).where(Media.id==media.id).values(
+            tmdb_data=func.coalesce(Media.tmdb_data,literal({},type_=JSONB)).op('||')({'_anylist_backdrop':cache})))
+        await db.commit();await db.refresh(media)
+
+
 def screen_images(media, details):
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
     retry = 0
@@ -93,8 +144,9 @@ def screen_images(media, details):
                 'posters': posters, 'artwork': artwork,
                 'image_replacements': cache.get('replacements') or {}, 'image_status': status}
     # Never paint the old unfiltered gallery while a new policy is being filled.
-    return {'poster': primary, 'backdrop': None, 'posters': unique_images([primary]),
-            'artwork': [], 'image_replacements': {}, 'image_status': status}
+    backdrop=screen_backdrop(media)['backdrop']
+    return {'poster': primary, 'backdrop': backdrop, 'posters': unique_images([primary]),
+            'artwork': unique_images([backdrop]), 'image_replacements': {}, 'image_status': status}
 
 
 async def fill_screen_images(db, media, api_key):

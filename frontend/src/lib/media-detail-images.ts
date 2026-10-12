@@ -98,6 +98,22 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   };
   root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(button=>{watchLandscape(button);watchThumbnail(button);});
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
+  const paintHero=(url:string|undefined)=>{
+    if(!url)return;
+    const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+    const button=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
+    if(button){button.dataset.detailImage=url;button.hidden=false;}
+    if(!hero)return;
+    const sameImage=imageKey(hero.src)===imageKey(url);
+    if(sameImage&&hero.complete&&hero.naturalWidth){hero.hidden=false;return;}
+    if(!sameImage)hero.hidden=true;
+    hero.onload=()=>{if(signal.aborted)return;hero.hidden=false;reveal(hero);};
+    hero.onerror=()=>{hero.hidden=true;};
+    if(sameImage)return;
+    const artwork=responsiveArtwork(url,{size:'w1280',sizes:'100vw',route:'direct'});
+    if(artwork?.srcset)hero.srcset=artwork.srcset;else hero.removeAttribute('srcset');
+    hero.sizes=artwork?.sizes||'100vw';hero.src=artwork?.src||url;
+  };
   const applyImages=(data:Galleries&{poster?:string;backdrop?:string;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
       galleries.posters=uniqueDetailImages(data.posters||[]);
@@ -112,14 +128,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary)){coverImage.removeAttribute('srcset');coverImage.src=primary.replace('/original/','/w500/');}
       }
       const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
-      const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
-      if(hero)hero.hidden=!galleries.artwork.length;
-      if(heroButton)heroButton.hidden=!galleries.artwork.length;
       if(galleries.artwork.length){
         const currentKey=(data.backdrop||heroButton?.dataset.detailImage||'').replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1');
         const preferred=galleries.artwork.find(url=>url.replace(/(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+\//,'$1')===currentKey)||galleries.artwork[0];
-        if(heroButton)heroButton.dataset.detailImage=preferred;
-        if(hero&&imageKey(hero.src)!==imageKey(preferred)){hero.removeAttribute('srcset');hero.src=preferred.replace('/original/','/w1280/');}
+        paintHero(preferred);
       }
       const preview=root.querySelector<HTMLButtonElement>('.lab-art-image');
       if(preview){
@@ -176,8 +188,19 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     showDialog(lightbox);showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].indexOf(url)));void loadImages();
   },{signal});
-  // Refresh stale policies without waiting for the visitor to open a gallery.
-  if(info.imagesAvailable)resource.start();
+  // The hero is critical: start its small metadata read immediately. Full
+  // gallery curation and extra image downloads wait for a gallery interaction.
+  if(info.heroAvailable){
+    const background=detailBackground<{backdrop?:string;background_status?:DetailLoadState}>(
+      `/api/proxy/tracking/title/${info.id}/background`,signal,data=>{
+        if(data.backdrop)applyImages({...galleries,artwork:uniqueDetailImages([data.backdrop,...galleries.artwork]),
+          backdrop:data.backdrop,image_status:{state:pending?'pending':'ready'}});
+        return data.background_status;
+      },()=>{});
+    void background.load();
+    const artworkPanel=root.querySelector<HTMLElement>('[data-detail-panel="artwork"]');
+    if(info.imagesAvailable&&artworkPanel&&!artworkPanel.hidden)void loadImages();
+  }
   bindImageViewerDismissal(lightbox,signal);
   lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1));}},{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep)),{signal}));

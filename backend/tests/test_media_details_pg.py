@@ -85,6 +85,57 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(projected['poster'], data['poster'])
         self.assertEqual(projected['backdrop'], data['artwork'][0])
 
+    async def test_cold_background_load_skips_gallery_analysis_and_is_cached_for_first_render(self):
+        await self.login()
+        async with self.Session() as db:
+            media=await db.get(Media,self.media_id);media.tmdb_id=99;media.backdrop_path='/primary.jpg'
+            media.tmdb_data={'protected_fixture':'keep'};await db.commit()
+        raw={'id':99,'posters':[],'backdrops':[
+            {'file_path':'/text.jpg','iso_639_1':'en','aspect_ratio':1.778},
+            {'file_path':'/alternative.jpg','iso_639_1':None,'aspect_ratio':1.778,'vote_count':50},
+            {'file_path':'/primary.jpg','iso_639_1':None,'aspect_ratio':1.778}]}
+        with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_title_images',AsyncMock(return_value=raw)) as fetch,
+              patch('core.tmdb.get_movie_light',AsyncMock()) as details,
+              patch('core.media_image_analysis.inspect_image',AsyncMock()) as inspect):
+            response=await self.client.get(f'/tracking/title/{self.media_id}/background')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['backdrop'],'https://image.tmdb.org/t/p/original/primary.jpg')
+            self.assertEqual(response.json()['background_status']['state'],'ready')
+            await self.client.get(f'/tracking/title/{self.media_id}/background')
+            projected=(await self.client.get(f'/tracking/title/{self.media_id}')).json()
+            self.assertEqual(projected['backdrop'],response.json()['backdrop'])
+            self.assertEqual(projected['image_status']['state'],'pending')
+            fetch.assert_awaited_once();details.assert_not_awaited();inspect.assert_not_awaited()
+        async with self.Session() as db:
+            media=await db.get(Media,self.media_id)
+            self.assertEqual(media.tmdb_data['protected_fixture'],'keep')
+            self.assertNotIn('_anylist_images',media.tmdb_data)
+
+    async def test_background_public_access_uses_the_same_gate_as_the_title(self):
+        from dependencies import get_optional_user
+        from models import GlobalSettings
+        self.app.dependency_overrides[get_optional_user]=lambda:None
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value=None)):
+            self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,200)
+            async with self.Session() as db:
+                settings=await db.get(GlobalSettings,1);settings.enable_logged_out_navigation=False;await db.commit()
+            self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,401)
+
+    async def test_background_failure_records_cooldown_and_retries_without_leaking_unverified_art(self):
+        await self.login()
+        async with self.Session() as db:
+            media=await db.get(Media,self.media_id);media.tmdb_id=99;media.tmdb_data={};await db.commit()
+        with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
+              patch('core.tmdb.get_title_images',AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
+            for _ in range(2):
+                response=await self.client.get(f'/tracking/title/{self.media_id}/background')
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertEqual(response.json()['background_status']['state'],'deferred')
+                self.assertGreater(response.json()['background_status']['retry_after'],0)
+                self.assertIsNone(response.json()['backdrop'])
+            fetch.assert_awaited_once()
+
     async def test_image_provider_failure_preserves_cache_and_cools_down(self):
         await self.login()
         async with self.Session() as db:

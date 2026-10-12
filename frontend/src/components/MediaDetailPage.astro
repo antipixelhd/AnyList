@@ -22,6 +22,7 @@ const signedIn=!!Astro.locals.user;
 const trackable=title&&['movie','series'].includes(title.type)&&title.tracking_available!==false;
 const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:650px) 108px, (max-width:900px) 170px, (max-width:1100px) 190px, 210px',route:'direct'});
 const backdrop=responsiveArtwork(title?.backdrop,{size:'w1280',sizes:'100vw',route:'direct'});
+const reserveBackdrop=!!backdrop||!!(trackable&&title?.image_status?.state!=='ready');
 const facts=title?detailFacts(title):[];
 const synopsis=detailSynopsis(title?.overview);
 const people=title?[...title.people,...title.organizations]:[];
@@ -41,7 +42,7 @@ const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.searc
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
 ---
 <Tracker title={title?.title||'Media'} preloadBodyFonts>
-{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-has-backdrop={String(!!backdrop)} data-spoilers="false">
+{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-has-backdrop={String(reserveBackdrop)} data-spoilers="false">
   {signedIn&&trackable&&<script id="title-editor-data" type="application/json" set:html={encode({...title,editor_library:{available:!!library?.connections?.length,desired:library?.desired===true}})}/>}
   <header class="lab-hero">
     {(backdrop||trackable)&&<img class="lab-hero-image" src={backdrop?.src} srcset={backdrop?.srcset} sizes={backdrop?.sizes} hidden={!backdrop} alt="" fetchpriority="high"/>}<div class="lab-hero-shade"></div>
@@ -92,7 +93,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
     </div>
   </div>
   <ImageLightbox id="detail-lightbox" gallery/>
-  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&trackable&&title.related_pending,imagesAvailable:signedIn&&trackable,backgroundAvailable:signedIn&&trackable,characterStatus:title.character_status,imageStatus:title.image_status,posters:title.posters,artwork})}/>
+  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&trackable&&title.related_pending,imagesAvailable:signedIn&&trackable,heroAvailable:trackable,backgroundAvailable:signedIn&&trackable,characterStatus:title.character_status,imageStatus:title.image_status,posters:title.posters,artwork})}/>
   <template data-detail-person-template><MediaDetailPerson person={{id:0,kind:'actor',name:'',image:null,url:'#',roles:[],characters:[]}}/></template>
   <template data-detail-work-icons><span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span><Icon name="arrow-right"/></template>
 </article>:<div class="page-width"><p class="error-message" role="alert">{error||'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}
