@@ -85,7 +85,18 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     };
     if(thumbnail.complete)inspect();else thumbnail.addEventListener('load',inspect,{signal,once:true});
   };
-  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(watchLandscape);
+  const watchThumbnail=(button:HTMLButtonElement)=>{
+    const thumbnail=button.querySelector<HTMLImageElement>('img');
+    if(!thumbnail||thumbnail.hidden)return;
+    if(thumbnail.complete&&thumbnail.naturalWidth)return;
+    button.classList.add('detail-image-skeleton');thumbnail.style.opacity='0';
+    thumbnail.addEventListener('load',()=>{
+      button.classList.remove('detail-image-skeleton');thumbnail.style.removeProperty('opacity');
+      if(button.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
+    },{signal,once:true});
+    thumbnail.addEventListener('error',()=>button.classList.remove('detail-image-skeleton'),{signal,once:true});
+  };
+  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(button=>{watchLandscape(button);watchThumbnail(button);});
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
   const applyImages=(data:Galleries&{poster?:string;backdrop?:string;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
@@ -135,7 +146,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
           let button=existing.get(url);
           if(!button){
             button=document.createElement('button');button.type='button';button.dataset.detailImage=url||'';
-            if(url){const thumbnail=document.createElement('img');thumbnail.src=responsiveArtwork(url,{size:'w500',route:'direct'})?.src||url;thumbnail.alt=`${name} artwork`;thumbnail.loading='lazy';button.append(thumbnail);watchLandscape(button);}
+            if(url){const thumbnail=document.createElement('img');thumbnail.src=responsiveArtwork(url,{size:'w500',route:'direct'})?.src||url;thumbnail.alt=`${name} artwork`;thumbnail.loading='lazy';button.append(thumbnail);watchLandscape(button);watchThumbnail(button);}
             else button.className='detail-image-skeleton';
           }
           button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);return button;

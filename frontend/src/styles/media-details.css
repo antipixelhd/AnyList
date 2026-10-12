@@ -72,7 +72,12 @@
 .detail-person-skeleton>div { width:65%; height:32px; }
 .detail-load-status { color:var(--muted); font-size:1.2rem; margin:8px 0 14px; }
 .detail-load-status .lab-text-button { color:var(--blue); }
-.media-detail .lab-art-image.detail-image-skeleton { aspect-ratio:16/9; width:100%; }
+.media-detail .lab-art-image { aspect-ratio:2.8; width:100%; }
+.media-detail .lab-art-image img { height:100%; }
+.media-detail .lab-gallery button { height:260px; }
+.media-detail .lab-gallery img { height:100%; }
+@media(max-width:900px) { .media-detail .lab-gallery button { height:220px; } }
+@media(max-width:650px) { .media-detail .lab-gallery button { height:190px; } }
 .media-detail [data-credit-preview] { min-height:77px; }
 @keyframes detail-skeleton { from { background-position:100% 0; } to { background-position:-140% 0; } }
 .detail-value-skeleton { display:inline-block; width:48px; height:18px; background:var(--field); border-radius:3px; animation:detail-skeleton 1.8s ease-in-out infinite; }
