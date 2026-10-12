@@ -3,7 +3,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
   const mobile=matchMedia('(max-width:650px)');
   const reduced=matchMedia('(prefers-reduced-motion:reduce)');
   let unlock:(()=>void)|undefined;
-  let gesture:{id:number;x:number;y:number;axis?:'horizontal'|'vertical';distance:number}|undefined;
+  let gesture:{id:number;x:number;y:number;axis?:'horizontal'|'vertical';distance:number;samples:{y:number;time:number}[]}|undefined;
   const pointers=new Set<number>();
   let settling:ReturnType<typeof setTimeout>|undefined,ignoreClickUntil=0;
 
@@ -38,14 +38,17 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
     pointers.add(event.pointerId);
     if(pointers.size>1){settle();return;}
     if(settling||(window.visualViewport?.scale||1)>1)return;
-    gesture={id:event.pointerId,x:event.clientX,y:event.clientY,distance:0};
+    gesture={id:event.pointerId,x:event.clientX,y:event.clientY,distance:0,samples:[{y:event.clientY,time:performance.now()}]};
   },{signal,passive:true});
   track.addEventListener('pointermove',event=>{
     if(!gesture||gesture.id!==event.pointerId||pointers.size!==1)return;
     const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;
+    const now=performance.now();
+    gesture.samples.push({y:event.clientY,time:now});
+    while(gesture.samples.length>2&&gesture.samples[0].time<now-100)gesture.samples.shift();
     if(!gesture.axis){
-      if(Math.max(Math.abs(dx),Math.abs(dy))<12)return;
-      gesture.axis=Math.abs(dy)>Math.abs(dx)*1.2?'vertical':'horizontal';
+      if(Math.max(Math.abs(dx),Math.abs(dy))<8)return;
+      gesture.axis=Math.abs(dy)>=Math.abs(dx)?'vertical':'horizontal';
     }
     if(gesture.axis!=='vertical')return;
     event.preventDefault();
@@ -60,8 +63,15 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
     if(!gesture||gesture.id!==event.pointerId)return;
     if(gesture.axis==='vertical'){
       ignoreClickUntil=performance.now()+400;
-      const threshold=Math.min(160,Math.max(90,dialog.clientHeight*.18));
-      settle(event.type!=='pointercancel'&&gesture.distance>=threshold);
+      const threshold=Math.min(112,Math.max(72,dialog.clientHeight*.12));
+      const first=gesture.samples[0],last=gesture.samples.at(-1)!;
+      const elapsed=performance.now()-first.time;
+      const velocity=elapsed>0&&performance.now()-last.time<=100?(last.y-first.y)/elapsed:0;
+      // Material's default significant velocity is 500 px/s. Adapt that
+      // pattern to CSS pixels, with minimum travel to reject accidental taps.
+      // https://github.com/material-components/material-components-android/blob/master/lib/java/com/google/android/material/bottomsheet/BottomSheetBehavior.java
+      const flick=gesture.distance>=32&&velocity>=.5;
+      settle(event.type!=='pointercancel'&&velocity>=-.2&&(gesture.distance>=threshold||flick));
     }else gesture=undefined;
   };
   window.addEventListener('pointerup',release,{signal,passive:true});
