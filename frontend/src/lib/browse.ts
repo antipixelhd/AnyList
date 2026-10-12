@@ -426,9 +426,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       grid.hidden = true;
       sections.hidden = true;
       notice.textContent = "";
-      loadingView.show(false, categoryView);
+      loadingView.show(false, categoryView, field('view').value==='timeline');
     } else {
-      loadingView.show(true);
+      loadingView.show(true, false, field('view').value==='timeline');
     }
     try {
       let response = cached;

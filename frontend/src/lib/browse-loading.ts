@@ -49,17 +49,19 @@ export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement, 
   let shownAt: number | undefined;
   const grid = skeleton.querySelector<HTMLElement>('[data-skeleton-grid]')!;
   const sections = skeleton.querySelector<HTMLElement>('[data-skeleton-sections]')!;
+  const timeline = skeleton.querySelector<HTMLElement>('[data-skeleton-timeline]')!;
   let active = grid;
   return {
-    show(append = false, categories = false) {
+    show(append = false, categories = false, timelineView = false) {
       const hasCards = [...region.querySelectorAll<HTMLElement>("[data-browse-card]")]
         .some((card) => card.getClientRects().length > 0);
       if (!append && hasCards) return;
-      const destination = categories && !append ? sections : grid;
+      const destination = timelineView ? timeline : categories && !append ? sections : grid;
       if (active !== destination) this.finish();
       active = destination;
       grid.hidden = active !== grid;
       sections.hidden = active !== sections;
+      timeline.hidden = active !== timeline;
       if (shownAt === undefined) {
         // Fresh slots receive their own entrance each time the loading view opens.
         active.querySelectorAll<HTMLElement>('.browse-skeleton').forEach(slot => {
