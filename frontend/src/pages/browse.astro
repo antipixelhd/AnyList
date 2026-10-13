@@ -8,7 +8,7 @@ import Icon from "../components/Icon.astro";
 import {timelineGroups} from '../lib/browse-timeline-data';
 import { tracker } from "../lib/tracker";
 import "../styles/browse.css";
-import { releaseYearBounds } from "../lib/browse-ranges";
+import { releaseYearBounds, releaseYearLabel } from "../lib/browse-ranges";
 import {
   isCategoryView,
   genreSelectionLabel,
@@ -85,7 +85,7 @@ const regions = [
 const region = params.get("region") || "US";
 if (!regions.some(([id]) => id === region)) regions.push([region, region]);
 const signedIn = !!Astro.locals.user;
-const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 1900);
+const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 1900, Number(params.get("end")?.slice(0, 4)) || 1900);
 const lastYear = Math.max(new Date().getFullYear() + 3, Number(params.get("start")?.slice(0, 4)) || 0, Number(params.get("end")?.slice(0, 4)) || 0);
 const years = releaseYearBounds(params.get("start") || "", params.get("end") || "", firstYear, lastYear);
 const minScore = Math.max(0, Math.min(10, Number(params.get("min_score") ?? 0) || 0));
@@ -268,8 +268,8 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
                 ))}
               </select>
             </label>
-            <div class="browse-range" data-year-range style={`--range-start:${(years.lower - firstYear) / (lastYear - firstYear) * 100}%;--range-end:${(years.upper - firstYear) / (lastYear - firstYear) * 100}%`}>
-              <div class="browse-range-heading"><span id="browse-year-label">Year range</span><output>{params.get("start") || params.get("end") ? `${years.lower} – ${years.upper}` : "Any year"}</output></div>
+            <div class="browse-range" data-year-range data-range-collapsed={years.lower === years.upper ? '' : undefined} style={`--range-start:${(years.lower - firstYear) / (lastYear - firstYear) * 100}%;--range-end:${(years.upper - firstYear) / (lastYear - firstYear) * 100}%`}>
+              <div class="browse-range-heading"><span id="browse-year-label">Year range</span><output>{releaseYearLabel(params.get('start') || '',params.get('end') || '',firstYear,lastYear)}</output></div>
               <div class="browse-range-track">
                 <input type="range" min={firstYear} max={lastYear} value={years.lower} data-range-lower aria-label="Earliest release year" />
                 <input type="range" min={firstYear} max={lastYear} value={years.upper} data-range-upper aria-label="Latest release year" />

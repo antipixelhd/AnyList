@@ -13,7 +13,7 @@ import MediaDetailWork from './MediaDetailWork.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import {detailSceneArtwork} from '../lib/detail-artwork';
-import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,moneyLabel} from '../lib/media-detail-data';
+import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,moneyLabel,detailBrowseHref,detailCreators} from '../lib/media-detail-data';
 import '../styles/dev-details.css';
 import '../styles/dev-marquee.css';
 import '../styles/dev-marquee-25.css';
@@ -28,12 +28,13 @@ const reserveBackdrop=!!backdrop||!!(trackable&&title?.image_status?.state!=='re
 const facts=title?detailFacts(title):[];
 const synopsis=detailSynopsis(title?.overview);
 const people=title?[...title.people,...title.organizations]:[];
-const others=people.filter(person=>person.kind!=='actor');
 const credits=title?detailCredits(title):null;
 const preview=credits?.preview||[];
 const artwork=[...new Set((title?.artwork||[]).filter(Boolean))].slice(0,10) as string[];
 const scenes=artwork.filter(url=>url!==title?.backdrop);
-const creator=others.filter(person=>person.roles.some(role=>/director|author|creator|developer/i.test(role))).slice(0,2).map(person=>person.name).join(', ');
+const creators=detailCreators(people);
+const typeHref=title&&detailBrowseHref(title.type);
+const yearHref=title?.year&&detailBrowseHref(title.type,{year:title.year});
 const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(trackable||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
 const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab'))?.id||'overview';
 // Discover only the primary preview in the head, ahead of the large credit JSON.
@@ -53,7 +54,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
     {(backdrop||trackable)&&<img class="lab-hero-image" src={backdrop?.src} srcset={backdrop?.srcset} sizes={backdrop?.sizes} hidden={!backdrop} alt="" fetchpriority="high"/>}<div class="lab-hero-shade"></div>
     <div class="lab-hero-content">
       {poster?<button class="lab-hero-poster lab-poster-button media-cover" type="button" data-detail-gallery="posters" data-detail-image={poster.src} data-detail-caption={`${title.title} · Cover`} aria-label={`Expand ${title.title} cover`}><img class="lab-poster" src={poster.src} srcset={poster.srcset} sizes={poster.sizes} alt={`${title.title} cover`} fetchpriority="high"/></button>:<div class="lab-hero-poster lab-poster-button media-cover media-cover-empty" aria-hidden="true">{title.title.slice(0,1)}</div>}
-      <div class="lab-heading"><p class="lab-kicker"><span>{kindLabel[title.type]}</span>{title.year&&<span>{title.year}</span>}{creator&&<span>{creator}</span>}</p><h1>{title.title}</h1>{title.original_title&&title.original_title.trim().toLocaleLowerCase()!==title.title.trim().toLocaleLowerCase()&&<p class="media-original-title">{title.original_title}</p>}{title.tagline&&<p class="lab-tagline">{title.tagline}</p>}{!!title.genres.length&&<div class="lab-genres">{title.genres.slice(0,6).map(genre=>trackable?<a href={`/browse?type=${title.type}&genre=${encodeURIComponent(genre)}`}>{genre}</a>:<span>{genre}</span>)}</div>}</div>
+      <div class="lab-heading"><p class="lab-kicker"><span>{typeHref?<a href={typeHref}>{kindLabel[title.type]}</a>:kindLabel[title.type]}</span>{title.year&&<span>{yearHref?<a href={yearHref}>{title.year}</a>:title.year}</span>}<span data-detail-creators hidden={!creators.length}>{creators.map((person,index)=><>{index>0?', ':''}{person.url?<a href={person.url}>{person.name}</a>:person.name}</>)}</span></p><h1>{title.title}</h1>{title.original_title&&title.original_title.trim().toLocaleLowerCase()!==title.title.trim().toLocaleLowerCase()&&<p class="media-original-title">{title.original_title}</p>}{title.tagline&&<p class="lab-tagline">{title.tagline}</p>}{!!title.genres.length&&<div class="lab-genres">{title.genres.slice(0,6).map(genre=>detailBrowseHref(title.type,{genre})?<a href={detailBrowseHref(title.type,{genre})!}>{genre}</a>:<span>{genre}</span>)}</div>}</div>
       {(backdrop||trackable)&&<button class="lab-hero-art-button" type="button" data-detail-image={backdrop?.src} hidden={!backdrop} data-detail-caption={`${title.title} · Main artwork`} aria-label="Expand artwork"><Icon name="zoom-in"/></button>}
     </div>
   </header>

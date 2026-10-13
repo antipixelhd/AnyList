@@ -25,6 +25,20 @@ export type DetailMedia = EditorTitle & {
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
 };
 export const kindLabel = {movie:'Movie', series:'Series', game:'Game', book:'Book'};
+export function detailBrowseHref(type: MediaKind, options: {year?: string; genre?: string} = {}) {
+  if (type !== 'movie' && type !== 'series') return null;
+  const params = new URLSearchParams({type});
+  if (options.year && /^\d{4}$/.test(options.year)) {
+    params.set('start', `${options.year}-01-01`);
+    params.set('end', `${options.year}-12-31`);
+    params.set('view', 'timeline');
+  }
+  if (options.genre) params.set('genres', `name:${options.genre}`);
+  return `/browse?${params}`;
+}
+export function detailCreators(people: DetailPerson[]) {
+  return people.filter(person => person.kind !== 'actor' && person.roles.some(role => /director|author|creator|developer/i.test(role))).slice(0,2);
+}
 export function detailWorkCaption(work: {type?: MediaKind; genres?: string[]; year?: string}, similar = false) {
   return [similar ? work.genres?.find(genre => typeof genre === 'string' && genre.trim())?.trim() : work.type ? kindLabel[work.type] : null, work.year].filter(Boolean).join(' · ');
 }

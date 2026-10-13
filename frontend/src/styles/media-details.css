@@ -1,5 +1,8 @@
 /* Marquee 2.7 opening with the compact Marquee 2.5 right rail. */
 .media-detail { --media-radius:var(--lab-radius); }
+.media-detail .lab-kicker a { border-radius:3px; transition:color .18s ease,background-color .18s ease; }
+.media-detail :is(.lab-kicker,.lab-genres) a:hover { color:var(--bright); }
+.media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
 .media-detail .lab-hero { overflow:visible; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }

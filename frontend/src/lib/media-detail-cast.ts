@@ -1,5 +1,5 @@
 import { createContentTransition } from './content-motion';
-import { detailCastPresentation, detailCredits, type DetailPerson, type DetailMedia } from './media-detail-data';
+import { detailCastPresentation, detailCredits, detailCreators, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
 import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
@@ -122,6 +122,17 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState;credits_status?:string})=>{
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
     if(!groups.cast.length&&['failed','deferred'].includes(data.credits_status||''))return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
+    const creatorRow=root.querySelector<HTMLElement>('[data-detail-creators]');
+    const creators=detailCreators([...data.people,...data.organizations]);
+    if(creatorRow&&creators.length){
+      const nodes:Node[]=[];
+      creators.forEach((person,index)=>{
+        if(index)nodes.push(document.createTextNode(', '));
+        if(person.url){const link=document.createElement('a');link.href=person.url;link.textContent=person.name;nodes.push(link);}
+        else nodes.push(document.createTextNode(person.name));
+      });
+      creatorRow.replaceChildren(...nodes);creatorRow.hidden=false;
+    }
     const preview=root.querySelector<HTMLElement>('[data-credit-preview]');if(preview)fill(preview,groups.preview);
     const rows={cast:groups.cast,crew:groups.principal,supporting:groups.supporting,studios:groups.studios};
     root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{

@@ -6,9 +6,30 @@ import test from 'node:test';
 import {formatDate} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
-const context={Intl,Date,countryLabel,formatDate};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation};',context);
+const context={Intl,Date,URLSearchParams,countryLabel,formatDate};
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('header browse links preserve media type and select a full year in timeline view',()=>{
+  assert.equal(api.detailBrowseHref('movie'), '/browse?type=movie');
+  const year=new URL(api.detailBrowseHref('series',{year:'2014'}),'https://anylist.test').searchParams;
+  assert.equal(year.get('type'),'series');
+  assert.equal(year.get('start'),'2014-01-01');
+  assert.equal(year.get('end'),'2014-12-31');
+  assert.equal(year.get('view'),'timeline');
+  const genre=new URL(api.detailBrowseHref('movie',{genre:'Science Fiction'}),'https://anylist.test').searchParams;
+  assert.equal(genre.get('genres'),'name:Science Fiction');
+  assert.equal(api.detailBrowseHref('movie',{year:'invalid'}),'/browse?type=movie');
+  assert.equal(api.detailBrowseHref('book'),null);
+});
+
+test('header creators preserve person links and exclude cast and unrelated crew',()=>{
+  const person=(id,kind,role)=>({id,kind,name:`Person ${id}`,roles:[role],url:`/staff/catalogue:${id}`});
+  const people=[person(1,'actor','Actor'),person(2,'staff','Director'),person(3,'staff','Writer'),person(4,'staff','Creator'),person(5,'staff','Director')];
+  const creators=api.detailCreators(people);
+  assert.deepEqual(Array.from(creators,person=>person.id),[2,4]);
+  assert.equal(creators[0].url,'/staff/catalogue:2');
+});
 
 test('cast mode reverses name hierarchy and preserves actor portrait as the final fallback',()=>{
   const actor={name:'Actor',kind:'actor',characters:['Character'],roles:['Actor'],image:'portrait',character_image:'local',character_images:['local','other']};
