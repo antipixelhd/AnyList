@@ -25,6 +25,17 @@ export type DetailMedia = EditorTitle & {
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
 };
 export const kindLabel = {movie:'Movie', series:'Series', game:'Game', book:'Book'};
+// Browse's canonical movie/series genre IDs; provider-specific names stay local.
+const browseGenres: Record<string, number> = {
+  Action:28, Adventure:12, Animation:16, Comedy:35, Crime:80, Documentary:99,
+  Drama:18, Family:10751, Fantasy:14, History:36, Horror:27, Music:10402,
+  Mystery:9648, Romance:10749, 'Science Fiction':878, 'TV Movie':10770,
+  Thriller:53, War:10752, Western:37, 'Action & Adventure':10759, Kids:10762,
+  News:10763, Reality:10764, 'Sci-Fi & Fantasy':10765, Soap:10766, Talk:10767,
+  'War & Politics':10768,
+};
+const seriesGenreIds = new Set([16,35,80,99,18,10751,9648,37,10759,10762,10763,10764,10765,10766,10767,10768]);
+const sharedGenreIds = new Set([16,35,80,99,18,10751,9648,37]);
 export function detailBrowseHref(type: MediaKind, options: {year?: string; genre?: string} = {}) {
   if (type !== 'movie' && type !== 'series') return null;
   const params = new URLSearchParams({type});
@@ -33,7 +44,11 @@ export function detailBrowseHref(type: MediaKind, options: {year?: string; genre
     params.set('end', `${options.year}-12-31`);
     params.set('view', 'timeline');
   }
-  if (options.genre) params.set('genres', `name:${options.genre}`);
+  if (options.genre) {
+    const id=browseGenres[options.genre];
+    const canonical=id && (type==='series' ? seriesGenreIds.has(id) : !seriesGenreIds.has(id)||sharedGenreIds.has(id));
+    params.set('genres', canonical ? String(id) : `name:${options.genre}`);
+  }
   return `/browse?${params}`;
 }
 export function detailCreators(people: DetailPerson[]) {

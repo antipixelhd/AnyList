@@ -18,7 +18,10 @@ test('header browse links preserve media type and select a full year in timeline
   assert.equal(year.get('end'),'2014-12-31');
   assert.equal(year.get('view'),'timeline');
   const genre=new URL(api.detailBrowseHref('movie',{genre:'Science Fiction'}),'https://anylist.test').searchParams;
-  assert.equal(genre.get('genres'),'name:Science Fiction');
+  assert.equal(genre.get('genres'),'878');
+  assert.equal(new URL(api.detailBrowseHref('series',{genre:'Sci-Fi & Fantasy'}),'https://anylist.test').searchParams.get('genres'),'10765');
+  assert.equal(new URL(api.detailBrowseHref('movie',{genre:'Anime'}),'https://anylist.test').searchParams.get('genres'),'name:Anime');
+  assert.equal(new URL(api.detailBrowseHref('series',{genre:'Action'}),'https://anylist.test').searchParams.get('genres'),'name:Action');
   assert.equal(api.detailBrowseHref('movie',{year:'invalid'}),'/browse?type=movie');
   assert.equal(api.detailBrowseHref('book'),null);
 });
