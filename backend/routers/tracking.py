@@ -685,6 +685,20 @@ async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(
     return {"media_ids": body.media_ids}
 
 
+@router.get('/quick-search/contributors')
+async def quick_search_contributors(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User, Depends(get_current_user)],
+    q: Annotated[str, Query(max_length=100)] = '',
+    kind: Literal['all', 'actor', 'staff', 'studio'] = 'all',
+) -> dict:
+    term = q.strip()
+    if len(term) < 2:
+        return {'results': {'actor': [], 'staff': [], 'studio': []}}
+    from core.contributor_search import search_contributors
+    return await search_contributors(db, viewer, term, kind)
+
+
 @router.get('/people-search')
 async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
     term=q.strip()

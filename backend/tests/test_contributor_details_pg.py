@@ -12,6 +12,33 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quick_search_uses_canonical_roles_studio_pages_and_literal_names(self):
+        from core.contributor_search import local_matches
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            person.name = 'Search Person'
+            alias = CatalogueEntity(kind='person', name='Search Old Name', canonical_person_id=person.id, attributes={})
+            db.add(alias); await db.flush()
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=alias.id, provider='tmdb', source_key='search-director', role='director', role_label='Director'))
+            studio = await db.get(CatalogueEntity, self.studio_id)
+            studio.name = 'Search Studio'
+            network = CatalogueEntity(kind='organization', name='Search Network', attributes={})
+            archive = CatalogueEntity(kind='person', name='Search Archive', attributes={})
+            db.add_all([network,archive]); await db.flush()
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=network.id, provider='tmdb', source_key='search-network', role='network'))
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=archive.id, provider='tmdb', source_key='search-archive', role='actor', character_label='Self (archive footage)'))
+            await db.commit()
+            data = await local_matches(db, 'Search', 'all')
+            self.assertEqual([row['key'] for row in data['actor']], [f'catalogue:{person.id}'])
+            self.assertEqual([row['key'] for row in data['staff']], [f'catalogue:{person.id}'])
+            self.assertEqual([row['key'] for row in data['studio']], [f'catalogue:{studio.id}'])
+            self.assertEqual(data['staff'][0]['url'], f'/person/catalogue:{person.id}')
+            alias_data = await local_matches(db, 'Old Name', 'actor')
+            self.assertEqual(alias_data['actor'][0]['name'], 'Search Person')
+            self.assertFalse(alias_data['staff'])
+            self.assertEqual(await local_matches(db, '%', 'all'), {'actor': [], 'staff': [], 'studio': []})
+
     async def test_cast_completeness_uses_historical_payload_without_dropping_partial_fallback(self):
         from core.screen_cast import complete_cast_works
         from models.catalogue import MetadataSnapshot
