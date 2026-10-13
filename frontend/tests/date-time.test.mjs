@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calendarDate, formatDate, formatDateTime, formatTime, localToday, requestDateLocale, timestamp } from '../src/lib/date-time.ts';
+import { browserDateRegion, dateRegion } from '../src/lib/date-region.ts';
 
 test('calendar dates follow German, US and British ordering with a complete year', () => {
   assert.equal(formatDate('2026-03-04', {locale:'de-DE'}), '04.03.2026');
@@ -68,4 +69,36 @@ test('SSR accepts supported request locales; local input dates keep the local ca
   const now=new Date(2026,9,12,0,5);
   assert.equal(localToday(now),'2026-10-12');
   assert.equal(now.getHours(),0);
+});
+
+test('saved region overrides browser language during SSR and ignores invalid preferences', () => {
+  assert.equal(requestDateLocale('en-US,en;q=0.9', 'de-DE'), 'de-DE');
+  assert.equal(requestDateLocale('en-US', 'invalid'), 'en-US');
+  assert.equal(requestDateLocale(null, 'de-DE'), 'de-DE');
+  assert.equal(dateRegion(''), undefined);
+  assert.equal(dateRegion('en-US<script>'), undefined);
+});
+
+test('browser region applies across dates, times and months and resetting restores the default', () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const browser = {cookie:'other=value; anylist_date_region=de-DE'};
+  Object.defineProperty(globalThis, 'document', {value:browser, configurable:true});
+  try {
+    assert.equal(browserDateRegion(), 'de-DE');
+    assert.equal(formatDate('2014-07-30'), '30.07.2014');
+    assert.equal(formatDateTime('2026-10', 'month'), 'Oktober 2026');
+    assert.equal(formatTime('2026-10-13T18:30:00Z', {timeZone:'UTC'}), '18:30');
+    assert.equal(formatDate('2014-07-30', {locale:'en-US'}), '07/30/2014');
+    assert.equal(formatDate('2026-10-13', {timeZone:'America/Los_Angeles'}), '13.10.2026');
+    browser.cookie = 'anylist_date_region=en-GB';
+    assert.equal(formatDate('2014-07-30'), '30/07/2014');
+    for (const cookie of ['', 'anylist_date_region=invalid', 'prefix_anylist_date_region=de-DE']) {
+      browser.cookie = cookie;
+      assert.equal(browserDateRegion(), undefined);
+      assert.equal(formatDate('2014-07-30'), new Intl.DateTimeFormat(undefined,{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}).format(new Date('2014-07-30T00:00:00Z')));
+    }
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'document', original);
+    else delete globalThis.document;
+  }
 });

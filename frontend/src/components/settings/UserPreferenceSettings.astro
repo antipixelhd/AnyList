@@ -1,6 +1,7 @@
 ---
 import RatingPosterSettings from "./RatingPosterSettings.astro";
 import StatisticsRefresh from "./StatisticsRefresh.astro";
+import DateRegionSettings from './DateRegionSettings.astro';
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
@@ -99,6 +100,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     <div id="js-message" class="hidden" role="status" aria-live="polite"></div>
     {category === "profile" && (
     <div class="settings-stack">
+      <DateRegionSettings />
 
       <!-- Profile color -->
       <section class="profile-color-settings" aria-labelledby="profile-color-heading">

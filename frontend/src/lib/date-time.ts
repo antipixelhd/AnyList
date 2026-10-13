@@ -1,3 +1,5 @@
+import { browserDateRegion, dateRegion } from './date-region.ts';
+
 /** Display only: API values and native date/datetime inputs remain ISO. */
 export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'month' | 'month-short' | 'month-name' | 'month-name-short' | 'month-day';
 export type DateTimeContext = { locale?: string | string[]; timeZone?: string };
@@ -45,10 +47,11 @@ export function formatDateTime(value: string | number | Date | null | undefined,
   if (!date) return '';
   // UTC here preserves a calendar day; real instants use the viewer's zone.
   const options = { ...styles[style], ...(calendar ? { timeZone: 'UTC' } : context.timeZone ? { timeZone: context.timeZone } : {}) };
-  const key = JSON.stringify([context.locale ?? null, options]);
+  const locale = context.locale ?? browserDateRegion();
+  const key = JSON.stringify([locale ?? null, options]);
   let formatter = formatters.get(key);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat(context.locale, options);
+    formatter = new Intl.DateTimeFormat(locale, options);
     if (formatters.size >= 32) formatters.delete(formatters.keys().next().value!);
     formatters.set(key, formatter);
   }
@@ -64,7 +67,9 @@ export function localToday(now = new Date()): string {
 }
 
 /** SSR can know the preferred language, but only the browser knows its time zone. */
-export function requestDateLocale(acceptLanguage: string | null): string | undefined {
+export function requestDateLocale(acceptLanguage: string | null, region?: string): string | undefined {
+  const preference = dateRegion(region);
+  if (preference) return preference;
   const locales = (acceptLanguage || '').split(',').map(part => part.split(';')[0].trim());
   for (const locale of locales) {
     try { if (locale && Intl.DateTimeFormat.supportedLocalesOf([locale]).length) return locale; } catch {}

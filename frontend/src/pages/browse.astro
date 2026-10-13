@@ -115,7 +115,7 @@ const scoreLimit = 10;
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
   .map((genre: any) => genre.name);
-const dateLocale = requestDateLocale(Astro.request.headers.get('accept-language'));
+const dateLocale = requestDateLocale(Astro.request.headers.get('accept-language'), Astro.cookies.get('anylist_date_region')?.value);
 if (params.get("start")) initialChips.push(`After ${formatDate(params.get("start"),{locale:dateLocale})}`);
 if (params.get("end")) initialChips.push(`Before ${formatDate(params.get("end"),{locale:dateLocale})}`);
 const statusLabel = statusOptions.find(([id]) => id === params.get("status"))?.[1];
