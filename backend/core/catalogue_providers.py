@@ -531,7 +531,7 @@ class CatalogueProviders:
             for r in rows[(page - 1) * limit : page * limit]
         ]
 
-    async def detail(self, provider, kind, external_id):
+    async def detail(self, provider, kind, external_id, *, credit_groups=None):
         self.validate(provider, kind)
         if provider == "openlibrary":
             from .openlibrary import detail
@@ -540,7 +540,7 @@ class CatalogueProviders:
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
-            self._detail(provider, kind, int(external_id)), timeout=120
+            self._detail(provider, kind, int(external_id), credit_groups=credit_groups), timeout=120
         )
 
     async def openlibrary_isbn(self, value):
@@ -553,7 +553,7 @@ class CatalogueProviders:
 
         return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
-    async def _detail(self, provider, kind, id):
+    async def _detail(self, provider, kind, id, *, credit_groups=None):
         if provider == "igdb":
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
@@ -748,9 +748,11 @@ class CatalogueProviders:
         # verified identity bridge. Bound optional enrichment per title.
         people = {}
         provisional = normalize_tvdb(raw, kind)
+        from core.screen_metadata_policy import credit_group
         principal_people = {str(c['contributor']['identities'][0]['external_id'])
                             for c in provisional['credits']
-                            if c['contributor']['kind'] == 'person' and c['attributes']['principal']}
+                            if c['contributor']['kind'] == 'person' and c['attributes']['principal']
+                            and (credit_groups is None or credit_group(c) in credit_groups)}
         counts = {True: 0, False: 0}
         for member in sorted(raw.get("characters") or [], key=lambda p: p.get("sort") or 0):
             pid = member.get("peopleId") or member.get("personId")
@@ -769,7 +771,8 @@ class CatalogueProviders:
                 people[str(pid)] = {}  # Retain title credits when optional people enrichment fails.
         companies = {}
         for c in [c for c in provisional['credits']
-                  if c['contributor']['kind'] == 'organization' and c['role'] == 'producer'][:4]:
+                  if c['contributor']['kind'] == 'organization' and c['role'] == 'producer'
+                  and (credit_groups is None or 'organizations' in credit_groups)][:4]:
             native = c['contributor']['identities'][0]['external_id']
             try:
                 async with self.http.lane('tvdb'):

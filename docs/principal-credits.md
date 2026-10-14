@@ -107,3 +107,31 @@ character galleries and contributor filmographies retain their dedicated reads.
 
 See the [performance verification](audits/credit-performance-fixes-2026-10-14.md)
 for measured results and remaining limits.
+
+
+## Metadata provider policy
+
+Detail credit loading and the daily tracked-title backfill share one source
+policy. TMDB is primary. A series with an existing TVDB canonical episode
+catalogue remains TVDB-primary, even after acquiring a TMDB ID. Existing
+catalogue source markers are also respected. Neither enrichment path renumbers
+seasons/episodes or changes personal tracking facts.
+
+The secondary provider runs only when the catalogue lacks a cast, crew or
+organization section, or a title name, overview, poster, release date or genres.
+Secondary projection fills absent sections and scalar metadata additively;
+it does not import another full cast/crew when those sections already exist.
+The full provider response remains in the shared metadata snapshot. Missing
+sections can be projected from that cached response without another download.
+Secondary data never supplies competing episode-count/layout attributes.
+
+TVDB person/company identity requests are limited to the sections being filled;
+a metadata-only gap does not request person or company profiles. Shared refresh
+leases/backoff do not trigger a competing secondary import. The background
+worker uses the same source/cache policy rather than re-ingesting both sources.
+Its primary-source refresh remains authoritative, including removal of obsolete
+primary credits; secondary enrichment is always additive.
+
+Character artwork retains its separate demand/background enrichment path, even
+when TMDB metadata is complete. Poster/background galleries retain the existing
+TMDB image policy; this change does not merge TVDB title artwork into galleries.

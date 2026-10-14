@@ -11,8 +11,10 @@ from core.character_backfill import backfill_screen_characters, backfill_tvmaze_
 from core.country_backfill import backfill_catalogue_countries, backfill_legacy_countries
 from core.data_health import COHORT, HAS_GENRES, JOB_TYPE, LOCK_KEY, NAMED_ROLE
 from core.runtime_backfill import backfill_history_runtimes
+from core.screen_metadata_policy import metadata_gaps, screen_sources
 from db import AsyncSessionLocal, engine
 from models.catalogue import CatalogueCredit, CatalogueEntity, MetadataSnapshot
+from models.media import Media
 from models.statistics import UserStatsState
 from models.sync import SyncJob, SyncStatus
 
@@ -44,9 +46,17 @@ async def fill_screen_metadata(db, providers, *, limit=10):
     result = {'examined': len(rows), 'updated': 0, 'failed': 0, 'deferred': 0}
     for row in rows:
         succeeded = False
-        for provider in ('tmdb', 'tvdb'):
+        media = await db.get(Media, row['id'])
+        if media is None:
+            continue
+        for index, (provider, external_id) in enumerate(await screen_sources(db, media)):
+            groups = None
+            if index:
+                from core.media_details import screen_work
+                groups, missing = await metadata_gaps(db, await screen_work(db, media))
+                if not groups and not missing:
+                    continue
             key = getattr(providers, provider + '_key')
-            external_id = row[provider + '_id']
             if not external_id:
                 continue
             kind = row['media_type'].value if hasattr(row['media_type'], 'value') else row['media_type']
@@ -57,12 +67,12 @@ async def fill_screen_metadata(db, providers, *, limit=10):
                 if snapshot and ((snapshot.next_attempt_at and snapshot.next_attempt_at > now) or
                     (snapshot.lease_token and snapshot.lease_until and snapshot.lease_until > now)):
                     result['deferred'] += 1
-                    continue
+                    break
                 if snapshot and snapshot.payload and not snapshot.error_code:
                     doc = catalogue_normalize.normalize_tmdb(snapshot.payload, kind) if provider == 'tmdb' else catalogue_normalize.normalize_tvdb(snapshot.payload, kind)
                 elif key:
                     receipt = await catalogue.refresh_metadata(db, providers, provider, kind, str(external_id),
-                        additive=True, expected_entity_id=row['entity_id'])
+                        additive=True, expected_entity_id=row['entity_id'], credit_groups=groups)
                     if receipt['status'] != 'updated':
                         result['failed' if receipt.get('error_code') else 'deferred'] += 1
                         continue
@@ -78,7 +88,7 @@ async def fill_screen_metadata(db, providers, *, limit=10):
                 if not any(i['namespace'] == f'{provider}.{kind}' and i['external_id'] == str(external_id) for i in doc['work']['identities']):
                     raise catalogue.IdentityConflict('Provider reply identity mismatch')
                 async with db.begin_nested():
-                    work = await fill_document(db, doc, provider)
+                    work = await fill_document(db, doc, provider, credit_groups=groups)
                     if row['entity_id'] and work.id != row['entity_id']:
                         raise catalogue.IdentityConflict('Existing title bridge requires review')
                     work.attributes = {**work.attributes, 'health_metadata_attempted_at': now.isoformat()}

@@ -5,7 +5,7 @@ from core import catalogue
 from models.catalogue import CatalogueCredit, CatalogueEntity
 
 
-async def fill_document(db, document, provider):
+async def fill_document(db, document, provider, *, credit_groups=None):
     """Only add missing screen metadata; authoritative refresh/delete is not used.
 
     Lock before comparing fields. Known values, protected fields, source credits,
@@ -15,6 +15,9 @@ async def fill_document(db, document, provider):
     """
     # Only the outer document/coverage/credit list are replaced. Contributor
     # preparation copies its own values; the retained provider document is read-only.
+    if credit_groups is not None:
+        from core.screen_metadata_policy import gap_document
+        document = gap_document(document, credit_groups)
     doc = dict(document)
     if doc['work']['kind'] not in ('movie', 'series'):
         raise catalogue.IdentityConflict('Screen metadata required')

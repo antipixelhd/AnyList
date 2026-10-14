@@ -372,11 +372,11 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(TrackedEntry(user_id=self.user_id, media_id=available.id))
             await db.commit()
             providers = SimpleNamespace(tmdb_key='fixture-key', tvdb_key=None)
-            with patch('core.actor_backfill.catalogue.refresh_metadata', AsyncMock(return_value={'status':'updated', 'entity_id':9})) as refresh:
+            with patch('core.actor_backfill.fill_screen_credits', AsyncMock(return_value='updated')) as refresh:
                 result = await backfill_actors(db, providers, limit=1)
             self.assertEqual((result['examined'], result['updated']), (1,1))
             self.assertNotIn('actor_backfill_attempted_at', missing.tmdb_data or {})
-        self.assertEqual(refresh.await_args.args[2:5], ('tmdb', 'movie', '10'))
+        self.assertEqual(refresh.await_args.args[1].id, available.id)
 
     async def test_runtime_batch_skips_ineligible_history_before_limit(self):
         from core.runtime_backfill import backfill_history_runtimes

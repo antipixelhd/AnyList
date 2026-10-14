@@ -576,7 +576,8 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 
 async def refresh_metadata(
-    db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None
+    db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
+    credit_groups=None
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -632,7 +633,8 @@ async def refresh_metadata(
                 int(external_id), edition_page
             )
         else:
-            doc, payload = await providers.detail(provider, kind, external_id)
+            options = {'credit_groups': credit_groups} if credit_groups is not None else {}
+            doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
         await db.refresh(row, with_for_update=True)
@@ -646,11 +648,11 @@ async def refresh_metadata(
                            for x in doc['work']['identities']):
                     raise IdentityConflict('Provider reply identity mismatch')
                 from core.catalogue_additive import fill_document
-                entity = await fill_document(db, doc, provider)
-                if expected_entity_id and entity.id != expected_entity_id:
-                    raise IdentityConflict('Existing title bridge requires review')
+                entity = await fill_document(db, doc, provider, credit_groups=credit_groups)
             else:
                 entity = await ingest_document(db, doc, provider)
+            if expected_entity_id and entity.id != expected_entity_id:
+                raise IdentityConflict('Existing title bridge requires review')
             row.entity_id = entity.id
             row.payload = payload
             row.coverage = doc.get("coverage", {})

@@ -24,6 +24,98 @@ def movie_payload(native=1492640, *, empty=False):
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_complete_tmdb_title_never_fetches_secondary_provider(self):
+        raw = movie_payload()
+        raw.update(overview='Complete overview', poster_path='/poster.jpg', release_date='2026-01-01',
+                   genres=[{'id': 18, 'name': 'Drama'}], production_companies=[{'id': 3, 'name': 'Studio'}])
+        self.reply(raw)
+        self.providers.tvdb_key = 'fixture'
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+            media.tvdb_id = 42
+            await db.commit()
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'updated')
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'cached')
+            work = await screen_work(db, media)
+            actor = await db.scalar(select(CatalogueCredit.contributor_id).where(
+                CatalogueCredit.work_id == work.id, CatalogueCredit.role == 'actor'))
+            db.add_all([CatalogueCredit(work_id=work.id, contributor_id=actor, provider=provider,
+                                       source_key='old-credit', role='actor') for provider in ('tmdb', 'tvdb')])
+            await db.commit()
+            # Periodic authoritative refresh still removes obsolete primary
+            # credits, while preserving other source data and avoiding downloads.
+            await fill_screen_credits(db, media, providers=self.providers, authoritative_primary=True)
+            remaining = list(await db.scalars(select(CatalogueCredit.provider).where(
+                CatalogueCredit.work_id == work.id, CatalogueCredit.source_key == 'old-credit')))
+            self.assertEqual(remaining, ['tvdb'])
+        self.assertEqual([call.args for call in self.providers.detail.await_args_list], [('tmdb', 'movie', '1492640')])
+
+    async def test_secondary_fills_only_missing_crew_and_retains_full_payload(self):
+        from core.catalogue_normalize import normalize_tvdb
+        raw = movie_payload()
+        raw['credits']['crew'] = []
+        raw.update(overview='Primary overview', poster_path='/poster.jpg', release_date='2026-01-01',
+                   genres=[{'id': 18, 'name': 'Drama'}], production_companies=[{'id': 3, 'name': 'Studio'}])
+        secondary = {'id': 42, 'name': 'Secondary title', 'overview': 'Secondary overview',
+                     'remoteIds': [{'sourceName': 'TheMovieDB.com', 'id': '1492640'}],
+                     'characters': [
+                         {'id': 1, 'peopleId': 901, 'personName': 'Secondary actor', 'type': 3, 'name': 'Role'},
+                         {'id': 2, 'peopleId': 902, 'personName': 'Missing director', 'type': 1, 'peopleType': 'Director'}]}
+        self.providers.tvdb_key = 'fixture'
+        self.providers.detail.side_effect = [(normalize_tmdb(raw, 'movie'), raw),
+                                            (normalize_tvdb(secondary, 'movie'), secondary)]
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+            media.tvdb_id = 42
+            await db.commit()
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'updated')
+            work = await screen_work(db, media)
+            self.assertEqual(work.description, 'Primary overview')
+            credits = list(await db.scalars(select(CatalogueCredit).where(
+                CatalogueCredit.work_id == work.id, CatalogueCredit.provider == 'tvdb')))
+            self.assertEqual([credit.source_key for credit in credits], ['2'])
+            snapshot = await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider == 'tvdb'))
+            self.assertEqual(len(snapshot.payload['characters']), 2)
+            self.assertEqual(snapshot.coverage['detail_credit_groups'], ['crew'])
+            await fill_screen_credits(db, media, providers=self.providers)
+        self.assertEqual(self.providers.detail.await_count, 2)
+        self.assertEqual(self.providers.detail.await_args.kwargs, {'credit_groups': {'crew'}})
+
+    async def test_tvdb_episode_catalogue_remains_primary_with_both_ids(self):
+        from core.screen_metadata_policy import screen_sources
+        from core.catalogue_normalize import normalize_tvdb
+        from models.show import Show
+        raw = {'id': 91, 'name': 'TVDB series', 'overview': 'Primary series overview',
+               'image': 'https://artworks.thetvdb.com/poster.jpg', 'firstAired': '2026-01-01',
+               'genres': [{'id': 18, 'name': 'Drama'}],
+               'remoteIds': [{'sourceName': 'TheMovieDB.com', 'id': '90'}],
+               'companies': [{'id': 3, 'name': 'Studio', 'companyType': {'companyTypeName': 'Studio'}}],
+               'characters': [{'id': 1, 'peopleId': 5, 'personName': 'Actor', 'type': 3},
+                              {'id': 2, 'peopleId': 6, 'personName': 'Director', 'type': 1, 'peopleType': 'Director'}]}
+        self.providers.tvdb_key = 'fixture'
+        self.providers.detail.return_value = (normalize_tvdb(raw, 'series'), raw)
+        async with self.Session() as db:
+            media = Media(title='TVDB series', media_type=MediaType.series, tmdb_id=90, tvdb_id=91,
+                          tmdb_data={'tracking_catalogue_provider': 'tmdb'})
+            db.add_all([media, Show(title='TVDB series', tmdb_id=90, tvdb_id=91, canonical_source='tvdb')])
+            await db.commit()
+            self.assertEqual(await screen_sources(db, media), [('tvdb', 91), ('tmdb', 90)])
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'updated')
+            self.assertEqual((await screen_work(db, media)).description, 'Primary series overview')
+            self.assertEqual((await db.scalar(select(Show).where(Show.tvdb_id == 91))).canonical_source, 'tvdb')
+        self.providers.detail.assert_awaited_once_with('tvdb', 'series', '91')
+
+    async def test_primary_refresh_lease_does_not_start_secondary_import(self):
+        self.providers.tvdb_key = 'fixture'
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+            media.tvdb_id = 42
+            db.add(MetadataSnapshot(provider='tmdb', kind='movie', external_id=str(media.tmdb_id),
+                                    lease_until=datetime.utcnow() + timedelta(minutes=3)))
+            await db.commit()
+            self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'deferred')
+        self.providers.detail.assert_not_awaited()
+
     async def test_cached_portrait_backfill_is_identity_matched_bounded_and_idempotent(self):
         from scripts.backfill_person_portraits import backfill
         from core import catalogue
