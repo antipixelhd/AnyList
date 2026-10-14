@@ -8,7 +8,7 @@ test('related posters use bounded responsive candidates with the active disk pol
   assert(cached.src.startsWith('/api/proxy/media/image/'));
   assert(cached.src.includes('/w342/poster.jpg'));
   assert(cached.srcset.includes('w154/poster.jpg 154w'));
-  assert(cached.sizes.includes('100vw'));
+  assert.equal(cached.sizes,'(max-width:650px) calc((100vw - 50px) / 2), 65px');
   const direct=detailWorkArtwork('/poster.jpg',false,'direct');
   assert(direct.src.startsWith('https://image.tmdb.org/t/p/'));
   assert(direct.sizes.includes('74px'));

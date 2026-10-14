@@ -69,6 +69,8 @@
 .media-detail .media-releases p { display:flex; justify-content:space-between; gap:20px; padding-block:14px; border-bottom:1px solid var(--lab-line); font-size:1.2rem; }
 .media-detail .media-releases span { color:var(--lab-muted); }
 .media-work-placeholder { display:grid; place-items:center; width:74px; min-height:110px; flex-shrink:0; color:var(--lab-muted); background:var(--panel); }
+.media-detail .lab-similar { grid-column:1; }
+.media-detail .lab-similar-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .lab-similar-grid .media-work-placeholder { width:65px; height:97px; min-height:0; border-radius:5px; }
 .media-credit-group+.media-credit-group { margin-top:30px; }
 .media-credit-more { margin-top:20px; }
