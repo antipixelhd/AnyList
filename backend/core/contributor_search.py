@@ -3,21 +3,24 @@ import asyncio
 from collections import defaultdict
 from types import SimpleNamespace
 
-from sqlalchemy import and_, case, func, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import case, func, select
+from sqlalchemy.orm import load_only
 
 from core import settings_store, tmdb
 from core.contributor_details import is_actor, positive_id
 from core.credit_roles import work_credit
 from core.person_identities import canonical_people
-from core.principal_credits import principal_clause, remote_person_kind, number, group
+from core.principal_credits import remote_person_kind, number, group
 from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
+from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch
 
 KINDS = ('actor', 'staff', 'studio')
 PATHS = {'actor': 'actors', 'staff': 'person', 'studio': 'studio'}
 LIMIT = 8
+# Keep keystroke-triggered sorting from occupying the shared VPS's entire
+# connection pool. Waiting searches stay cancellable and do not spawn threads.
+_local_search_slots = asyncio.Semaphore(2)
 
 
 def result(person, kind, roles=(), key=None):
@@ -37,60 +40,33 @@ def credit_kind(person, credit):
 
 
 async def local_matches(db, term, kind):
-    alias = aliased(CatalogueEntity)
-    # Search old names too, but emit only the canonical identity.
+    async with _local_search_slots:
+        return await _local_matches(db, term, kind)
+
+
+async def _local_matches(db, term, kind):
+    # Counts and roles are maintained when credits change, never aggregated on
+    # each keystroke. This read does not touch source credits or entity JSON.
     pattern = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
-    aliases = select(func.coalesce(alias.canonical_person_id, alias.canonical_company_id)).where(
-        alias.name.ilike(pattern, escape='\\'),
-        or_(alias.canonical_person_id.is_not(None), alias.canonical_company_id.is_not(None)))
-    contributor = aliased(CatalogueEntity)
-    work = aliased(CatalogueEntity)
-    qualified = or_(and_(CatalogueEntity.kind == 'organization', CatalogueCredit.role == 'producer'),
-                    and_(CatalogueEntity.kind == 'person', principal_clause(CatalogueCredit, work.kind)))
-    matches = (await db.execute(select(CatalogueEntity,
-        func.count(func.distinct(CatalogueCredit.work_id)).label('work_count')).join(
-        contributor, func.coalesce(contributor.canonical_person_id, contributor.canonical_company_id, contributor.id) == CatalogueEntity.id).join(
-        CatalogueCredit, CatalogueCredit.contributor_id == contributor.id).join(work, work.id == CatalogueCredit.work_id).where(
-        CatalogueEntity.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person', 'organization')),
-        CatalogueEntity.canonical_person_id.is_(None),
-        CatalogueEntity.canonical_company_id.is_(None),
-        or_(CatalogueEntity.name.ilike(pattern, escape='\\'), CatalogueEntity.id.in_(aliases),
-            CatalogueEntity.attributes['also_known_as'].astext.ilike(pattern, escape='\\')),
-        work.kind.in_(('movie', 'series')), qualified,
-        (CatalogueCredit.role == 'actor') if kind == 'actor' else
-        (CatalogueCredit.role != 'actor') if kind == 'staff' else True,
-    ).group_by(CatalogueEntity.id).order_by(
-        case((func.lower(CatalogueEntity.name) == term.casefold(), 0), else_=1),
-        func.count(func.distinct(CatalogueCredit.work_id)).desc(),
-        func.lower(CatalogueEntity.name), CatalogueEntity.id).limit(80))).all()
-    entities = [person for person, _ in matches]
-    work_counts = {person.id: count for person, count in matches}
+    summary = ContributorSearch
+    count = summary.actor_count if kind == 'actor' else summary.staff_count if kind == 'staff' else summary.work_count
+    matches = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
+        count.label('work_count'), summary.roles).where(
+        summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person', 'organization')),
+        summary.search_text.ilike(pattern, escape='\\'), summary.work_count > 0, count > 0,
+    ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
+               count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
     groups = {k: [] for k in KINDS}
-    if not entities:
-        return groups
-    contributor = aliased(CatalogueEntity)
-    work = aliased(CatalogueEntity)
-    # Collapse repeated film credits in SQL; quick search needs roles, not filmographies.
-    rows = (await db.execute(select(func.coalesce(contributor.canonical_person_id, contributor.canonical_company_id, contributor.id), CatalogueCredit.role, CatalogueCredit.role_label).join(
-        contributor, contributor.id == CatalogueCredit.contributor_id).join(work, work.id == CatalogueCredit.work_id).where(
-        func.coalesce(contributor.canonical_person_id, contributor.canonical_company_id, contributor.id).in_([p.id for p in entities]),
-        work.kind.in_(('movie', 'series')),
-        or_(and_(contributor.kind == 'organization', CatalogueCredit.role == 'producer'),
-            and_(contributor.kind == 'person', principal_clause(CatalogueCredit, work.kind))),
-        ~func.coalesce(CatalogueCredit.character_label, '').op('~*')(r'\y(uncredited|archive footage|archive sound)\y'),
-    ).distinct())).all()
-    by_id = {p.id: p for p in entities}
-    roles = defaultdict(set)
-    for identity, role, label in rows:
-        credit = SimpleNamespace(role=role, role_label=label, character_label=None)
-        section = credit_kind(by_id[identity], credit)
-        if section and (kind == 'all' or section == kind):
-            roles[(identity, section)].add(role_label(credit))
-    for person in entities:
-        for section in KINDS:
-            if (person.id, section) in roles:
-                groups[section].append({**result(person, section, roles[(person.id, section)]),
-                                       '_works': work_counts[person.id]})
+    for row in matches:
+        person = SimpleNamespace(id=row.entity_id, kind=row.kind, name=row.name, image_url=row.image_url)
+        roles = defaultdict(set)
+        for role, label in row.roles:
+            credit = SimpleNamespace(role=role, role_label=label, character_label=None)
+            section = credit_kind(person, credit)
+            if section and (kind == 'all' or section == kind):
+                roles[section].add(role_label(credit))
+        for section, labels in roles.items():
+            groups[section].append({**result(person, section, labels), '_works': row.work_count})
     return groups
 
 
@@ -112,13 +88,8 @@ def ranked_results(groups, term):
 async def known_principal_status(db, ids):
     if not ids:
         return {}
-    person = aliased(CatalogueEntity)
-    work = aliased(CatalogueEntity)
-    canonical = func.coalesce(person.canonical_person_id, person.id)
-    return dict((await db.execute(select(canonical,
-        func.bool_or(principal_clause(CatalogueCredit, work.kind))).join(
-        person, person.id == CatalogueCredit.contributor_id).join(work, work.id == CatalogueCredit.work_id)
-        .where(canonical.in_(ids), work.kind.in_(('movie', 'series'))).group_by(canonical))).all())
+    return dict((await db.execute(select(ContributorSearch.entity_id, ContributorSearch.work_count > 0)
+        .where(ContributorSearch.entity_id.in_(ids), ContributorSearch.screen_count > 0))).all())
 
 
 async def search_contributors(db, viewer, term, kind='all'):
@@ -143,16 +114,16 @@ async def search_contributors(db, viewer, term, kind='all'):
     native_ids = {str(row['id']) for _, row in sources if positive_id(row.get('id'))}
     mappings = (await db.execute(select(CatalogueIdentity, CatalogueEntity).join(
         CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id).where(
-        CatalogueIdentity.namespace.in_(('tmdb.person', 'tmdb.company')), CatalogueIdentity.external_id.in_(native_ids)))).all() if native_ids else []
-    roots = await canonical_people(db, [person for _, person in mappings])
+        CatalogueIdentity.namespace.in_(('tmdb.person', 'tmdb.company')), CatalogueIdentity.external_id.in_(native_ids))
+        .options(load_only(CatalogueEntity.id,CatalogueEntity.kind,CatalogueEntity.name,CatalogueEntity.image_url,
+            CatalogueEntity.canonical_person_id,CatalogueEntity.canonical_company_id)))).all() if native_ids else []
+    roots = await canonical_people(db, [person for _, person in mappings], lightweight=True)
     known = {(identity.namespace, identity.external_id): roots[person.id] for identity, person in mappings}
     principal_status = await known_principal_status(db, {person.id for person in known.values() if person.kind == 'person'})
     studio_ids = {person.id for person in known.values() if person.kind == 'organization'}
-    company = aliased(CatalogueEntity)
-    root_company = func.coalesce(company.canonical_company_id, company.id)
-    studio_pages = set(await db.scalars(select(root_company).select_from(CatalogueCredit).join(
-        company, company.id == CatalogueCredit.contributor_id).where(
-        root_company.in_(studio_ids), CatalogueCredit.role == 'producer').distinct())) if studio_ids else set()
+    studio_pages = set(await db.scalars(select(ContributorSearch.entity_id).where(
+        ContributorSearch.entity_id.in_(studio_ids), ContributorSearch.kind == 'organization',
+        ContributorSearch.work_count > 0))) if studio_ids else set()
     seen = {section: {row['key'] for row in rows} for section, rows in groups.items()}
     for provider_kind, raw in sources:
         native = positive_id(raw.get('id'))

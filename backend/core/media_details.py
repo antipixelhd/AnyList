@@ -69,8 +69,14 @@ async def work_details(db, work, *, extras=True):
         credits = preferred_cast([(credit, canonical[person.id]) for credit, person in credits],
                                  await complete_cast_works(db, {work.id}))
         credits = select_credits(credits, work.kind)
-    images = await character_images(db, {credit.screen_character_id for credit, _ in credits
-        if credit.role == 'actor' and credit.screen_character_id})
+    image_roles, art_counts = [], {}
+    for credit, person in credits:
+        if credit.role == 'actor' and art_counts.get(person.id, 0) < 8:
+            image_roles.append(credit)
+            art_counts[person.id] = art_counts.get(person.id, 0) + 1
+    images = await character_images(db, {credit.screen_character_id for credit in image_roles
+        if credit.screen_character_id})
+    image_role_ids = {credit.id for credit in image_roles}
     for credit, contributor in credits:
         contributor = canonical.get(contributor.id, contributor)
         actor = credit.role == 'actor'
@@ -90,10 +96,10 @@ async def work_details(db, work, *, extras=True):
             if key not in billing or candidate < billing[key]:
                 billing[key] = candidate
                 row['position'] = credit.position
-        if credit.role not in row['role_codes']:
+        if len(row['role_codes']) < 8 and credit.role not in row['role_codes']:
             row['role_codes'].append(credit.role)
         role = credit.role_label or credit.role.replace('_', ' ').title()
-        if role not in row['roles']:
+        if len(row['roles']) < 8 and role not in row['roles']:
             row['roles'].append(role)
         # Each job may overlap the same episodes. Do not sum role counts or
         # infer episode numbers/season ranges from an aggregate count.
@@ -102,16 +108,16 @@ async def work_details(db, work, *, extras=True):
             row['episode_count'] = max(row.get('episode_count', 0), count)
             if label(credit) in ('producer', 'executive producer'):
                 row['producer_episode_count'] = max(row.get('producer_episode_count', 0), count)
-        if credit.character_label and credit.character_label not in row['characters']:
+        if credit.character_label and len(row['characters']) < 8 and credit.character_label not in row['characters']:
             row['characters'].append(credit.character_label)
-        if actor:
+        if actor and credit.id in image_role_ids:
             local_images.setdefault(key, []).extend([url] if (url := image(credit.character_image_url)) else [])
             alternative_images.setdefault(key, []).extend(role_image_candidates(credit, images.get(credit.screen_character_id, [])))
     for key, row in people.items():
         if row['kind'] == 'actor':
             row['character_images'] = list(dict.fromkeys(local_images.get(key, []) + alternative_images.get(key, [])))[:4]
             row['character_image'] = next(iter(row['character_images']), None)
-        elif work.kind == 'series' and row.get('episode_count'):
+        elif not actor and work.kind == 'series' and row.get('episode_count'):
             total = positive((work.attributes or {}).get('episode_count'))
             if total:
                 row['episode_total'] = total

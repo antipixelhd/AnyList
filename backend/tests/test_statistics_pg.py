@@ -45,7 +45,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine(URL, connect_args={"server_settings": {"search_path": self.schema}})
 
         def setup(conn):
-            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name != "stats_metadata_revision"]
+            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search")]
             Base.metadata.create_all(conn, tables=wanted)
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
@@ -59,6 +59,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt040_statistics_utc_schedule").upgrade()
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
                 importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
+                importlib.import_module("migrations.versions.mt050_contributor_search").upgrade()
             self.assertEqual(conn.scalar(text("SELECT count(*) FROM user_stats_state")), 1)
             self.assertEqual(tuple(conn.execute(text(
                 "SELECT condeferrable, condeferred FROM pg_constraint "

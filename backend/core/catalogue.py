@@ -172,7 +172,8 @@ def merge_fields(row, values, source):
                 and source_rank(row.kind, source) >= source_rank(row.kind, old_source)
             )
         ):
-            setattr(row, field, value)
+            if old != value:
+                setattr(row, field, value)
             sources[field] = source
     attrs = dict(row.attributes or {})
     for key, value in (values.get("attributes") or {}).items():
@@ -192,8 +193,10 @@ def merge_fields(row, values, source):
         ):
             attrs[key] = value
             sources[field] = source
-    row.attributes = attrs
-    row.field_sources = sources
+    if row.attributes != attrs:
+        row.attributes = attrs
+    if row.field_sources != sources:
+        row.field_sources = sources
 
 
 async def upsert_entity(db, values, source):
@@ -276,7 +279,7 @@ async def upsert(db, model, values, keys, preserve_missing=False):
     ).scalar_one()
 
 
-async def ingest_document(db, doc, provider):
+async def ingest_document(db, doc, provider, *, entities=None, project_screen_roles=True):
     await write_lock(db)
     if doc["work"]["kind"] == "book":
         # A verified ISBN identifies an edition, whose existing parent identifies
@@ -311,42 +314,38 @@ async def ingest_document(db, doc, provider):
     work = await upsert_entity(db, doc["work"], provider)
     if work.kind not in ("movie", "series", "game", "book", "person"):
         raise IdentityConflict("Invalid catalogue work kind")
-    for c in doc["credits"]:
-        if c.get("edition_identity"):
-            continue
-        person = await upsert_entity(db, c["contributor"], provider)
-        if person.kind not in ("person", "organization"):
-            raise IdentityConflict("Credits require a person or organization")
-        await upsert(
-            db,
-            CatalogueCredit,
-            {
-                "work_id": work.id,
-                "contributor_id": person.id,
-                "provider": provider,
-                "source_key": str(c["source_key"])[:200],
-                "role": c["role"],
-                "role_label": c.get("role_label"),
-                "character_label": c.get("character_label"),
-                "character_image_url": c.get("character_image_url"),
-                # This derived link is rebuilt below after role/performer changes.
-                "screen_character_id": None,
-                "scope": c.get("scope", "title"),
-                "position": c.get("position"),
-                "attributes": c.get("attributes", {}),
-            },
-            ["work_id", "provider", "source_key"],
-            preserve_missing=True,
-        )
+    from core.catalogue_batch import DocumentEntities, write_credits
+    entities = entities or DocumentEntities(db, provider)
+    source_credits = [c for c in doc['credits'] if not c.get('edition_identity')]
+    await entities.preload([c['contributor'] for c in source_credits])
+    credit_rows = []
+    for c in source_credits:
+        person = await entities.get(c['contributor'])
+        if person.kind not in ('person', 'organization'):
+            raise IdentityConflict('Credits require a person or organization')
+        credit_rows.append({
+            'work_id': work.id, 'contributor_id': person.id, 'provider': provider,
+            'source_key': str(c['source_key'])[:200], 'role': c['role'],
+            'role_label': c.get('role_label'), 'character_label': c.get('character_label'),
+            'character_image_url': c.get('character_image_url'), 'scope': c.get('scope', 'title'),
+            'position': c.get('position'), 'attributes': c.get('attributes', {}),
+        })
+    await db.flush()
+    changed = await write_credits(db, credit_rows)
     # A complete authoritative screen-credit response replaces obsolete rows.
     # Partial payloads and other providers retain their last successful credits.
     if provider == "tmdb" and work.kind in ("movie", "series") and doc.get("coverage", {}).get("credits_complete"):
         keys = {str(c["source_key"])[:200] for c in doc["credits"] if not c.get("edition_identity")}
-        await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id == work.id,
+        removed = await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id == work.id,
             CatalogueCredit.provider == provider, CatalogueCredit.source_key.not_in(keys)))
-    if work.kind in ("movie", "series"):
-        from core.screen_characters import project_characters
-        await project_characters(db, work.id)
+        changed |= bool(removed.rowcount)
+    if work.kind in ("movie", "series") and project_screen_roles:
+        missing = changed or await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.work_id == work.id,
+            CatalogueCredit.role == 'actor', CatalogueCredit.character_label.is_not(None),
+            CatalogueCredit.screen_character_id.is_(None)).limit(1))
+        if missing:
+            from core.screen_characters import project_characters
+            await project_characters(db, work.id)
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
         if character.kind != "character":

@@ -80,6 +80,21 @@ class CatalogueEntity(Base):
     )
 
 
+class ContributorSearch(Base):
+    """Transactionally maintained quick-search projection, never source credits."""
+    __tablename__ = 'catalogue_contributor_search'
+    entity_id: Mapped[int] = mapped_column(ForeignKey('catalogue_entities.id', ondelete='CASCADE'), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    work_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    actor_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    staff_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    screen_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    roles: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='[]')
+
+
 class CatalogueIdentity(Base):
     __tablename__ = "catalogue_identities"
     __table_args__ = (

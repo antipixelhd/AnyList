@@ -123,9 +123,9 @@ class PrincipalCreditDatabaseTests(unittest.IsolatedAsyncioTestCase):
             before=await conn.scalar(text('SELECT count(*) FROM catalogue_credits'))
             def migrate(connection):
                 with Operations.context(MigrationContext.configure(connection)):
-                    for revision in ('mt049_verified_company_aliases','mt048_principal_credits'):
+                    for revision in ('mt050_contributor_search','mt049_verified_company_aliases','mt048_principal_credits'):
                         importlib.import_module('migrations.versions.'+revision).downgrade()
-                    for revision in ('mt048_principal_credits','mt049_verified_company_aliases'):
+                    for revision in ('mt048_principal_credits','mt049_verified_company_aliases','mt050_contributor_search'):
                         importlib.import_module('migrations.versions.'+revision).upgrade()
             await conn.run_sync(migrate)
             self.assertEqual(await conn.scalar(text('SELECT count(*) FROM catalogue_credits')),before)

@@ -206,9 +206,20 @@ async def seed(engine, works, people):
             await conn.execute(text(f"SELECT setval(pg_get_serial_sequence('{table}','id'),(SELECT max(id) FROM {table}))"))
         for table in tables:
             await conn.execute(text('ALTER TABLE '+table+' ENABLE TRIGGER USER'))
+            await conn.execute(text('ANALYZE '+table))
+        if await conn.scalar(text("SELECT to_regprocedure('refresh_contributor_search(integer[])') IS NOT NULL")):
+            await conn.execute(text("""DO $$ DECLARE batch integer[]; cursor_id integer := 0;
+              BEGIN LOOP
+                SELECT array_agg(id) INTO batch FROM (SELECT id FROM catalogue_entities WHERE id>cursor_id
+                  AND kind IN ('person','organization') ORDER BY id LIMIT 1000) e;
+                EXIT WHEN batch IS NULL;
+                PERFORM refresh_contributor_search(batch); SELECT max(id) INTO cursor_id FROM unnest(batch) id;
+              END LOOP; END $$"""))
     async with engine.connect() as conn:
         for table in ('catalogue_entities','catalogue_credits','catalogue_screen_characters','catalogue_metadata_snapshots'):
             await conn.execute(text('ANALYZE '+table))
+        if await conn.scalar(text("SELECT to_regclass('catalogue_contributor_search') IS NOT NULL")):
+            await conn.execute(text('ANALYZE catalogue_contributor_search'))
         await conn.commit()
 
 
@@ -237,7 +248,7 @@ async def main(args):
         async with admin.begin() as conn:
             await conn.execute(text('CREATE SCHEMA '+schema))
     engine = create_async_engine(url, pool_size=20, max_overflow=10, pool_pre_ping=True,
-        connect_args={'server_settings':{'search_path':schema,'statement_timeout':'120000'}})
+        connect_args={'server_settings':{'search_path':schema+',public','statement_timeout':'120000'}})
     attach(engine)
     sessions = async_sessionmaker(engine,expire_on_commit=False)
     report = {'schema':schema,'python':platform.python_version(),'host':platform.platform(),

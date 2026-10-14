@@ -10,11 +10,16 @@ def tvdb_tmdb_person(raw):
     return next(iter(ids)) if len(ids) == 1 else None
 
 
-async def canonical_people(db, people):
+async def canonical_people(db, people, *, lightweight=False):
     def target(person):
         return getattr(person, 'canonical_person_id', None) or getattr(person, 'canonical_company_id', None)
     ids = {target(person) for person in people if target(person)}
-    roots = {person.id: person for person in await db.scalars(select(CatalogueEntity).where(CatalogueEntity.id.in_(ids)))} if ids else {}
+    statement = select(CatalogueEntity).where(CatalogueEntity.id.in_(ids))
+    if lightweight:
+        from sqlalchemy.orm import load_only
+        statement = statement.options(load_only(CatalogueEntity.id,CatalogueEntity.kind,CatalogueEntity.name,
+            CatalogueEntity.image_url,CatalogueEntity.canonical_person_id,CatalogueEntity.canonical_company_id))
+    roots = {person.id: person for person in await db.scalars(statement)} if ids else {}
     return {person.id: roots.get(target(person), person) for person in people}
 
 

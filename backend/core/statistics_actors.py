@@ -17,7 +17,7 @@ async def load_actors(db, facts, *, show_anime=True):
         CatalogueEntity, CatalogueEntity.id == CatalogueCredit.contributor_id).where(
         CatalogueCredit.work_id.in_(entity_ids), CatalogueCredit.role == "actor", CatalogueEntity.kind == "person"))).all())
     by_work = defaultdict(list)
-    images = await character_images(db, {c.screen_character_id for c, _ in credits if getattr(c, 'screen_character_id', None)})
+    images = await character_images(db, {c.screen_character_id for c, _ in credits if getattr(c, 'screen_character_id', None)}, show_anime=show_anime)
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
     from core.screen_cast import complete_cast_works, preferred_cast
