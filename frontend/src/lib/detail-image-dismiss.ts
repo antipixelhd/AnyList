@@ -13,7 +13,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
     dialog.style.removeProperty('translate');dialog.style.removeProperty('--viewer-backdrop');
   };
   const lockPage=()=>{
-    if(unlock||!mobile.matches)return;
+    if(unlock)return;
     const x=window.scrollX,y=window.scrollY;
     const body=document.body,html=document.documentElement;
     const saved=[...['position','top','left','right','width','overflow'].map(property=>({element:body,property,value:body.style.getPropertyValue(property),priority:body.style.getPropertyPriority(property)})),
@@ -80,7 +80,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
     if(performance.now()<ignoreClickUntil){event.preventDefault();event.stopImmediatePropagation();}
   },{signal,capture:true});
   dialog.addEventListener('close',()=>{reset();pointers.clear();unlock?.();},{signal});
-  mobile.addEventListener('change',()=>{reset();pointers.clear();if(mobile.matches&&dialog.open)lockPage();else unlock?.();},{signal});
+  mobile.addEventListener('change',()=>{reset();pointers.clear();if(dialog.open)lockPage();else unlock?.();},{signal});
   signal.addEventListener('abort',()=>{if(dialog.open)dialog.close();reset();unlock?.();},{once:true});
   return ()=>{reset();pointers.clear();lockPage();};
 }

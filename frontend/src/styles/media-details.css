@@ -4,12 +4,15 @@
 .media-detail :is(.lab-kicker,.lab-genres) a:hover { color:var(--bright); }
 .media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
-.media-detail .lab-hero { overflow:visible; }
+.media-detail .lab-hero { overflow:visible; background:none; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero { height:auto; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { height:auto; padding-top:32px; }
 .media-detail .lab-hero-image,.media-detail .lab-hero-shade { pointer-events:none; }
+/* Carry the artwork's existing fade beneath the first content row without
+   changing the header or content positions. Both layers share one boundary. */
+.media-detail.concept-marquee :is(.lab-hero-image,.lab-hero-shade) { height:calc(100% + 96px); bottom:-96px; }
 .media-detail .lab-hero-image { object-fit:cover; }
 .media-detail .lab-hero-art-button { border:0; background:transparent; color:#d4e0ea99; transition:background-color .18s ease,color .18s ease; }
 .media-detail .lab-hero-art-button .ui-icon { width:15px; height:15px; filter:drop-shadow(0 1px 2px #0008); }
@@ -124,7 +127,7 @@
   /* Folio opening: the cover overlaps a short backdrop, while the heading
      grows naturally below it instead of fitting inside a fixed hero. */
   .media-detail.concept-marquee .lab-hero { height:auto; background:none; }
-  .media-detail.concept-marquee .lab-hero-image,.media-detail.concept-marquee .lab-hero-shade { height:210px; bottom:auto; }
+  .media-detail.concept-marquee .lab-hero-image,.media-detail.concept-marquee .lab-hero-shade { height:270px; bottom:auto; }
   .media-detail.concept-marquee .lab-hero-content { display:grid; grid-template-columns:108px minmax(0,1fr); align-items:start; gap:20px; height:auto; padding:145px 0 0; }
   .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:108px; height:162px; align-self:start; }
   .media-detail.concept-marquee .lab-heading { margin-top:39px; padding:0; }
