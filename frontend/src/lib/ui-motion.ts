@@ -19,11 +19,14 @@ function stop(element: HTMLElement) {
   element.style.removeProperty('transform');
 }
 
-function play(element: HTMLElement, entering: boolean, distance: number) {
+function play(element: HTMLElement, entering: boolean, distance: number, dropdown = false) {
   stop(element);
   const fading = element.hasAttribute('data-motion-fade');
-  const timing = dropdownTiming(entering, fading);
-  arrows.play(element, entering, timing);
+  const timing = dropdown ? dropdownTiming(entering, fading) : {
+    duration: fading ? (entering ? .16 : .1) : (entering ? .18 : .12),
+    ease: entering ? [0.2, 0.7, 0.2, 1] as [number, number, number, number] : 'easeIn' as const,
+  };
+  if (dropdown) arrows.play(element, entering, timing);
   if (reduced()) return null;
   const control = animate(element, {
     opacity: entering ? [0, 1] : [1, 0],
@@ -79,23 +82,26 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   dialog.removeAttribute('data-motion-closing');
 }
 
-export function showMenu(menu: HTMLElement) {
+export function showMenu(menu: HTMLElement, immediate = false) {
   closing.set(menu, ++sequence);
   menu.hidden = false;
   menu.inert = false;
   menu.style.removeProperty('pointer-events');
-  play(menu, true, 5);
+  if (immediate) {
+    stop(menu);
+    arrows.play(menu, true, { ...dropdownTiming(true), duration: 0 });
+  } else play(menu, true, 5, true);
 }
 
 export function reveal(element: HTMLElement) {
   closing.set(element, ++sequence);
-  play(element, true, 6);
+  play(element, true, 6, element.parentElement?.matches('details[data-motion-details]') ?? false);
 }
 
 export async function dismiss(element: HTMLElement) {
   const token = ++sequence;
   closing.set(element, token);
-  const control = play(element, false, 6);
+  const control = play(element, false, 6, element.parentElement?.matches('details[data-motion-details]') ?? false);
   if (control) await control.finished.catch(() => {});
   return closing.get(element) === token;
 }
@@ -113,7 +119,7 @@ export async function hideMenu(menu: HTMLElement, immediate = false) {
     return;
   }
   menu.style.pointerEvents = 'none';
-  const control = play(menu, false, 5);
+  const control = play(menu, false, 5, true);
   if (control) await control.finished.catch(() => {});
   if (closing.get(menu) !== token) return;
   stop(menu);
@@ -125,7 +131,7 @@ export function showCollapsible(section: HTMLElement) {
   closing.set(section, ++sequence);
   section.classList.remove('hidden');
   section.inert = false;
-  play(section, true, 4);
+  play(section, true, 4, true);
 }
 
 export async function hideCollapsible(section: HTMLElement) {
@@ -133,7 +139,7 @@ export async function hideCollapsible(section: HTMLElement) {
   const token = ++sequence;
   closing.set(section, token);
   section.inert = true;
-  const control = play(section, false, 4);
+  const control = play(section, false, 4, true);
   if (control) await control.finished.catch(() => {});
   if (closing.get(section) !== token) return;
   stop(section);
