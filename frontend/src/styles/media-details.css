@@ -4,18 +4,12 @@
 .media-detail :is(.lab-kicker,.lab-genres) a:hover { color:var(--bright); }
 .media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
-.media-detail .lab-hero { overflow:visible; background:var(--bg); }
+.media-detail .lab-hero { overflow:visible; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero { height:auto; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { height:auto; padding-top:32px; }
 .media-detail .lab-hero-image,.media-detail .lab-hero-shade { pointer-events:none; }
-/* Fade both artwork and its side scrim into the page, so neither leaves a
-   tinted edge. Keep the fade on the background layers, clear of the content. */
-.media-detail :is(.lab-hero-image,.lab-hero-shade) {
-  -webkit-mask-image:linear-gradient(to bottom,#000 65%,rgb(0 0 0 / 75%) 80%,transparent 98%);
-  mask-image:linear-gradient(to bottom,#000 65%,rgb(0 0 0 / 75%) 80%,transparent 98%);
-}
 .media-detail .lab-hero-image { object-fit:cover; }
 .media-detail .lab-hero-art-button { border:0; background:transparent; color:#d4e0ea99; transition:background-color .18s ease,color .18s ease; }
 .media-detail .lab-hero-art-button .ui-icon { width:15px; height:15px; filter:drop-shadow(0 1px 2px #0008); }
