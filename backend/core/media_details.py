@@ -8,6 +8,7 @@ from core.catalogue_normalize import image
 from core.media_images import provider_images, unique_images
 from core.screen_characters import character_images, role_image_candidates
 from core.studio_names import studio_name
+from core.movie_financials import movie_financials
 from core.principal_credits import principal_clause, select_credits, evidence, positive, label
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
@@ -134,6 +135,8 @@ async def work_details(db, work, *, extras=True):
     snapshots = (await db.execute(select(MetadataSnapshot.provider,
         MetadataSnapshot.payload['images'].label('images'),
         MetadataSnapshot.payload['homepage'].astext.label('homepage'),
+        MetadataSnapshot.payload['budget'].label('budget'),
+        MetadataSnapshot.payload['revenue'].label('revenue'),
         MetadataSnapshot.payload['url'].astext.label('url')).where(MetadataSnapshot.entity_id == work.id)
         .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
     sources = []
@@ -149,6 +152,8 @@ async def work_details(db, work, *, extras=True):
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
         'posters': unique_images(posters), 'artwork': unique_images(artwork), **related,
+        **(movie_financials(attrs, *({'budget': row.budget, 'revenue': row.revenue}
+            for row in snapshots if row.provider == 'tmdb')) if work.kind == 'movie' else {}),
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
+from core.movie_financials import movie_financials
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -151,6 +152,7 @@ def normalize_tmdb(raw, kind):
             attributes={
                 "release_date": raw.get("release_date") or raw.get("first_air_date"),
                 "runtime": raw.get("runtime"),
+                **(movie_financials(raw) if kind == 'movie' else {}),
                 **{k: raw[k] for k in ('vote_count', 'vote_average') if raw.get(k) is not None},
                 "origin_countries": raw.get("origin_country"),
                 "production_countries": [

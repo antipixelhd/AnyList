@@ -1,6 +1,7 @@
 """Descriptive TMDB fields retained by every movie/series metadata writer."""
 
 from core import tmdb
+from core.movie_financials import movie_financials
 
 FIELDS = (
     "original_language",
@@ -11,6 +12,8 @@ FIELDS = (
     "production_companies",
     "created_by",
     "cast",
+    "budget",
+    "revenue",
 )
 
 
@@ -28,6 +31,7 @@ def tvdb_fields(data, previous=None):
 
 def tmdb_fields(data, previous=None):
     fields = retained_fields(previous or {})
+    fields.update(movie_financials(data, previous))
     for key in (
         "original_language",
         "origin_country",

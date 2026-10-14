@@ -117,6 +117,22 @@ test('partial release dates remain stable and absent metadata is omitted',()=>{
   assert.deepEqual(Array.from(facts,fact=>fact.label),['First published','Pages']);
 });
 
+test('movie budget and box office follow Country with whole-dollar currency formatting',()=>{
+  const facts=api.detailFacts(api.prepareDetail({type:'movie',countries:['US'],budget:150000000,revenue:825000001}));
+  assert.deepEqual(Array.from(facts,fact=>[fact.label,fact.value]),[
+    ['Country',countryLabel('US')],['Budget','$150,000,000'],['Box office','$825,000,001'],
+  ]);
+});
+
+test('unknown movie financials and non-movie financials stay out of Information',()=>{
+  for(const value of [undefined,null,0,-1,'1000',true,Infinity,1.5]){
+    assert.equal(api.detailFacts(api.prepareDetail({type:'movie',budget:value,revenue:value})).length,0);
+  }
+  for(const type of ['series','book','game']){
+    assert.equal(api.detailFacts(api.prepareDetail({type,budget:150000000,revenue:825000000})).length,0);
+  }
+});
+
 test('synopsis previews include multiple paragraphs and retain the full expanded text',()=>{
   const short='First paragraph.\n\nA more detailed second paragraph.';
   assert.equal(api.detailSynopsis(short).lead,short);

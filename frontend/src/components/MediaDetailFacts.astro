@@ -4,7 +4,7 @@ import LocalDateTime from './LocalDateTime.astro';
 interface Props {facts:{label:string;value:string}[];title:DetailMedia}
 const {facts,title}=Astro.props;
 const organizations=detailOrganizationFacts(title);
-const lowerFacts=new Set(['Language','Country','Platforms']);
+const lowerFacts=new Set(['Language','Country','Budget','Box office','Platforms']);
 const finalGroups=new Set(['Studios','Publisher']);
 ---
 <dl>

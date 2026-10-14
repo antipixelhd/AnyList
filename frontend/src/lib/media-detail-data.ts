@@ -22,6 +22,7 @@ export type DetailMedia = EditorTitle & {
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
+  budget?: number | null; revenue?: number | null;
   genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
@@ -153,6 +154,12 @@ export function detailFacts(media: DetailMedia) {
   }
   add('Language',media.original_language?.toUpperCase());
   add('Country',media.countries.map(countryLabel).join(', '));
+  if (media.type === 'movie') {
+    const dollars = new Intl.NumberFormat('en', {style:'currency',currency:'USD',maximumFractionDigits:0});
+    for (const [label, value] of [['Budget', media.budget], ['Box office', media.revenue]] as const) {
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) add(label, dollars.format(value));
+    }
+  }
   if (media.type === 'book') add('Pages',media.pages);
   if (media.type === 'game') add('Platforms',[...new Set(media.releases.map(release => release.platform).filter(Boolean))].join(', '));
   return facts;

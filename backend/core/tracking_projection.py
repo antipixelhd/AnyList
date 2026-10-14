@@ -5,6 +5,7 @@ These functions read already-loaded values; they do not query or mutate state.
 
 from models.media import Media
 from core.tracking_rules import effective_score
+from core.movie_financials import movie_financials
 
 
 def is_anime(media: Media) -> bool:
@@ -49,6 +50,7 @@ def media_data(media):
         "release_date": media.release_date,
         "original_title": media.original_title,
         "runtime": media.runtime or data.get("runtime"),
+        **(movie_financials(data) if media.media_type.value == 'movie' else {}),
         "tmdb_score": media.tmdb_rating,
         "imdb_score": media.imdb_rating,
         "rt_critic_score": media.rt_critic_score,
