@@ -196,6 +196,12 @@ async def main(args):
         save('stress/images',{k:v for k,v in report['stress']['images'].items() if k!='plans'})
         async with engine.begin() as db:
             registry_size=await db.scalar(text('SELECT count(*) FROM catalogue_screen_characters WHERE actor_id=100038'))
+            if args.existing_role_registry_size is not None and registry_size < args.existing_role_registry_size:
+                await db.execute(text("""INSERT INTO catalogue_screen_characters(actor_id,role_key,name,aliases)
+                    SELECT 100038,'audit-retained-role-'||g,'Retained Role '||g,'[]'::jsonb
+                    FROM generate_series(1,:extra) g ON CONFLICT DO NOTHING"""),
+                    {'extra':args.existing_role_registry_size-registry_size})
+                registry_size=await db.scalar(text('SELECT count(*) FROM catalogue_screen_characters WHERE actor_id=100038'))
             work_id=await db.scalar(text("INSERT INTO catalogue_entities(kind,name) VALUES('series','Validation many roles') RETURNING id"))
             await db.execute(text("""INSERT INTO catalogue_credits(work_id,contributor_id,provider,source_key,role,character_label,attributes)
                 SELECT :work,100038,'tmdb','role:'||g,'actor','Validation Role '||:native||'-'||g,jsonb_build_object('principal',true)
@@ -226,4 +232,5 @@ if __name__=='__main__':
     parser.add_argument('--fixture',required=True)
     parser.add_argument('--output',required=True)
     parser.add_argument('--skip-reads',action='store_true',help='Reuse completed read/load measurements; recheck writes, CPU batches and stress')
+    parser.add_argument('--existing-role-registry-size',type=int,help='Prepare at least this many retained actor roles before the stress measurement')
     asyncio.run(main(parser.parse_args()))
