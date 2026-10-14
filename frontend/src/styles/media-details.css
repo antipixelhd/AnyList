@@ -58,6 +58,7 @@
 .media-detail .media-provider-ratings p { display:flex; justify-content:space-between; gap:8px; color:var(--lab-muted); }
 .media-detail .media-provider-ratings strong { color:var(--bright); font-variant-numeric:tabular-nums; }
 .media-detail .lab-note-footer { justify-content:end; }
+.media-detail .lab-note textarea:focus { outline:none; box-shadow:none; }
 .media-detail .media-price-low { font-size:1.1rem; color:var(--lab-muted); }
 .media-detail .lab-game-offer { display:grid; grid-template-columns:minmax(0,1fr); gap:18px; padding:22px; }
 .media-detail .lab-offer-edition { min-width:0; }
