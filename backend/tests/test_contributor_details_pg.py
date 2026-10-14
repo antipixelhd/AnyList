@@ -121,7 +121,8 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         from core.screen_characters import project_characters
         async with self.Session() as db:
             person = await db.get(CatalogueEntity, self.person_id)
-            alias = CatalogueEntity(kind='person', name=person.name, attributes={})
+            alias = CatalogueEntity(kind='person', name=person.name, attributes={'birthday':'1970-01-01'},
+                protected_fields=['attributes.birthday'])
             db.add(alias); await db.flush()
             alias_id = alias.id
             db.add_all([CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='77', source='tmdb'),
@@ -336,13 +337,15 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
             db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='77', source='tmdb'))
             await db.commit()
         with patch('core.contributor_backfill.tmdb.get_person_profile', AsyncMock(return_value={'id':77,'biography':'Saved biography','birthday':'1970-01-01','place_of_birth':'Provider location','homepage':'javascript:bad'})) as people, \
-             patch('core.contributor_backfill.tmdb.get_company', AsyncMock(return_value={'id':99,'description':'Studio biography','headquarters':'HQ'})) as companies:
+             patch('core.contributor_backfill.tmdb.get_company', AsyncMock(return_value={'id':99,'description':'Studio biography','headquarters':'HQ'})) as companies, \
+             patch('core.contributor_backfill.tmdb.get_company_aliases', AsyncMock(return_value={'id':99,'results':[{'name':'Studio Alias'}]})):
             async with self.Session() as db:
                 first = await backfill_contributors(db, 'fixture')
                 person = await db.get(CatalogueEntity, self.person_id)
                 self.assertEqual(person.description, 'Saved biography')
                 self.assertEqual(person.attributes['birthday'], '')
                 self.assertEqual(person.attributes['place_of_birth'], 'My edit')
+                self.assertEqual((await db.get(CatalogueEntity,self.studio_id)).attributes['also_known_as'],['Studio Alias'])
                 self.assertNotIn('homepage', person.attributes)
                 self.assertEqual(first['examined'], 2)
                 self.assertEqual((await backfill_contributors(db, 'fixture'))['examined'], 0)

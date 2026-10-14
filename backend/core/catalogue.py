@@ -203,6 +203,9 @@ async def upsert_entity(db, values, source):
     if values['kind'] == 'person':
         from core.person_identities import reconcile_person_identities
         await reconcile_person_identities(db, ids, source)
+    elif values['kind'] == 'organization':
+        from core.person_identities import reconcile_company_identities
+        await reconcile_company_identities(db, ids, source)
     matches = set()
     for x in ids:
         validate_identity(x["namespace"], x["external_id"], values["kind"])
@@ -330,6 +333,7 @@ async def ingest_document(db, doc, provider):
                 "screen_character_id": None,
                 "scope": c.get("scope", "title"),
                 "position": c.get("position"),
+                "attributes": c.get("attributes", {}),
             },
             ["work_id", "provider", "source_key"],
             preserve_missing=True,

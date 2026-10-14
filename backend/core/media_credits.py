@@ -15,7 +15,7 @@ from models.catalogue import CatalogueEntity, CatalogueLegacyLink, MetadataSnaps
 from db import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
-VERSION = 2
+VERSION = 3
 
 
 async def fill_screen_credits(db, media, user_id=None, *, providers=None):

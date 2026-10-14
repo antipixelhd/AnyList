@@ -48,6 +48,7 @@ class CatalogueEntity(Base):
         ),
         Index("ix_catalogue_kind_name", "kind", "name"),
         CheckConstraint("canonical_person_id IS NULL OR (kind = 'person' AND canonical_person_id <> id)", name="ck_catalogue_person_alias"),
+        CheckConstraint("canonical_company_id IS NULL OR (kind = 'organization' AND canonical_company_id <> id)", name="ck_catalogue_company_alias"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
@@ -57,6 +58,9 @@ class CatalogueEntity(Base):
     # Preserve old contributor URLs and credits after a verified person bridge.
     canonical_person_id: Mapped[int | None] = mapped_column(
         ForeignKey("catalogue_entities.id", ondelete="RESTRICT"), index=True
+    )
+    canonical_company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalogue_entities.id", ondelete="RESTRICT", name="fk_catalogue_company_alias"), index=True
     )
     # Normalized descriptive fields only. Provider responses live in snapshots.
     attributes: Mapped[dict] = mapped_column(
@@ -230,6 +234,7 @@ class CatalogueCredit(Base):
         String(80), nullable=False, default="title", server_default="title"
     )
     position: Mapped[int | None] = mapped_column(Integer)
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
 
 
 class CharacterAppearance(Base):

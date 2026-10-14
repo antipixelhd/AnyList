@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from core import catalogue, settings_store, tvdb, tmdb
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError, retry_after_seconds
 from core.catalogue_normalize import normalize_tvdb
+from core.principal_credits import principal_clause
 from core.media_details import screen_work
 from core.screen_characters import project_characters
 from db import AsyncSessionLocal
@@ -17,7 +18,7 @@ from models.base import MediaType
 from models.catalogue import CatalogueCredit, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
 
 KIND = 'character_art'
-VERSION = 2
+VERSION = 3
 
 
 def result(row, status, now=None):
@@ -106,10 +107,16 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
             if ids.get('imdb.title') and remotes.get('IMDB') != ids['imdb.title']:
                 raise ProviderError('identity_conflict')
         payload.update(native=native, title=raw, people=dict(payload.get('people') or {}))
-        cast = sorted((r for r in (raw or {}).get('characters') or [] if r.get('type') == 3 and r.get('image')),
+        principal_ids = {str(c['contributor']['identities'][0]['external_id'])
+                         for c in normalize_tvdb(raw, work.kind)['credits']
+                         if c['role'] == 'actor' and c['attributes']['principal']} if raw else set()
+        cast = sorted((r for r in (raw or {}).get('characters') or []
+                       if r.get('type') == 3 and r.get('image')
+                       and str(r.get('peopleId') or r.get('personId')) in principal_ids),
                       key=lambda r: r.get('sort') or 0)
         actor_ids = set(await db.scalars(select(CatalogueCredit.contributor_id).where(
-            CatalogueCredit.work_id == work.id, CatalogueCredit.role == 'actor')))
+            CatalogueCredit.work_id == work.id, CatalogueCredit.role == 'actor',
+            principal_clause(CatalogueCredit, work.kind))))
         cast_ids = {str(r.get('peopleId') or r.get('personId') or '') for r in cast}
         mappings = {i.external_id: i.entity_id for i in await db.scalars(select(CatalogueIdentity).where(
             CatalogueIdentity.namespace == 'tvdb.person', CatalogueIdentity.external_id.in_(cast_ids)))}
@@ -136,6 +143,8 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
         # Some TVDB performers have only an IMDb identity. Resolve that exact ID
         # through TMDB instead of guessing from the name or role spelling.
         for pid, person in list(payload['people'].items()):
+            if pid not in principal_ids:
+                continue
             remotes=person.get('remoteIds') or []
             if person.get('_tmdb_resolved') or any(r.get('sourceName')=='TheMovieDB.com' for r in remotes):
                 continue
@@ -164,7 +173,7 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
                 await catalogue.bind_identity(db, work.id, 'tvdb.' + work.kind, str(native), 'tvdb',
                     {'basis': 'verified_title_remote_ids', 'imdb': ids.get('imdb.title')})
             for credit in normalize_tvdb({**(raw or {}), '_people': payload['people']}, work.kind)['credits'] if raw else []:
-                if credit['role'] != 'actor' or not credit.get('character_image_url'):
+                if credit['role'] != 'actor' or not credit['attributes']['principal'] or not credit.get('character_image_url'):
                     continue
                 roots = {mapping.entity_id for identity in credit['contributor']['identities']
                          if (mapping := await catalogue.resolve_identity(db, identity['namespace'], identity['external_id']))}
@@ -179,7 +188,7 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
                     CatalogueCredit.provider == 'tvdb', CatalogueCredit.source_key == credit['source_key']))
                 if old and (old.contributor_id != actor_id or old.role != 'actor'):
                     raise ProviderError('identity_conflict')
-                values = {k: credit[k] for k in ('role', 'role_label', 'character_label', 'character_image_url', 'source_key', 'position')}
+                values = {k: credit[k] for k in ('role', 'role_label', 'character_label', 'character_image_url', 'source_key', 'position', 'attributes')}
                 await catalogue.upsert(db, CatalogueCredit, {**values, 'work_id': work.id,
                     'contributor_id': actor_id, 'provider': 'tvdb'}, ['work_id', 'provider', 'source_key'], preserve_missing=True)
                 count += 1

@@ -238,6 +238,11 @@ async def get_movie(movie_id: int, api_key: str) -> dict:
     return data.get("data") or {}
 
 
+async def get_company(company_id: int, api_key: str) -> dict:
+    data = await _get(f"/companies/{company_id}", api_key)
+    return data.get('data') or {}
+
+
 async def find_movie(imdb_id: str, api_key: str) -> int | None:
     import re
     if not re.fullmatch(r"tt[0-9]+", imdb_id or ""):

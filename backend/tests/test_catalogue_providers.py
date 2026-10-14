@@ -98,6 +98,25 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tvdb_enriches_principals_and_verified_studios_without_fetching_supporting_people(self):
+        from core import tvdb
+        raw={'id':1,'name':'Movie','characters':[
+            {'id':1,'peopleId':88,'personName':'Director','peopleType':'Director','type':1,'sort':1},
+            *[{'id':i+2,'peopleId':i+100,'personName':f'Assistant {i}',
+               'peopleType':'Production Assistant','type':1} for i in range(80)]],
+            'companies':{'studio':[{'id':5,'name':'Studio, LLC'}]}}
+        company={'id':5,'remoteIds':[{'sourceName':'TheMovieDB.com','id':'99'}]}
+        adapter=providers.CatalogueProviders(providers.ProviderHTTP(),tvdb_key='fixture')
+        with patch.object(tvdb,'get_movie',AsyncMock(return_value=raw)), \
+             patch.object(tvdb,'get_person',AsyncMock(return_value={'id':88})) as people, \
+             patch.object(tvdb,'get_company',AsyncMock(return_value=company)) as companies:
+            doc,_=await adapter.detail('tvdb','movie','1')
+        people.assert_awaited_once_with(88,'fixture')
+        companies.assert_awaited_once_with(5,'fixture')
+        self.assertEqual(len(doc['credits']),82)
+        studio=next(c for c in doc['credits'] if c['contributor']['kind']=='organization')
+        self.assertIn({'namespace':'tmdb.company','external_id':'99'},studio['contributor']['identities'])
+
     async def test_tvdb_principal_staff_and_cast_receive_verified_person_cross_references(self):
         from core import tvdb
         raw={'id':1,'name':'Movie','characters':[

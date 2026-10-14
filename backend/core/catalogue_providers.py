@@ -747,10 +747,14 @@ class CatalogueProviders:
         # Include principal crew as well as cast so filmmakers receive the same
         # verified identity bridge. Bound optional enrichment per title.
         people = {}
+        provisional = normalize_tvdb(raw, kind)
+        principal_people = {str(c['contributor']['identities'][0]['external_id'])
+                            for c in provisional['credits']
+                            if c['contributor']['kind'] == 'person' and c['attributes']['principal']}
         counts = {True: 0, False: 0}
         for member in sorted(raw.get("characters") or [], key=lambda p: p.get("sort") or 0):
             pid = member.get("peopleId") or member.get("personId")
-            if not pid or str(pid) in people:
+            if not pid or str(pid) in people or str(pid) not in principal_people:
                 continue
             acting = member.get('type') == 3
             if counts[acting] >= 12:
@@ -763,7 +767,18 @@ class CatalogueProviders:
                         people[str(pid)] = {}
             except Exception:
                 people[str(pid)] = {}  # Retain title credits when optional people enrichment fails.
-        raw = {**raw, "_people": people}
+        companies = {}
+        for c in [c for c in provisional['credits']
+                  if c['contributor']['kind'] == 'organization' and c['role'] == 'producer'][:4]:
+            native = c['contributor']['identities'][0]['external_id']
+            try:
+                async with self.http.lane('tvdb'):
+                    company = await tvdb.get_company(int(native), self.tvdb_key)
+                if str(company.get('id')) == str(native):
+                    companies[str(native)] = company
+            except Exception:
+                pass  # Optional identity evidence must not fail title credits.
+        raw = {**raw, "_people": people, '_companies': companies}
         return normalize_tvdb(raw, kind), raw
 
     async def book_editions_page(self, id, page):

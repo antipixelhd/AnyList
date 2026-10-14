@@ -86,7 +86,8 @@ async def known_works(db, entity, native, kind, viewer):
     work_identities = defaultdict(dict)
     own = set(await db.scalars(select(TrackedEntry.media_id).where(TrackedEntry.user_id == viewer.id))) if viewer else set()
     if entity:
-        person_ids = select(CatalogueEntity.id).where(or_(CatalogueEntity.id == entity.id, CatalogueEntity.canonical_person_id == entity.id)).correlate(None)
+        person_ids = select(CatalogueEntity.id).where(or_(CatalogueEntity.id == entity.id,
+            CatalogueEntity.canonical_person_id == entity.id, CatalogueEntity.canonical_company_id == entity.id)).correlate(None)
         credits = list((await db.execute(select(CatalogueCredit, CatalogueEntity).join(
             CatalogueEntity, CatalogueEntity.id == CatalogueCredit.work_id).where(
             CatalogueCredit.contributor_id.in_(person_ids), CatalogueEntity.kind.in_(("movie", "series")),
@@ -242,14 +243,16 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         return None
     if entity and entity.kind != expected_kind:
         return None
-    if entity and entity.canonical_person_id:
-        entity = await db.get(CatalogueEntity, entity.canonical_person_id)
+    if entity and (entity.canonical_person_id or entity.canonical_company_id):
+        entity = await db.get(CatalogueEntity, entity.canonical_person_id or entity.canonical_company_id)
         if not entity or entity.kind != expected_kind:
             return None
     identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == entity.id))) if entity else []
     if entity:
         native = next((positive_id(i.external_id) for i in identities if i.namespace == f"tmdb.{provider_kind}"), None)
-        if kind == "studio" and not await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.contributor_id == entity.id, CatalogueCredit.role == "producer").limit(1)):
+        studio_ids = select(CatalogueEntity.id).where(or_(CatalogueEntity.id == entity.id,
+            CatalogueEntity.canonical_company_id == entity.id))
+        if kind == "studio" and not await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.contributor_id.in_(studio_ids), CatalogueCredit.role == "producer").limit(1)):
             return None
     local = await known_works(db, entity, native, kind, viewer)
     attrs = dict(entity.attributes or {}) if entity else {}
@@ -350,6 +353,8 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     banner = public_url(attrs.get('studio_banner')) if kind == 'studio' else None
     if kind == 'studio' and not banner and 'attributes.studio_banner' not in protected:
         banner = profile_image
+    from core.studio_names import studio_name
+    name = studio_name(name) if kind == 'studio' else name
     return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
         "banner": banner,
         "image": profile_image,

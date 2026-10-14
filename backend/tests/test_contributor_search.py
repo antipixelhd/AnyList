@@ -33,11 +33,14 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.company_mock = self.companies.start()
         self.addCleanup(self.local.stop); self.addCleanup(self.keys.stop)
         self.addCleanup(self.people.stop); self.addCleanup(self.companies.stop)
+        status = patch.object(search, 'known_principal_status', AsyncMock(return_value={}))
+        self.principal_status = status.start()
+        self.addCleanup(status.stop)
 
     async def test_remote_people_and_studios_link_to_details_and_respect_sections(self):
         self.people_mock.return_value = {'results': [
-            {'id': 11, 'name': 'Actor', 'known_for_department': 'Acting', 'profile_path': '/actor.jpg'},
-            {'id': 12, 'name': 'Director', 'known_for_department': 'Directing'},
+            {'id': 11, 'name': 'Actor', 'known_for_department': 'Acting', 'known_for':[{'id':1}], 'profile_path': '/actor.jpg'},
+            {'id': 12, 'name': 'Director', 'known_for_department': 'Directing', 'known_for':[{'id':1}]},
             {'id': 13, 'name': 'Adult', 'known_for_department': 'Acting', 'adult': True},
         ]}
         self.company_mock.return_value = {'results': [{'id': 14, 'name': 'Studio', 'logo_path': '/logo.png'}]}
@@ -60,6 +63,29 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['results'], empty())
         self.company_mock.assert_not_called()
 
+    async def test_remote_search_rejects_people_without_known_works_and_ranks_recognition(self):
+        self.people_mock.return_value = {'results':[
+            {'id':1,'name':'Test Unknown','known_for_department':'Acting','known_for':[],'popularity':100},
+            {'id':2,'name':'Test Supporting','known_for_department':'Crew','known_for':[{'id':1}],'popularity':100},
+            {'id':3,'name':'Test New','known_for_department':'Acting','known_for':[{'id':1}],'popularity':1},
+            {'id':4,'name':'Test Known','known_for_department':'Acting','known_for':[{'id':1}],'popularity':20},
+        ]}
+        data=await search.search_contributors(self.db,self.viewer,'Test')
+        self.assertEqual([p['key'] for p in data['results']['actor']],['tmdb:4','tmdb:3'])
+        self.assertEqual(data['results']['staff'],[])
+        self.assertFalse(any(key.startswith('_') for p in data['results']['actor'] for key in p))
+
+    async def test_remote_results_do_not_reintroduce_known_supporting_crew(self):
+        person=SimpleNamespace(id=5,kind='person',canonical_person_id=None,canonical_company_id=None,
+            name='Minor Producer',image_url=None)
+        self.db.execute.return_value=SimpleNamespace(all=lambda:[(SimpleNamespace(
+            namespace='tmdb.person',external_id='11'),person)])
+        self.principal_status.return_value={5:False}
+        self.people_mock.return_value={'results':[{'id':11,'name':'Minor Producer',
+            'known_for_department':'Production','known_for':[{'id':1}]}]}
+        data=await search.search_contributors(self.db,self.viewer,'Minor')
+        self.assertEqual(data['results'],empty())
+
     async def test_canonical_identity_deduplicates_provider_results_without_merging_namesakes(self):
         person = SimpleNamespace(id=5, kind='person', canonical_person_id=None, name='Canonical', image_url=None)
         alias = SimpleNamespace(id=6, kind='person', canonical_person_id=5, name='Alias', image_url=None)
@@ -67,8 +93,8 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.local_mock.return_value = {**empty(), 'actor': [local]}
         self.db.execute.return_value = SimpleNamespace(all=lambda: [(SimpleNamespace(namespace='tmdb.person', external_id='11'), alias)])
         self.people_mock.return_value = {'results': [
-            {'id': 11, 'name': 'Alias', 'known_for_department': 'Acting'},
-            {'id': 15, 'name': 'Canonical', 'known_for_department': 'Acting'},
+            {'id': 11, 'name': 'Alias', 'known_for_department': 'Acting', 'known_for':[{'id':1}]},
+            {'id': 15, 'name': 'Canonical', 'known_for_department': 'Acting', 'known_for':[{'id':1}]},
         ]}
         with patch.object(search, 'canonical_people', AsyncMock(return_value={6: person})):
             data = await search.search_contributors(self.db, self.viewer, 'Alias')

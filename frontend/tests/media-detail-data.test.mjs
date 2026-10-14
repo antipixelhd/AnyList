@@ -7,7 +7,7 @@ import {formatDate} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
 
 test('header browse links preserve media type and select a full year in timeline view',()=>{
@@ -59,10 +59,10 @@ test('credits prioritize cast billing, responsible crew and separate production 
   const credits=api.detailCredits(media);
   assert.deepEqual(Array.from(credits.preview,p=>p.id),[2,1]);
   assert.deepEqual(Array.from(credits.principal,p=>p.id),[4,5]);
-  assert.deepEqual(Array.from(credits.supporting,p=>p.id),[3]);
+  assert.deepEqual(Array.from(credits.supporting,p=>p.id),[]);
   assert.deepEqual(Array.from(credits.studios,p=>p.id),[7]);
   media.people=media.people.filter(p=>p.kind!=='actor');
-  assert.deepEqual(Array.from(api.detailCredits(media).preview,p=>p.id),[4,5,3]);
+  assert.deepEqual(Array.from(api.detailCredits(media).preview,p=>p.id),[4,5]);
 });
 
 test('information groups roles once and prefers primary networks over alternate outlets',()=>{
@@ -71,6 +71,34 @@ test('information groups roles once and prefers primary networks over alternate 
   const groups=api.detailOrganizationFacts(media);
   assert.deepEqual(Array.from(groups,g=>g.label),['Network','Studios']);
   assert.deepEqual(Array.from(groups.flatMap(g=>g.rows),p=>p.name),['Apple TV+','Apple Studios']);
+});
+
+test('limited TV producer contributions show truthful episode counts and hide full-series labels',()=>{
+  const person={kind:'staff',roles:['Executive Producer'],producer_episode_count:12,episode_total:60};
+  assert.equal(api.detailCreditEpisodes(person),'12 episodes');
+  assert.equal(api.detailCreditEpisodes({...person,producer_episode_count:1}),'1 episode');
+  assert.equal(api.detailCreditEpisodes({...person,producer_episode_count:60}),'');
+  assert.equal(api.detailCreditEpisodes({...person,roles:['Creator','Executive Producer']}),'');
+  assert.equal(api.detailCreditEpisodes({...person,producer_episode_count:0}),'');
+  assert.equal(api.detailCreditEpisodes({...person,producer_episode_count:1.5}),'');
+});
+
+test('principal crew includes original authors and department heads and keeps historical studios separate',()=>{
+  const person=(id,roles)=>({id,kind:'staff',name:`Person ${id}`,roles,characters:[]});
+  const media=api.prepareDetail({type:'movie',people:[person(1,['Novel']),person(2,['Editor']),
+    person(3,['Production Design']),person(4,['Assistant Director']),person(5,['Executive Producer'])],
+    organizations:[{id:10,kind:'studio',name:'Marvel Studios',roles:['Producer'],characters:[]},
+      {id:11,kind:'studio',name:'Marvel Films',roles:['Producer'],characters:[]}]});
+  assert.deepEqual(Array.from(api.detailCredits(media).principal,p=>p.id),[1,2,3]);
+  assert.deepEqual(Array.from(api.detailCredits(media).studios,p=>p.name),['Marvel Studios','Marvel Films']);
+});
+
+test('server-selected cast order and bounded lists survive background updates',()=>{
+  const cast=Array.from({length:90},(_,id)=>({id,kind:'actor',name:String(id),roles:['Actor'],
+    characters:[],position:id,credit_order:id===89?0:id+1}));
+  const media=api.prepareDetail({type:'series',people:cast});
+  const credits=api.detailCredits(media);
+  assert.equal(credits.cast.length,24);assert.equal(credits.preview[0].id,89);
 });
 test('direct catalogue routes validate local IDs and reject ambiguous or oversized values',()=>{
   assert.equal(api.localMediaId('12'),12);

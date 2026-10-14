@@ -153,3 +153,4 @@
 }
 @media (hover:none),(pointer:coarse) { .media-detail :is(.lab-person,.lab-related-card,.lab-similar-grid img,.lab-poster,.lab-gallery img,.lab-art-image img):hover { transform:none; }.media-detail .lab-person:hover { background:var(--panel); } }
 @media (prefers-reduced-motion:reduce) { .media-scroll-reveal { translate:none; opacity:1; } }
+.media-detail .media-credit-episodes { display:inline-block; margin-top:3px; padding:2px 6px; border-radius:5px; background:var(--panel); color:var(--muted); font-size:.75rem; }

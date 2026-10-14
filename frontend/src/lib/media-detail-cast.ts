@@ -1,5 +1,5 @@
 import { createContentTransition } from './content-motion';
-import { detailCastPresentation, detailCredits, detailCreators, type DetailPerson, type DetailMedia } from './media-detail-data';
+import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
 import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
@@ -99,6 +99,12 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       if(person.kind==='actor')card.dataset.castPerson=JSON.stringify(person);else delete card.dataset.castPerson;
       card.querySelector<HTMLElement>('h3')!.textContent=person.name;
       card.querySelector<HTMLElement>('p')!.textContent=person.characters.join(' / ')||person.roles.join(', ');
+      const episodes=detailCreditEpisodes(person);
+      let count=card.querySelector<HTMLElement>('[data-credit-episodes]');
+      if(episodes){
+        if(!count){count=document.createElement('span');count.className='media-credit-episodes';count.dataset.creditEpisodes='';card.querySelector('h3')!.parentElement!.append(count);}
+        count.textContent=episodes;
+      }else count?.remove();
       if(person.kind!=='actor'&&card.querySelector('.media-person-art'))artwork(card,[person.image].filter((url):url is string=>!!url));
       return card;
     });
@@ -134,7 +140,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       creatorRow.replaceChildren(...nodes);creatorRow.hidden=false;
     }
     const preview=root.querySelector<HTMLElement>('[data-credit-preview]');if(preview)fill(preview,groups.preview);
-    const rows={cast:groups.cast,crew:groups.principal,supporting:groups.supporting,studios:groups.studios};
+    const rows={cast:groups.cast,crew:groups.principal,studios:groups.studios};
     root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{
       const people=rows[section.dataset.creditSection as keyof typeof rows]||[];
       const limit=Number(section.dataset.creditLimit||8);

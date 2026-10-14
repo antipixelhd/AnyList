@@ -22,6 +22,9 @@ async def fill_document(db, document, provider):
         if values['kind'] == 'person':
             from core.person_identities import reconcile_person_identities
             await reconcile_person_identities(db, values.get('identities', []), provider)
+        elif values['kind'] == 'organization':
+            from core.person_identities import reconcile_company_identities
+            await reconcile_company_identities(db, values.get('identities', []), provider)
         roots = {mapping.entity_id for identity in values.get('identities', [])
                  if (mapping := await catalogue.resolve_identity(db, identity['namespace'], identity['external_id']))}
         if len(roots) > 1:
@@ -54,6 +57,11 @@ async def fill_document(db, document, provider):
             # A changed known performer or job is reviewable, never auto-replaced.
             if person and old.contributor_id == person.id and old.role == credit['role']:
                 await catalogue.upsert_entity(db, credit['contributor'], provider)
+                # Selection/counts describe this provider association, not a
+                # protected title or user fact. Refresh them on cached repairs.
+                old.attributes = {**(old.attributes or {}), **credit.get('attributes', {})}
+                if old.position is None and credit.get('position') is not None:
+                    old.position = credit['position']
                 for field in ('role_label', 'character_label', 'character_image_url'):
                     if not catalogue.has_value(getattr(old, field)) and credit.get(field):
                         setattr(old, field, credit[field])

@@ -7,6 +7,8 @@ from sqlalchemy.orm import load_only
 from core.catalogue_normalize import image
 from core.media_images import provider_images, unique_images
 from core.screen_characters import character_images, role_image_candidates
+from core.studio_names import studio_name
+from core.principal_credits import principal_clause, select_credits, evidence, positive, label
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
     CatalogueLegacyLink, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
@@ -44,27 +46,31 @@ async def work_details(db, work, *, extras=True):
     if work is None:
         return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
     credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
-        CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id)
+        CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id,
+            or_(CatalogueEntity.kind == 'organization', principal_clause(CatalogueCredit, work.kind))
+            if work.kind in ('movie', 'series') else True)
         .options(load_only(CatalogueCredit.id, CatalogueCredit.work_id, CatalogueCredit.contributor_id,
             CatalogueCredit.provider, CatalogueCredit.role, CatalogueCredit.role_label, CatalogueCredit.position,
-            CatalogueCredit.character_label, CatalogueCredit.character_image_url, CatalogueCredit.screen_character_id),
+            CatalogueCredit.character_label, CatalogueCredit.character_image_url, CatalogueCredit.screen_character_id,
+            CatalogueCredit.attributes),
             load_only(CatalogueEntity.id, CatalogueEntity.kind, CatalogueEntity.name, CatalogueEntity.image_url,
-                CatalogueEntity.canonical_person_id))
+                CatalogueEntity.canonical_person_id, CatalogueEntity.canonical_company_id))
         .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id))).all()
     people = {}
     organizations = {}
     billing = {}
-    images = await character_images(db, {credit.screen_character_id for credit, _ in credits
-        if credit.role == 'actor' and credit.screen_character_id})
     local_images = {}
     alternative_images = {}
-    studio_ids = {contributor.id for credit, contributor in credits if credit.role == 'producer'}
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
+    studio_ids = {canonical[person.id].id for c, person in credits if c.role == 'producer'}
     from core.screen_cast import complete_cast_works, preferred_cast
     if work.kind in ('movie', 'series'):
         credits = preferred_cast([(credit, canonical[person.id]) for credit, person in credits],
                                  await complete_cast_works(db, {work.id}))
+        credits = select_credits(credits, work.kind)
+    images = await character_images(db, {credit.screen_character_id for credit, _ in credits
+        if credit.role == 'actor' and credit.screen_character_id})
     for credit, contributor in credits:
         contributor = canonical.get(contributor.id, contributor)
         actor = credit.role == 'actor'
@@ -73,10 +79,11 @@ async def work_details(db, work, *, extras=True):
         key = (contributor.id, kind)
         if key not in group:
             path = 'studio' if kind == 'studio' else 'actors' if actor else 'person'
-            group[key] = {'id': contributor.id, 'kind': kind, 'name': contributor.name,
+            group[key] = {'id': contributor.id, 'kind': kind, 'name': studio_name(contributor.name) if kind == 'studio' else contributor.name,
                 'image': image(contributor.image_url), 'url': f'/{path}/catalogue:{contributor.id}'
                 if kind != 'studio' or (work.kind in ('movie', 'series') and contributor.id in studio_ids) else None,
-                'roles': [], 'role_codes': [], 'position': credit.position, 'characters': []}
+                'roles': [], 'role_codes': [], 'position': credit.position,
+                'credit_order': len(group), 'characters': []}
         row = group[key]
         if credit.position is not None:
             candidate = (0 if credit.provider == 'tmdb' else 1, credit.position)
@@ -88,6 +95,13 @@ async def work_details(db, work, *, extras=True):
         role = credit.role_label or credit.role.replace('_', ' ').title()
         if role not in row['roles']:
             row['roles'].append(role)
+        # Each job may overlap the same episodes. Do not sum role counts or
+        # infer episode numbers/season ranges from an aggregate count.
+        count = positive(evidence(credit).get('episode_count'))
+        if count:
+            row['episode_count'] = max(row.get('episode_count', 0), count)
+            if label(credit) in ('producer', 'executive producer'):
+                row['producer_episode_count'] = max(row.get('producer_episode_count', 0), count)
         if credit.character_label and credit.character_label not in row['characters']:
             row['characters'].append(credit.character_label)
         if actor:
@@ -97,6 +111,10 @@ async def work_details(db, work, *, extras=True):
         if row['kind'] == 'actor':
             row['character_images'] = list(dict.fromkeys(local_images.get(key, []) + alternative_images.get(key, [])))[:4]
             row['character_image'] = next(iter(row['character_images']), None)
+        elif work.kind == 'series' and row.get('episode_count'):
+            total = positive((work.attributes or {}).get('episode_count'))
+            if total:
+                row['episode_total'] = total
     if not extras:
         return {'catalogue_id':work.id, 'people':list(people.values()), 'organizations':list(organizations.values())}
     attrs = work.attributes or {}

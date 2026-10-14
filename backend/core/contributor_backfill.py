@@ -3,14 +3,16 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import exists, or_, select
+from sqlalchemy.orm import aliased
 
 from core import catalogue, tmdb, tvdb
 from core.contributor_details import positive_id, public_url
 from core.statistics_genres import poster
+from core.principal_credits import principal_clause
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink
 from models.tracking import TrackedEntry
 
-VERSION = 1
+VERSION = 2
 FIELDS = ('birthday', 'deathday', 'place_of_birth', 'known_for_department', 'also_known_as',
           'imdb_id', 'origin_country', 'headquarters', 'homepage')
 
@@ -18,6 +20,9 @@ FIELDS = ('birthday', 'deathday', 'place_of_birth', 'known_for_department', 'als
 def missing_values(row, raw):
     attrs = row.attributes or {}
     values = {'attributes': {key: raw[key] for key in FIELDS if raw.get(key) and not attrs.get(key)}}
+    if row.kind == 'organization' and raw.get('also_known_as'):
+        values['attributes']['also_known_as'] = list(dict.fromkeys([
+            *(attrs.get('also_known_as') or []), *raw['also_known_as']]))
     if 'homepage' in values['attributes'] and not public_url(values['attributes']['homepage']):
         del values['attributes']['homepage']
     if not row.description:
@@ -55,12 +60,17 @@ async def backfill_contributors(db, api_key, *, limit=100, provider='tmdb'):
     namespaces = ((CatalogueEntity.kind == 'person') & (CatalogueIdentity.namespace == 'tvdb.person')) if provider == 'tvdb' else or_(
         (CatalogueEntity.kind == 'person') & (CatalogueIdentity.namespace == 'tmdb.person'),
         (CatalogueEntity.kind == 'organization') & (CatalogueIdentity.namespace == 'tmdb.company'))
+    work = aliased(CatalogueEntity)
     query = select(CatalogueEntity, CatalogueIdentity).join(CatalogueIdentity,
         CatalogueIdentity.entity_id == CatalogueEntity.id).where(
         namespaces,
+        CatalogueEntity.canonical_person_id.is_(None), CatalogueEntity.canonical_company_id.is_(None),
         exists(select(CatalogueCredit.id).join(CatalogueLegacyLink, CatalogueLegacyLink.entity_id == CatalogueCredit.work_id)
+            .join(work, work.id == CatalogueCredit.work_id)
             .join(TrackedEntry, TrackedEntry.media_id == CatalogueLegacyLink.media_id)
-            .where(CatalogueCredit.contributor_id == CatalogueEntity.id)),
+            .where(CatalogueCredit.contributor_id == CatalogueEntity.id,
+                or_((CatalogueEntity.kind == 'organization') & (CatalogueCredit.role == 'producer'),
+                    principal_clause(CatalogueCredit, work.kind)))),
         or_(attrs[version_key].astext.is_(None), attrs[version_key].astext != str(VERSION)),
         or_(attrs[attempted_key].astext.is_(None), attrs[attempted_key].astext < (now-timedelta(days=7)).isoformat()),
     ).order_by(CatalogueEntity.id).limit(limit)
@@ -79,6 +89,15 @@ async def backfill_contributors(db, api_key, *, limit=100, provider='tmdb'):
                         tmdb.get_person_profile(native, api_key=api_key) if row.kind == 'person' else tmdb.get_company(native, api_key=api_key))
                 if positive_id(raw.get('id')) != native:
                     raise ValueError('Provider identity mismatch')
+                if row.kind == 'organization' and provider == 'tmdb':
+                    try:
+                        async with asyncio.timeout(5):
+                            aliases = await tmdb.get_company_aliases(native, api_key=api_key)
+                        if positive_id(aliases.get('id')) == native:
+                            raw = {**raw, 'also_known_as': [item['name'] for item in aliases.get('results') or []
+                                if isinstance(item, dict) and item.get('name')]}
+                    except Exception:
+                        pass
                 return tvdb_profile(raw) if provider == 'tvdb' else raw
             except Exception:
                 return None
@@ -100,6 +119,11 @@ async def backfill_contributors(db, api_key, *, limit=100, provider='tmdb'):
         row.attributes = {key:value for key,value in row.attributes.items()
             if catalogue.has_value(value) or key not in values['attributes'] or 'attributes.'+key in (row.protected_fields or [])}
         catalogue.merge_fields(row, values, provider)
+        # Alias discovery is additive even when the original provider name was
+        # already stored; explicitly protected aliases still take precedence.
+        if row.kind == 'organization' and 'also_known_as' in values['attributes'] and (
+                'attributes.also_known_as' not in (row.protected_fields or [])):
+            row.attributes = {**row.attributes, 'also_known_as': values['attributes']['also_known_as']}
         if before != (row.description, row.image_url, row.attributes):
             result['updated'] += 1
         if not raw.get('biography') and not raw.get('description'):

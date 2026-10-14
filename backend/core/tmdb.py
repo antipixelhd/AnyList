@@ -578,6 +578,10 @@ async def get_company_images(company_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/company/{company_id}/images", headers=get_headers(api_key))
 
 
+async def get_company_aliases(company_id: int, api_key: str = None) -> dict:
+    return await _get(f"{TMDB_BASE}/company/{company_id}/alternative_names", headers=get_headers(api_key))
+
+
 async def get_title_images(tmdb_id: int, kind: str, api_key: str = None) -> dict:
     if kind not in ('movie', 'series'):
         raise ValueError('Unsupported screen media kind')

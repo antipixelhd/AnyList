@@ -3,7 +3,15 @@ import {countryLabel} from './stats-overview-data';
 import {formatDate} from './date-time';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; characters: string[]};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
+export function detailCreditEpisodes(person:DetailPerson) {
+  const count=person.producer_episode_count,total=person.episode_total;
+  if(person.kind!=='staff'||!person.roles.some(role=>/^(executive )?producer$/i.test(role))||
+      person.roles.some(role=>/^(creator|showrunner|head writer)$/i.test(role))||
+      typeof count!=='number'||!Number.isInteger(count)||count<1||
+      (typeof total==='number'&&Number.isInteger(total)&&count>=total))return '';
+  return `${count} ${count===1?'episode':'episodes'}`;
+}
 export function detailCastPresentation(person: DetailPerson, mode: 'actors' | 'characters') {
   const character = person.characters.filter(Boolean).join(' / ');
   return {primary: mode === 'characters' && character ? character : person.name,
@@ -60,24 +68,26 @@ export function detailWorkCaption(work: {type?: MediaKind; genres?: string[]; ye
 const nameKey=(name:string)=>name.trim().toLocaleLowerCase().replace(/\s+/g,' ');
 const roleText=(person:DetailPerson)=>[...person.roles,...(person.role_codes||[])].join(' ');
 export function detailCredits(media:DetailMedia) {
-  const position=(person:DetailPerson)=>person.position??Number.MAX_SAFE_INTEGER;
-  const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b));
+  const position=(person:DetailPerson)=>person.credit_order??person.position??Number.MAX_SAFE_INTEGER;
+  const screen=media.type==='movie'||media.type==='series';
+  const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b)).slice(0,screen?(media.type==='movie'?16:24):undefined);
   const priority=(person:DetailPerson)=>{
-    const roles=[...person.roles,...(person.role_codes||[])];
-    const ranks=[/^(director|creator|showrunner)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author)$/i,/^executive producer$/i,/^(producer|developer)$/i,/^(cinematographer|director of photography|composer|original music composer)$/i];
+    const roles=person.roles.length?person.roles:person.role_codes||[];
+    const ranks=[/^(director|supervising director|creator|showrunner|head writer)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author|novel|book|play|original story|characters|characters created by)$/i,/^(cinematographer|cinematography|director of photography|composer|original music composer|editor|film editor|production design|production designer|costume design|costume designer|casting|casting director|visual effects supervisor|animation director)$/i,/^(producer|developer)$/i,...(media.type==='series'?[/^executive producer$/i]:[])];
     const rank=ranks.findIndex(pattern=>roles.some(role=>pattern.test(role.trim())));
-    return rank<0?ranks.length:rank;
+    return rank<0?99:rank;
   };
   const crew=media.people.filter(person=>person.kind!=='actor').sort((a,b)=>priority(a)-priority(b)||position(a)-position(b));
   const companies=new Map<string,DetailPerson>();
   for(const person of media.organizations.filter(person=>/producer|production|studio|developer|publisher/i.test(roleText(person)))){
-    const key=nameKey(person.name),previous=companies.get(key);
+    const key=String(person.id),previous=companies.get(key);
     companies.set(key,previous?{...previous,url:previous.url||person.url,image:previous.image||person.image,
       roles:[...new Set([...previous.roles,...person.roles])],role_codes:[...new Set([...(previous.role_codes||[]),...(person.role_codes||[])])]}:person);
   }
   const studios=[...companies.values()];
-  return {cast,principal:crew.filter(person=>priority(person)<5),supporting:crew.filter(person=>priority(person)>=5),studios,
-    preview:cast.length?cast.slice(0,8):crew.slice(0,8)};
+  const principal=screen?crew.filter(person=>priority(person)<99).slice(0,16):crew;
+  return {cast,principal,supporting:[],studios,
+    preview:cast.length?cast.slice(0,8):principal.slice(0,8)};
 }
 export function detailOrganizationFacts(media:DetailMedia) {
   const groups:{label:string;rows:{name:string;url?:string|null}[]}[]=[];
