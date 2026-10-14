@@ -1,6 +1,6 @@
-/** Leave room for exterior controls and fit without stretching or upscaling. */
+/** Leave room for previews and viewport margins without stretching or upscaling. */
 export function detailViewerFrame(width:number,height:number,viewportWidth:number,viewportHeight:number) {
-  const scale=Math.min(1,Math.max(1,viewportWidth-160)/width,Math.max(1,viewportHeight-172)/height);
+  const scale=Math.min(1,Math.max(1,viewportWidth-48)/width,Math.max(1,viewportHeight-124)/height);
   return {width:width*scale,height:height*scale};
 }
 

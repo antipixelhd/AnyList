@@ -75,23 +75,25 @@
 }
 @media (min-width:651px) {
   .image-lightbox[data-image-gallery] {
-    width:calc(var(--viewer-image-width,800px) + 128px);
-    height:calc(var(--viewer-image-height,450px) + 132px);
+    width:var(--viewer-image-width,800px);
+    height:calc(var(--viewer-image-height,450px) + 84px);
     max-width:calc(100vw - 32px); max-height:calc(100dvh - 40px);
-    padding:48px 64px 84px; overflow:visible; background:transparent;
+    padding:0 0 84px; overflow:visible; background:transparent;
     grid-template-rows:minmax(0,1fr); border-radius:0;
     transition:width .2s ease,height .2s ease;
   }
   .image-lightbox[data-image-gallery] .image-viewer-track { border-radius:8px; background:#080f18; }
-  .image-lightbox[data-image-gallery] .image-viewer-close { top:0; right:64px; }
-  .image-lightbox[data-image-gallery] [data-image-viewer-step] { grid-area:auto; top:calc(48px + var(--viewer-image-height,450px) / 2); }
-  .image-lightbox[data-image-gallery] [data-image-viewer-step="-1"] { left:4px; }
-  .image-lightbox[data-image-gallery] [data-image-viewer-step="1"] { right:4px; }
-  .image-lightbox[data-image-gallery] .image-viewer-button { border-radius:50%; background:var(--panel); }
+  .image-lightbox[data-image-gallery] .image-viewer-close { top:12px; right:12px; }
+  .image-lightbox[data-image-gallery] [data-image-viewer-step] { grid-area:auto; top:calc(var(--viewer-image-height,450px) / 2); }
+  .image-lightbox[data-image-gallery] [data-image-viewer-step="-1"] { left:12px; }
+  .image-lightbox[data-image-gallery] [data-image-viewer-step="1"] { right:12px; }
+  .image-lightbox[data-image-gallery] .image-viewer-button { border-radius:50%; background:#15233390; opacity:.3; transition:opacity .18s ease,background-color .18s ease,color .18s ease; }
+  .image-lightbox[data-image-gallery]:hover .image-viewer-button { opacity:.65; }
+  .image-lightbox[data-image-gallery] .image-viewer-button:is(:hover,:focus-visible) { opacity:1; background:#26445f; }
   .image-lightbox[data-image-gallery] .image-viewer-slots {
-    position:absolute; grid-area:auto; bottom:8px; left:64px; right:64px; padding:6px 0;
+    position:absolute; grid-area:auto; bottom:8px; left:0; right:0; padding:6px 0;
   }
-  .image-lightbox[data-image-gallery] [data-image-viewer-status] { position:absolute; grid-area:auto; bottom:0; left:64px; right:64px; padding:0; }
+  .image-lightbox[data-image-gallery] [data-image-viewer-status] { position:absolute; grid-area:auto; bottom:0; left:0; right:0; padding:0; }
 }
 @media (min-width:651px) and (prefers-reduced-motion:reduce) {
   .image-lightbox[data-image-gallery] { transition:none; }

@@ -129,7 +129,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
     fitViewer(image,group);
-    arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=Number(arrow.dataset.imageViewerStep)<0?current===0:current>=count-1;});
+    arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=count<2;});
     paintSlots();
     if(!rows[current]){
       image.style.visibility='hidden';skeleton.hidden=false;
@@ -293,7 +293,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(info.imagesAvailable&&artworkPanel&&!artworkPanel.hidden)void loadImages();
   }
   bindImageViewerDismissal(lightbox,signal);
-  lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(Math.max(0,Math.min((pending?10:galleries[active].length)-1,current+(event.key==='ArrowLeft'?-1:1))),true);}},{signal});
-  arrows.forEach(button=>button.addEventListener('click',()=>showImage(Math.max(0,Math.min((pending?10:galleries[active].length)-1,current+Number(button.dataset.imageViewerStep))),true),{signal}));
+  lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}},{signal});
+  arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep),true),{signal}));
   return loadImages;
 }
