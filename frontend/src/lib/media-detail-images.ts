@@ -8,6 +8,7 @@ import {createDetailImageCarousel} from './detail-image-carousel';
 import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
+import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailSceneArtwork} from './detail-artwork';
 
 type Galleries = {posters:string[]; artwork:string[]};
@@ -90,6 +91,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   lightbox.addEventListener('close',()=>{clearPreviewTimer();previewInteracting=false;delete lightbox.dataset.previewsHidden;},{signal});
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
+  const fitViewer=bindDetailViewerFrame(lightbox,signal);
   let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;
@@ -126,6 +128,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
+    fitViewer(image,group);
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=Number(arrow.dataset.imageViewerStep)<0?current===0:current>=count-1;});
     paintSlots();
     if(!rows[current]){
@@ -161,6 +164,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     void ready.then(loaded=>{
       if(!loaded||signal.aborted)return;
       if(group==='artwork'&&image.naturalWidth<=image.naturalHeight){discard();return;}
+      if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,group);
       if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
     }).catch(()=>{
       if(signal.aborted)return;

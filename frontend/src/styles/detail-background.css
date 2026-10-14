@@ -1,0 +1,53 @@
+/* Shared artwork-to-page transition for media and people detail pages. */
+.media-detail.concept-marquee .lab-hero-shade,
+.contributor-page.is-person .contributor-banner-shade {
+  /* Sample a smoothstep curve every 2.5% to keep slope changes imperceptible.
+     Reach page color early, with a flat tail before the covered bottom strip. */
+  background:linear-gradient(to bottom,
+    color-mix(in srgb,var(--bg) 15%,transparent) 0%,
+    color-mix(in srgb,var(--bg) 15%,transparent) 20%,
+    color-mix(in srgb,var(--bg) 15.318%,transparent) 22.5%,
+    color-mix(in srgb,var(--bg) 16.239%,transparent) 25%,
+    color-mix(in srgb,var(--bg) 17.718%,transparent) 27.5%,
+    color-mix(in srgb,var(--bg) 19.708%,transparent) 30%,
+    color-mix(in srgb,var(--bg) 22.163%,transparent) 32.5%,
+    color-mix(in srgb,var(--bg) 25.036%,transparent) 35%,
+    color-mix(in srgb,var(--bg) 28.281%,transparent) 37.5%,
+    color-mix(in srgb,var(--bg) 31.851%,transparent) 40%,
+    color-mix(in srgb,var(--bg) 35.7%,transparent) 42.5%,
+    color-mix(in srgb,var(--bg) 39.781%,transparent) 45%,
+    color-mix(in srgb,var(--bg) 44.048%,transparent) 47.5%,
+    color-mix(in srgb,var(--bg) 48.455%,transparent) 50%,
+    color-mix(in srgb,var(--bg) 52.954%,transparent) 52.5%,
+    color-mix(in srgb,var(--bg) 57.5%,transparent) 55%,
+    color-mix(in srgb,var(--bg) 62.046%,transparent) 57.5%,
+    color-mix(in srgb,var(--bg) 66.545%,transparent) 60%,
+    color-mix(in srgb,var(--bg) 70.952%,transparent) 62.5%,
+    color-mix(in srgb,var(--bg) 75.219%,transparent) 65%,
+    color-mix(in srgb,var(--bg) 79.3%,transparent) 67.5%,
+    color-mix(in srgb,var(--bg) 83.149%,transparent) 70%,
+    color-mix(in srgb,var(--bg) 86.719%,transparent) 72.5%,
+    color-mix(in srgb,var(--bg) 89.964%,transparent) 75%,
+    color-mix(in srgb,var(--bg) 92.837%,transparent) 77.5%,
+    color-mix(in srgb,var(--bg) 95.292%,transparent) 80%,
+    color-mix(in srgb,var(--bg) 97.282%,transparent) 82.5%,
+    color-mix(in srgb,var(--bg) 98.761%,transparent) 85%,
+    color-mix(in srgb,var(--bg) 99.682%,transparent) 87.5%,
+    var(--bg) 90%,
+    var(--bg) 100%),
+    linear-gradient(90deg,color-mix(in srgb,var(--bg) 70%,transparent),transparent 85%);
+  background-size:100% calc(100% - 20px); background-repeat:no-repeat;
+}
+.media-detail .lab-hero-shade::before,
+.contributor-page.is-person .contributor-banner-shade::before {
+  content:''; position:absolute; inset:auto 0 0; height:20px; background:var(--bg);
+}
+.media-detail .lab-hero-shade::after,
+.contributor-page.is-person .contributor-banner-shade::after {
+  /* Subtle static dithering breaks up 8-bit gradient bands. Fade it out before
+     the solid tail so the artwork boundary still matches page color exactly. */
+  content:''; position:absolute; inset:0 0 20px; opacity:.025;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cpath fill='%23fff' d='M0 0h128v128H0z' filter='url(%23n)'/%3E%3C/svg%3E");
+  -webkit-mask-image:linear-gradient(to bottom,transparent 20%,#000 40%,#000 65%,transparent 90%);
+  mask-image:linear-gradient(to bottom,transparent 20%,#000 40%,#000 65%,transparent 90%);
+}

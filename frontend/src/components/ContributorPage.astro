@@ -10,6 +10,7 @@ import { personAge, personDate } from '../lib/person-page-data';
 import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import '../styles/browse.css';
+import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
 interface Props { kind: 'actor' | 'staff' | 'studio' }
 const { kind } = Astro.props;
@@ -45,8 +46,8 @@ if (data) {
 }
 ---
 <Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)}>
-  {data ? <article class="contributor-page" data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-endpoint={endpoint}>
-    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}</div>
+  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-endpoint={endpoint}>
+    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
         <button class="contributor-portrait" type="button" data-portrait-image={artwork(data.image,'original',imageRoute)} data-portrait-caption={data.name} disabled={!portrait} aria-label={`Expand ${data.name} image`}>{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></button>

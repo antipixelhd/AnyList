@@ -5,6 +5,13 @@
 .contributor-banner.is-logo img { object-fit:contain; object-position:center; padding:36px 18%; opacity:.65; filter:brightness(0) invert(1); }
 html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-banner::after { content:''; position:absolute; inset:0; background:linear-gradient(0deg,var(--bg),transparent 90%),linear-gradient(90deg,var(--bg),transparent 70%); }
+.contributor-page.is-person .contributor-banner { overflow:visible; background:none; }
+.contributor-page.is-person .contributor-banner::after { content:none; }
+.contributor-page.is-person .contributor-banner img {
+  position:absolute; inset:0 0 -96px; height:calc(100% + 96px);
+  clip-path:inset(0 0 20px); pointer-events:none;
+}
+.contributor-banner-shade { position:absolute; inset:0 0 -96px; height:calc(100% + 96px); pointer-events:none; }
 .contributor-layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:var(--list-column-gap,40px); align-items:start; }
 .contributor-sidebar { margin-top:-130px; position:relative; }
 .contributor-portrait { aspect-ratio:2/3; display:grid; place-items:center; background:var(--panel); border-radius:8px; overflow:hidden; box-shadow:0 16px 36px #0003; color:var(--muted); font-size:64px; }
