@@ -1,4 +1,5 @@
 <script>
+    import { showMenu, hideMenu } from '../lib/ui-motion';
     import { wirePasswordToggles } from '../lib/password-toggle';
     wirePasswordToggles();
     // ── Theme toggle ───────────────────────────────────────────────────────────
@@ -19,21 +20,46 @@
     });
 
     // ── User dropdown (click-toggled) ──────────────────────────────────────────
-    const userMenuBtn = document.getElementById('user-menu-btn');
-    const userMenu = document.getElementById('user-menu');
-    const userChevron = document.getElementById('user-chevron');
-
-    userMenuBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const open = !userMenu?.classList.contains('hidden');
-      userMenu?.classList.toggle('hidden', open);
-      userChevron?.style.setProperty('transform', open ? '' : 'rotate(180deg)');
-    });
-
-    document.addEventListener('click', () => {
-      userMenu?.classList.add('hidden');
-      userChevron?.style.removeProperty('transform');
-    });
+    let cleanupUserMenu: (() => void) | undefined;
+    function mountUserMenu() {
+      const listeners = new AbortController();
+      const userMenuBtn = document.getElementById('user-menu-btn');
+      const userMenu = document.getElementById('user-menu');
+      const closeUserMenu = () => {
+        if (!userMenu || !userMenuBtn || userMenuBtn.getAttribute('aria-expanded') !== 'true') return;
+        userMenuBtn.setAttribute('aria-expanded', 'false');
+        void hideMenu(userMenu);
+      };
+      if (userMenu && userMenuBtn) {
+        userMenu.classList.remove('hidden');
+        userMenu.hidden = true;
+        userMenuBtn.setAttribute('aria-expanded', 'false');
+        userMenuBtn.setAttribute('aria-controls', userMenu.id);
+        userMenuBtn.setAttribute('aria-haspopup', 'menu');
+        userMenuBtn.addEventListener('click', event => {
+          event.stopPropagation();
+          if (userMenuBtn.getAttribute('aria-expanded') === 'true') closeUserMenu();
+          else {
+            showMenu(userMenu);
+            userMenuBtn.setAttribute('aria-expanded', 'true');
+          }
+        }, { signal: listeners.signal });
+        document.addEventListener('click', event => {
+          if (!userMenu.contains(event.target as Node)) closeUserMenu();
+        }, { signal: listeners.signal });
+        document.addEventListener('keydown', event => {
+          if (event.key === 'Escape' && userMenuBtn.getAttribute('aria-expanded') === 'true') {
+            closeUserMenu(); userMenuBtn.focus();
+          }
+        }, { signal: listeners.signal });
+      }
+      return () => {
+        listeners.abort();
+        if (userMenu) void hideMenu(userMenu, true);
+      };
+    }
+    document.addEventListener('astro:page-load', () => { cleanupUserMenu?.(); cleanupUserMenu = mountUserMenu(); });
+    document.addEventListener('astro:before-swap', () => { cleanupUserMenu?.(); cleanupUserMenu = undefined; });
 
     // Keep the desktop search caret at the end of an existing query.
     const desktopInput = document.getElementById('desktop-search-input') as HTMLInputElement | null;

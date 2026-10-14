@@ -1,4 +1,5 @@
 import { animate } from 'motion/mini';
+import { createDropdownArrowMotion, dropdownTiming } from './dropdown-arrow-motion.ts';
 
 type MotionControl = ReturnType<typeof animate>;
 const running = new Map<HTMLElement, MotionControl>();
@@ -7,6 +8,7 @@ const boundDialogs = new WeakSet<HTMLDialogElement>();
 let sequence = 0;
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const arrows = createDropdownArrowMotion((arrow, values, timing) => animate(arrow, values, timing), reduced);
 
 function stop(element: HTMLElement) {
   const control = running.get(element);
@@ -19,8 +21,10 @@ function stop(element: HTMLElement) {
 
 function play(element: HTMLElement, entering: boolean, distance: number) {
   stop(element);
-  if (reduced()) return null;
   const fading = element.hasAttribute('data-motion-fade');
+  const timing = dropdownTiming(entering, fading);
+  arrows.play(element, entering, timing);
+  if (reduced()) return null;
   const control = animate(element, {
     opacity: entering ? [0, 1] : [1, 0],
     ...(!fading ? {
@@ -28,7 +32,7 @@ function play(element: HTMLElement, entering: boolean, distance: number) {
         ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
         : ['translateY(0) scale(1)', `translateY(${Math.max(2, distance / 2)}px) scale(.995)`],
     } : {}),
-  }, { duration: fading ? (entering ? .16 : .1) : (entering ? .18 : .12), ease: entering ? [0.2, 0.7, 0.2, 1] : 'easeIn' });
+  }, timing);
   running.set(element, control);
   void control.finished.then(() => {
     if (running.get(element) === control) stop(element);
@@ -96,11 +100,18 @@ export async function dismiss(element: HTMLElement) {
   return closing.get(element) === token;
 }
 
-export async function hideMenu(menu: HTMLElement) {
+export async function hideMenu(menu: HTMLElement, immediate = false) {
   if (menu.hidden) return;
   const token = ++sequence;
   closing.set(menu, token);
   menu.inert = true;
+  if (immediate) {
+    stop(menu);
+    arrows.play(menu, false, { ...dropdownTiming(false), duration: 0 });
+    menu.hidden = true;
+    menu.style.removeProperty('pointer-events');
+    return;
+  }
   menu.style.pointerEvents = 'none';
   const control = play(menu, false, 5);
   if (control) await control.finished.catch(() => {});
@@ -155,6 +166,7 @@ export async function hideOverlay(overlay: HTMLElement) {
 }
 
 export function cancelUiMotion(root?: HTMLElement) {
+  arrows.cancel(root);
   for (const element of running.keys()) {
     if (!root || root.contains(element)) stop(element);
   }
