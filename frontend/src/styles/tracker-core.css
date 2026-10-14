@@ -85,7 +85,7 @@ button:disabled {
   left:12px;
   top:-70px;
   background:var(--blue);
-  color:var(--bg);
+  color:#ffffff;
   padding:12px;
   z-index:99
 }

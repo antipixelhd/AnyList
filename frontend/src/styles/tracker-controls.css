@@ -64,12 +64,12 @@
 .button-primary.button-rate {
   background:#f7b731;
   border-color:#f7b731;
-  color:#142131
+  color:#ffffff
 }
 .button-primary.button-rate:hover,.button-primary.button-rate:focus-visible {
   background:#ffd166;
   border-color:#ffd166;
-  color:#142131
+  color:#ffffff
 }
 .button-primary.button-rate:focus-visible {
   outline:2px solid #ffd166;

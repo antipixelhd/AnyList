@@ -6,7 +6,7 @@
 .stats-genre-summary h3 { margin:0; min-width:0; font-size:22px; font-weight:600; line-height:1.25; }
 .stats-genre-summary h3 a { color:var(--bright); text-decoration:none; transition:color 240ms ease; }
 .stats-genre-summary h3 a:hover { color:var(--stats-cyan); }
-.stats-genre-rank { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border-radius:50%; background:var(--stats-cyan); color:#071725; font-size:12px; font-variant-numeric:tabular-nums; }
+.stats-genre-rank { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border-radius:50%; background:var(--stats-cyan); color:#ffffff; font-size:12px; font-variant-numeric:tabular-nums; }
 .stats-genre-summary dl { display:grid; grid-template-columns:auto auto minmax(0,1fr); gap:16px; margin:0; }
 .stats-genre-summary dl>div { display:flex; flex-direction:column-reverse; gap:4px; align-self:start; }
 .stats-genre-summary dt { font-size:12px; line-height:1.4; color:var(--text); }
