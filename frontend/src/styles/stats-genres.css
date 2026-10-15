@@ -1,17 +1,17 @@
 .stats-genres-toolbar { display:flex; justify-content:flex-end; margin:-8px 0 30px; }
 .stats-genres-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:30px; }
-.stats-genre-card { min-width:0; background:var(--stats-plot); border-radius:6px; overflow:hidden; }
+.stats-genre-card { min-width:0; container-type:inline-size; background:var(--stats-plot); border-radius:6px; overflow:hidden; }
 .stats-genre-summary { padding:22px 24px 18px; background:color-mix(in srgb,var(--panel) 88%,transparent); }
 .stats-genre-summary header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
-.stats-genre-summary h3 { margin:0; min-width:0; font-size:2rem; font-weight:700; line-height:1.25; }
+.stats-genre-summary h3 { margin:0; min-width:0; font-size:2.4rem; font-weight:700; line-height:1.25; }
 .stats-genre-summary h3 a { color:var(--bright); text-decoration:none; transition:color 240ms ease; }
 .stats-genre-summary h3 a:hover { color:var(--stats-cyan); }
 .stats-genre-rank { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border-radius:50%; background:var(--stats-cyan); color:#ffffff; font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); font-variant-numeric:tabular-nums; }
-.stats-genre-summary dl { display:grid; grid-template-columns:auto auto minmax(0,1fr); gap:16px; margin:0; }
-.stats-genre-summary dl>div { display:flex; flex-direction:column-reverse; gap:4px; align-self:start; }
-.stats-genre-summary dt { font-size:12px; line-height:1.4; color:var(--text); }
-.stats-genre-summary dd { margin:0; color:var(--bright); font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); font-variant-numeric:tabular-nums; line-height:1.4; }
-.stats-genre-posters { position:relative; padding:20px 24px; }
+.stats-genre-summary dl { display:flex; justify-content:space-between; gap:clamp(12px,4cqi,24px); margin:0; }
+.stats-genre-summary dl>div { display:flex; flex-direction:column-reverse; gap:4px; align-self:start; min-width:0; }
+.stats-genre-summary dt { font-size:1.4rem; line-height:1.4; color:var(--text); }
+.stats-genre-summary dd { margin:0; color:var(--bright); font-size:clamp(1.6rem,5cqi,2rem); font-weight:700; font-variant-numeric:tabular-nums; line-height:1.4; overflow-wrap:anywhere; }
+.stats-genre-posters { position:relative; padding:20px 24px; background:rgba(11, 22, 34, 0.8); }
 .stats-genre-track { display:flex; gap:10px; overflow-x:auto; scrollbar-width:none; overscroll-behavior-x:contain; cursor:grab; touch-action:pan-x pan-y; }
 .stats-genre-track::-webkit-scrollbar { display:none; }
 .stats-genre-track.is-dragging { cursor:grabbing; user-select:none; }
