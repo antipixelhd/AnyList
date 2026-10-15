@@ -1,5 +1,6 @@
 ---
 import ShellControlsRuntime from "../components/ShellControlsRuntime.astro";
+import ReloadScrollRestoration from "../components/ReloadScrollRestoration.astro";
 import ToastRuntime from "../components/ToastRuntime.astro";
 import ResponsiveArtworkRuntime from "../components/ResponsiveArtworkRuntime.astro";
 import DateTimeRuntime from "../components/DateTimeRuntime.astro";
@@ -105,6 +106,7 @@ const mobileGroups: MobileNavigationGroup[] = [
 <html lang="en" class={blurExplicit ? "blur-explicit" : ""} style={siteColor ? themeVariables(siteColor) : undefined}>
 <head>
   <meta charset="UTF-8" />
+  <ReloadScrollRestoration />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>{title} · AnyList</title>
   <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
