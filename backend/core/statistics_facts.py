@@ -1,4 +1,4 @@
-"""One canonical title cohort for every statistics metric. No network or writes."""
+"""Canonical title facts and explicit watched/completed cohorts. No network or writes."""
 
 import math
 from collections import defaultdict
@@ -163,7 +163,7 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
             facts[key] = {"key": key, "kind": kind, "entity_id": entity.id if entity else None,
                           "data": {}, "listed": False, "status": None, "score": None,
                           "minutes": 0.0, "plays": 0, "episode_plays": 0, "episodes": set(),
-                          "years": {}, "runtime_known": 0, "runtime_estimated": 0, "runtime_missing": 0,
+                          "years": {}, "completion_year": None, "runtime_known": 0, "runtime_estimated": 0, "runtime_missing": 0,
                           "authoritative_plays": 0, "unattributed_plays": 0, "entry_order": None,
                           "planned_minutes": 0.0, "planned_unknown_episodes": 0, "planned_partial": False,
                           "planned_known_episodes": 0, "media": [], "shows": [], "progress": 0}
@@ -240,6 +240,8 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
             score = None
         target.update(listed=True, status=entry.status, score=score if score and score <= 10 else None,
                       progress=max(entry.progress or 0, 0), entry_order=order, detail_media_id=row.id)
+        finished = getattr(entry, 'finish_date', None)
+        target['completion_year'] = year_of(finished.isoformat() if isinstance(finished, (date, datetime)) else finished) if entry.status == 'completed' else None
     for event, row in events:
         key = by_media.get(row.id) if row.media_type == MediaType.movie else by_show.get(row.show_id)
         plays = max(event.play_count or 1, 1)
@@ -319,23 +321,47 @@ def title_facts(entries, events, shows, media, episodes, links, show_links, iden
     return [value for key, value in facts.items() if key not in hidden], coverage
 
 
-def grouped(values, label, *, year=None):
+def grouped(values, label):
     scores = [t["score"] for t in values if t["score"] is not None]
     return {"key": str(label), "label": str(label), "titles": len(values),
-            "minutes": sum(t["minutes"] if year is None else t["years"][year]["minutes"] for t in values),
+            "minutes": sum(t["minutes"] for t in values),
             "mean_score": sum(scores) / len(scores) if scores else None, "rated_titles": len(scores)}
 
 
-def yearly(values, watched=False):
+def yearly(values):
     buckets = defaultdict(list)
     for title in values:
-        for year in title["years"] if watched else [year_of(title["data"].get("release_date"))]:
-            buckets[year].append(title)
+        buckets[year_of(title["data"].get("release_date"))].append(title)
     years = sorted(y for y in buckets if y is not None)
-    result = [grouped(buckets[y], y, year=y if watched else None) for y in range(years[0], years[-1] + 1)] if years else []
-    if None in buckets and not watched:
+    result = [grouped(buckets[y], y) for y in range(years[0], years[-1] + 1)] if years else []
+    if None in buckets:
         result.append(grouped(buckets[None], "Unknown"))
     return result
+
+
+def completion_years(values):
+    """Movie completions and explicitly finished series, never partial episodes.
+
+    Full movie watch events establish historical completions (including dated
+    rewatches). A recorded entry finish date also works without detailed history.
+    Episode dates alone cannot establish that an entire series was completed.
+    """
+    buckets = defaultdict(list)
+    for title in values:
+        finish = title['completion_year']
+        if title['kind'] == 'series':
+            if finish is not None:
+                buckets[finish].append(title)
+            continue
+        years = set(title['years'])
+        if finish is not None:
+            years.add(finish)
+        for year in years:
+            # Keep dated movie replays in their actual years. If all available
+            # history is undated, the explicit finish date anchors that title.
+            minutes = title['years'][year]['minutes'] if year in title['years'] else title['minutes'] if not title['years'] else 0
+            buckets[year].append({**title, 'minutes':minutes})
+    return [grouped(buckets[year], year) for year in sorted(buckets)]
 
 
 def aggregate_scope(facts, coverage, scope):
@@ -384,7 +410,7 @@ def aggregate_scope(facts, coverage, scope):
         "episode_counts": [grouped(episode_bins[label], label) for label in [*(label for _, label in LENGTH_BINS), "Unknown"]],
         "statuses": statuses, "formats": formats,
         "countries": [{"key": k, "label": k, **v} for k, v in sorted(countries.items(), key=lambda kv: (-kv[1]["share"], kv[0]))],
-        "release_years": yearly(watched), "watch_years": yearly(watched, watched=True),
+        "release_years": yearly(watched), "watch_years": completion_years(titles),
         "genres": genre_groups(listed),
         "actors": actor_groups(listed),
         "studios": studio_groups(listed),

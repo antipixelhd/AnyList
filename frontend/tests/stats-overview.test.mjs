@@ -27,9 +27,9 @@ test('visible breakdowns omit unknown metadata without changing stored rows or t
   assert.deepEqual(distributionRows({countries:[{key:'Unknown',titles:1,share:1}]}, 'countries'), []);
 });
 
-test('watch-year range leaves lifetime rows untouched', () => {
+test('watch years include all recorded years without calendar gaps or changing lifetime rows', () => {
   const rows = [2024, 2025, 2026].map(year => ({ key: String(year), titles: year === 2025 ? 0 : 1, mean_score: null }));
-  assert.equal(watchYearRows(rows, '2025', '2026').length, 2);
+  assert.deepEqual(watchYearRows(rows).map(row=>row.key), ['2024','2026']);
   assert.equal(rows.length, 3);
 });
 

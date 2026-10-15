@@ -62,7 +62,15 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
     tooltip.style.left = `${Math.max(8, Math.min(left, plot.clientWidth - width - 8))}px`;
     tooltip.style.top = `${Math.max(8, Math.min((pointerY ?? chart.chartArea.top) + canvasRect.top - plotRect.top + 16, plot.clientHeight - height - 8))}px`;
   };
-  canvas.addEventListener('focus', () => { if (!pointerInput && canvas.matches(':focus-visible')) { keyboardInput = true; scroller.scrollLeft = 0; show(0); chart?.draw(); } }, listenerOptions);
+  canvas.addEventListener('focus', () => {
+    if (!pointerInput && canvas.matches(':focus-visible') && chart && rows.length) {
+      keyboardInput = true;
+      const right=scroller.getBoundingClientRect().right-canvas.getBoundingClientRect().left-16;
+      const visible=Number(chart.scales.x.getValueForPixel(Math.min(right,chart.chartArea.right)));
+      show(Math.max(0,Math.min(rows.length-1,Math.round(visible)||0)));
+      chart.draw();
+    }
+  }, listenerOptions);
   canvas.addEventListener('blur', () => { hide(); chart?.draw(); }, listenerOptions);
   document.addEventListener('keydown', event => { if (event.key === 'Tab') pointerInput = false; }, listenerOptions);
   canvas.addEventListener('keydown', event => {

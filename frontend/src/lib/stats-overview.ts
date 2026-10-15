@@ -9,7 +9,7 @@ import { actorArtwork } from './stats-actors-data';
 import { mountActors, mountStaff } from './stats-actors';
 import { mountStatisticsNavigation } from './stats-navigation';
 import { createMetricTooltip } from './stats-metric-tooltip';
-import { chartMinimumWidth } from './stats-chart-density';
+import { chartMinimumWidth, mountChartViewport } from './stats-chart-density';
 import { createContentTransition } from './content-motion';
 import { initializeScrollMotion } from './scroll-motion';
 import { cancelUiMotion, reveal } from './ui-motion';
@@ -46,10 +46,10 @@ function mount(root: HTMLElement) {
   const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 300, easing: 'easeOutCubic' as const } } });
   const charts = new Map<string, Chart<'bar' | 'line'>>();
   const tooltips = new Map<string, ReturnType<typeof createMetricTooltip>>();
+  const viewports = new Map<string, ReturnType<typeof mountChartViewport>>();
   const labelColors = new Map<string, string>();
   const pies = new Map<string, Chart<'pie'>>();
   const metrics = new Map<string, ChartMetric>(chartKeys.map(key => [key, 'titles']));
-  const from = node<HTMLSelectElement>('[data-watch-from]'), through = node<HTMLSelectElement>('[data-watch-through]');
   const colors = new Map<string, string>();
   const color = (variable: string) => {
     const cached = colors.get(variable);
@@ -70,7 +70,7 @@ function mount(root: HTMLElement) {
   };
   function dataRows(data: Overview, key: typeof chartKeys[number]): MetricGroup[] {
     const rows = knownRows(data[key]);
-    return key === 'watch_years' ? watchYearRows(rows, from.value, through.value) : rows;
+    return key === 'watch_years' ? watchYearRows(rows) : rows;
   }
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
@@ -140,6 +140,9 @@ function mount(root: HTMLElement) {
       }));
     }
     table(key, rows);
+    let viewport=viewports.get(key);
+    if(!viewport){viewport=mountChartViewport(canvas.closest<HTMLElement>('.overview-chart-scroll')!,events.signal);viewports.set(key,viewport);}
+    viewport.update(`${data.media_type}:${rows.map(row=>row.key).join(',')}`);
   }
   function drawDistribution(data: Overview, key: 'statuses' | 'formats' | 'countries', initial = false) {
     const rows = distributionRows(data, key);
@@ -198,11 +201,6 @@ function mount(root: HTMLElement) {
       node(`[data-headline-label="${index}"]`).textContent = metric.label;
     });
     node('[data-chart-section="episode_counts"]').hidden = data.media_type === 'movie';
-    for (const select of [from, through]) {
-      const previous = select.value;
-      select.replaceChildren(new Option(select === from ? 'First year' : 'Latest year', ''), ...data.watch_years.map(row => new Option(row.label, row.key)));
-      select.value = data.watch_years.some(row => row.key === previous) ? previous : '';
-    }
     if (section === 'overview') {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
@@ -313,10 +311,6 @@ function mount(root: HTMLElement) {
   function clearHighlight() { pies.forEach(chart => { chart.setActiveElements([]); chart.render(); }); }
   root.addEventListener('focusout', clearHighlight, { signal: events.signal });
   root.addEventListener('pointerout', clearHighlight, { signal: events.signal });
-  for (const select of [from, through]) select.addEventListener('change', () => {
-    if (from.value && through.value && Number(from.value) > Number(through.value)) (select === from ? through : from).value = select.value;
-    if (response.overview) drawMetric(response.overview, 'watch_years');
-  }, { signal: events.signal });
   window.addEventListener('popstate', () => {
     const params = new URL(location.href).searchParams, value = params.get('media');
     root.dataset.genreSort = genreSort(params.get('sort')); root.dataset.actorSort = genreSort(params.get('actor_sort'));

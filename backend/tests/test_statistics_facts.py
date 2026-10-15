@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace as Row
 
 os.environ.setdefault("SECRET_KEY", "statistics-test-only")
@@ -17,7 +17,7 @@ def media(id, kind, **values):
 
 def entry(id, score=None, **values):
     return Row(**{**dict(id=id, updated_at=datetime(2026, 1, 1), status="completed", rating_mode="manual",
-                        manual_score=score, season_scores={}, progress=0), **values})
+                        manual_score=score, season_scores={}, progress=0, finish_date=None), **values})
 
 
 def event(when=None, plays=1, **values):
@@ -41,7 +41,7 @@ class StatisticsFactsTests(unittest.TestCase):
         facts, coverage = title_facts(entries, events, list(shows), rows, list(episodes), links or {}, show_links or {}, identities or {}, entities or {}, show_anime=show_anime)
         return build_overviews(facts, coverage)
 
-    def test_all_charts_share_canonical_watched_title_cohort_and_exact_scores(self):
+    def test_canonical_watched_totals_exact_scores_and_completed_watch_years(self):
         movie = media(1, "movie", runtime=100, release_date="2020-03-01", tmdb_data={"production_countries": ["US", "GB"]})
         show = Row(id=7, tmdb_id=10, tvdb_id=20, first_air_date="2010-01-01", tmdb_data={"episode_run_time": [30]})
         series = media(2, "series", tmdb_id=10, tmdb_data={"origin_country": ["JP"]})
@@ -50,7 +50,7 @@ class StatisticsFactsTests(unittest.TestCase):
         ep2 = media(5, "episode", show_id=7, season_number=1)
         special = media(6, "episode", show_id=7, runtime=20, season_number=0)
         root = Row(id=100, kind="series", attributes={"regular_episode_count": 12, "release_date": "2010-01-01"})
-        result = self.build([(entry(1, 8), movie), (entry(2, rating_mode="season", season_scores={"1": 7, "2": 7, "3": 8}), series),
+        result = self.build([(entry(1, 8), movie), (entry(2, finish_date=date(2026,1,1), rating_mode="season", season_scores={"1": 7, "2": 7, "3": 8}), series),
                              (entry(3, status="planning"), planned)],
                             [(event(datetime(2025, 1, 1), 3), movie), (event(datetime(2026, 1, 1), 2), ep1),
                              (event(datetime(2024, 1, 1), date_inferred=True), ep2), (event(), special), (event(), ep1)],
@@ -72,7 +72,7 @@ class StatisticsFactsTests(unittest.TestCase):
         self.assertEqual(sum(x["share"] for x in data["countries"]), 2)
         self.assertEqual(data["watch_years"], [
             {"key": "2025", "label": "2025", "titles": 1, "minutes": 100.0, "mean_score": 8.0, "rated_titles": 1},
-            {"key": "2026", "label": "2026", "titles": 1, "minutes": 40.0, "mean_score": 22 / 3, "rated_titles": 1},
+            {"key": "2026", "label": "2026", "titles": 1, "minutes": 170.0, "mean_score": 22 / 3, "rated_titles": 1},
         ])
         self.assertEqual(data["release_years"][0]["minutes"], 170)
         self.assertEqual(result["movie"]["totals"]["watch_minutes"] + result["series"]["totals"]["watch_minutes"], 470)
@@ -143,12 +143,41 @@ class StatisticsFactsTests(unittest.TestCase):
         self.assertEqual(data["totals"]["planned_minutes"], 30)
         self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
 
-    def test_empty_years_and_unrated_means_remain_distinct(self):
+    def test_only_recorded_completion_years_are_returned_with_unrated_means_absent(self):
         movie = media(1, "movie", runtime=50)
         data = self.build([], [(event(datetime(2024, 1, 1)), movie), (event(datetime(2026, 1, 1)), movie)])["all"]
-        self.assertEqual(data["watch_years"][1]["titles"], 0)
-        self.assertEqual(data["watch_years"][1]["minutes"], 0)
+        self.assertEqual([row['key'] for row in data['watch_years']], ['2024','2026'])
+        self.assertEqual(data["watch_years"][1]["titles"], 1)
+        self.assertEqual(data["watch_years"][1]["minutes"], 50)
         self.assertIsNone(data["watch_years"][1]["mean_score"])
+
+    def test_watch_year_means_completed_titles_not_episode_activity_or_release_year(self):
+        movie=media(1,'movie',runtime=100,release_date='2020-01-01')
+        saved=media(2,'movie',release_date='2019-01-01')
+        finished=media(3,'series',tmdb_id=10)
+        ongoing=media(4,'series',tmdb_id=20)
+        shows=[Row(id=7,tmdb_id=10,tvdb_id=None,first_air_date='2010-01-01',tmdb_data={}),
+               Row(id=8,tmdb_id=20,tvdb_id=None,first_air_date='2011-01-01',tmdb_data={})]
+        first=media(5,'episode',show_id=7,runtime=30)
+        last=media(6,'episode',show_id=7,runtime=40)
+        partial=media(7,'episode',show_id=8,runtime=50)
+        data=self.build([(entry(1,9,finish_date=date(2024,1,1)),movie),
+                         (entry(2,7,finish_date=date(2025,1,1)),saved),
+                         (entry(3,8,finish_date=date(2026,1,1)),finished),
+                         (entry(4,6,status='watching',finish_date=date(2022,1,1)),ongoing)],
+                        [(event(datetime(2024,1,1)),movie),(event(datetime(2023,1,1)),first),
+                         (event(datetime(2024,1,1)),last),(event(datetime(2026,1,1)),partial)],shows)['all']
+        self.assertEqual([(row['key'],row['titles'],row['mean_score']) for row in data['watch_years']],
+                         [('2024',1,9),('2025',1,7),('2026',1,8)])
+        self.assertEqual(data['watch_years'][2]['minutes'],70)
+        self.assertEqual(next(row for row in data['release_years'] if row['key']=='2020')['titles'],1)
+
+    def test_finished_series_without_a_finish_date_does_not_guess_from_episode_dates(self):
+        series=media(1,'series',tmdb_id=10)
+        show=Row(id=7,tmdb_id=10,tvdb_id=None,first_air_date=None,tmdb_data={})
+        episode=media(2,'episode',show_id=7,runtime=30)
+        data=self.build([(entry(1,8),series)],[(event(datetime(2025,1,1)),episode)],[show])['series']
+        self.assertEqual(data['watch_years'],[])
 
     def test_partial_local_episode_rows_never_establish_total_length(self):
         self.assertIsNone(regular_total({"number_of_episodes": 12}))
