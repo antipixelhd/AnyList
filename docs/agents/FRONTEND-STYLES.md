@@ -20,6 +20,13 @@ selection dialogs, file input wiring, and navigation cleanup.
 
 - typography.css: font families, semantic size/weight tokens, line height, and
   the 62.5% root size (normally 10px). Account for this when using rem.
+- font-roles.css: Overpass display surfaces and Roboto reading text. Statistics,
+  browse, favorites, and library use Overpass throughout, including controls and
+  tooltips. Shared main/profile navigation, footer, profile names, detail headings,
+  and detail poster-card titles also use Overpass. Lists, settings, home,
+  notifications, activity cards, and detail prose/controls keep Roboto. Use
+  --font-content for controls so they follow their containing surface; keep the
+  shared font preloads route-independent.
 - global-theme.css: shared colors, surfaces, borders, and text colors.
 - global.css: Tailwind and shared theme/utility/component imports.
 - tailwind-rem-scale.css: utility scaling for the project's root size.

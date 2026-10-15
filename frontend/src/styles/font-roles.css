@@ -1,0 +1,23 @@
+/* Reading stays in Roboto. Display surfaces pass their font to controls too. */
+:is(.stats-overview-page,.favorites-page,.library-page,.browse-page) {
+  --font-content:var(--font-display);
+  font-family:var(--font-content);
+}
+
+/* Shared chrome remains display typography on every route. */
+:is(.topbar,.profile-tabs,.page-footer) {
+  --font-content:var(--font-display);
+  font-family:var(--font-display);
+}
+.profile-identity h1 { font-family:var(--font-display); }
+
+/* Detail prose and controls keep the reading face; headings and poster titles
+   are display text. BrowseCard is shared by details grids and their timelines. */
+:is(.media-detail,.contributor-page) { --font-navigation:var(--font-body); }
+body.tracker :is(.media-detail,.contributor-page) :is(h1,h2,h3) { font-family:var(--font-display); }
+
+/* Activity and notification content may be rendered inside shared chrome. */
+:is([data-activity-card],.notice-card,.quick-search-dialog) {
+  --font-content:var(--font-body);
+  font-family:var(--font-body);
+}

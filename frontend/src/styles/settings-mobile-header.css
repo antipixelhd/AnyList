@@ -10,7 +10,7 @@
   .settings-app .settings-heading h1 {
     margin: 0;
     padding-right: 44px;
-    font-family: var(--font-navigation);
+    font-family: var(--font-body);
     font-size: 2rem;
     font-weight: 500;
     line-height: 1.4;

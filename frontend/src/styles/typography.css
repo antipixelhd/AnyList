@@ -14,8 +14,10 @@
 @font-face { font-family: Roboto; font-style: italic; font-weight: 400; font-display: swap; src: url("/fonts/roboto-italic-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
 
 :root {
-  --font-navigation: Overpass, -apple-system, BlinkMacSystemFont, "Segoe UI", Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-display: Overpass, -apple-system, BlinkMacSystemFont, "Segoe UI", Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-navigation: var(--font-display);
   --font-body: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-content: var(--font-body);
   --type-nav-size: 1.4rem; --type-nav-weight: 600;
   --line-height-base: 1.15;
   --type-sidebar-size: 1.4rem; --type-sidebar-weight: 400; --type-sidebar-selected-weight: 500;
@@ -52,8 +54,8 @@
 }
 html { font-size: 62.5%; }
 body { font-family: var(--font-body); font-size: var(--type-body-size); font-weight: var(--type-body-weight); line-height: var(--line-height-base); }
-button, input, select, textarea, code, kbd, pre, samp { font-family: var(--font-body); }
-nav, [role="navigation"] { font-family: var(--font-navigation); font-size: var(--type-nav-size); font-weight: var(--type-nav-weight); }
+button, input, select, textarea, code, kbd, pre, samp { font-family: var(--font-content); }
+nav, [role="navigation"] { font-family: var(--font-content); font-size: var(--type-nav-size); font-weight: var(--type-nav-weight); }
 aside nav, aside [role="navigation"] { font-size: var(--type-sidebar-size); font-weight: var(--type-sidebar-weight); }
 .type-nav { font-family: var(--font-navigation); font-size: var(--type-nav-size); font-weight: var(--type-nav-weight); }
 .type-sidebar { font-family: var(--font-navigation); font-size: var(--type-sidebar-size); font-weight: var(--type-sidebar-weight); }

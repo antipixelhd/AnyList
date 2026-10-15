@@ -633,7 +633,7 @@
   display: block;
 }
 .browse-card-title h2 {
-  font-family: var(--font-body);
+  font-family: var(--font-content);
   font-size: var(--browse-title-size);
   font-weight: 600;
   line-height: 1.35;

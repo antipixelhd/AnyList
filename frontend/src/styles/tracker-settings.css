@@ -26,7 +26,7 @@ body.settings-app {
 .settings-heading { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; }
 .settings-heading h1 { margin: 0; color: var(--bright); font-size: var(--type-page-size); font-weight: var(--type-page-weight); }
 .settings-menu-toggle { display: none; }
-.settings-nav { display: grid; gap: 26px; position: sticky; top: 24px; font-family: var(--font-navigation); }
+.settings-nav { display: grid; gap: 26px; position: sticky; top: 24px; font-family: var(--font-body); }
 .settings-nav-heading { margin: 0 0 10px; color: #91a5bb; font-size: var(--type-control-size); }
 .settings-nav-group { display: grid; gap: 7px; }
 .settings-nav a {
