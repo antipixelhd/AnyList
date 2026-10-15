@@ -228,7 +228,7 @@ body.tracker {
 .entry-title>a {
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
-  color:#abc3d8
+  color:var(--text)
 }
 .status-section h2 {
   font-size:var(--type-section-size);

@@ -344,8 +344,8 @@
 .browse-range-track input[data-range-upper]::-webkit-slider-thumb { background: color-mix(in srgb, var(--blue) 70%, var(--bg)); }
 .browse-range-track input[data-range-upper]::-moz-range-thumb { background: color-mix(in srgb, var(--blue) 70%, var(--bg)); }
 .browse-range-track input:focus-visible { outline: none; }
-.browse-range-track input:focus-visible::-webkit-slider-thumb { background: var(--bright); }
-.browse-range-track input:focus-visible::-moz-range-thumb { background: var(--bright); }
+.browse-range-track input:focus-visible::-webkit-slider-thumb { background: var(--white); }
+.browse-range-track input:focus-visible::-moz-range-thumb { background: var(--white); }
 .browse-range[data-range-collapsed] input[data-range-lower]::-webkit-slider-thumb { transform: translateX(-8px); }
 .browse-range[data-range-collapsed] input[data-range-upper]::-webkit-slider-thumb { transform: translateX(8px); }
 .browse-range[data-range-collapsed] input[data-range-lower]::-moz-range-thumb { transform: translateX(-8px); }

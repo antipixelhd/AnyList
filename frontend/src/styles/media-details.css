@@ -1,5 +1,7 @@
 /* Marquee 2.7 opening with the compact Marquee 2.5 right rail. */
 .media-detail { --media-radius:var(--lab-radius); --media-control-height:44px; }
+/* Keep the existing hero colors over artwork; soften the content below it. */
+.media-detail .lab-hero { --text:#aabdd1; --muted:#70869e; --bright:var(--white); --lab-muted:color-mix(in srgb,var(--text) 86%,var(--muted)); }
 .media-detail .lab-kicker a { border-radius:3px; transition:color .18s ease,background-color .18s ease; }
 .media-detail :is(.lab-kicker,.lab-genres) a:hover { color:var(--bright); }
 .media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
@@ -50,7 +52,7 @@
 .media-detail .media-personal-score .ui-icon { width:14px; height:14px; }
 .media-detail .media-tracking .media-personal-score .media-score-action .ui-icon { width:15px; height:15px; color:var(--bright); opacity:.75; }
 .media-detail .media-tracking .media-personal-score:is(:hover,:focus-visible) {
-  outline:none; background:color-mix(in srgb,var(--bright) 7%,var(--panel));
+  outline:none; background:color-mix(in srgb,var(--white) 7%,var(--panel));
 }
 .media-detail .media-personal-score:is(:hover,:focus-visible) .media-score-action .ui-icon { opacity:1; }
 @media (prefers-reduced-motion:reduce) { .media-detail .media-tracking .media-personal-score { transition:none; } }

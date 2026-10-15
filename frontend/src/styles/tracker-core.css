@@ -8,10 +8,14 @@ html {
   --bg:#0b1622;
   --panel:#151f2e;
   --field:#0c1723;
-  --text:#aabdd1;
-  --text-data:#9fadbd;
-  --muted:#70869e;
-  --bright:#e6edf6;
+  --white:#e6edf6;
+  --text:rgb(159, 173, 189);
+  --text-data:var(--text);
+  --muted:rgb(114, 138, 161);
+  /* Legacy heading/value styles share the dark-surface reading color. */
+  --bright:var(--text);
+  --text-primary:var(--text);
+  --text-secondary:var(--muted);
   --blue:#3db4f2;
   --alert:#e85d7d;
   --border:#243449
@@ -121,15 +125,16 @@ button:disabled {
   font-size:var(--type-profile-size);
   font-weight:var(--type-profile-weight);
   margin:0 0 12px;
-  color:var(--bright)
+  color:var(--white)
 }
 .profile-identity p {
   margin:0 0 18px;
   max-width:700px;
   font-size:var(--type-body-size);
-  color:#9db1c9
+  color:var(--text)
 }
 .profile-tabs {
+  color:var(--muted);
   font-family:var(--font-navigation);
   font-size:var(--type-nav-size);
   font-weight:var(--type-nav-weight);
@@ -258,7 +263,7 @@ button:disabled {
 }
 .entry-head {
   font-size:var(--type-label-size);
-  color:#8ca6c0;
+  color:var(--muted);
   padding-bottom:16px
 }
 .entry-row {

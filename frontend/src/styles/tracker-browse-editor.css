@@ -184,7 +184,7 @@
 }
 .editor label,.editor-status-field>label {
   font-size:var(--type-label-size);
-  color:#85a6c1
+  color:var(--muted)
 }
 .editor label input,.editor label textarea,.editor-status-trigger {
   margin-top:6px;
@@ -193,7 +193,7 @@
   background:#0d1926;
   border:1px solid transparent;
   border-radius:4px;
-  color:#bdcbd9;
+  color:var(--text);
   font-size:var(--type-control-size)
 }
 .editor label textarea {
@@ -229,7 +229,7 @@
 }
 .editor-status-trigger .ui-icon {
   font-size:var(--type-meta-size);
-  color:#9cb1c3
+  color:var(--muted)
 }
 .editor-status-trigger:focus-visible {
   border-color:#3db4f2;
@@ -257,7 +257,7 @@
   border:0;
   border-radius:3px;
   background:transparent;
-  color:#b8c9d9;
+  color:var(--text);
   text-align:left;
   font-size:var(--type-control-size)
 }
@@ -297,7 +297,7 @@
 }
 .editor-score-field>label {
   font-size:var(--type-label-size);
-  color:#85a6c1
+  color:var(--muted)
 }
 .editor-score-field>.score-stepper {
   margin-top:6px
@@ -309,7 +309,7 @@
   background:#0d1926;
   border:1px solid transparent;
   border-radius:4px;
-  color:#bdcbd9;
+  color:var(--text);
   font-size:var(--type-control-size);
   padding:8px 30px 8px 12px
 }
@@ -346,7 +346,7 @@
   border:0;
   border-radius:2px;
   background:transparent;
-  color:#91a7ba;
+  color:var(--muted);
   line-height:1
 }
 .score-stepper-controls button:hover,.score-stepper-controls button:focus-visible {

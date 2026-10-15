@@ -4,11 +4,11 @@ body.settings-app {
   --color-border-base: var(--border);
   --color-border-muted: #30445a;
   --color-text-base: var(--bright);
-  --color-text-primary: #d5e0ec;
-  --color-text-secondary: #bed0e2;
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text);
   --color-text-description: var(--text);
-  --color-text-muted: #91a5bb;
-  --color-text-dim: #91a5bb;
+  --color-text-muted: var(--muted);
+  --color-text-dim: var(--muted);
   min-height: 100vh;
   background: var(--bg);
 }
@@ -27,7 +27,7 @@ body.settings-app {
 .settings-heading h1 { margin: 0; color: var(--bright); font-size: var(--type-page-size); font-weight: var(--type-page-weight); }
 .settings-menu-toggle { display: none; }
 .settings-nav { display: grid; gap: 26px; position: sticky; top: 24px; font-family: var(--font-body); }
-.settings-nav-heading { margin: 0 0 10px; color: #91a5bb; font-size: var(--type-control-size); }
+.settings-nav-heading { margin: 0 0 10px; color: var(--muted); font-size: var(--type-control-size); }
 .settings-nav-group { display: grid; gap: 7px; }
 .settings-nav a {
   display: block;
@@ -85,7 +85,7 @@ body.settings-app {
 .settings-app .text-blue-400 { color: var(--blue); }
 .settings-app .button-primary { border-radius: 4px; }
 .settings-app .setting-switch-row { align-items: center; }
-.settings-app .setting-switch-row small { color: #91a5bb; }
+.settings-app .setting-switch-row small { color: var(--muted); }
 .settings-app .localization-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .settings-app .chip { border-radius: 4px; padding: 10px 16px; background: var(--field); color: var(--text); border-color: var(--border); }
 .settings-app .chip[aria-pressed="true"] { color: var(--blue); background: color-mix(in srgb, var(--blue) 12%, var(--field)); border-color: var(--blue); }

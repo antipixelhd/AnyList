@@ -1,5 +1,6 @@
 /* Stable shared app bar: fixed geometry keeps navigation aligned on every page. */
 .topbar {
+  --bright:var(--white);
   --type-nav-size:14px;
   --type-nav-weight:600;
   color:rgb(229, 231, 234);

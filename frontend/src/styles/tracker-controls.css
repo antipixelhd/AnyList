@@ -183,7 +183,7 @@
 .notice-content p {
   font-size:var(--type-meta-size);
   line-height:1.55;
-  color:#8fa6bc;
+  color:var(--muted);
   margin:0;
   max-width:760px
 }
@@ -262,7 +262,7 @@
   font-size:var(--type-caption-size)
 }
 .history-changes span {
-  color:#9bb0c4
+  color:var(--muted)
 }
 .history-changes strong {
   color:var(--bright);
@@ -348,7 +348,7 @@
 }
 .editor label {
   font-size:var(--type-label-size);
-  color:#7fa6c4
+  color:var(--muted)
 }
 .editor label input,.editor label select,.editor label textarea {
   margin-top:6px;
@@ -356,7 +356,7 @@
   border:1px solid transparent;
   border-radius:4px;
   min-height:44px;
-  color:#afbed0;
+  color:var(--text);
   transition:border-color .15s,box-shadow .15s
 }
 .editor label textarea {

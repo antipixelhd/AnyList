@@ -14,7 +14,7 @@ body.tracker :is(.app-tabs,[role="tablist"],.overview-metrics,.overview-media,.m
 body.tracker :is(.app-tabs,.overview-metrics,.media-cast-toggle,.contributor-view-switch,.browse-types,.browse-view-switch) > :is(button,a):not([aria-pressed="true"],[aria-selected="true"],[aria-current],.active):is(:hover,:focus-visible),
 body.tracker .contributor-filter-switch label:has(input:not(:checked)):hover > span,
 body.tracker .contributor-filter-switch input:not(:checked):focus-visible + span {
-  background:color-mix(in srgb,var(--bright) 8%,transparent);
+  background:color-mix(in srgb,var(--white) 8%,transparent);
   color:var(--bright);
   outline:none;
 }

@@ -29,7 +29,7 @@
 .overview-chart-heading h3,.overview-distribution h3 { font-size:2rem; font-weight:700; color:var(--bright); margin:0; }
 .overview-metrics { display:flex; gap:2px; padding:3px; border-radius:20px; background:var(--stats-plot); }
 .overview-metrics button { padding:6px 10px; min-height:32px; border:0; border-radius:18px; background:transparent; color:var(--muted); font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); white-space:nowrap; transition:background 240ms ease,color 240ms ease; }
-.overview-metrics button:not([aria-pressed=true]):is(:hover,:focus-visible) { outline:none; background:color-mix(in srgb,var(--bright) 8%,transparent); color:var(--bright); }
+.overview-metrics button:not([aria-pressed=true]):is(:hover,:focus-visible) { outline:none; background:color-mix(in srgb,var(--white) 8%,transparent); color:var(--bright); }
 .overview-metrics button[aria-pressed=true] { background:var(--stats-cyan); color:#ffffff; }
 .overview-plot { height:230px; position:relative; min-width:0; background:var(--stats-plot); padding:12px 0 0; border-radius:6px; }
 .overview-plot canvas { max-width:100%; }

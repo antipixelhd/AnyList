@@ -40,6 +40,12 @@ selection dialogs, file input wiring, and navigation cleanup.
 
 ## Editing rules
 
+Dark-surface main text uses rgb(159, 173, 189), and subtle text uses
+rgb(114, 138, 161). Keep white for text on colored controls and artwork,
+profile names, and the existing details hero colors. The top navigation keeps
+its own palette. Use --white for preserved white surfaces/contrast instead of
+the legacy --bright token, which now follows main reading text.
+
 Reuse existing semantic typography, palette, and spacing variables before adding
 new ones. Keep feature rules in their focused stylesheet. Inspect imports and
 selectors before adding overrides; preserve shared profile alignment.

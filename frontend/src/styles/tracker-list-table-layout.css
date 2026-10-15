@@ -128,7 +128,7 @@
   display:inline-grid;
   place-items:center;
   flex:none;
-  color:#8da1b6;
+  color:var(--muted);
   font-size:var(--type-panel-size);
   line-height:1
 }

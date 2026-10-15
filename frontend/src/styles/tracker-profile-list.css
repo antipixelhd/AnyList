@@ -36,7 +36,7 @@
 .profile-bio {
   max-width:850px;
   margin:0 0 22px;
-  color:#9db1c9;
+  color:var(--text);
   white-space:pre-wrap
 }
 .profile-bio {
@@ -133,7 +133,7 @@
   margin:0 0 10px;
   line-height:1.45;
   font-size:var(--type-label-size);
-  color:#b7c8d9
+  color:var(--text)
 }
 .profile-settings .profile-settings-cards>section .flex.flex-wrap.gap-2 {
   gap:7px
@@ -298,7 +298,7 @@
   border:0;
   border-radius:3px;
   background:transparent;
-  color:#b8c9d9;
+  color:var(--text);
   text-align:left;
   font-size:var(--type-control-size);
   cursor:pointer
