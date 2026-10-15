@@ -29,7 +29,26 @@
 .media-detail .lab-genres a { font-size:1.1rem; padding:4px 10px; background:rgb(21 31 46 / 75%); border-radius:4px; color:var(--text); }
 .media-detail .media-tracking { display:flex; flex-direction:column; gap:17px; }
 .media-action-row { display:flex; align-items:stretch; gap:6px; min-width:0; }
-.media-rating-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:0; }
+.media-rating-row { display:flex; align-items:end; justify-content:space-between; gap:12px; min-width:0; }
+.media-rating-row > .lab-rating-field { flex:1; min-width:0; }
+.media-detail .media-tracking .media-personal-score {
+  display:flex; align-items:center; justify-content:space-between; gap:6px;
+  width:100%; min-height:48px; padding:10px 8px; border-radius:5px;
+  background:var(--panel); text-align:left;
+  transition:background-color .18s ease;
+}
+.media-detail .media-tracking .media-personal-score > span { display:inline-flex; align-items:center; }
+.media-personal-score .media-score-value { gap:5px; min-width:0; }
+.media-detail .media-personal-score strong { font-size:2rem; line-height:1; color:var(--bright); }
+.media-personal-score .media-score-total { font-size:1.1rem; color:var(--lab-muted); white-space:nowrap; }
+.media-personal-score .media-score-action { justify-content:center; flex-shrink:0; width:26px; height:26px; border-radius:4px; background:#ffffff08; }
+.media-detail .media-personal-score .ui-icon { width:14px; height:14px; }
+.media-detail .media-tracking .media-personal-score .media-score-action .ui-icon { width:12px; height:12px; color:var(--bright); opacity:.75; }
+.media-detail .media-tracking .media-personal-score:is(:hover,:focus-visible) {
+  outline:none; background:color-mix(in srgb,var(--bright) 7%,var(--panel));
+}
+.media-detail .media-personal-score:is(:hover,:focus-visible) .media-score-action .ui-icon { opacity:1; }
+@media (prefers-reduced-motion:reduce) { .media-detail .media-tracking .media-personal-score { transition:none; } }
 .media-detail :is(.lab-rating-control,.lab-friends .lab-section-title) .ui-icon { color:#f7b731; }
 .media-detail .status-control { margin:0; min-width:0; flex:1; }
 .media-detail .media-tracking .media-action-row .status-split>button:first-child { min-width:0; padding:10px 4px; font-size:1.4rem; font-weight:400; white-space:nowrap; }
