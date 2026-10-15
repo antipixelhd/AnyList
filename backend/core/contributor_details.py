@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from collections import defaultdict
+from datetime import date
 from urllib.parse import urlsplit
 
 from sqlalchemy import or_, select
@@ -234,7 +235,7 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
     return output, more, json.dumps({"scope": scope, "positions": positions}, separators=(",", ":")) if more else None
 
 
-async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source=""):
+async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
     namespace, raw_id = key.split(":")
     native = positive_id(raw_id) if namespace == "tmdb" else None
     if kind == 'studio' and native:
@@ -320,6 +321,25 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     await attach_editor_context(db, viewer, all_known)
     list_count = sum(bool(r.get("list_status")) for r in all_known) if viewer else None
     roles = sorted({role for row in all_known for role in row["roles"]}, key=lambda role: (role_order(role), role))
+    share_summary = None
+    if sharing:
+        share_rows = all_known
+        if kind == 'studio' and native:
+            # Count the complete evidence collection, never a displayed page.
+            from core.contributor_evidence import evidence_key, cached_evidence, eligible_work
+            evidence_id, config = evidence_key('studio', native, filters, show_anime)
+            evidence, _ = await cached_evidence(db, {evidence_id:config}, None, enqueue=False)
+            payload = evidence.get(evidence_id) or {}
+            if payload.get('complete'):
+                discovered = [remote_work(raw, None) for raw in payload.get('works', [])
+                    if eligible_work(raw, {'movie':'movie','tv':'series'}.get(raw.get('media_type')), filters, show_anime, released=True)]
+                share_rows = merge_works(all_known + [row for row in discovered if row])
+        released = sorted((row for row in share_rows if '0000' < (row.get('release_date') or '') <= date.today().isoformat()),
+            key=lambda row:(row['release_date'],row['key']), reverse=True)
+        latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
+        share_summary = {'movies':sum(row['type']=='movie' for row in share_rows),
+            'series':sum(row['type']=='series' for row in share_rows),
+            'background':latest.get('backdrop') or latest.get('poster')}
     filtered = [r for r in all_known if (media_type == "all" or r["type"] == media_type)
                 and (list_scope == "all" or bool(r.get("list_status")) == (list_scope == "in"))
                 and (not status or r.get("list_status") == status)]
@@ -368,4 +388,5 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         "countries": country_codes(attrs.get("origin_country") or attrs.get("country")), "headquarters": attrs.get("headquarters"),
         "links": links, "roles": roles, "works": works, "known_works": len(all_known), "list_count": list_count,
         "total": total, "page": page, "has_more": has_more, "notice": notice,
-        "next_cursor": next_cursor, "source": result_source}
+        "next_cursor": next_cursor, "source": result_source,
+        **({'share_summary':share_summary} if sharing else {})}

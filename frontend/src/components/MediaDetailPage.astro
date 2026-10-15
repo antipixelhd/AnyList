@@ -13,6 +13,7 @@ import MediaDetailWork from './MediaDetailWork.astro';
 import {scoreLabel,statuses,tracker} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import {detailSceneArtwork} from '../lib/detail-artwork';
+import {mediaShareDescription} from '../lib/share-preview';
 import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,moneyLabel,detailBrowseHref,detailCreators} from '../lib/media-detail-data';
 import '../styles/dev-details.css';
 import '../styles/dev-marquee.css';
@@ -50,7 +51,7 @@ const price=title?.prices.find(row=>moneyLabel(row.current));
 const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.search)}`;
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
 ---
-<Tracker title={title?.title||'Media'} predictionArtwork={[poster,backdrop].filter(Boolean)} preloadArtwork={initialArtwork}>
+<Tracker title={title?.title||'Media'} shareDescription={title ? mediaShareDescription(title) : undefined} predictionArtwork={[poster,backdrop].filter(Boolean)} preloadArtwork={initialArtwork}>
 {title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-has-backdrop={String(reserveBackdrop)} data-spoilers="false">
   {signedIn&&trackable&&<script id="title-editor-data" type="application/json" set:html={encode({...title,people:undefined,organizations:undefined,posters:undefined,artwork:undefined,relations:undefined,similar:undefined,editor_library:{available:!!library?.connections?.length,desired:library?.desired===true}})}/>}
   <header class="lab-hero">
