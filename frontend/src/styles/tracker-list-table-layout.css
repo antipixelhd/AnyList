@@ -123,6 +123,12 @@
   flex:none;
   margin-left:auto;
 }
+.entry-annotations .unwatched-indicator {
+  display:inline;
+  flex:none;
+  margin:0;
+  white-space:nowrap;
+}
 .entry-rewatch,.entry-note {
   position:relative;
   display:inline-grid;
@@ -281,6 +287,9 @@
   #entry-groups:not(.grid-view) .entry-title .entry-annotations {
     align-self:center;
     gap:8px
+  }
+  #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) .entry-annotations {
+    align-self:start
   }
   #entry-groups:not(.grid-view) .entry-row:has(.entry-annotations) .entry-progress {
     padding-right:44px
