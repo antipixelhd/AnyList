@@ -277,6 +277,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
     prepareViewer();
+    fitViewer(undefined,active);
     showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
