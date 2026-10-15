@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {quickSearchRequests,visibleQuickSearchSections} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults} from '../src/lib/quick-search-data.ts';
 
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{
   const requests=quickSearchRequests('James & Co',false,'actor');
-  assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors']);
+  assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors','contributors']);
   const params=new URL(requests[2].url,'https://anylist.test').searchParams;
-  assert.equal(params.get('q'),'James & Co');assert.equal(params.get('kind'),'all');
+  assert.equal(params.get('q'),'James & Co');assert.equal(params.get('kind'),'people');
+  assert.equal(new URL(requests[3].url,'https://anylist.test').searchParams.get('kind'),'studio');
+});
+
+test('independent studio verification never erases people, regardless of response order',()=>{
+  for(const order of [['studio','people'],['people','studio']]){
+    let values={actor:[],staff:[],studio:[]};
+    for(const scope of order)values=mergeContributorResults(values,scope==='studio'?{studio:['DC']}:{actor:['Actor'],staff:['Director']},scope);
+    assert.deepEqual(values,{actor:['Actor'],staff:['Director'],studio:['DC']});
+  }
 });
 test('mobile searches only the selected section, defaulting to series and movies',()=>{
   assert.deepEqual(quickSearchRequests('James',true,'all').map(row=>row.kind),['movie','series']);

@@ -12,6 +12,38 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reviewed_studio_group_unions_credits_without_merging_historical_identities(self):
+        from core.contributor_search import local_matches
+        from core.studio_discovery import verified_studios
+        async with self.Session() as db:
+            root = CatalogueEntity(kind='organization', name='DC', attributes={})
+            branch = CatalogueEntity(kind='organization', name='DC Entertainment', attributes={})
+            historical = CatalogueEntity(kind='organization', name='DC Films', attributes={})
+            current = CatalogueEntity(kind='organization', name='DC Studios', attributes={})
+            exclusive = CatalogueEntity(kind='movie', name='Branch Film', attributes={'release_date':'2024-01-01'})
+            old_work = CatalogueEntity(kind='movie', name='Historical Film', attributes={'release_date':'2018-01-01'})
+            new_work = CatalogueEntity(kind='movie', name='Current Film', attributes={'release_date':'2025-01-01'})
+            db.add_all([root,branch,historical,current,exclusive,old_work,new_work]); await db.flush()
+            for entity, native in [(root,429),(branch,9993),(historical,128064),(current,184898)]:
+                db.add(CatalogueIdentity(entity_id=entity.id,namespace='tmdb.company',external_id=str(native),source='tmdb'))
+            shared = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie',CatalogueEntity.name=='Fixture movie'))
+            for company, work in [(root,shared),(branch,shared),(branch,exclusive),(historical,old_work),(current,new_work)]:
+                db.add(CatalogueCredit(work_id=work.id,contributor_id=company.id,provider='tmdb',source_key=f'{company.id}-{work.id}',role='producer'))
+            await db.commit()
+            rows = (await local_matches(db,'DC Entertainment','studio'))['studio']
+            grouped, _ = await verified_studios(db,None,rows,None)
+            self.assertEqual(len(grouped),1)
+            self.assertEqual(grouped[0]['name'],'DC Entertainment')
+            self.assertEqual(grouped[0]['url'],'/studio/tmdb:429')
+        for native in [429,9993]:
+            response=await self.request('studio',f'tmdb:{native}')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual({row['title'] for row in response.json()['works']},{'Fixture movie','Branch Film'})
+            self.assertEqual(len(response.json()['works']),2)
+        for native, name in [(128064,'Historical Film'),(184898,'Current Film')]:
+            response=await self.request('studio',f'tmdb:{native}')
+            self.assertEqual([row['title'] for row in response.json()['works']],[name])
+
     async def test_quick_search_uses_canonical_roles_studio_pages_and_literal_names(self):
         from core.contributor_search import local_matches
         async with self.Session() as db:

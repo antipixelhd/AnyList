@@ -692,7 +692,7 @@ async def quick_search_contributors(
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User, Depends(get_current_user)],
     q: Annotated[str, Query(max_length=100)] = '',
-    kind: Literal['all', 'actor', 'staff', 'studio'] = 'all',
+    kind: Literal['all', 'people', 'actor', 'staff', 'studio'] = 'all',
 ) -> dict:
     term = q.strip()
     if len(term) < 2:

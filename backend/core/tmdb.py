@@ -461,7 +461,8 @@ async def discover_movies(
     watch_provider_id: int | None = None,
     watch_region: str = "US",
     with_original_language: str | None = None,
-    with_companies: int | None = None,
+    with_companies: int | str | None = None,
+    released_before: str | None = None,
     api_key: str = None,
     language: str | None = None,
     excluded_genre_ids: list[int] | tuple[int, ...] = (),
@@ -497,6 +498,8 @@ async def discover_movies(
         params["with_original_language"] = with_original_language
     if with_companies is not None:
         params["with_companies"] = with_companies
+    if released_before:
+        params['primary_release_date.lte'] = released_before
     if language:
         params["language"] = language
     return await _get(f"{TMDB_BASE}/discover/movie", headers=get_headers(api_key), params=params)
@@ -516,7 +519,8 @@ async def discover_shows(
     watch_region: str = "US",
     with_original_language: str | None = None,
     with_networks: int | None = None,
-    with_companies: int | None = None,
+    with_companies: int | str | None = None,
+    released_before: str | None = None,
     api_key: str = None,
     language: str | None = None,
     excluded_genre_ids: list[int] | tuple[int, ...] = (),
@@ -554,6 +558,8 @@ async def discover_shows(
         params["with_networks"] = with_networks
     if with_companies is not None:
         params["with_companies"] = with_companies
+    if released_before:
+        params['first_air_date.lte'] = released_before
     if language:
         params["language"] = language
     return await _get(f"{TMDB_BASE}/discover/tv", headers=get_headers(api_key), params=params)

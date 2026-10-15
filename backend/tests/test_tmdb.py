@@ -401,6 +401,12 @@ class DiscoverStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(req.url.path, "/3/discover/movie")
         self.assertEqual(req.url.params.get("with_companies"), "1957")
 
+    async def test_studio_groups_use_or_membership_and_bound_released_work_dates(self) -> None:
+        for discover, date_field in [(tmdb.discover_movies, 'primary_release_date.lte'), (tmdb.discover_shows, 'first_air_date.lte')]:
+            req = await self._run(lambda: discover(with_companies='429|9993|165407', released_before='2026-01-01', api_key='k'))
+            self.assertEqual(req.url.params.get('with_companies'), '429|9993|165407')
+            self.assertEqual(req.url.params.get(date_field), '2026-01-01')
+
     async def test_discover_shows_omits_studio_params_when_unset(self) -> None:
         req = await self._run(lambda: tmdb.discover_shows(api_key="k"))
         self.assertNotIn("with_networks", req.url.params)

@@ -41,7 +41,9 @@ matches also require popularity of at least 5. This is a discovery heuristic,
 not an authoritative notability score. Cached people known only through excluded
 credits cannot re-enter through remote results. Local and remote candidates are
 ranked together and deduplicated by provider/canonical identity, never by name.
-Search performs no per-result profile or filmography requests.
+People search performs no per-result profile or filmography requests. Studio
+verification uses independently loaded, bounded discovery-page evidence as
+described below.
 
 ## Studios
 
@@ -54,8 +56,10 @@ provider IDs or protected edits prevent an automatic bridge.
 Parent companies, subsidiaries, name prefixes and historical names do not establish
 identity. Marvel Studios and Marvel Films therefore remain separate, as do two
 different provider company IDs with similar display names. Broader brand-family
-aggregation would require a separately curated relationship, not another name
-normalizer.
+aggregation uses separately reviewed presentation memberships, never the identity
+normalizer. See [studio discovery](studio-search.md) for work eligibility,
+historical-name preservation, platform references and resource bounds. Studio
+verification is isolated from people search and uses bounded cached work evidence.
 
 ## Existing installations
 

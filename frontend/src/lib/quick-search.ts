@@ -2,7 +2,7 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog, reveal } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,visibleQuickSearchSections,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,type SearchSection} from './quick-search-data';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -167,7 +167,7 @@ export function mountQuickSearch() {
         try{
           const response=await fetch(request.url,{signal:current.signal});if(!response.ok)throw new Error();
           const data=await response.json();if(controller!==current||current.signal.aborted)return;
-          if(request.kind==='contributors'){contributors={actor:data.results?.actor||[],staff:data.results?.staff||[],studio:data.results?.studio||[]};if(data.partial)failed++;}
+          if(request.kind==='contributors'){contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;}
           else latest[request.kind]=unique(data.results||[]);
         }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
         finally{if(controller===current&&!current.signal.aborted){pending--;render(request.kind);}}

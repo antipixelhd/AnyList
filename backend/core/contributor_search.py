@@ -3,7 +3,7 @@ import asyncio
 from collections import defaultdict
 from types import SimpleNamespace
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import load_only
 
 from core import settings_store, tmdb
@@ -13,6 +13,8 @@ from core.person_identities import canonical_people
 from core.principal_credits import remote_person_kind, number, group
 from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
+from core.studio_discovery import verified_studios
+from core.studio_groups import matching_studio_members
 from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch
 
 KINDS = ('actor', 'staff', 'studio')
@@ -49,11 +51,17 @@ async def _local_matches(db, term, kind):
     # each keystroke. This read does not touch source credits or entity JSON.
     pattern = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
     summary = ContributorSearch
+    members = matching_studio_members(term) if kind in ('all', 'studio') else ()
+    branded_ids = select(CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace == 'tmdb.company',
+        CatalogueIdentity.external_id.in_([str(i) for i in members]))
     count = summary.actor_count if kind == 'actor' else summary.staff_count if kind == 'staff' else summary.work_count
     matches = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
-        count.label('work_count'), summary.roles).where(
+        count.label('work_count'), summary.roles,
+        select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id == summary.entity_id,
+            CatalogueIdentity.namespace == 'tmdb.company').order_by(CatalogueIdentity.external_id).limit(1).scalar_subquery().label('tmdb_id')).where(
         summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person', 'organization')),
-        summary.search_text.ilike(pattern, escape='\\'), summary.work_count > 0, count > 0,
+        or_(summary.search_text.ilike(pattern, escape='\\'), summary.entity_id.in_(branded_ids) if members else False),
+        summary.work_count > 0, count > 0,
     ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
                count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
     groups = {k: [] for k in KINDS}
@@ -63,10 +71,11 @@ async def _local_matches(db, term, kind):
         for role, label in row.roles:
             credit = SimpleNamespace(role=role, role_label=label, character_label=None)
             section = credit_kind(person, credit)
-            if section and (kind == 'all' or section == kind):
+            if section and (kind in ('all', 'people') or section == kind):
                 roles[section].add(role_label(credit))
         for section, labels in roles.items():
-            groups[section].append({**result(person, section, labels), '_works': row.work_count})
+            groups[section].append({**result(person, section, labels), '_works': row.work_count,
+                **({'_native': positive_id(row.tmdb_id)} if section == 'studio' else {})})
     return groups
 
 
@@ -77,6 +86,9 @@ def ranked_results(groups, term):
         match = 0 if name == query else 1 if name.startswith(query) else 2
         recognition = number(item.get('_popularity'))
         works = item.get('_works', 0)
+        if section == 'studio':
+            recent = int((item.get('_latest') or '0').replace('-', ''))
+            return (0 if match < 2 else 1, -recent, -works, match, not bool(item.get('image')), name, item['key'])
         return (match, -works if section == 'studio' else -recognition,
                 -recognition if section == 'studio' else -works,
                 not bool(item.get('image')), name, item['key'])
@@ -96,6 +108,7 @@ async def search_contributors(db, viewer, term, kind='all'):
     groups = await local_matches(db, term, kind)
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     if not key:
+        groups['studio'], _ = await verified_studios(db, viewer, groups['studio'], None)
         return {'results': ranked_results(groups, term)}
 
     async def remote(company=False):
@@ -120,10 +133,6 @@ async def search_contributors(db, viewer, term, kind='all'):
     roots = await canonical_people(db, [person for _, person in mappings], lightweight=True)
     known = {(identity.namespace, identity.external_id): roots[person.id] for identity, person in mappings}
     principal_status = await known_principal_status(db, {person.id for person in known.values() if person.kind == 'person'})
-    studio_ids = {person.id for person in known.values() if person.kind == 'organization'}
-    studio_pages = set(await db.scalars(select(ContributorSearch.entity_id).where(
-        ContributorSearch.entity_id.in_(studio_ids), ContributorSearch.kind == 'organization',
-        ContributorSearch.work_count > 0))) if studio_ids else set()
     seen = {section: {row['key'] for row in rows} for section, rows in groups.items()}
     for provider_kind, raw in sources:
         native = positive_id(raw.get('id'))
@@ -132,7 +141,7 @@ async def search_contributors(db, viewer, term, kind='all'):
         section = 'studio' if provider_kind == 'company' else remote_person_kind(raw)
         if section is None:
             continue
-        if kind != 'all' and section != kind:
+        if kind not in ('all', 'people') and section != kind:
             continue
         person = known.get((f'tmdb.{provider_kind}', str(native)))
         if person and section != 'studio' and principal_status.get(person.id) is False:
@@ -142,9 +151,7 @@ async def search_contributors(db, viewer, term, kind='all'):
             for item in groups[section]:
                 if item['key'] == identity:
                     item['_popularity'] = number(raw.get('popularity'))
-            continue
-        # Cached organizations without production credits have no studio page.
-        if person and section == 'studio' and person.id not in studio_pages:
+                    if section == 'studio': item['_native'] = native
             continue
         if person:
             item = result(person, section)
@@ -153,6 +160,8 @@ async def search_contributors(db, viewer, term, kind='all'):
             item = {'key': identity, 'name': studio_name(raw['name']) if section == 'studio' else raw['name'], 'image': f'https://image.tmdb.org/t/p/w185{image}' if image else None,
                     'roles': [] if section == 'studio' else [raw.get('known_for_department') or 'Crew'],
                     'url': f'/{PATHS[section]}/{identity}'}
-        groups[section].append({**item, '_popularity': number(raw.get('popularity'))})
+        groups[section].append({**item, '_popularity': number(raw.get('popularity')),
+            **({'_native': native} if section == 'studio' else {})})
         seen[section].add(identity)
-    return {'results': ranked_results(groups, term), 'partial': failed}
+    groups['studio'], partial = await verified_studios(db, viewer, groups['studio'], key)
+    return {'results': ranked_results(groups, term), 'partial': failed or partial}

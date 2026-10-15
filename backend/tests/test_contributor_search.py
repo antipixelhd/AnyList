@@ -36,6 +36,9 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         status = patch.object(search, 'known_principal_status', AsyncMock(return_value={}))
         self.principal_status = status.start()
         self.addCleanup(status.stop)
+        verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key: (rows, False)))
+        verified.start()
+        self.addCleanup(verified.stop)
 
     async def test_remote_people_and_studios_link_to_details_and_respect_sections(self):
         self.people_mock.return_value = {'results': [
@@ -56,6 +59,11 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         await search.search_contributors(self.db, self.viewer, 'Studio', 'studio')
         self.people_mock.assert_not_called()
         self.company_mock.assert_awaited_once()
+
+    async def test_people_section_does_not_wait_for_studio_discovery(self):
+        await search.search_contributors(self.db, self.viewer, 'Name', 'people')
+        self.company_mock.assert_not_called()
+        self.people_mock.assert_awaited_once()
 
     async def test_actor_search_does_not_query_studios_or_return_crew(self):
         self.people_mock.return_value = {'results': [{'id': 12, 'name': 'Director', 'known_for_department': 'Directing'}]}
