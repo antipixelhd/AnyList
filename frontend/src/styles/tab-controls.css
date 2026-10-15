@@ -1,0 +1,26 @@
+/* Shared type for tabs and segmented view/media switches, including mobile.
+   New controls can opt in with app-tabs or the native tablist role. */
+body.tracker :is(.app-tabs,[role="tablist"],.overview-metrics,.overview-media,.media-cast-toggle,.contributor-view-switch,.browse-types,.browse-view-switch,.profile-tabs) > :is(button,a),
+body.tracker .contributor-filter-switch label > span {
+  font-size:var(--type-tab-size);
+  font-weight:var(--type-tab-weight);
+}
+
+body.tracker :is(.app-tabs,[role="tablist"],.overview-metrics,.overview-media,.media-cast-toggle,.contributor-view-switch,.browse-types,.browse-view-switch,.profile-tabs) > :is(button,a):focus-visible {
+  outline:none;
+  filter:brightness(1.12);
+}
+
+body.tracker :is(.app-tabs,.overview-metrics,.media-cast-toggle,.contributor-view-switch,.browse-types,.browse-view-switch) > :is(button,a):not([aria-pressed="true"],[aria-selected="true"],[aria-current],.active):is(:hover,:focus-visible),
+body.tracker .contributor-filter-switch label:has(input:not(:checked)):hover > span,
+body.tracker .contributor-filter-switch input:not(:checked):focus-visible + span {
+  background:color-mix(in srgb,var(--bright) 8%,transparent);
+  color:var(--bright);
+  outline:none;
+}
+
+body.tracker .contributor-filter-switch input:checked:focus-visible + span {
+  background:var(--blue);
+  color:#ffffff;
+  filter:brightness(1.12);
+}

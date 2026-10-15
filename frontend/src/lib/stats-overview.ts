@@ -1,7 +1,7 @@
 import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
-import { displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
+import { barChartRows, displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
 import { createOverviewLoader } from './stats-overview-request';
 import { mountGenres, mountStudios } from './stats-genres';
 import { genreSort } from './stats-genres-data';
@@ -42,6 +42,9 @@ function mount(root: HTMLElement) {
   const staff = mountStaff(root);
   let section = root.dataset.section === 'genres' || root.dataset.section === 'actors' || root.dataset.section === 'studios' || root.dataset.section === 'staff' ? root.dataset.section : 'overview';
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const chartTextStyle=getComputedStyle(node('.overview-metrics button'));
+  const chartFont = {size:parseFloat(chartTextStyle.fontSize),
+    weight:700 as const, family:chartTextStyle.fontFamily};
   const motion = (initial: boolean) => reducedMotion.matches ? false as const : { duration: initial ? 0 : 900, easing: 'easeInOutCubic' as const };
   const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 300, easing: 'easeOutCubic' as const } } });
   const charts = new Map<string, Chart<'bar' | 'line'>>();
@@ -70,7 +73,7 @@ function mount(root: HTMLElement) {
   };
   function dataRows(data: Overview, key: typeof chartKeys[number]): MetricGroup[] {
     const rows = knownRows(data[key]);
-    return key === 'watch_years' ? watchYearRows(rows) : rows;
+    return key === 'watch_years' ? watchYearRows(rows) : key === 'scores' || key === 'episode_counts' ? barChartRows(rows) : rows;
   }
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
@@ -92,12 +95,13 @@ function mount(root: HTMLElement) {
     const tooltip = tooltips.get(key) || createMetricTooltip(canvas, key, events.signal);
     tooltips.set(key, tooltip); tooltip.update(plotted, metric);
     const isLine = key.includes('years');
-    const cyan = color('--stats-cyan'), muted = color('--muted'), bright = color('--bright');
+    const cyan = color('--stats-cyan'), axisText = color('--text-data'), bright = color('--bright');
     labelColors.set(key, bright);
     const empty = rows.every(row => row.titles === 0 || (metric === 'mean_score' && row.mean_score === null));
     const message = node(`[data-chart-empty="${key}"]`);
     message.hidden = !empty;
     message.textContent = metric === 'mean_score' ? 'No rated watched titles.' : 'No watched titles.';
+    const highest=plotted.reduce((maximum,row)=>Math.max(maximum,metricValue(row,metric) ?? 0),0);
     canvas.setAttribute('aria-label', `${node(`[data-chart-section="${key}"] h3`).textContent}: ${metricLabels[metric]}`);
     const options: ChartOptions<'bar' | 'line'> = {
       responsive: true, maintainAspectRatio: false,
@@ -106,12 +110,19 @@ function mount(root: HTMLElement) {
       animation: motion(initial), transitions: activeMotion(),
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: false }, tooltip: { enabled:false } },
-      scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: muted, maxRotation: 0, autoSkip: true, maxTicksLimit: Math.max(1, rows.length), font: { size: 11 } } },
-        y: { beginAtZero: true, grace: '15%', max: metric === 'mean_score' ? 10 : undefined, display: false } },
-      layout: { padding: { top: 10 } },
+      scales: { x: { offset: !isLine || rows.length === 1, afterFit(axis) { axis.height=50; },
+        grid: { display: false, drawTicks:false }, border: { display: false },
+        ticks: { color: axisText, padding:(50-chartFont.size*1.2)/2, maxRotation: 0, autoSkip: true, maxTicksLimit: Math.max(1, rows.length), font: {...chartFont,lineHeight:1.2} } },
+        y: { beginAtZero: true, max: metric === 'mean_score' ? 10 : highest > 0 ? highest * 1.05 : undefined, display: false } },
+      layout: { padding: { top: 14 } },
     };
-    const dataset = { label: metricLabels[metric], data: plotted.map(row => row ? metricValue(row, metric) : null), borderColor: cyan, backgroundColor: cyan,
-      borderWidth: isLine ? 2 : 0, borderRadius: 3, pointRadius: rows.length > 25 ? 2 : 3, pointHoverRadius: 5, tension: 0, spanGaps: false };
+    const dataset = { label: metricLabels[metric], data: plotted.map(row => row ? metricValue(row, metric) : null), borderColor: cyan,
+      backgroundColor: isLine ? 'rgba(30, 42, 56, 0.6)' : cyan, fill: isLine ? 'origin' as const : false,
+      borderWidth: isLine ? 3 : 0,
+      ...(!isLine ? { barThickness: key === 'episode_counts' ? 40 : 28,
+        borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 }, borderSkipped: 'bottom' as const } : {}),
+      pointRadius: 3.5, pointHoverRadius: 3.5, pointBackgroundColor: cyan,
+      tension: isLine ? .35 : 0, cubicInterpolationMode: 'monotone' as const, spanGaps: false };
     const existing = charts.get(key);
     if (existing) {
       existing.data.labels = plotted.map(row => row?.label || '');
@@ -123,9 +134,12 @@ function mount(root: HTMLElement) {
       existing.update();
     } else {
       charts.set(key, new Chart<'bar' | 'line'>(canvas, { type: isLine ? 'line' : 'bar', data: { labels: plotted.map(row => row?.label || ''), datasets: [dataset] }, options,
-        plugins: [tooltip.plugin, { id: 'overview-values', afterDatasetsDraw(chart) {
+        plugins: [tooltip.plugin, {id:'overview-axis-background', beforeDraw(chart) {
+          const axis=chart.scales.x,ctx=chart.ctx;
+          ctx.save();ctx.fillStyle=color('--stats-axis-background');ctx.fillRect(0,axis.top,chart.width,axis.height);ctx.restore();
+        }}, { id: 'overview-values', afterDatasetsDraw(chart) {
           const ctx = chart.ctx;
-          ctx.save(); ctx.fillStyle = labelColors.get(key)!; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+          ctx.save(); ctx.fillStyle = labelColors.get(key)!; ctx.font = `${chartFont.weight} ${chartFont.size}px ${chartFont.family}`; ctx.textAlign = 'center';
           let lastRight = -Infinity;
           chart.getDatasetMeta(0).data.forEach((element, index) => {
             const value = chart.data.datasets[0].data[index];
@@ -133,7 +147,7 @@ function mount(root: HTMLElement) {
             const label = displayNumber(value, chart.data.datasets[0].label === metricLabels.mean_score ? 2 : chart.data.datasets[0].label === metricLabels.hours ? 1 : 0);
             const { x, y } = element.tooltipPosition(false), half = ctx.measureText(label).width / 2;
             if (x === null || y === null) return;
-            if (x - half > lastRight + 4 && x + half < chart.width) { ctx.fillText(label, x, Math.max(y - 8, 12)); lastRight = x + half; }
+            if (x - half > lastRight + 4 && x + half < chart.width) { ctx.fillText(label, x, Math.max(y - (isLine ? 10 : 8), isLine ? 14 : 16)); lastRight = x + half; }
           });
           ctx.restore();
         } }],
@@ -154,7 +168,7 @@ function mount(root: HTMLElement) {
     const options: ChartOptions<'pie'> = { responsive: true, maintainAspectRatio: false,
       events: ['mousemove', 'mouseout', 'click'],
       animation: motion(initial), transitions: activeMotion(),
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: item => `${labels[item.dataIndex]}: ${displayNumber(rows[item.dataIndex].percent, 1)}%` } } } };
+      plugins: { legend: { display: false }, tooltip: { titleFont:chartFont, bodyFont:chartFont, callbacks: { label: item => `${labels[item.dataIndex]}: ${displayNumber(rows[item.dataIndex].percent, 1)}%` } } } };
     let pie = pies.get(key);
     if (!pie) { pie = new Chart<'pie'>(canvas, { type: 'pie', data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] }, options,
       plugins:[{id:'overview-distribution-interaction', beforeEvent(_chart, args) { if (args.replay) return false; }}],
@@ -175,7 +189,7 @@ function mount(root: HTMLElement) {
     colors.clear();
     // Resolve the theme once before chart/table writes, avoiding repeated
     // synchronous layout reads during first paint and snapshot updates.
-    for (const variable of ['--stats-cyan', '--muted', '--bright']) color(variable);
+    for (const variable of ['--stats-cyan', '--stats-axis-background', '--text-data', '--bright']) color(variable);
     response = next;
     root.dataset.initial = JSON.stringify(next);
     node('.overview-error').hidden = true;

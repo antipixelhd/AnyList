@@ -31,6 +31,7 @@
   --type-compact-heading-size: var(--type-table-heading-size); --type-compact-heading-weight: var(--type-table-heading-weight);
   --type-card-size: 1.4rem; --type-card-weight: 500;
   --type-control-size: 1.4rem; --type-control-weight: 400;
+  --type-tab-size: 1.3rem; --type-tab-weight: 700;
   --type-label-size: 1.3rem; --type-label-weight: 400;
   --type-action-size: 1.3rem; --type-action-weight: 500;
   --type-meta-size: 1.2rem; --type-meta-weight: 400;

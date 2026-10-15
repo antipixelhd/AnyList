@@ -56,13 +56,13 @@
 }
 #entry-groups:not(.grid-view) .entry-title {
   padding:18px 20px 18px 15px;
-  color:#9fadbD;
+  color:var(--text-data);
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
   line-height:17.25px
 }
 #entry-groups:not(.grid-view) .entry-title>a {
-  color:#9fadbD;
+  color:var(--text-data);
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
   line-height:20px
@@ -72,7 +72,7 @@
 }
 #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column) {
   padding:18px 6px 20px;
-  color:#9fadbD;
+  color:var(--text-data);
   font-size:var(--type-table-heading-size);
   font-weight:var(--type-table-heading-weight);
   line-height:17.25px
@@ -85,7 +85,7 @@
   flex:1 1 0%;
   min-width:0;
   padding:18px 6px;
-  color:#9fadbD;
+  color:var(--text-data);
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
   line-height:17.25px

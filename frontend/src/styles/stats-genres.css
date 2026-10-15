@@ -3,14 +3,14 @@
 .stats-genre-card { min-width:0; background:var(--stats-plot); border-radius:6px; overflow:hidden; }
 .stats-genre-summary { padding:22px 24px 18px; background:color-mix(in srgb,var(--panel) 88%,transparent); }
 .stats-genre-summary header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
-.stats-genre-summary h3 { margin:0; min-width:0; font-size:22px; font-weight:600; line-height:1.25; }
+.stats-genre-summary h3 { margin:0; min-width:0; font-size:2rem; font-weight:700; line-height:1.25; }
 .stats-genre-summary h3 a { color:var(--bright); text-decoration:none; transition:color 240ms ease; }
 .stats-genre-summary h3 a:hover { color:var(--stats-cyan); }
-.stats-genre-rank { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border-radius:50%; background:var(--stats-cyan); color:#ffffff; font-size:12px; font-variant-numeric:tabular-nums; }
+.stats-genre-rank { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border-radius:50%; background:var(--stats-cyan); color:#ffffff; font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); font-variant-numeric:tabular-nums; }
 .stats-genre-summary dl { display:grid; grid-template-columns:auto auto minmax(0,1fr); gap:16px; margin:0; }
 .stats-genre-summary dl>div { display:flex; flex-direction:column-reverse; gap:4px; align-self:start; }
 .stats-genre-summary dt { font-size:12px; line-height:1.4; color:var(--text); }
-.stats-genre-summary dd { margin:0; color:var(--bright); font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1.4; }
+.stats-genre-summary dd { margin:0; color:var(--bright); font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); font-variant-numeric:tabular-nums; line-height:1.4; }
 .stats-genre-posters { position:relative; padding:20px 24px; }
 .stats-genre-track { display:flex; gap:10px; overflow-x:auto; scrollbar-width:none; overscroll-behavior-x:contain; cursor:grab; touch-action:pan-x pan-y; }
 .stats-genre-track::-webkit-scrollbar { display:none; }
@@ -22,7 +22,7 @@
 .stats-genre-poster:focus-visible img,.stats-actor-portrait:focus-visible img { transform:scale(1.035); }
 @media(hover:hover) and (pointer:fine) { .stats-genre-poster:hover img,.stats-actor-portrait:hover img { transform:scale(1.035); } }
 .stats-genre-placeholder { display:grid; place-items:center; height:100%; color:var(--muted); font-size:22px; }
-.stats-genre-tooltip { position:absolute; inset:auto 0 0; background:linear-gradient(transparent,rgba(0,0,0,.9)); color:#fff; padding:20px 5px 7px; font-size:11px; line-height:1.35; overflow-wrap:anywhere; opacity:0; translate:0 4px; transition:opacity 180ms ease,translate 180ms ease; }
+.stats-genre-tooltip { position:absolute; inset:auto 0 0; background:linear-gradient(transparent,rgba(0,0,0,.9)); color:#fff; padding:20px 5px 7px; font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); line-height:1.35; overflow-wrap:anywhere; opacity:0; translate:0 4px; transition:opacity 180ms ease,translate 180ms ease; }
 .stats-genre-poster:focus-visible .stats-genre-tooltip { opacity:1; translate:0 0; }
 @media(hover:hover) and (pointer:fine) { .stats-genre-poster:hover .stats-genre-tooltip { opacity:1; translate:0 0; } }
 .stats-genre-arrow { position:absolute; top:50%; transform:translateY(-50%); width:36px; height:36px; border:0; border-radius:50%; display:grid; place-items:center; background:color-mix(in srgb,var(--bg) 85%,transparent); color:var(--stats-cyan); font-size:21px; opacity:0; pointer-events:none; transition:opacity 200ms ease,background 200ms ease; }
