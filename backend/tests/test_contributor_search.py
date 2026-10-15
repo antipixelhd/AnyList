@@ -39,6 +39,8 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key: (rows, False)))
         verified.start()
         self.addCleanup(verified.stop)
+        people_verified=patch.object(search,'verified_people',AsyncMock(return_value=False))
+        people_verified.start();self.addCleanup(people_verified.stop)
 
     async def test_remote_people_and_studios_link_to_details_and_respect_sections(self):
         self.people_mock.return_value = {'results': [

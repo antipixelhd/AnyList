@@ -27,6 +27,9 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
             for entity, native in [(root,429),(branch,9993),(historical,128064),(current,184898)]:
                 db.add(CatalogueIdentity(entity_id=entity.id,namespace='tmdb.company',external_id=str(native),source='tmdb'))
             shared = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie',CatalogueEntity.name=='Fixture movie'))
+            for work in (shared,exclusive,old_work,new_work):
+                work.attributes={**(work.attributes or {}),'vote_count':500,
+                    'release_date':(work.attributes or {}).get('release_date','2020-01-01')}
             for company, work in [(root,shared),(branch,shared),(branch,exclusive),(historical,old_work),(current,new_work)]:
                 db.add(CatalogueCredit(work_id=work.id,contributor_id=company.id,provider='tmdb',source_key=f'{company.id}-{work.id}',role='producer'))
             await db.commit()

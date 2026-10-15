@@ -366,6 +366,23 @@ class MetadataSnapshot(Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class ContributorEvidence(Base):
+    """Public discovery evidence and durable, deduplicated verification jobs."""
+    __tablename__ = 'catalogue_contributor_evidence'
+    __table_args__ = (Index('ix_contributor_evidence_due', 'next_attempt_at'),)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    native_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variant: Mapped[str] = mapped_column(String(64), primary_key=True)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lease_token: Mapped[str | None] = mapped_column(String(40))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
+
+
 class MetadataProviderBudget(Base):
     __tablename__ = "catalogue_provider_budgets"
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)

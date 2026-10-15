@@ -40,21 +40,42 @@ notability score. Our work-eligibility and recency ranking are product choices.
 
 ## Resource bounds and verification
 
-Search reads the indexed local contributor summary. At most 12 distinct studio
-candidates receive one movie and one series discovery-page check. No company
-profiles or complete filmographies are fetched per search. Public evidence is
-cached by visibility filters for 30 minutes (empty results for five minutes,
-failures for 15 seconds), with 512 entries, four concurrent provider requests and
-at most 24 shared in-flight studio checks. Checks share work across aliases and
-requests, have a six-second deadline, and outlive cancellation of one viewer.
+Search reads the indexed local contributor summary and persistent public work
+records in `catalogue_contributor_evidence`. It never waits for company-work
+verification or person filmography requests. A cold provider-name lookup remains
+one request. Reviewed studio members share one job; person credits share one job
+across actor/staff scopes and viewer filters. No credentials or list state are
+stored in evidence, and discovered titles are not imported into the catalogue.
 
-Actor/crew search is a separate request from studio verification, so a cold
-studio check cannot delay people results. Studio detail pagination retains its
-existing bounded timeline reads. Search eligibility samples the latest provider
-page of each media type; it does not compute a complete global filmography count
-when extra local-only visibility rules exclude part of that page.
+At most 12 studio candidates per query are admitted to a global queue capped at
+256 pending records. Each worker batch leases two jobs (`FOR UPDATE SKIP LOCKED`)
+for 45 seconds and performs at most four concurrent provider requests. Network
+work happens outside database transactions. Interrupted workers recover through
+lease expiry; token-guarded publication rejects superseded results.
 
-Local verification on 2026-10-15 changed `dc` from eight results to DC Studios,
-DC Entertainment, DC Films, and `marc` from eight results to Marc Platt Productions.
-Every retained example opened a populated works page. Cold studio checks took
-1.6–1.8 seconds; warm checks took 6–9ms. These are local development measurements.
+Studio variants include provider-side vote/runtime/category filters, anime
+visibility, and reviewed membership. Positive evidence lasts seven days; complete
+empty evidence lasts one day. Person combined credits are stored once and filtered
+for each viewer/role. Local evidence is checked against work metadata in a batch,
+not accepted from an unfiltered contributor count. `known_for` may establish a
+positive person match before full credits are available; a failed shortlist is
+unknown, not verified empty. Complete cached credits override the shortlist.
+
+A studio job reads one movie and one TV discovery page, continuing on later ticks
+only when additional pages may contain qualifying works. It retains progress
+instead of declaring an unexamined timeline empty. Work counts from this evidence
+are observed samples, not claimed complete filmography totals. Positive local
+works remain usable during provider failures. Retries back off; after five failed
+attempts the job frees its queue slot and waits six hours for search-driven retry.
+
+The open search renders its first response immediately, then refreshes only
+pending contributor requests every 1.5 seconds, at most four times. Query changes,
+closing, and navigation cancel requests and waits. Unchanged responses do not
+replace result DOM. Unknown/failed evidence never becomes verified-empty merely
+because a request failed. Studio/people requests remain independent.
+
+Verification must cover cold and repeated name queries, restart persistence,
+filtered-empty people/studios, identities/branch grouping, admission limits,
+parallel-worker leases, failure/backoff, and full credits beyond a weak shortlist.
+Use a disposable database for automated tests. Timings from local development
+include provider/network variability and are not production latency guarantees.

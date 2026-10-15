@@ -2,7 +2,7 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog, reveal } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -165,12 +165,14 @@ export function mountQuickSearch() {
       const requests=quickSearchRequests(query,mobile.matches,selected());pending=requests.length;
       await Promise.all(requests.map(async request=>{
         try{
-          const response=await fetch(request.url,{signal:current.signal});if(!response.ok)throw new Error();
-          const data=await response.json();if(controller!==current||current.signal.aborted)return;
-          if(request.kind==='contributors'){contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;}
-          else latest[request.kind]=unique(data.results||[]);
+          await readQuickSearch(request,current.signal,data=>{
+            if(controller!==current||current.signal.aborted)return;
+            if(request.kind==='contributors'){contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;}
+            else latest[request.kind]=unique(data.results||[]);
+            render(request.kind);
+          });
         }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
-        finally{if(controller===current&&!current.signal.aborted){pending--;render(request.kind);}}
+        finally{if(controller===current&&!current.signal.aborted){pending--;render();}}
       }));
     } catch (cause) {
       if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');

@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
+
+test('pending contributor evidence renders immediately and refreshes only its own request',async()=>{
+  const values=[],requests=[];
+  const fetcher=async url=>{requests.push(url);return {ok:true,json:async()=>({verification_pending:requests.length<2,results:{studio:[requests.length]}})};};
+  const pause=async()=>{assert.equal(values.length,1);};
+  await readQuickSearch({kind:'contributors',url:'/studios'},new AbortController().signal,data=>values.push(data.results.studio),fetcher,pause);
+  assert.deepEqual(values,[[1],[2]]);
+  assert.deepEqual(requests,['/studios','/studios']);
+});
+
+test('verification polling is bounded and cancelled on query change',async()=>{
+  const controller=new AbortController();let calls=0;
+  const fetcher=async()=>{calls++;return {ok:true,json:async()=>({verification_pending:true})};};
+  await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>{},fetcher,async()=>{});
+  assert.equal(calls,5);
+  calls=0;
+  await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>controller.abort(),fetcher);
+  assert.equal(calls,1);
+});
 
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{
   const requests=quickSearchRequests('James & Co',false,'actor');

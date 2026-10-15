@@ -15,6 +15,9 @@ from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
 from core.studio_discovery import verified_studios
 from core.studio_groups import matching_studio_members
+from core.contributor_evidence import cached_evidence, evidence_key, local_evidence, work_summary
+from core.catalog_search import result_filters
+from models import GlobalSettings
 from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch
 
 KINDS = ('actor', 'staff', 'studio')
@@ -58,7 +61,8 @@ async def _local_matches(db, term, kind):
     matches = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
         count.label('work_count'), summary.roles,
         select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id == summary.entity_id,
-            CatalogueIdentity.namespace == 'tmdb.company').order_by(CatalogueIdentity.external_id).limit(1).scalar_subquery().label('tmdb_id')).where(
+            CatalogueIdentity.namespace == case((summary.kind == 'organization', 'tmdb.company'), else_='tmdb.person'))
+            .order_by(CatalogueIdentity.external_id).limit(1).scalar_subquery().label('tmdb_id')).where(
         summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person', 'organization')),
         or_(summary.search_text.ilike(pattern, escape='\\'), summary.entity_id.in_(branded_ids) if members else False),
         summary.work_count > 0, count > 0,
@@ -75,7 +79,7 @@ async def _local_matches(db, term, kind):
                 roles[section].add(role_label(credit))
         for section, labels in roles.items():
             groups[section].append({**result(person, section, labels), '_works': row.work_count,
-                **({'_native': positive_id(row.tmdb_id)} if section == 'studio' else {})})
+                '_native': positive_id(row.tmdb_id)})
     return groups
 
 
@@ -104,11 +108,42 @@ async def known_principal_status(db, ids):
         .where(ContributorSearch.entity_id.in_(ids), ContributorSearch.screen_count > 0))).all())
 
 
+async def verified_people(db, viewer, groups, api_key):
+    if not groups['actor'] and not groups['staff']:
+        return False
+    filters = await result_filters(db, viewer)
+    settings = await db.get(GlobalSettings, 1)
+    show_anime = settings is None or settings.show_anime
+    jobs = {}
+    for section in ('actor', 'staff'):
+        for row in groups[section][:20]:
+            if row.get('_native'):
+                key, config = evidence_key('person', row['_native'], filters, show_anime)
+                jobs[key] = config
+    evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key))
+    for section in ('actor', 'staff'):
+        local = await local_evidence(db, groups[section], section, filters, show_anime)
+        output = []
+        for row in groups[section]:
+            key = evidence_key('person', row['_native'], filters, show_anime)[0] if row.get('_native') else None
+            value = work_summary(evidence.get(key), section, filters, show_anime)
+            # known_for is positive evidence only. A failed shortlist is unknown,
+            # not proof of an empty filmography. Full cached credits take priority.
+            if value is None and row.get('_known_for'):
+                shortlist = {'cast' if section == 'actor' else 'crew':row['_known_for']}
+                value = work_summary(shortlist, section, filters, show_anime)
+            if local.get(row['key']) or (value and value['works']):
+                output.append(row)
+        groups[section] = output
+    return pending and bool(api_key)
+
+
 async def search_contributors(db, viewer, term, kind='all'):
     groups = await local_matches(db, term, kind)
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     if not key:
         groups['studio'], _ = await verified_studios(db, viewer, groups['studio'], None)
+        await verified_people(db, viewer, groups, None)
         return {'results': ranked_results(groups, term)}
 
     async def remote(company=False):
@@ -151,7 +186,8 @@ async def search_contributors(db, viewer, term, kind='all'):
             for item in groups[section]:
                 if item['key'] == identity:
                     item['_popularity'] = number(raw.get('popularity'))
-                    if section == 'studio': item['_native'] = native
+                    item['_native'] = item.get('_native') or native
+                    if section != 'studio': item['_known_for'] = raw.get('known_for') or []
             continue
         if person:
             item = result(person, section)
@@ -161,7 +197,9 @@ async def search_contributors(db, viewer, term, kind='all'):
                     'roles': [] if section == 'studio' else [raw.get('known_for_department') or 'Crew'],
                     'url': f'/{PATHS[section]}/{identity}'}
         groups[section].append({**item, '_popularity': number(raw.get('popularity')),
-            **({'_native': native} if section == 'studio' else {})})
+            '_native':native, **({'_known_for':raw.get('known_for') or []} if section != 'studio' else {})})
         seen[section].add(identity)
-    groups['studio'], partial = await verified_studios(db, viewer, groups['studio'], key)
-    return {'results': ranked_results(groups, term), 'partial': failed or partial}
+    groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key)
+    people_pending = await verified_people(db, viewer, groups, key)
+    return {'results': ranked_results(groups, term), 'partial': failed,
+            'verification_pending':studios_pending or people_pending}
