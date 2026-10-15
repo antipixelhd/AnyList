@@ -57,3 +57,45 @@ sudo journalctl -u 'anylist-production-job-*' --no-pager
 
 Only startup deployment health is monitored here; later failures use Docker's
 existing restart policy and the VPS monitoring system.
+
+## Production domain
+
+Production uses `https://anylist.win` through Cloudflare's proxied apex A record
+and **Full (strict)** TLS. The shared VPS Caddy gateway routes that hostname to
+`anylist-app:7330`. Production Compose sets both `SERVER_URL` and
+`OIDC_REDIRECT_URL` explicitly; Google's existing OAuth client must authorize
+`https://anylist.win/oidc-callback`. Private preview origins are independent.
+
+The AnyList route uses a Cloudflare Origin CA certificate, valid until
+2041-10-11. Its private key was generated on the VPS; only the public CSR was
+submitted to Cloudflare. The certificate and key live in the existing gateway
+data volume at `/data/anylist-origin/anylist.win.pem` and
+`/data/anylist-origin/anylist.win.key`, with restricted filesystem permissions.
+Do not commit or print private keys. Replace the certificate before expiry;
+use a publicly trusted certificate before disabling Cloudflare's proxy.
+
+Caddy accepts this hostname only from Cloudflare's published IPv4/IPv6 ranges,
+using the actual connecting address rather than forwarded headers. Keep those
+ranges aligned with `https://api.cloudflare.com/client/v4/ips`. This restriction
+is specific to AnyList; other gateway routes retain their existing policies.
+API and OAuth callback responses receive `Cache-Control: private, no-store`.
+The proxied A record must be updated if the VPS public IPv4 address changes.
+
+The old AnyList gateway route and its deSEC updater source entry were removed.
+The installed deSEC updater already excluded AnyList; it continues updating the
+other services. The old AnyList DNS record is separate registrar-side cleanup.
+
+The 2026-10-16 migration verified the Origin CA chain and matching private key,
+Full (strict), public HTTPS, Google sign-in into the existing account, Secure
+OAuth state cookies, cross-origin POST rejection, production container health,
+and all six running preview services. Direct origin requests were rejected even
+with forged forwarding headers. The other public gateway services still
+responded after a graceful Caddy reload.
+
+Root-only configuration backups and certificate staging files are retained in
+`/var/lib/anylist-domain-migration`. For recovery, restore only the affected
+AnyList Compose values and gateway route from those backups, validate Caddy,
+and reload its existing config with `SIGUSR1`; do not replace unrelated routes
+that may have changed since the backup. Recreate only the AnyList app with
+`--no-deps`, retaining the pinned image and data volumes. This domain change
+does not require a database restore or schema change.
