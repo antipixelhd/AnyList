@@ -1,7 +1,9 @@
 .stats-overview-page { --stats-data-size:var(--type-tab-size); --stats-data-weight:var(--type-tab-weight); --stats-cyan:var(--blue); --stats-axis-background:#1a2534; --stats-plot:color-mix(in srgb,var(--panel) 72%,transparent); min-width:0; padding-bottom:40px; }
 .stats-overview-page { display:grid; grid-template-columns:var(--list-sidebar-width) minmax(0,1fr); gap:var(--list-column-gap); align-items:start; }
 .stats-overview-content { min-width:0; }
+.stats-overview-page :is(.overview-plot,.stats-genre-card) { box-shadow:0 14px 30px 0 rgba(0, 5, 15, 0.15),0 4px 4px 0 rgba(0, 5, 15, 0.05); }
 .overview-sidebar { min-width:0; }
+.overview-sidebar .profile-section-selector { --type-sidebar-size:1.4rem; --type-sidebar-weight:700; --type-sidebar-selected-weight:700; }
 .overview-menu-toggle { display:none; }
 .overview-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:30px; }
 .overview-heading h2 { margin:0; font-size:var(--type-page-size); color:var(--bright); }
