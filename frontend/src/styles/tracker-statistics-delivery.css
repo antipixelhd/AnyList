@@ -202,9 +202,12 @@
   margin-top:9px
 }
 .quick-search-progress {
+  position:absolute;
+  left:0;
+  bottom:0;
+  pointer-events:none;
   height:2px;
   width:0;
-  margin-top:-2px;
   background:var(--blue);
   opacity:0;
   transition:width 700ms cubic-bezier(.2,.7,.2,1),opacity 100ms ease

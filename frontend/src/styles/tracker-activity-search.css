@@ -107,6 +107,8 @@
 .quick-search-contributor img { border-radius:50%; }
 .quick-search-studio img { border-radius:4px; object-fit:contain; padding:4px; }
 .quick-search-bar {
+  position:relative;
+  overflow:hidden;
   border:1px solid #30495e;
   border-radius:7px;
   box-shadow:0 16px 45px #02070d80;

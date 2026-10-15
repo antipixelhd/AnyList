@@ -10,9 +10,9 @@ const { combineLists = true, hideTrigger = false } = Astro.props;
     <label class="sr-only" for="quick-search-input">Quick search</label>
     <input id="quick-search-input" type="search" placeholder="Search titles, people and studios…" maxlength="100" autocomplete="off" spellcheck="false" />
     <button class="editor-icon-button" type="button" aria-label="Close search" data-motion-press data-quick-search-close><Icon name="close" /></button>
+    <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   </div>
   <label class="quick-search-scope"><span class="sr-only">Search section</span><select data-search-scope aria-label="Search section"><option value="all">Series & Movies</option><option value="actor">Actors</option><option value="staff">Crew</option><option value="studio">Studios</option></select></label>
-  <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   <p class="quick-search-state" data-search-state role="status" hidden></p>
   <p class="sr-only" data-search-announcement role="status"></p>
   <div class:list={['quick-search-results', {'combined': combineLists}]} aria-busy="false" hidden>
