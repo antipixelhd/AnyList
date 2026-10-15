@@ -52,7 +52,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
         </div>
       </aside>
       <div class="list-content">
-      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span>{entries.length>0&&<div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div>}</div>
+      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span></div>
       <div id="entry-groups">
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
@@ -97,11 +97,10 @@ document.addEventListener('astro:page-load', () => {
   const preview = document.querySelector<HTMLElement>('#cover-preview');
   const previewImage = preview?.querySelector<HTMLImageElement>('img');
   const compactImageOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'auto' as const};
-  const gridImageOptions={size:'w342',sizes:'(max-width:650px) calc((100vw - 54px) / 2), (max-width:900px) 180px, 215px',route:'auto' as const};
-  const updateEntryImages=(grid:boolean) => document.querySelectorAll<HTMLElement>('.entry-thumbnail').forEach(thumbnail => {
+  const updateEntryImages=() => document.querySelectorAll<HTMLElement>('.entry-thumbnail').forEach(thumbnail => {
     const image=thumbnail.querySelector<HTMLImageElement>('.entry-cover');
     const source=thumbnail.dataset.artworkPath;
-    if(image && source) applyResponsiveArtwork(image,source,grid?gridImageOptions:compactImageOptions);
+    if(image && source) applyResponsiveArtwork(image,source,compactImageOptions);
   });
   let previewDismissed = false;
   function syncAvailability(row: HTMLElement, updated: any) {
@@ -116,7 +115,7 @@ document.addEventListener('astro:page-load', () => {
   function showPreview(row: HTMLElement) {
     const thumbnail = row.querySelector<HTMLElement>('.entry-thumbnail');
     const source = thumbnail?.dataset.previewSrc;
-    if (!preview || !previewImage || !source || previewDismissed || row.closest('.grid-view') || !matchMedia('(hover:hover) and (min-width:901px)').matches) return;
+    if (!preview || !previewImage || !source || previewDismissed || !matchMedia('(hover:hover) and (min-width:901px)').matches) return;
     const rect = thumbnail!.getBoundingClientRect();
     const width = 174, height = 248, gap = 18;
     applyResponsiveArtwork(previewImage,source,{size:'w500',sizes:'174px',route:'auto'});
@@ -318,7 +317,6 @@ document.addEventListener('astro:page-load', () => {
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));
     resetButton.addEventListener('click',()=>{['list-search','genre-filter','favorite-filter'].forEach(id=>input(id).value='');yearSlider.value='0';input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
-    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();const grid=button.dataset.view==='grid';groups.classList.toggle('grid-view',grid);updateEntryImages(grid);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
     const filters=document.querySelector<HTMLElement>('#list-filters')!;
     const filterPanel=document.querySelector<HTMLElement>('#list-filter-panel')!;
     const mobileFilters=matchMedia('(max-width:650px)');
@@ -343,7 +341,7 @@ document.addEventListener('astro:page-load', () => {
     },{signal:pageListeners.signal});
     document.addEventListener('keydown',event=>{if(!event.defaultPrevented&&event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
     document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});
-    updateEntryImages(groups.classList.contains('grid-view'));
+    updateEntryImages();
     filter();
   }
 });

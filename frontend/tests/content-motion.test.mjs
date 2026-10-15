@@ -53,13 +53,17 @@ test('season header and native summary share disclosure state and stop respondin
   globalThis.matchMedia=()=>reduced;
   t.after(()=>{globalThis.matchMedia=previousMedia;globalThis.Element=previousElement;});
   const summary=new Control(), header=new Control(), details=new Control(), controller=new AbortController();
+  const arrow={style:{}};
+  summary.querySelector=()=>arrow;
   Object.assign(details,{open:false,style:{removeProperty(){}},querySelector:()=>summary,getBoundingClientRect:()=>({height:details.open?400:50})});
   mountDetailsMotion(details,controller.signal,[header]);
   header.dispatchEvent(new Event('click'));
   assert.equal(details.open,true);
+  assert.equal(arrow.style.transform,'rotate(-180deg)');
   assert.equal(header.attributes.get('aria-expanded'),'true');
   summary.dispatchEvent(new Event('click'));
   assert.equal(details.open,false);
+  assert.equal(arrow.style.transform,'rotate(0deg)');
   assert.equal(header.attributes.get('aria-expanded'),'false');
   details.open=true;
   details.dispatchEvent(new Event('toggle'));
