@@ -99,6 +99,7 @@ class PreferencePatch(BaseModel):
     show_new_ratings_popup: bool | None = None
     new_season_release_dates: bool | None = None
     new_season_releases: bool | None = None
+    remove_specials_seasons: bool | None = None
 
 
 @router.get('/preferences')
@@ -113,6 +114,7 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
         'show_new_ratings_popup': True if row is None else row.show_new_ratings_popup,
         'new_season_release_dates': True if row is None else row.new_season_release_dates,
         'new_season_releases': True if row is None else row.new_season_releases,
+        'remove_specials_seasons': True if row is None else row.remove_specials_seasons,
     }
 
 

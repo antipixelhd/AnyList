@@ -26,22 +26,24 @@ export function createContentTransition(element: HTMLElement, signal: AbortSigna
 }
 
 /** Animate a native disclosure without losing its keyboard or no-JS behavior. */
-export function mountDetailsMotion(details: HTMLDetailsElement, signal: AbortSignal) {
+export function mountDetailsMotion(details: HTMLDetailsElement, signal: AbortSignal, triggers: HTMLButtonElement[] = []) {
   const summary = details.querySelector<HTMLElement>(':scope > summary');
   if (!summary) return;
   let expanded = details.open, animation: Animation | undefined;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const syncTriggers = () => triggers.forEach(trigger => trigger.setAttribute('aria-expanded', String(expanded)));
   const settle = () => {
     animation?.cancel(); animation = undefined;
     details.open = expanded;
     details.style.removeProperty('overflow');
+    syncTriggers();
   };
-  summary.addEventListener('click', event => {
-    if (event.target instanceof Element && event.target.closest('button,a,input,select,textarea,label')) return;
+  const toggle = (event: Event) => {
     event.preventDefault();
     const start = details.getBoundingClientRect().height;
     animation?.cancel();
     expanded = !expanded;
+    syncTriggers();
     details.style.overflow = 'hidden';
     details.open = expanded;
     const end = details.getBoundingClientRect().height;
@@ -52,7 +54,16 @@ export function mountDetailsMotion(details: HTMLDetailsElement, signal: AbortSig
     });
     animation = current;
     current.finished.then(() => { if (animation === current) settle(); }).catch(() => {});
+  };
+  summary.addEventListener('click', event => {
+    if (event.target instanceof Element && event.target.closest('button,a,input,select,textarea,label')) return;
+    toggle(event);
   }, {signal});
+  triggers.forEach(trigger => trigger.addEventListener('click', toggle, {signal}));
+  details.addEventListener('toggle', () => {
+    if (!animation) { expanded = details.open; syncTriggers(); }
+  }, {signal});
+  syncTriggers();
   reduced.addEventListener('change', settle, {signal});
   signal.addEventListener('abort', settle, {once:true});
 }

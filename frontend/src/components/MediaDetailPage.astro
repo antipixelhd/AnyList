@@ -10,7 +10,7 @@ import MediaDetailPerson from './MediaDetailPerson.astro';
 import MediaDetailCredits from './MediaDetailCredits.astro';
 import MediaDetailCastToggle from './MediaDetailCastToggle.astro';
 import MediaDetailWork from './MediaDetailWork.astro';
-import {scoreLabel,statuses} from '../lib/tracker';
+import {scoreLabel,statuses,tracker} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import {detailSceneArtwork} from '../lib/detail-artwork';
 import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,moneyLabel,detailBrowseHref,detailCreators} from '../lib/media-detail-data';
@@ -22,6 +22,8 @@ import '../styles/media-details.css';
 const {media,library=null,libraryError='',canUseLibrary=false,error=''}=Astro.props;
 const title=media?prepareDetail(media):null;
 const signedIn=!!Astro.locals.user;
+const removeSpecials=signedIn&&title?.type==='series'
+  ? (await tracker('preferences',Astro.locals.token).catch(()=>null))?.remove_specials_seasons!==false : true;
 const trackable=title&&['movie','series'].includes(title.type)&&title.tracking_available!==false;
 const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:650px) 108px, (max-width:900px) 170px, (max-width:1100px) 190px, 210px',route:Astro.locals.imageCacheEnabled?'proxy':'direct'});
 const backdrop=responsiveArtwork(title?.backdrop,{size:'w1280',sizes:'100vw',route:Astro.locals.imageCacheEnabled?'proxy':'direct'});
@@ -93,7 +95,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
             <section class="lab-similar lab-module" data-detail-similar hidden={!title.similar.length}><div class="lab-section-title"><h2>Similar {title.type==='series'?'series':`${title.type}s`}</h2></div><div class="lab-similar-grid" data-detail-similar-grid>{title.similar.map(work=><MediaDetailWork work={work} similar/>)}</div></section>
           </div>
         </div>
-        {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn}/></section>}
+        {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn} removeSpecials={removeSpecials}/></section>}
         {(trackable||!!people.length)&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}><p class="detail-load-status" data-detail-people-status hidden></p>{credits&&<><MediaDetailCredits label="Cast" rows={credits.cast} id="cast" loading={!!trackable&&!credits.cast.length}/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}
         {(trackable||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><p class="section-empty" data-detail-artwork-status hidden></p><div class="lab-gallery" data-detail-artwork-grid>{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img data-gallery-src={responsiveArtwork(url,{size:'w500',route:Astro.locals.imageCacheEnabled?'proxy':'direct'})?.src} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
       </div>

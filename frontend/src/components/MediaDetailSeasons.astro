@@ -3,10 +3,10 @@ import Icon from './Icon.astro';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import LocalDateTime from './LocalDateTime.astro';
 import {durationLabel,type DetailMedia} from '../lib/media-detail-data';
-import {currentDetailSeason,detailSeasonState,type DetailSeason} from '../lib/season-detail-data';
+import {currentDetailSeason,detailSeasonState,visibleDetailSeasons} from '../lib/season-detail-data';
 import {scoreLabel} from '../lib/tracker';
-const {title,signedIn}=Astro.props as {title:DetailMedia;signedIn:boolean};
-const seasons=[...title.seasons].sort((a,b)=>a.season_number-b.season_number) as DetailSeason[];
+const {title,signedIn,removeSpecials=true}=Astro.props as {title:DetailMedia;signedIn:boolean;removeSpecials?:boolean};
+const seasons=visibleDetailSeasons(title.seasons,removeSpecials);
 const current=currentDetailSeason(seasons,title.entry?.status==='watching');
 ---
 <section class="seasons-section lab-season-panel" id="seasons" data-season-details>
@@ -16,8 +16,8 @@ const current=currentDetailSeason(seasons,title.entry?.status==='watching');
     const number=season.season_number;
     const state=detailSeasonState(season,current,title.entry?.status==='watching');
     return <article class="lab-season-card" data-season-card={number}>
-      <div class="lab-season-head"><div class="lab-season-identity"><span class="lab-season-number" aria-hidden="true">{String(number).padStart(2,'0')}</span><div><h3>{season.name||`Season ${number}`}</h3>{season.air_date&&<p>{season.air_date.slice(0,4)}</p>}</div></div>{signedIn&&<button class="lab-season-rate" type="button" data-open-season-score={number} aria-label={`Rate season ${number}`} aria-haspopup="dialog"><strong><Icon name="star"/><span data-season-score={number}>{scoreLabel(title.entry?.season_scores?.[String(number)]??null)}</span></strong></button>}</div>
-      <details class="media-season-disclosure" data-season-disclosure open={number===current}>
+      <div class="lab-season-head" data-season-can-rate={signedIn ? "" : undefined}><button class="media-season-card-toggle" type="button" data-season-toggle={number} data-motion-static aria-label={`Toggle episodes for season ${number}`} aria-controls={`season-episodes-${number}`} aria-expanded={number===current}></button><div class="lab-season-identity"><span class="lab-season-number" aria-hidden="true">{String(number).padStart(2,'0')}</span><div><h3>{season.name||`Season ${number}`}</h3>{season.air_date&&<p>{season.air_date.slice(0,4)}</p>}</div></div>{signedIn&&<div class="media-season-rating-area"><button class="lab-season-rate" type="button" data-open-season-score={number} aria-label={`Rate season ${number}`} aria-haspopup="dialog"><strong><Icon name="star"/><span data-season-score={number}>{scoreLabel(title.entry?.season_scores?.[String(number)]??null)}</span></strong></button></div>}</div>
+      <details id={`season-episodes-${number}`} class="media-season-disclosure" data-season-disclosure open={number===current}>
         <summary class="lab-season-toolbar"><span class="media-season-state" data-season-state={number} hidden={!signedIn} data-watched={String(state.watched)} data-motion-fade><Icon name="check"/><span data-season-state-label>{state.label}</span></span><span class="lab-season-expand">Episodes <Icon name="chevron-down"/></span></summary>
         <div class="lab-episode-list">{season.episodes?.length?season.episodes.map(episode=>{
           const image=responsiveArtwork(episode.image,{size:'w300',sizes:'(max-width:650px) 55px, 125px',route:Astro.locals.imageCacheEnabled?'proxy':'direct'});

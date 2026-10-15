@@ -1694,6 +1694,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'low_priority_notifications':True,'low_priority_retention_days':7,
             'show_new_ratings_popup':True,
             'new_season_release_dates':True,'new_season_releases':True,
+            'remove_specials_seasons':True,
         })
         changed=await self.client.patch('/tracking/preferences',json={
             'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,
@@ -1709,6 +1710,23 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(changed.json()['new_season_releases'])
         invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
         self.assertEqual(invalid.status_code,422,invalid.text)
+
+    async def test_specials_visibility_is_saved_per_viewer_and_survives_unrelated_changes(self):
+        disabled = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': False})
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertFalse(disabled.json()['remove_specials_seasons'])
+        changed = await self.client.patch('/tracking/preferences', json={'default_sort': 'score'})
+        self.assertFalse(changed.json()['remove_specials_seasons'])
+        self.viewer = self.friend
+        other = await self.client.get('/tracking/preferences')
+        self.assertTrue(other.json()['remove_specials_seasons'])
+        self.viewer = self.owner
+        saved = await self.client.get('/tracking/preferences')
+        self.assertFalse(saved.json()['remove_specials_seasons'])
+        invalid = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': None})
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        enabled = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': True})
+        self.assertTrue(enabled.json()['remove_specials_seasons'])
 
     async def test_profile_partial_patch_and_markdown_bio_limit(self):
         changed = await self.client.patch('/profile/me', json={'country': 'DE'})

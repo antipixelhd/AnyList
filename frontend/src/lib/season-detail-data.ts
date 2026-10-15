@@ -1,6 +1,10 @@
 export type DetailEpisode = {id:number;episode_number:number;title:string;air_date?:string|null;runtime?:number|null;image?:string|null;watched:boolean;released:boolean};
 export type DetailSeason = {season_number:number;name?:string;air_date?:string|null;episode_count:number;released_count:number|null;watched_count:number;episodes?:DetailEpisode[]};
 
+export function visibleDetailSeasons(seasons:DetailSeason[], removeSpecials=true) {
+  return seasons.filter(season=>!removeSpecials||season.season_number!==0).sort((a,b)=>a.season_number-b.season_number);
+}
+
 /** Follow the latest season with watch history rather than reopening older gaps. */
 export function currentDetailSeason(seasons:DetailSeason[],watching=false) {
   const regular=[...seasons].filter(season=>season.season_number>0).sort((a,b)=>a.season_number-b.season_number);

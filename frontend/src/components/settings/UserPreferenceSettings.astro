@@ -250,6 +250,13 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       {category === "media" && <div class="settings-stack">
       <StatisticsRefresh />
       <section>
+        <div class="setting-label-line mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Seasons</h2><span class="setting-save-state" data-save-state="remove-specials-seasons" role="status"></span></div>
+        <label class="setting-switch-row" for="remove-specials-seasons">
+          <span><strong>Remove Specials Seasons</strong></span>
+          <input id="remove-specials-seasons" type="checkbox" checked={trackingPrefs.remove_specials_seasons !== false} />
+        </label>
+      </section>
+      <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
         <div class="space-y-2 max-w-xs">
           <div class="setting-label-line"><label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label><span class="setting-save-state" data-save-state="minimum_votes" role="status"></span></div>
@@ -682,8 +689,10 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     // Save
     const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
     const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
+    const removeSpecials = document.getElementById('remove-specials-seasons') as HTMLInputElement | null;
     if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
     if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
+    if (removeSpecials) removeSpecials.dataset.savedValue = String(removeSpecials.checked);
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
     function publishCombinePreference(value: boolean) {
@@ -693,8 +702,9 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
+      const statusKey = field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
-      setStatus('combine-lists', 'Saving…', 'saving');
+      setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
         try {
           const response = await fetch('/api/proxy/tracking/preferences', {
@@ -702,19 +712,19 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(change),
           });
-          if (!response.ok) throw new Error('Could not update your list preferences.');
-          const saved = await response.json() as { combine_lists?: boolean; default_sort?: string };
+          if (!response.ok) throw new Error('Could not update your preferences.');
+          const saved = await response.json() as Record<string, boolean | string>;
           // Keep the last confirmed server value available for rollback, even when
           // a newer change is already queued behind this request.
-          control.dataset.savedValue = field === 'combine_lists' ? String(saved.combine_lists !== false) : saved.default_sort || requestedValue;
-          if (trackingRevisions.get(field) === revision) setStatus('combine-lists', 'Saved');
+          control.dataset.savedValue = String(saved[field] ?? requestedValue);
+          if (trackingRevisions.get(field) === revision) setStatus(statusKey, 'Saved');
         } catch (error) {
           if (trackingRevisions.get(field) === revision) {
             const savedValue = control.dataset.savedValue ?? '';
             if (control instanceof HTMLInputElement) control.checked = savedValue === 'true';
             else control.value = savedValue;
             if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
-            setStatus('combine-lists', error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
+            setStatus(statusKey, error instanceof Error ? error.message : 'Could not update your preferences.', 'error');
           }
         }
       });
@@ -722,6 +732,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     }
     combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists, 'combine_lists'));
     defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort, 'default_sort'));
+    removeSpecials?.addEventListener('change', () => saveTrackingPreferences({ remove_specials_seasons: removeSpecials.checked }, removeSpecials, 'remove_specials_seasons'));
 
     // Completion-rating Web Push is enrolled per browser/PWA installation.
     const pushButton = document.getElementById('push-notifications-toggle') as HTMLButtonElement | null;

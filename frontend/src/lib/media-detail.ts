@@ -217,7 +217,10 @@ export function mountMediaDetail() {
   loadDetailImages=mountDetailImages(root,info,signal);
 
   const seasons=root.querySelector<HTMLElement>('.seasons-section');
-  seasons?.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>mountDetailsMotion(details,signal));
+  seasons?.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>{
+    const trigger=details.closest('[data-season-card]')?.querySelector<HTMLButtonElement>('[data-season-toggle]');
+    mountDetailsMotion(details,signal,trigger?[trigger]:[]);
+  });
   const paintEpisodeTitles=()=>{
     root.querySelectorAll<HTMLElement>('[data-episode-row]').forEach(row=>{
       const heading=row.querySelector<HTMLElement>('[data-episode-title]')!;

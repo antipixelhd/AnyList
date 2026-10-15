@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {currentDetailSeason,detailSeasonState} from '../src/lib/season-detail-data.ts';
+import {currentDetailSeason,detailSeasonState,visibleDetailSeasons} from '../src/lib/season-detail-data.ts';
 const season=(number,watched,released)=>({season_number:number,episodes:watched.map((value,index)=>({watched:value,released:released?.[index]??true}))});
+
+test('specials are hidden by default and restored by preference without changing season data',()=>{
+  const source=[season(2,[true]),season(0,[true,false]),season(1,[false])];
+  assert.deepEqual(visibleDetailSeasons(source).map(s=>s.season_number),[1,2]);
+  assert.deepEqual(visibleDetailSeasons(source,false).map(s=>s.season_number),[0,1,2]);
+  assert.deepEqual(source.map(s=>s.season_number),[2,0,1]);
+  assert.equal(source[1].episodes[0].watched,true);
+});
 test('current season follows watch history, ignoring older gaps, specials and future episodes',()=>{
   assert.equal(currentDetailSeason([season(0,[false]),season(1,[true,false]),season(2,[true,false]),season(3,[false],[false])]),2);
   assert.equal(currentDetailSeason([season(1,[true,true]),season(2,[false,false])]),2);

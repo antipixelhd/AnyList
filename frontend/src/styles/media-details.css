@@ -141,6 +141,18 @@
 .media-season-state>.ui-icon { width:12px; height:12px; }
 .media-season-state[data-watched=false]>.ui-icon { display:none; }
 .media-detail .lab-season-rate { min-width:44px; min-height:44px; justify-content:center; }
+.media-detail .lab-season-head { position:relative; padding:0; gap:0; --season-rating-width:0px; }
+.media-detail .lab-season-head[data-season-can-rate] { --season-rating-width:clamp(104px,25%,160px); }
+.media-detail .lab-season-identity { flex:1; min-width:0; padding:24px; pointer-events:none; }
+.media-detail .lab-season-identity h3 { overflow-wrap:anywhere; }
+.media-detail .media-season-card-toggle { position:absolute; inset:0 var(--season-rating-width) 0 0; border:0; padding:0; background:transparent; cursor:pointer; border-radius:var(--lab-radius); transition:background-color .18s ease; }
+.media-detail .media-season-card-toggle:is(:hover,:focus-visible) { background:#ffffff08; outline:none; }
+.media-season-rating-area { width:var(--season-rating-width); flex-shrink:0; align-self:stretch; display:flex; align-items:center; justify-content:flex-end; padding:20px 24px 20px 0; }
+.media-detail .lab-season-rate:focus-visible { outline:none; background:var(--field); border-radius:5px; }
+@media(max-width:650px) {
+  .media-detail .lab-season-identity { padding:20px 18px; }
+  .media-season-rating-area { padding:16px 18px 16px 0; }
+}
 .media-detail .lab-season-card .lab-episode-list { animation:none; }
 .media-detail .lab-episode-copy { min-width:0; }
 .media-detail .lab-episode-copy h3 { overflow-wrap:anywhere; }

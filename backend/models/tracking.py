@@ -86,6 +86,7 @@ class TrackingPreferences(Base):
     show_new_ratings_popup: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     new_season_release_dates: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     new_season_releases: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    remove_specials_seasons: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     favorite_order: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
 
 
