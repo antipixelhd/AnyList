@@ -57,14 +57,48 @@ def decoded(content):
         return None
 
 
+def render_profile_card(card, portrait, backdrop):
+    # Keep the chosen banner separate from the solid statistics panel.
+    image = Image.new('RGB', SIZE, '#1c2938')
+    banner = Image.new('RGBA', (1200, 430), '#242538')
+    if backdrop:
+        banner = Image.alpha_composite(banner, ImageOps.fit(backdrop, banner.size, method=Image.Resampling.LANCZOS))
+        shade = Image.new('RGBA', banner.size)
+        gradient = ImageDraw.Draw(shade)
+        for y in range(430):
+            gradient.line((0, y, 1200, y), fill=(6, 13, 34, int(130 * (y / 430) ** 3)))
+        banner = Image.alpha_composite(banner, shade)
+    image.paste(banner.convert('RGB'), (0, 0))
+    draw = ImageDraw.Draw(image)
+    if portrait:
+        tile = ImageOps.fit(portrait, (250, 250), method=Image.Resampling.LANCZOS)
+        mask = Image.new('L', (250, 250))
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, 250, 250), radius=14, fill=255)
+        surface = Image.new('RGB', tile.size, '#23394e')
+        surface.paste(tile, (0, 0), tile)
+        image.paste(surface, (54, 260), mask)
+    else:
+        draw.rounded_rectangle((54, 260, 304, 510), radius=14, fill='#23394e')
+        draw.text((124, 313), card['title'][:1].upper(), font=font(100, True), fill='#d9e5ef')
+    text_block(draw, card['title'], (350, 335), 795, 58, 1)
+    for index, stat in enumerate(card.get('stats', [])[:3]):
+        x = 350 + index * 270
+        draw.text((x, 469), str(stat['value']), font=font(46, True), fill='#b6d9ed')
+        draw.text((x, 529), stat['label'], font=font(23), fill='#d1dce5')
+    result = BytesIO()
+    image.save(result, format='JPEG', quality=88, optimize=True)
+    return result.getvalue()
+
+
 def render_card(card, primary=None, background=None):
     portrait, backdrop = decoded(primary), decoded(background)
+    if card['kind'] == 'profile':
+        return render_profile_card(card, portrait, backdrop)
     image = Image.new('RGB', SIZE, '#101d2c')
     if backdrop:
         backdrop = ImageOps.fit(backdrop, SIZE, method=Image.Resampling.LANCZOS)
-        if card['kind'] != 'profile':
-            backdrop = backdrop.filter(ImageFilter.GaussianBlur(18))
-        image = ImageEnhance.Brightness(backdrop).enhance(.5 if card['kind'] == 'profile' else .38)
+        backdrop = backdrop.filter(ImageFilter.GaussianBlur(18))
+        image = ImageEnhance.Brightness(backdrop).enhance(.38)
     shade = Image.new('RGBA', SIZE)
     gradient = ImageDraw.Draw(shade)
     for y in range(SIZE[1]):
@@ -72,8 +106,7 @@ def render_card(card, primary=None, background=None):
     image = Image.alpha_composite(image.convert('RGBA'), shade)
     draw = ImageDraw.Draw(image)
     draw.text((54, 34), 'AnyList', font=font(26, True), fill='#b6c7d9')
-    profile = card['kind'] == 'profile'
-    box = (54, 151, 264, 361) if profile else (856, 92, 1146, 527)
+    box = (856, 92, 1146, 527)
     if portrait:
         size = (box[2] - box[0], box[3] - box[1])
         tile = ImageOps.contain(portrait, size, method=Image.Resampling.LANCZOS) if card['kind'] == 'studio' else ImageOps.fit(portrait, size, method=Image.Resampling.LANCZOS)
@@ -82,14 +115,11 @@ def render_card(card, primary=None, background=None):
         mask = Image.new('L', size)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, *size), radius=18, fill=255)
         image.paste(surface, box[:2], mask)
-    elif profile:
-        draw.rounded_rectangle(box, radius=18, fill='#23394e')
-        draw.text((109, 191), card['title'][:1].upper(), font=font(92, True), fill='#d9e5ef')
-    x, width = (306, 835) if profile else (54, 740)
-    y = 157 if profile else 124
+    x, width = 54, 740
+    y = 124
     if card.get('eyebrow'):
         y = text_block(draw, card['eyebrow'], (x, y), width, 25, 1, '#b9cbdc', False) + 18
-    y = text_block(draw, card['title'], (x, y), width, 62 if profile else 58, 2) + 16
+    y = text_block(draw, card['title'], (x, y), width, 58, 2) + 16
     if card.get('subtitle'):
         text_block(draw, card['subtitle'], (x, y), width, 25, 1, '#c9d6e2', False)
     if card.get('genres'):
@@ -108,9 +138,9 @@ def render_card(card, primary=None, background=None):
             gx += w + 10
     stats = card.get('stats', [])
     for index, stat in enumerate(stats[:3]):
-        sx = 54 + index * (360 if profile else 250)
-        draw.text((sx, 450 if profile else 365), str(stat['value']), font=font(47, True), fill='#f4cf76' if stat['label'] == 'IMDb' else '#d4e8f7')
-        draw.text((sx, 511 if profile else 421), stat['label'], font=font(23), fill='#c5d3df')
+        sx = 54 + index * 250
+        draw.text((sx, 365), str(stat['value']), font=font(47, True), fill='#f4cf76' if stat['label'] == 'IMDb' else '#d4e8f7')
+        draw.text((sx, 421), stat['label'], font=font(23), fill='#c5d3df')
     result = BytesIO()
     image.convert('RGB').save(result, format='JPEG', quality=88, optimize=True)
     return result.getvalue()
