@@ -304,7 +304,7 @@ button:disabled {
   border:0;
   border-radius:4px;
   background:#25445d;
-  color:var(--bright);
+  color:var(--white);
   padding:5px 10px;
   opacity:0;
   transition:none

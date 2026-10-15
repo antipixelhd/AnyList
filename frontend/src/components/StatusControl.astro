@@ -1,10 +1,9 @@
 ---
 import {statuses} from '../lib/tracker';
-import Icon from './Icon.astro';
 const {mediaId,status}=Astro.props;
 ---
 <div class="status-control" data-status-control data-media={mediaId}>
-  <div class="status-split"><button class="button-primary" data-status-label data-edit-entry={mediaId}>{statuses.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" aria-label="Quick status actions" aria-haspopup="menu" aria-expanded="false" aria-controls={`quick-status-options-${mediaId}`}><Icon name="chevron-down" /></button></div>
+  <div class="status-split"><button class="button-primary" data-status-label data-edit-entry={mediaId}>{statuses.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" aria-label="Quick status actions" aria-haspopup="menu" aria-expanded="false" aria-controls={`quick-status-options-${mediaId}`}><span class="ui-icon" aria-hidden="true"><svg data-dropdown-arrow viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7 7 7-7" /></svg></span></button></div>
   <div class="status-options tracker-dropdown-menu" id={`quick-status-options-${mediaId}`} role="menu" hidden>
     <button role="menuitem" data-quick-status="completed" aria-current={status === 'completed' ? 'true' : undefined}>Set as Completed</button>
     <button role="menuitem" data-quick-status="watching" aria-current={status === 'watching' ? 'true' : undefined}>Set as Watching</button>

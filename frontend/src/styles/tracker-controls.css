@@ -327,7 +327,7 @@
 }
 .editor-heading h2 {
   font-size:var(--type-section-size);
-  color:var(--bright);
+  color:var(--white);
   margin:0;
   line-height:1.3
 }

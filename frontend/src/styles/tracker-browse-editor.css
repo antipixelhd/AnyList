@@ -115,7 +115,7 @@
   position:relative;
   width:40px;
   height:40px;
-  color:#d6e2ed!important;
+  color:var(--white)!important;
   cursor:pointer
 }
 .editor-favorite input {
@@ -142,7 +142,7 @@
 .editor-library {
   border:0;
   background:transparent;
-  color:#d6e2ed
+  color:var(--white)
 }
 .editor-library .ui-icon {
   font-size:var(--type-section-size)
