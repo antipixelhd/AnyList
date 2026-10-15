@@ -18,6 +18,7 @@
     generation?: number;
     timer?: number;
     initialized?: boolean;
+    alignListLanding?: boolean;
     originalFetch?: typeof window.fetch;
     prediction?: ReturnType<typeof createPrediction<CachedPage>>;
     predictionNavigation?: {key:string;signal:AbortSignal;generation:number};
@@ -277,6 +278,7 @@
       closeNavigationDialogs();
       resetForIdentity();
       const event = rawEvent;
+      state.alignListLanding = event.navigationType !== 'traverse';
       const key = keyFor(event.to);
       state.predictionNavigation=undefined;
       let predicted=state.pages.get(key);
@@ -298,7 +300,7 @@
     });
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:after-swap', () => {
-      if (!document.body.hasAttribute('data-list-landing')) return;
+      if (!state.alignListLanding || !document.body.hasAttribute('data-list-landing')) return;
       const tabs = document.querySelector<HTMLElement>('.profile-tabs');
       if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
     });

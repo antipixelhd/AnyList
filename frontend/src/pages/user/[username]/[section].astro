@@ -74,6 +74,9 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
     </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>{data.owner && <script id="list-editor-entries" type="application/json" set:html={JSON.stringify(entries).replace(/</g, '\\u003c')}></script>}
     <script is:inline data-astro-rerun>
       (() => {
+        // A reload/back visit belongs to scroll restoration, not the list's
+        // initial landing position. Route swaps align the tabs in NavigationRuntime.
+        if (performance.getEntriesByType('navigation')[0]?.type !== 'navigate' || history.state) return;
         const tabs = document.querySelector('.profile-tabs');
         if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
       })();

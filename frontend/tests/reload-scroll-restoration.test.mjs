@@ -7,7 +7,7 @@ const component = readFileSync(new URL('../src/components/ReloadScrollRestoratio
 const script = component.match(/<script is:inline>([\s\S]*?)<\/script>/)[1];
 const contextFor = (history, entries) => {
   const saved = new Map();
-  return { history, window: { addEventListener() {} }, performance: { getEntriesByType: () => entries },
+  return { history, window: { addEventListener() {} }, document: { addEventListener() {} }, performance: { getEntriesByType: () => entries },
     location: { href: 'https://anylist.test/title/320' },
     sessionStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
   };
@@ -69,7 +69,7 @@ test('repeat initialization registers one final-position listener and ignores un
   const listeners = [];
   const history = { state: { otherRouter: true }, replaceState() { throw Error('Unrelated state changed'); } };
   const context = contextFor(history, []);
-  context.window.addEventListener = (_, handler) => listeners.push(handler);
+  context.window.addEventListener = (event, handler) => { if (event === 'pagehide') listeners.push(handler); };
   runInNewContext(script, context);
   runInNewContext(script, context);
   assert.equal(listeners.length, 1);
@@ -90,9 +90,59 @@ test('exit positions are scoped to the exact URL and history entry with valid co
 test('blocked session storage does not interfere with loading or leaving a page', () => {
   const listeners = [];
   const context = contextFor({ state: { index: 0 }, scrollRestoration: 'manual' }, [{ type: 'reload' }]);
-  context.window.addEventListener = (_, listener) => listeners.push(listener);
+  context.window.addEventListener = (event, listener) => { if (event === 'pagehide') listeners.push(listener); };
   context.sessionStorage = { getItem() { throw Error('Blocked'); }, setItem() { throw Error('Blocked'); } };
   assert.doesNotThrow(() => runInNewContext(script, context));
   assert.equal(context.history.scrollRestoration, 'auto');
   assert.doesNotThrow(() => listeners[0]());
+});
+
+test('the outgoing document allows native reload restoration while Astro owns route traversal', () => {
+  const documentEvents = new Map(), windowEvents = new Map();
+  const history = { state: null, scrollRestoration: 'auto' };
+  const context = contextFor(history, [{ type: 'navigate' }]);
+  context.document.addEventListener = (event, handler) => documentEvents.set(event, handler);
+  context.window.addEventListener = (event, handler, options) => windowEvents.set(event, { handler, options });
+  runInNewContext(script, context);
+  // Astro's first initialization puts the outgoing document in manual mode.
+  history.state = { index: 0, scrollX: 0, scrollY: 0 };
+  history.scrollRestoration = 'manual';
+  documentEvents.get('astro:page-load')();
+  assert.equal(history.scrollRestoration, 'auto', 'the very first reload must already be native');
+  documentEvents.get('astro:before-preparation')();
+  assert.equal(history.scrollRestoration, 'manual');
+  documentEvents.get('astro:page-load')();
+  assert.equal(history.scrollRestoration, 'auto');
+  assert.equal(windowEvents.get('popstate').options.capture, true);
+  windowEvents.get('popstate').handler();
+  assert.equal(history.scrollRestoration, 'manual', 'disable native traversal before Astro swaps the DOM');
+  documentEvents.get('astro:page-load')();
+  assert.equal(history.scrollRestoration, 'auto');
+  history.scrollRestoration = 'manual';
+  windowEvents.get('pageshow').handler();
+  assert.equal(history.scrollRestoration, 'auto', 'full-document layouts and BFCache returns also allow reload restoration');
+});
+
+test('list landing does not override hard reload or back/forward positions', () => {
+  const page = readFileSync(new URL('../src/pages/user/[username]/[section].astro', import.meta.url), 'utf8');
+  const landing = page.match(/<script is:inline data-astro-rerun>([\s\S]*?)<\/script>/)[1];
+  for (const [type, state, shouldAlign] of [['navigate', null, true], ['reload', null, false], ['back_forward', null, false], ['navigate', { index: 1 }, false]]) {
+    const calls = [];
+    runInNewContext(landing, { performance: { getEntriesByType: () => [{ type }] }, history: { state },
+      document: { querySelector: () => ({ getBoundingClientRect: () => ({ top: 330 }) }) },
+      window: { scrollY: 0, scrollTo: (...args) => calls.push(args) } });
+    assert.equal(calls.length, Number(shouldAlign), `${type}, state: ${JSON.stringify(state)}`);
+  }
+});
+
+test('shared layouts preload the same primary typefaces without route-specific exceptions', () => {
+  const preloads = readFileSync(new URL('../src/components/PrimaryFontPreloads.astro', import.meta.url), 'utf8');
+  assert.match(preloads, /\[400, 500, 600, 700\]/);
+  assert.match(preloads, /overpass-latin\.woff2/);
+  for (const name of ['Tracker', 'TrackerSettings', 'Base']) {
+    const layout = readFileSync(new URL(`../src/layouts/${name}.astro`, import.meta.url), 'utf8');
+    const head = layout.slice(layout.indexOf('<head>'), layout.indexOf('</head>'));
+    assert.match(head, /<PrimaryFontPreloads \/>/, name);
+    assert.doesNotMatch(layout, /preloadBodyFonts/);
+  }
 });

@@ -7,6 +7,7 @@ import '../styles/footer.css';
 import '../styles/profile-theme.css';
 import AppBar from '../components/AppBar.astro';
 import ReloadScrollRestoration from '../components/ReloadScrollRestoration.astro';
+import PrimaryFontPreloads from '../components/PrimaryFontPreloads.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import QuickRating from '../components/QuickRating.astro';
 import AttentionPrompt from '../components/AttentionPrompt.astro';
@@ -19,13 +20,13 @@ import DateTimeRuntime from '../components/DateTimeRuntime.astro';
 import { profileColor, themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
 import type {ResponsiveArtworkAttributes} from '../lib/responsive-artwork';
-const {title = 'AnyList', favicon = '/favicon.svg', listLanding = false, ownerProfileColor, ownerIsViewer = false, preloadBodyFonts = false, predictionArtwork = [], preloadArtwork = []} = Astro.props;
+const {title = 'AnyList', favicon = '/favicon.svg', listLanding = false, ownerProfileColor, ownerIsViewer = false, predictionArtwork = [], preloadArtwork = []} = Astro.props;
 const viewerTheme = await viewerProfileTheme(Astro.locals.token);
 const ownerColor = ownerProfileColor ? profileColor(ownerProfileColor) : undefined;
 const activeColor = ownerColor ?? (viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined);
 ---
 <!doctype html>
-<html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · AnyList</title>{(title === "Browse" || preloadBodyFonts) && [400, 500, 700].map(weight => <link rel="preload" href={`/fonts/roboto-${weight}-latin.woff2`} as="font" type="font/woff2" crossorigin/>)}<link rel="preload" href="/fonts/roboto-600-latin.woff2" as="font" type="font/woff2" crossorigin/><link rel="preload" href="/fonts/overpass-latin.woff2" as="font" type="font/woff2" crossorigin/><link rel="icon" href={favicon}/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/>{preloadArtwork.map((image:ResponsiveArtworkAttributes & {priority?:'high'|'low'|'auto'})=><link rel="preload" as="image" href={image.src} imagesrcset={image.srcset} imagesizes={image.sizes} fetchpriority={image.priority||'auto'}/>)}<ReloadScrollRestoration /><ClientRouter fallback="swap" /></head>
+<html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · AnyList</title><PrimaryFontPreloads /><link rel="icon" href={favicon}/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/>{preloadArtwork.map((image:ResponsiveArtworkAttributes & {priority?:'high'|'low'|'auto'})=><link rel="preload" as="image" href={image.src} imagesrcset={image.srcset} imagesizes={image.sizes} fetchpriority={image.priority||'auto'}/>)}<ReloadScrollRestoration /><ClientRouter fallback="swap" /></head>
 <body class="tracker" data-image-cache={String(!!Astro.locals.imageCacheEnabled)} data-cache-user={Astro.locals.user?.id ?? 'anonymous'} data-list-landing={listLanding ? '' : undefined} data-theme-owner-color={ownerColor} data-theme-owner-self={String(ownerIsViewer)} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
   <a class="skip-link" href="#content">Skip to content</a>
   <slot name="navigation"><AppBar initiallyHidden={listLanding} /></slot>

@@ -22,6 +22,14 @@ Dont prefer bandade fixes but prefer concrete systems that fix the problem or im
 - Share browser-locale date/time formatting; keep calendar dates zone-free, timestamps local, and API/input values ISO.
 - Measure real bottlenecks before adding complexity; preserve correctness and distinguish preview lab results from production performance.
 
+## Reload and first-paint stability
+
+- Verify startup changes on the actual authenticated details and profile pages. Record the first reload from a nonzero scroll position, repeated reloads, cold/warm font caches, mobile/desktop, and back/forward. A standalone fixture or a reload at the top does not establish that the page is stable.
+- Keep native reload restoration enabled on the outgoing idle document; switching it only in the incoming head misses the first reload. Let Astro own scroll restoration during route preparation and history traversal, then return to native mode on page-load completion.
+- Initial list-tab alignment applies to new visits only. Neither inline initializers nor after-swap handlers may override reload/back/forward positions.
+- Preload primary body/navigation fonts through the shared layout component. Do not gate essential font weights on route names or opt-in page props. Measure rendered text dimensions as well as computed font size: fallback font swaps can look like a size change and alter layout.
+- Render changed components in a real page before declaring success; a successful build alone does not catch runtime template errors such as unsupported icon names. Do not hide the whole page to mask initialization or restoration errors.
+
 ## Start with the task
 
 Read only the source files and documentation needed for the requested change.

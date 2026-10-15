@@ -21,6 +21,7 @@ import '../styles/settings-mobile-header.css';
 import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
 import ReloadScrollRestoration from '../components/ReloadScrollRestoration.astro';
+import PrimaryFontPreloads from '../components/PrimaryFontPreloads.astro';
 import { settingsGroups, isSettingsLinkActive } from '../lib/settings-navigation';
 
 const { title = 'Settings' } = Astro.props;
@@ -32,6 +33,7 @@ const pathname = Astro.url.pathname;
 <!doctype html>
 <html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}>
   <head>
+    <PrimaryFontPreloads />
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#0b1622" />
