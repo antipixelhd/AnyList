@@ -11,7 +11,7 @@ from core.statistics_genres import genre_groups, poster
 from core.statistics_actors import load_actors, actor_groups
 from core.statistics_studios import load_studios, studio_groups
 from core.statistics_staff import load_staff, staff_groups
-from core.tracking_rules import effective_score
+from core.tracking_rules import effective_score, project_score
 from models.base import MediaType
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink
 from models.events import WatchEvent
@@ -345,7 +345,14 @@ def aggregate_scope(facts, coverage, scope):
     rated = [t["score"] for t in watched if t["score"] is not None]
     planned = [t for t in listed if t["status"] == "planning"]
     average = sum(rated) / len(rated) if rated else None
-    score_bins = [grouped([t for t in watched if t["score"] is not None and i / 2 < t["score"] <= (i + 1) / 2], f"{(i + 1) / 2:g}") for i in range(20)]
+    score_groups = defaultdict(list)
+    for title in watched:
+        if title['score'] is not None:
+            # Nearest half-point; midpoint ties go up, rather than Python's
+            # round-to-even. Keep the original score for every aggregate.
+            bucket = min(20, max(1, int(project_score(title['score'], .5) * 2)))
+            score_groups[bucket].append(title)
+    score_bins = [grouped(score_groups[i], f'{i / 2:g}') for i in range(1, 21)]
     episode_bins = defaultdict(list)
     for title in watched:
         if title["kind"] != "series":

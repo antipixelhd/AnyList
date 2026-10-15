@@ -18,8 +18,8 @@ test('zero values stay visible and unrated points are not represented as score z
   assert.deepEqual(data.values.map(item => item.value),['0','0.0','Unrated']);
 });
 
-test('score tooltips retain the interval boundary and omit redundant score statistics', () => {
+test('score tooltips show the score itself and omit redundant score statistics', () => {
   const data = metricTooltipData('scores',{key:'8',label:'8',titles:3,minutes:120,mean_score:7.9,rated_titles:3});
-  assert.equal(data.title,'Score >7.5–8');
+  assert.equal(data.title,'Score 8');
   assert.deepEqual(data.values.map(item => item.metric),['titles','hours']);
 });

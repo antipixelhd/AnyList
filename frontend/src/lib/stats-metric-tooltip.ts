@@ -1,10 +1,10 @@
 import type { Chart, Plugin } from 'chart.js';
 import type { ChartMetric, MetricGroup } from './stats-overview-data';
 import { displayNumber } from './stats-overview-data.ts';
-import { cancelUiMotion, reveal } from './ui-motion.ts';
+import { cancelUiMotion, dismiss, reveal } from './ui-motion.ts';
 
 export function metricTooltipData(key: string, row: MetricGroup) {
-  const title = key === 'scores' ? `Score >${Number(row.key) - .5}–${row.key}`
+  const title = key === 'scores' ? `Score ${row.key}`
     : key === 'episode_counts' ? `${row.label} episodes` : row.label;
   return {title, values:[
     {metric:'titles', label:'Titles', value:displayNumber(row.titles)},
@@ -32,10 +32,19 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
   let chart: Chart<'bar' | 'line'> | undefined;
   let pointerInput = false, keyboardInput = false, dragging = false, suppressClick = false;
   let drag: {id: number; x: number; scroll: number} | undefined;
-  const hide = () => { cancelUiMotion(tooltip); tooltip.hidden = true; index = -1; };
+  let visibilityVersion = 0;
+  const hide = (immediate = false) => {
+    const version = ++visibilityVersion;
+    index = -1;
+    if (immediate || tooltip.hidden) { cancelUiMotion(tooltip); tooltip.hidden = true; return; }
+    void dismiss(tooltip).then(current => {
+      if (current && version === visibilityVersion) tooltip.hidden = true;
+    });
+  };
   const show = (next: number, pointerY?: number) => {
     if (!chart || !rows[next]) { hide(); return; }
-    const entering = tooltip.hidden;
+    const entering = tooltip.hidden || index < 0;
+    visibilityVersion++;
     if (next !== index || tooltip.hidden) {
       const data = metricTooltipData(key, rows[next]); heading.textContent = data.title;
       values.replaceChildren(...data.values.map(value => {
@@ -74,12 +83,12 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
   }, listenerOptions);
   scroller.addEventListener('scroll', () => {
     if (keyboardInput && index >= 0) show(index);
-    else hide();
+    else hide(true);
     chart?.draw();
   }, listenerOptions);
   scroller.addEventListener('pointerdown', event => {
     pointerInput = true; keyboardInput = false; dragging = false; suppressClick = false;
-    hide(); chart?.draw();
+    hide(true); chart?.draw();
     if (event.pointerType === 'mouse' && event.button === 0 && scroller.scrollWidth > scroller.clientWidth) {
       drag = {id:event.pointerId, x:event.clientX, scroll:scroller.scrollLeft};
     }
@@ -87,7 +96,7 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
   scroller.addEventListener('pointermove', event => {
     if (!drag || drag.id !== event.pointerId) return;
     if (Math.abs(event.clientX - drag.x) > 6) {
-      dragging = true; suppressClick = true; hide();
+      dragging = true; suppressClick = true; hide(true);
       scroller.setPointerCapture(event.pointerId);
       scroller.classList.add('is-dragging');
       scroller.scrollLeft = drag.scroll + drag.x - event.clientX;
@@ -110,7 +119,7 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
       if (!args.replay && args.event.type === 'mousemove' && !drag) suppressClick = false;
       if (args.replay || dragging || suppressClick) return false;
     },
-    resize() { hide(); },
+    resize() { hide(true); },
     afterEvent(instance, args) {
       if (args.replay) return;
       keyboardInput = false;
@@ -125,7 +134,7 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
       ctx.save(); ctx.strokeStyle = String(instance.data.datasets[0].borderColor); ctx.globalAlpha = .45;
       ctx.lineWidth = 1; ctx.setLineDash([3,4]); ctx.beginPath(); ctx.moveTo(x,chartArea.top); ctx.lineTo(x,chartArea.bottom); ctx.stroke(); ctx.restore();
     },
-    afterDestroy() { hide(); lifetime.abort(); tooltip.remove(); canvas.setAttribute('aria-describedby',description); chart = undefined; },
+    afterDestroy() { hide(true); lifetime.abort(); tooltip.remove(); canvas.setAttribute('aria-describedby',description); chart = undefined; },
   };
-  return {plugin, dismiss() { hide(); chart?.setActiveElements([]); chart?.draw(); }, update(next: MetricGroup[], active: ChartMetric) { rows = next; metric = active; hide(); }};
+  return {plugin, dismiss() { hide(true); chart?.setActiveElements([]); chart?.draw(); }, update(next: MetricGroup[], active: ChartMetric) { rows = next; metric = active; hide(true); }};
 }

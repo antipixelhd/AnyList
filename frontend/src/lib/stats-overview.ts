@@ -42,8 +42,8 @@ function mount(root: HTMLElement) {
   const staff = mountStaff(root);
   let section = root.dataset.section === 'genres' || root.dataset.section === 'actors' || root.dataset.section === 'studios' || root.dataset.section === 'staff' ? root.dataset.section : 'overview';
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-  const motion = (initial: boolean) => reducedMotion.matches || initial ? false as const : { duration: 900, easing: 'easeInOutCubic' as const };
-  const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 160 } } });
+  const motion = (initial: boolean) => reducedMotion.matches ? false as const : { duration: initial ? 0 : 900, easing: 'easeInOutCubic' as const };
+  const activeMotion = () => ({ active: { animation: { duration: reducedMotion.matches ? 0 : 300, easing: 'easeOutCubic' as const } } });
   const charts = new Map<string, Chart<'bar' | 'line'>>();
   const tooltips = new Map<string, ReturnType<typeof createMetricTooltip>>();
   const labelColors = new Map<string, string>();
@@ -75,7 +75,7 @@ function mount(root: HTMLElement) {
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
       const tr = document.createElement('tr');
-      [key === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label, displayNumber(row.titles), displayNumber(row.minutes / 60, 1), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
+      [row.label, displayNumber(row.titles), displayNumber(row.minutes / 60, 1), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
         const cell = document.createElement(index ? 'td' : 'th');
         if (cell instanceof HTMLTableCellElement && !index) cell.scope = 'row';
         cell.textContent = value;
@@ -117,7 +117,7 @@ function mount(root: HTMLElement) {
       existing.data.labels = plotted.map(row => row?.label || '');
       Object.assign(existing.data.datasets[0], dataset);
       existing.options = options;
-      // animation:false makes this immediate while still refreshing Chart.js's
+      // A zero-duration update is immediate while still refreshing Chart.js's
       // shared element colors (the 'none' mode can retain their old accent).
       if (initial || reducedMotion.matches) existing.stop();
       existing.update();

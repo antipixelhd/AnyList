@@ -25,6 +25,17 @@ def event(when=None, plays=1, **values):
 
 
 class StatisticsFactsTests(unittest.TestCase):
+    def test_score_bars_round_to_nearest_half_point_with_midpoints_up_and_keep_exact_aggregates(self):
+        scores=[.5,7.24,7.25,7.74,7.75,10]
+        movies=[media(i,'movie',runtime=90) for i in range(1,len(scores)+1)]
+        data=self.build([(entry(movie.id,score),movie) for movie,score in zip(movies,scores)],
+                        [(event(),movie) for movie in movies])['movie']
+        buckets={row['key']:row['titles'] for row in data['scores'] if row['titles']}
+        self.assertEqual(buckets,{'0.5':1,'7':1,'7.5':2,'8':1,'10':1})
+        self.assertEqual(sum(row['titles'] for row in data['scores']),len(scores))
+        self.assertAlmostEqual(data['totals']['mean_score'],sum(scores)/len(scores))
+        self.assertEqual(sum(row['minutes'] for row in data['scores']),len(scores)*90)
+
     def build(self, entries, events, shows=(), media_rows=(), episodes=(), links=None, show_links=None, identities=None, entities=None, show_anime=True):
         rows = list(media_rows) or list({m.id: m for _, m in [*entries, *events] if m.media_type != MediaType.episode}.values())
         facts, coverage = title_facts(entries, events, list(shows), rows, list(episodes), links or {}, show_links or {}, identities or {}, entities or {}, show_anime=show_anime)
@@ -53,7 +64,7 @@ class StatisticsFactsTests(unittest.TestCase):
         self.assertEqual(data["totals"]["planned_minutes"], 60)
         self.assertAlmostEqual(data["totals"]["mean_score"], 23 / 3)
         self.assertAlmostEqual(data["totals"]["standard_deviation"], 1 / 3)
-        self.assertEqual(data["scores"][14]["titles"], 1)  # (7, 7.5], season mean 7.333...
+        self.assertEqual(data["scores"][14]["titles"], 1)  # Nearest half-point to season mean 7.333...
         self.assertEqual(data["scores"][15]["minutes"], 300)
         self.assertEqual(data["episode_counts"][2]["titles"], 1)
         self.assertEqual(data["coverage"]["runtime_estimated_plays"], 1)

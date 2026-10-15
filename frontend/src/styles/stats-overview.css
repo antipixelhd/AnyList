@@ -36,6 +36,7 @@
 .overview-plot-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; color:var(--muted); font-size:13px; pointer-events:none; }
 .overview-chart-tooltip { position:absolute; z-index:2; pointer-events:none; width:190px; max-width:calc(100% - 16px); padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--panel); box-shadow:0 8px 28px #0003; color:var(--bright); font-size:12px; }
 .overview-chart-tooltip>strong { display:block; margin-bottom:8px; font-size:13px; }
+.overview-chart-tooltip { transition:left 180ms cubic-bezier(.2,.7,.2,1),top 180ms cubic-bezier(.2,.7,.2,1); }
 .overview-chart-tooltip dl { display:grid; gap:6px; margin:0; }
 .overview-chart-tooltip dl>div { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .overview-chart-tooltip dt { color:var(--muted); }
