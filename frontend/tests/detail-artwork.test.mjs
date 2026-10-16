@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {detailSceneArtwork, detailWorkArtwork} from '../src/lib/detail-artwork.ts';
+import {detailHeroArtwork, detailSceneArtwork, detailWorkArtwork} from '../src/lib/detail-artwork.ts';
 import {responsiveArtwork} from '../src/lib/responsive-artwork.ts';
 
 test('related posters use bounded responsive candidates with the active disk policy',()=>{
@@ -27,4 +27,15 @@ test('non-TMDB posters remain at their provider URL without fabricated resize va
   const url='https://artworks.thetvdb.com/banners/poster.jpg';
   assert.deepEqual(detailWorkArtwork(url,true,'direct'),{src:url});
   assert.equal(detailSceneArtwork(null,null),null);
+});
+
+test('detail heroes and scenes retain original resolution and direct MetaHub URLs',()=>{
+  const movie='https://images.metahub.space/background/high/tt0133093/img';
+  const tvdb='https://artworks.thetvdb.com/banners/v4/movie/1/backgrounds/scene.jpg';
+  for(const route of ['direct','proxy']){
+    assert.deepEqual(detailHeroArtwork(movie,route),{src:movie});
+    assert.equal(detailHeroArtwork('/series.jpg',route).src,route==='direct'?'https://image.tmdb.org/t/p/original/series.jpg':'/api/proxy/media/image/original/series.jpg');
+    assert.equal(detailSceneArtwork('/scene.jpg',null,route).src.includes('/original/scene.jpg'),true);
+    assert.equal(detailSceneArtwork(tvdb,null,route).src.endsWith('/banners/v4/movie/1/backgrounds/scene.jpg'),true);
+  }
 });

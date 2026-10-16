@@ -11,6 +11,16 @@ from core import tmdb
 
 
 class ImageProjectionTests(unittest.TestCase):
+    def test_series_hero_uses_highest_rated_explicitly_textless_landscape(self):
+        from core.media_images import best_tmdb_backdrop
+        raw={'backdrops':[{'file_path':'/branded.jpg','iso_639_1':'en','vote_average':10},
+                          {'file_path':'/unknown.jpg','vote_average':10},
+                          {'file_path':'/portrait.jpg','iso_639_1':None,'aspect_ratio':.6,'vote_average':10},
+                          {'file_path':'/popular.jpg','iso_639_1':None,'vote_average':8,'vote_count':1000},
+                          {'file_path':'/rated.jpg','iso_639_1':None,'vote_average':9,'vote_count':5}]}
+        self.assertEqual(best_tmdb_backdrop(raw),'https://image.tmdb.org/t/p/original/rated.jpg')
+        self.assertIsNone(best_tmdb_backdrop({'backdrops':raw['backdrops'][:3]}))
+
     def test_tvdb_taxonomy_keeps_title_posters_and_explicit_textless_backgrounds(self):
         from core.screen_artwork import artwork_candidates
         types=[{'id':10,'name':'Poster','recordType':'movie','width':680,'height':1000},

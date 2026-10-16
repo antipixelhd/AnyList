@@ -10,7 +10,7 @@ import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
-import {detailSceneArtwork} from './detail-artwork';
+import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
@@ -29,12 +29,15 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
   const name=root.querySelector('.lab-heading h1')!.textContent!;
-  const galleries:Galleries={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[])};
+  const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
+  const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
   let pending=!!info.imagesAvailable&&info.imageStatus?.state!=='ready';
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
   const announcement=lightbox.querySelector<HTMLElement>('[data-image-viewer-announcement]');
-  let active:keyof Galleries='artwork',current=0;
+  let active:keyof typeof galleries='artwork',current=0;
+  const viewerGroup=()=>active==='posters'?'posters':'artwork';
+  const viewerPending=()=>pending&&active!=='hero';
   const loadViewerImage=createDetailViewerImageLoader(signal);
   const preparedImages=new WeakMap<HTMLImageElement,string>();
   const watchThumbnail=createGalleryThumbnailWatcher(signal,thumbnail=>{
@@ -97,7 +100,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;
-    const rows=galleries[active],count=pending?10:rows.length;
+    const rows=galleries[active],count=viewerPending()?10:rows.length;
     const existing=new Map([...slots.querySelectorAll<HTMLButtonElement>('button')].map(button=>[button.dataset.slotKey,button]));
     const buttons=Array.from({length:count},(_,index)=>{
       const key=`${active}:${rows[index]?imageKey(rows[index]):`pending:${index}`}`;
@@ -123,21 +126,21 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   };
   const showImage=(index:number,animate=false,scroll=true)=>{
     const rows=galleries[active];
-    const count=pending?10:rows.length;
+    const count=viewerPending()?10:rows.length;
     const previous=current;
     current=count?(index+count)%count:0;
     if(current!==previous)revealPreviews();
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
-    if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${pending?'':` of ${count}`}`:'No images available';
+    if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${viewerPending()?'':` of ${count}`}`:'No images available';
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
-    fitViewer(image,group);
+    fitViewer(image,viewerGroup());
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=count<2;});
     paintSlots();
     if(!rows[current]){
       image.style.visibility='hidden';skeleton.hidden=false;
-      skeleton.classList.toggle('detail-image-skeleton',pending);
-      skeleton.textContent=pending?'':'No images available.';
+      skeleton.classList.toggle('detail-image-skeleton',viewerPending());
+      skeleton.textContent=viewerPending()?'':'No images available.';
       return;
     }
     prepareImage(current);
@@ -146,7 +149,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(!lightbox.open||signal.aborted)return;
     const group=active,original=galleries[group][index];
     if(!original)return;
-    const url=responsiveArtwork(original,{size:group==='posters'?'w780':'w1280',route:'auto'})?.src;
+    const url=responsiveArtwork(original,{size:group==='posters'?'w780':'original',route:'auto'})?.src;
     const slide=carousel.slide(index);
     if(!url||!slide||preparedImages.get(slide.image)===url)return;
     const {image,skeleton}=slide;
@@ -166,8 +169,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const cached=image.complete&&image.naturalWidth>0;
     void ready.then(loaded=>{
       if(!loaded||signal.aborted)return;
-      if(group==='artwork'&&image.naturalWidth<=image.naturalHeight){discard();return;}
-      if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,group);
+      if(group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
+      if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,viewerGroup());
       if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
     }).catch(()=>{
       if(signal.aborted)return;
@@ -190,6 +193,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
   const paintHero=(url:string|undefined)=>{
     if(!url)return;
+    galleries.hero=[url];
     const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
     const button=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
     if(button){button.dataset.detailImage=url;button.hidden=false;}
@@ -200,7 +204,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     hero.onload=()=>{if(signal.aborted)return;hero.hidden=false;reveal(hero);};
     hero.onerror=()=>{hero.hidden=true;};
     if(sameImage)return;
-    const artwork=responsiveArtwork(url,{size:'w1280',sizes:'100vw',route:'auto'});
+    const artwork=detailHeroArtwork(url);
     if(artwork?.srcset)hero.srcset=artwork.srcset;else hero.removeAttribute('srcset');
     hero.sizes=artwork?.sizes||'100vw';hero.src=artwork?.src||url;
   };
@@ -218,11 +222,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
       const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
-      if(galleries.artwork.length){
-        const currentKey=imageKey(data.backdrop||heroButton?.dataset.detailImage||'');
-        const preferred=galleries.artwork.find(url=>imageKey(url)===currentKey)||galleries.artwork[0];
-        paintHero(preferred);
-      }
+      paintHero(data.backdrop);
       editorStore.updateArtwork(info.id,{poster:primary,backdrop:heroButton?.dataset.detailImage});
       const preview=root.querySelector<HTMLButtonElement>('.lab-art-image');
       if(preview){
@@ -247,7 +247,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
           let button=existing.get(url?imageKey(url):`pending:${index}`);
           if(!button){
             button=document.createElement('button');button.type='button';button.dataset.detailImage=url||'';
-            if(url){const thumbnail=document.createElement('img');thumbnail.dataset.gallerySrc=responsiveArtwork(url,{size:'w500',route:'auto'})?.src||url;thumbnail.alt=`${name} artwork`;button.append(thumbnail);}
+            if(url){const thumbnail=document.createElement('img');thumbnail.dataset.gallerySrc=responsiveArtwork(url,{size:'original',route:'auto'})?.src||url;thumbnail.alt=`${name} artwork`;button.append(thumbnail);}
             else button.className='detail-image-skeleton';
           }
           button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);loadThumbnail(button);return button;
@@ -257,7 +257,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       const preferred=data.image_replacements?.[selected]||selected;
       if(lightbox.open){
         const index=preferred?galleries[active].findIndex(url=>imageKey(url)===imageKey(preferred)):-1;
-        showImage(index>=0?index:Math.min(current,Math.max(0,(pending?10:galleries[active].length)-1)));
+        showImage(index>=0?index:Math.min(current,Math.max(0,(viewerPending()?10:galleries[active].length)-1)));
       }
       return data.image_status;
   };
@@ -274,22 +274,22 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-detail-image]');
     if(!button)return;
-    active=button.dataset.detailGallery==='posters'?'posters':'artwork';
-    lightbox.dataset.gallery=active;
+    active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'?'posters':'artwork';
+    if(active==='hero')galleries.hero=[button.dataset.detailImage!];
+    lightbox.dataset.gallery=viewerGroup();
     const url=button.dataset.detailImage!;
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
     prepareViewer();
-    fitViewer(undefined,active);
-    showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));void loadImages();
+    fitViewer(undefined,viewerGroup());
+    showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));if(active!=='hero')void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
   if(info.heroAvailable){
     const background=detailBackground<{backdrop?:string;background_status?:DetailLoadState}>(
       `/api/proxy/tracking/title/${info.id}/background`,signal,data=>{
-        if(data.backdrop)applyImages({...galleries,artwork:uniqueDetailImages([...galleries.artwork,data.backdrop]),
-          backdrop:data.backdrop,image_status:{state:pending?'pending':'ready'}});
+        if(data.backdrop){paintHero(data.backdrop);editorStore.updateArtwork(info.id,{backdrop:data.backdrop});}
         return data.background_status;
       },()=>{});
     void background.load();

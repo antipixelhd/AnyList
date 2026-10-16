@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 import test_statistics_pg as fixture
 from dependencies import get_current_user
 from core.media_details import work_details
-from core.media_images import IMAGE_POLICY_VERSION
+from core.media_images import IMAGE_POLICY_VERSION, BACKGROUND_POLICY_VERSION
 from models import Follow, Media, Show, TrackedEntry, TrackingActivity, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import (
@@ -62,6 +62,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             media = await db.get(Media, self.media_id)
             media.tmdb_id = 99
+            media.imdb_id = 'tt0133093'
             media.tmdb_data = {'protected_fixture': 'keep'}
             await db.commit()
         raw = {'id':99, 'posters':[{'file_path':'https://artworks.thetvdb.com/banners/poster.jpg',
@@ -87,7 +88,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         projected = (await self.client.get(f'/tracking/title/{self.media_id}')).json()
         self.assertEqual(projected['artwork'], data['artwork'])
         self.assertEqual(projected['poster'], data['poster'])
-        self.assertEqual(projected['backdrop'], data['artwork'][0])
+        self.assertEqual(projected['backdrop'], 'https://images.metahub.space/background/high/tt0133093/img')
+        self.assertNotIn(projected['backdrop'],data['artwork'])
 
     async def test_image_only_reads_skip_credits_and_people_reads_skip_unrelated_graphs(self):
         await self.login()
@@ -108,7 +110,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             media=await db.get(Media,self.media_id)
             media.poster_path='/old.jpg';media.backdrop_path='/old-background.jpg'
-            media.tmdb_data={'_anylist_images':{'version':IMAGE_POLICY_VERSION,
+            media.media_type=MediaType.series
+            media.tmdb_data={'_anylist_backdrop':{'version':BACKGROUND_POLICY_VERSION,'image':'https://image.tmdb.org/t/p/original/background.jpg'},'_anylist_images':{'version':IMAGE_POLICY_VERSION,
                 'primary_poster':'https://image.tmdb.org/t/p/original/primary.jpg',
                 'primary_backdrop':'https://image.tmdb.org/t/p/original/background.jpg',
                 'posters':['https://image.tmdb.org/t/p/original/extra.jpg'],
@@ -150,20 +153,20 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
     async def test_cold_background_load_skips_gallery_analysis_and_is_cached_for_first_render(self):
         await self.login()
         async with self.Session() as db:
-            media=await db.get(Media,self.media_id);media.tmdb_id=99;media.backdrop_path='/primary.jpg'
+            media=await db.get(Media,self.media_id);media.media_type=MediaType.series;media.tmdb_id=99;media.backdrop_path='/primary.jpg'
             media.tmdb_data={'protected_fixture':'keep'};await db.commit()
-        raw={'id':99,'posters':[],'backdrops':[
-            {'file_path':'https://artworks.thetvdb.com/banners/text.jpg','iso_639_1':'en','aspect_ratio':1.778},
-            {'file_path':'https://artworks.thetvdb.com/banners/alternative.jpg','iso_639_1':None,'aspect_ratio':1.778,'vote_count':50},
-            {'file_path':'https://artworks.thetvdb.com/banners/primary.jpg','iso_639_1':None,'aspect_ratio':1.778}]}
+        raw={'id':99,'backdrops':[
+            {'file_path':'/text.jpg','iso_639_1':'en','aspect_ratio':1.778,'vote_average':10},
+            {'file_path':'/alternative.jpg','iso_639_1':None,'aspect_ratio':1.778,'vote_average':9,'vote_count':50},
+            {'file_path':'/primary.jpg','iso_639_1':None,'aspect_ratio':1.778,'vote_average':8,'vote_count':500}]}
         with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
               patch('core.settings_store.get_user_tvdb_key',AsyncMock(return_value='fixture')),
-              patch('core.screen_artwork.title_artwork',AsyncMock(return_value=raw)) as fetch,
-              patch('core.tmdb.get_movie_light',AsyncMock()) as details,
+              patch('core.tmdb.get_title_images',AsyncMock(return_value=raw)) as fetch,
+              patch('core.screen_artwork.title_artwork',AsyncMock()) as details,
               patch('core.media_image_analysis.inspect_image',AsyncMock()) as inspect):
             response=await self.client.get(f'/tracking/title/{self.media_id}/background')
             self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(response.json()['backdrop'],'https://artworks.thetvdb.com/banners/alternative.jpg')
+            self.assertEqual(response.json()['backdrop'],'https://image.tmdb.org/t/p/original/alternative.jpg')
             self.assertEqual(response.json()['background_status']['state'],'ready')
             await self.client.get(f'/tracking/title/{self.media_id}/background')
             projected=(await self.client.get(f'/tracking/title/{self.media_id}')).json()
@@ -174,6 +177,36 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media=await db.get(Media,self.media_id)
             self.assertEqual(media.tmdb_data['protected_fixture'],'keep')
             self.assertNotIn('_anylist_images',media.tmdb_data)
+
+    async def test_movie_background_uses_direct_metahub_without_gallery_or_keys(self):
+        await self.login()
+        async with self.Session() as db:
+            media=await db.get(Media,self.media_id)
+            media.imdb_id='tt0133093'
+            media.tmdb_data={'_anylist_images':{'version':IMAGE_POLICY_VERSION,
+                'primary_backdrop':'https://artworks.thetvdb.com/banners/old.jpg',
+                'artwork':['https://artworks.thetvdb.com/banners/old.jpg']}}
+            await db.commit()
+        with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value=None)) as key,
+              patch('core.tmdb.get_external_ids',AsyncMock(return_value={'imdb_id':'tt0133093'})) as ids,
+              patch('core.screen_artwork.title_artwork',AsyncMock()) as gallery):
+            hero=(await self.client.get(f'/tracking/title/{self.media_id}/background')).json()
+            self.assertEqual(hero['backdrop'],'https://images.metahub.space/background/high/tt0133093/img')
+            self.assertEqual(hero['background_status']['state'],'ready')
+            projected=(await self.client.get(f'/tracking/title/{self.media_id}')).json()
+            self.assertEqual(projected['backdrop'],hero['backdrop'])
+            self.assertEqual(projected['artwork'],['https://artworks.thetvdb.com/banners/old.jpg'])
+            ids.assert_not_awaited();gallery.assert_not_awaited()
+            async with self.Session() as db:
+                media=await db.get(Media,self.media_id)
+                media.imdb_id=None;media.tmdb_id=99
+                await db.commit()
+            key.return_value='fixture'
+            for _ in range(2):
+                bridged=(await self.client.get(f'/tracking/title/{self.media_id}/background')).json()
+                self.assertEqual(bridged['backdrop'],hero['backdrop'])
+            ids.assert_awaited_once_with(99,'movie',api_key='fixture')
+            gallery.assert_not_awaited()
 
     async def test_background_public_access_uses_the_same_gate_as_the_title(self):
         from dependencies import get_optional_user
@@ -188,10 +221,10 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
     async def test_background_failure_records_cooldown_and_retries_without_leaking_unverified_art(self):
         await self.login()
         async with self.Session() as db:
-            media=await db.get(Media,self.media_id);media.tmdb_id=99;media.tmdb_data={};await db.commit()
+            media=await db.get(Media,self.media_id);media.media_type=MediaType.series;media.tmdb_id=99;media.tmdb_data={};await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
               patch('core.settings_store.get_user_tvdb_key',AsyncMock(return_value='fixture')),
-              patch('core.screen_artwork.title_artwork',AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
+              patch('core.tmdb.get_title_images',AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
             for _ in range(2):
                 response=await self.client.get(f'/tracking/title/{self.media_id}/background')
                 self.assertEqual(response.status_code,200,response.text)
@@ -500,6 +533,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         collection = {'id':10,'name':'Fixture collection','parts':[{'id':99,'title':'Current','release_date':'2020-01-01'}, {'id':55,'title':'Earlier','release_date':'2010-01-01'}]}
         recommendations = {'results':[{'id':55,'title':'Earlier'}, {'id':79,'title':'Short movie','vote_count':500,'runtime':2},
             {'id':80,'title':'Documentary','vote_count':500,'genre_ids':[99]}, {'id':78,'title':'Low vote movie','vote_count':249},
+            {'id':81,'title':'Future movie','vote_count':0,'release_date':'2099-01-01'},
             {'id':77,'title':'Another movie','vote_count':250,'runtime':30,'poster_path':'/cover.jpg','genre_ids':[878,28,999999]},
             {'id':66,'name':'A series','media_type':'tv'}, {'id':99,'title':'Current'}, {'id':88,'title':'Adult','adult':True}]}
         async with self.Session() as db:
@@ -514,9 +548,9 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             data = response.json()
             self.assertEqual([row['title'] for row in data['relations']], ['Earlier'])
             self.assertEqual(data['relations'][0]['label'], 'Previous entry')
-            self.assertEqual([row['title'] for row in data['similar']], ['Another movie'])
-            self.assertEqual(data['similar'][0]['poster'], 'https://image.tmdb.org/t/p/w500/cover.jpg')
-            self.assertEqual(data['similar'][0]['genres'], ['Science Fiction','Action'])
+            self.assertEqual([row['title'] for row in data['similar']], ['Future movie','Another movie'])
+            self.assertEqual(data['similar'][1]['poster'], 'https://image.tmdb.org/t/p/w500/cover.jpg')
+            self.assertEqual(data['similar'][1]['genres'], ['Science Fiction','Action'])
             self.assertFalse(data['related_pending'])
             async with self.Session() as db:
                 profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
@@ -525,7 +559,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 profile.excluded_categories = []
                 await db.commit()
             unfiltered = (await self.client.get(f'/tracking/title/{self.media_id}/related')).json()
-            self.assertEqual([row['title'] for row in unfiltered['similar']], ['Short movie', 'Documentary', 'Low vote movie', 'Another movie'])
+            self.assertEqual([row['title'] for row in unfiltered['similar']], ['Short movie', 'Documentary', 'Low vote movie', 'Future movie', 'Another movie'])
             self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/related')).status_code,200)
             fetch_collection.assert_awaited_once(); fetch_recommendations.assert_awaited_once()
         async with self.Session() as db:

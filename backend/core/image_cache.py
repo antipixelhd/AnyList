@@ -237,16 +237,16 @@ async def pre_cache_all_collected(db):
     # only the small curated image fields, never whole provider documents.
     from types import SimpleNamespace
     from core.media_images import screen_backdrop, IMAGE_POLICY_VERSION
-    for poster_path, backdrop_path, gallery, backdrop in (await db.execute(
-        select(Media.poster_path, Media.backdrop_path,
+    for poster_path, backdrop_path, kind, imdb, external_ids, gallery, backdrop in (await db.execute(
+        select(Media.poster_path, Media.backdrop_path, Media.media_type, Media.imdb_id, Media.tmdb_data['external_ids'],
             Media.tmdb_data['_anylist_images'], Media.tmdb_data['_anylist_backdrop'])
         .where(Media.id.in_(select(Collection.media_id)) | Media.id.in_(select(TrackedEntry.media_id)))
         .distinct()
     )).all():
         if gallery and gallery.get('version') == IMAGE_POLICY_VERSION:
             poster_path = gallery.get('primary_poster') or poster_path
-        preferred = screen_backdrop(SimpleNamespace(tmdb_data={
-            '_anylist_images':gallery or {}, '_anylist_backdrop':backdrop or {}}))['backdrop']
+        preferred = screen_backdrop(SimpleNamespace(media_type=kind,imdb_id=imdb,tmdb_data={
+            'external_ids':external_ids or {}, '_anylist_images':gallery or {}, '_anylist_backdrop':backdrop or {}}))['backdrop']
         if poster_path: queue(poster_path, 'w342')
         if preferred or backdrop_path: queue(preferred or backdrop_path, 'w1280')
 

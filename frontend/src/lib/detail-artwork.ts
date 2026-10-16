@@ -1,5 +1,10 @@
 import { artworkIdentity, responsiveArtwork, type ArtworkRoute, type ResponsiveArtworkAttributes } from './responsive-artwork.ts';
 
+/** Detail heroes use the original provider image; compact views keep their buckets. */
+export function detailHeroArtwork(path: string | null | undefined, route: ArtworkRoute = 'auto') {
+  return responsiveArtwork(path, {size:'original',route});
+}
+
 /** Related cards use the same provider buckets and disk policy as Browse. */
 export function detailWorkArtwork(path: string | null | undefined, similar = false, route: ArtworkRoute = 'auto') {
   return responsiveArtwork(path, {
@@ -12,5 +17,5 @@ export function detailWorkArtwork(path: string | null | undefined, similar = fal
 /** When the preview shows the hero, reuse its exact responsive sources. */
 export function detailSceneArtwork(path: string | null | undefined, hero: ResponsiveArtworkAttributes | null, route: ArtworkRoute = 'auto') {
   if (path && hero && artworkIdentity(path) === artworkIdentity(hero.src)) return hero;
-  return responsiveArtwork(path, {size: 'w780', route});
+  return responsiveArtwork(path, {size: 'original', route});
 }

@@ -1540,10 +1540,10 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):raise HTTPException(404,'Title not found')
     from core.media_images import fill_screen_backdrop,screen_backdrop
     key=await settings_store.get_user_tmdb_key(db,viewer.id if viewer else -1)
-    tvdb_key=await settings_store.get_user_tvdb_key(db,viewer.id if viewer else -1)
-    await fill_screen_backdrop(db,media,key,tvdb_key)
+    await fill_screen_backdrop(db,media,key)
     data=screen_backdrop(media)
-    if not tvdb_key:data['background_status']={'state':'unavailable','error':'missing_key','retry_after':0}
+    if not key and data['background_status']['state']=='pending':data['background_status']={'state':'unavailable','error':'missing_key','retry_after':0}
+    elif not media.tmdb_id and data['background_status']['state']=='pending':data['background_status']={'state':'unavailable','error':'missing_identity','retry_after':0}
     return data
 
 

@@ -155,6 +155,7 @@ async def screen_related(db, media, details, *, min_votes=0, min_runtime=0, excl
             return None
         return {'id':locals_.get(native), 'tmdb_id':native, 'type':kind, 'title':raw.get('title') or raw.get('name') or '',
             'poster':tmdb_image(raw.get('poster_path')), 'year':str(raw.get('release_date') or raw.get('first_air_date') or '')[:4],
+            'release_date':raw.get('release_date') or raw.get('first_air_date'),
             'genres':genre_names(raw.get('genres'), raw.get('genre_ids')) or genre_names(
                 (local_rows[native].tmdb_data or {}).get('genres') if native in local_rows else None),
             'runtime':raw.get('runtime') or (local_rows[native].runtime or (local_rows[native].tmdb_data or {}).get('runtime') if native in local_rows else None),

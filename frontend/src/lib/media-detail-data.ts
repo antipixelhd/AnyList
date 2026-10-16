@@ -27,6 +27,7 @@ export type DetailMedia = EditorTitle & {
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
   image_status?: {state:string;error?:string|null;retry_after?:number};
+  background_status?: {state:string;error?:string|null;retry_after?:number};
   scores_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
@@ -61,7 +62,7 @@ export function detailBrowseHref(type: MediaKind, options: {year?: string; genre
   return `/browse?${params}`;
 }
 export function detailCreators(people: DetailPerson[]) {
-  return people.filter(person => person.kind !== 'actor' && person.roles.some(role => /director|author|creator|developer/i.test(role))).slice(0,2);
+  return people.filter(person => person.kind !== 'actor' && person.roles.some(role => /^(director|supervising director|creator|showrunner|head writer|author|developer)$/i.test(role.trim()))).slice(0,2);
 }
 export function detailWorkCaption(work: {type?: MediaKind; genres?: string[]; year?: string}, similar = false) {
   return [similar ? work.genres?.find(genre => typeof genre === 'string' && genre.trim())?.trim() : work.type ? kindLabel[work.type] : null, work.year].filter(Boolean).join(' · ');

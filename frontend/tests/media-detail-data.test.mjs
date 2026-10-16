@@ -28,7 +28,7 @@ test('header browse links preserve media type and select a full year in timeline
 
 test('header creators preserve person links and exclude cast and unrelated crew',()=>{
   const person=(id,kind,role)=>({id,kind,name:`Person ${id}`,roles:[role],url:`/staff/catalogue:${id}`});
-  const people=[person(1,'actor','Actor'),person(2,'staff','Director'),person(3,'staff','Writer'),person(4,'staff','Creator'),person(5,'staff','Director')];
+  const people=[person(8,'staff','Director of Photography'),person(9,'staff','Casting Director'),person(10,'staff','Art Director'),person(1,'actor','Actor'),person(2,'staff','Director'),person(3,'staff','Writer'),person(4,'staff','Creator'),person(5,'staff','Director')];
   const creators=api.detailCreators(people);
   assert.deepEqual(Array.from(creators,person=>person.id),[2,4]);
   assert.equal(creators[0].url,'/staff/catalogue:2');
