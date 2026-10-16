@@ -118,7 +118,7 @@ async def work_details(db, work, *, extras=True):
         if row['kind'] == 'actor':
             row['character_images'] = list(dict.fromkeys(local_images.get(key, []) + alternative_images.get(key, [])))[:4]
             row['character_image'] = next(iter(row['character_images']), None)
-        elif not actor and work.kind == 'series' and row.get('episode_count'):
+        elif row['kind'] == 'staff' and work.kind == 'series' and row.get('episode_count'):
             total = positive((work.attributes or {}).get('episode_count'))
             if total:
                 row['episode_total'] = total

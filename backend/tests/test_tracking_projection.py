@@ -31,10 +31,10 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertNotIn('revenue', series)
 
     def test_primary_artwork_matches_details_without_mutating_metadata(self):
-        from core.media_images import IMAGE_POLICY_VERSION, screen_images
-        metadata={'_anylist_images':{'version':IMAGE_POLICY_VERSION,'primary_poster':'https://image.tmdb.org/t/p/original/new.jpg',
-            'primary_backdrop':'https://image.tmdb.org/t/p/original/background.jpg',
-            'artwork':['https://image.tmdb.org/t/p/original/background.jpg']}}
+        from core.media_images import IMAGE_POLICY_VERSION, BACKGROUND_POLICY_VERSION, screen_images
+        metadata={'_anylist_backdrop':{'version':BACKGROUND_POLICY_VERSION,'image':'https://image.tmdb.org/t/p/original/background.jpg'},
+            '_anylist_images':{'version':IMAGE_POLICY_VERSION,'primary_poster':'https://image.tmdb.org/t/p/original/new.jpg',
+            'artwork':['https://artworks.thetvdb.com/banners/background.jpg']}}
         media=_media(poster_path='/old.jpg',backdrop_path='/old-background.jpg',tmdb_data=metadata)
         before=copy.deepcopy(metadata)
         projected=tracking_projection.media_data(media)

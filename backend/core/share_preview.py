@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from core.config import settings
 from core.share_cards import render_card
+from core.credit_roles import creator_role
 
 _images = OrderedDict()
 _pending = {}
@@ -59,7 +60,8 @@ def media_card(data):
         for field, label in [('season_count', 'seasons'), ('episode_count', 'episodes')]:
             if data.get(field):
                 metadata.append(f'{data[field]} {label}')
-    creators = [p['name'] for p in data.get('people', []) if any(re.search(r'director|author|creator|developer', role, re.I) for role in p.get('roles', []))]
+    creators = [p['name'] for p in data.get('people', []) if p.get('kind') != 'actor'
+                and any(creator_role(role) for role in p.get('roles', []))]
     if not creators:
         creators = [p['name'] for p in data.get('creators', [])]
     score = data.get('imdb_score')

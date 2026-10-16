@@ -43,6 +43,13 @@ class ShareProjectionTests(unittest.TestCase):
         self.assertNotIn('profile_color', card)
         self.assertEqual(preview.profile_card(user, None)['stats'], [])
 
+    def test_media_creators_exclude_specialist_director_jobs(self):
+        people=[{'name':role,'kind':'staff','roles':[role]} for role in
+                ('Director of Photography','Casting Director','Art Director','Director','Creator','Author','Developer','Showrunner','Head Writer')]
+        people.append({'name':'Cast member','kind':'actor','roles':['Director']})
+        card=preview.media_card({'type':'movie','title':'Fixture','people':people})
+        self.assertEqual(card['subtitle'],'Director, Creator, Author, Developer, Showrunner, Head Writer')
+
     def test_long_titles_and_missing_or_bad_images_still_render_small_jpeg(self):
         for kind in ['media', 'profile', 'actor', 'studio']:
             result = render_card({'kind':kind, 'title':'Very long title <>& ' * 30, 'eyebrow':'Metadata ' * 30,

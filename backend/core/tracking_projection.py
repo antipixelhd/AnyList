@@ -91,7 +91,7 @@ def media_data(media):
     }
 
 
-def entry_data(entry, media, owner=False):
+def entry_data(entry, media, owner=False, *, favorite=None):
     result = {
         **media_data(media),
         "status": entry.status,
@@ -101,7 +101,7 @@ def entry_data(entry, media, owner=False):
         ),
         "season_scores": entry.season_scores,
         "progress": entry.progress,
-        "favorite": entry.favorite,
+        "favorite": entry.favorite if favorite is None else favorite,
         "start_date": entry.start_date,
         "finish_date": entry.finish_date,
         "rewatch_count": entry.rewatch_count,

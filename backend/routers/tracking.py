@@ -942,17 +942,21 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 @router.get("/profile/{username}/{media_type}")
 async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     user, owner = await profile_access(db, username, viewer)
-    query=select(TrackedEntry,Media).join(Media,Media.id==TrackedEntry.media_id).where(TrackedEntry.user_id==user.id)
+    query=select(TrackedEntry,Media,MediaFavorite.media_id).join(Media,Media.id==TrackedEntry.media_id).outerjoin(
+        MediaFavorite,(MediaFavorite.user_id==TrackedEntry.user_id)&(MediaFavorite.media_id==TrackedEntry.media_id)
+    ).where(TrackedEntry.user_id==user.id)
     if media_type=='all':query=query.where(Media.media_type.in_([MediaType.movie,MediaType.series]))
     else:query=query.where(Media.media_type==MediaType(media_type))
-    rows=(await db.execute(query.order_by(Media.title))).all()
+    loaded=(await db.execute(query.order_by(Media.title))).all()
+    favorite_ids={identifier for _,_,identifier in loaded if identifier is not None}
+    rows=[(entry,media) for entry,media,_ in loaded]
     if not await anime_is_visible(db):rows=[row for row in rows if not tracking_projection.is_anime(row[1])]
     following = False
     follows_you = False
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
         follows_you = (await db.execute(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))).scalar_one_or_none() is not None
-    entries = [tracking_projection.entry_data(e, m, owner) for e, m in rows]
+    entries = [tracking_projection.entry_data(e, m, owner, favorite=bool(e.favorite or m.id in favorite_ids)) for e, m in rows]
     movie_ids = [m.id for _, m in rows if m.media_type == MediaType.movie]
     watched_movies = set((await db.execute(select(WatchEvent.media_id).where(
         WatchEvent.user_id == user.id, WatchEvent.media_id.in_(movie_ids),
@@ -1473,7 +1477,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     from core.external_scores import effective_mdblist_key
     details['scores_pending'] = bool(viewer and await effective_mdblist_key(db, viewer.id))
     favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
-    return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True) if entry else None,
+    return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None,
             "seasons": seasons, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 

@@ -1934,6 +1934,28 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unfavorite.json()['status'], 'paused')
         self.assertFalse(unfavorite.json()['favorite'])
 
+    async def test_independent_favorite_survives_rating_created_entry_in_all_projections(self):
+        self.assertEqual((await self.save(self.movie,favorite=True)).status_code,200)
+        rated=await self.client.post('/ratings',json={'media_id':self.movie.id,'media_type':'movie','rating':8})
+        self.assertEqual(rated.status_code,200,rated.text)
+        entry=await self.db.scalar(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))
+        self.assertFalse(entry.favorite)
+        for viewer in (self.owner,self.friend):
+            self.viewer=viewer
+            for kind in ('movie','all'):
+                response=await self.client.get(f'/tracking/profile/{self.owner.username}/{kind}')
+                self.assertEqual(response.status_code,200,response.text)
+                listed=next(row for row in response.json()['entries'] if row['id']==self.movie.id)
+                self.assertTrue(listed['favorite'])
+        self.viewer=self.owner
+        details=(await self.client.get(f'/tracking/title/{self.movie.id}')).json()
+        self.assertTrue(details['favorite']);self.assertTrue(details['entry']['favorite'])
+        self.assertTrue((await self.save(self.movie,notes='Local edit')).json()['favorite'])
+        self.assertFalse((await self.save(self.movie,favorite=False,notes='Unfavorite')).json()['favorite'])
+        listed=(await self.client.get(f'/tracking/profile/{self.owner.username}/movie')).json()['entries']
+        self.assertFalse(next(row for row in listed if row['id']==self.movie.id)['favorite'])
+
     async def test_favorites_preserve_every_existing_status_and_tracking_history(self):
         entry = TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='planning',
             progress=1, manual_score=8, rating_mode='manual', season_scores={},

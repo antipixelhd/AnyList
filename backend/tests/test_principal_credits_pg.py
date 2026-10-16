@@ -74,17 +74,22 @@ class PrincipalCreditDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_selected_tv_producers_expose_role_counts_without_combining_jobs(self):
         raw={'id':99,'name':'Show','number_of_episodes':60,'created_by':[],
-             'aggregate_credits':{'cast':[],'crew':[{'id':80,'name':'Producer','total_episode_count':60,
+             'aggregate_credits':{'cast':[{'id':81,'name':'Actor','order':0,'roles':[{'credit_id':'cast','character':'Lead','episode_count':60}]}],'crew':[{'id':80,'name':'Producer','total_episode_count':60,
                  'jobs':[{'job':'Executive Producer','credit_id':'ep','episode_count':12},
                          {'job':'Producer','credit_id':'p','episode_count':8},
                          {'job':'Director','credit_id':'d','episode_count':60}]}]}}
         async with self.Session() as db:
             work=await catalogue.ingest_document(db,normalize_tmdb(raw,'series'),'tmdb')
             await db.commit()
-            person=(await work_details(db,work,extras=False))['people'][0]
-            self.assertEqual(person['producer_episode_count'],12)
-            self.assertEqual(person['episode_count'],60)
-            self.assertEqual(person['episode_total'],60)
+            from core.principal_credits import select_credits
+            for actor_last in (False,True):
+                with patch('core.media_details.select_credits',side_effect=lambda rows,kind:
+                           sorted(select_credits(rows,kind),key=lambda pair: (pair[0].role=='actor')==actor_last)):
+                    people=(await work_details(db,work,extras=False))['people']
+                person=next(row for row in people if row['kind']=='staff')
+                self.assertEqual(person['producer_episode_count'],12)
+                self.assertEqual(person['episode_count'],60)
+                self.assertEqual(person['episode_total'],60)
 
     async def test_verified_studio_bridge_preserves_history_and_excludes_historical_namesakes(self):
         from core.person_identities import reconcile_company_identities
