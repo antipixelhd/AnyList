@@ -114,6 +114,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   });
 </script>}
 <script>
+  import {pageScrollPosition} from '../lib/page-scroll-position';
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
@@ -122,7 +123,8 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   appbarListeners = new AbortController();
   const appbar = document.querySelector<HTMLElement>('[data-appbar]');
   if (appbar) {
-    let previousY = Math.max(0, window.scrollY);
+    const pageY=()=>pageScrollPosition(window.scrollY,document.body.style);
+    let previousY = pageY();
     let scheduled = false;
     let keyboardFocus = false;
     let wheelDown = false;
@@ -234,7 +236,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     syncTopFade(previousY);
     if (previousY <= topThreshold()) reveal();
     const update = () => {
-      const currentY = Math.max(0, window.scrollY);
+      const currentY = pageY();
       const delta = currentY - previousY;
       const ownsFocus = keyboardFocus && appbar.contains(document.activeElement);
       const isMobile = mobile();
@@ -258,11 +260,11 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     }, { passive: true, signal: appbarListeners.signal });
     appbar.addEventListener('focusin', reveal);
     window.addEventListener('pageshow', () => {
-      previousY = Math.max(0, window.scrollY);
+      previousY = pageY();
       syncTopFade(previousY);
       if (previousY <= topThreshold() || !document.body.hasAttribute('data-list-landing')) reveal();
     }, { signal: appbarListeners.signal });
-    window.addEventListener('resize', () => syncTopFade(Math.max(0, window.scrollY)), { passive: true, signal: appbarListeners.signal });
+    window.addEventListener('resize', () => syncTopFade(pageY()), { passive: true, signal: appbarListeners.signal });
   }
   document.addEventListener('anylist:combine-lists-changed', rawEvent => {
     const combined = (rawEvent as CustomEvent<{combineLists: boolean}>).detail.combineLists;

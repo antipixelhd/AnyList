@@ -207,6 +207,3 @@
 .tracker[data-list-landing] .list-shell {
   min-height:calc(100dvh - 50px)
 }
-.tracker[data-list-landing]:not([data-list-ready]) #content {
-  visibility:hidden
-}

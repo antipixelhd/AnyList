@@ -1,4 +1,5 @@
 ---
+import LocalDateTime from '../../components/LocalDateTime.astro';
 import TrackerSettings from '../../layouts/TrackerSettings.astro';
 import { api } from '../../lib/api';
 import { healthActions, healthSummary, healthJobMessage, isHealthJobActive } from '../../lib/data-health';
@@ -14,7 +15,7 @@ const summary = healthSummary(data?.checks || []);
 <TrackerSettings title="Data health">
   <div id="data-health" data-initial={JSON.stringify(data)}>
     <div class="health-toolbar">
-      <p id="health-time">{data ? `Checked ${new Date(data.checked_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Health check unavailable'}</p>
+      <p id="health-time">{data ? <>Checked <LocalDateTime value={data.checked_at} style="time"/></> : 'Health check unavailable'}</p>
       <button id="health-recheck" type="button" class="health-button">Recheck</button>
     </div>
     <div class="health-summary">

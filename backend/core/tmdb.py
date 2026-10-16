@@ -128,10 +128,13 @@ async def _get(
             async with httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT)) as client:
                 r = await client.get(url, headers=headers or {}, params=params)
                 if r.status_code == 429:
-                    wait = int(r.headers.get("Retry-After", 2 ** (attempt + 1)))
+                    from core.catalogue_providers import retry_after_seconds
+                    wait = retry_after_seconds(r.headers.get("Retry-After", ''), 2 ** (attempt + 1))
                     last_exc = httpx.HTTPStatusError(
                         "429 Too Many Requests", request=r.request, response=r
                     )
+                    if wait > 5:
+                        raise last_exc
                     await asyncio.sleep(wait)
                     continue
                 r.raise_for_status()
@@ -458,9 +461,12 @@ async def discover_movies(
     watch_provider_id: int | None = None,
     watch_region: str = "US",
     with_original_language: str | None = None,
-    with_companies: int | None = None,
+    with_companies: int | str | None = None,
+    released_before: str | None = None,
     api_key: str = None,
     language: str | None = None,
+    excluded_genre_ids: list[int] | tuple[int, ...] = (),
+    minimum_runtime: int = 0,
 ) -> dict:
     params: dict = {
         "page": page,
@@ -468,6 +474,13 @@ async def discover_movies(
         "include_adult": "false",
         "vote_count.gte": vote_count_min if vote_count_min is not None else 50,
     }
+    if excluded_genre_ids:
+        from core.browse import MOVIE_GENRES
+        allowed = MOVIE_GENRES
+        excluded = sorted(set(excluded_genre_ids) & allowed)
+        if excluded: params["without_genres"] = ",".join(map(str, excluded))
+    if minimum_runtime:
+        params["with_runtime.gte"] = minimum_runtime
     if genre_ids:
         params["with_genres"] = "|".join(str(g) for g in genre_ids)
     elif genre_id:
@@ -485,6 +498,8 @@ async def discover_movies(
         params["with_original_language"] = with_original_language
     if with_companies is not None:
         params["with_companies"] = with_companies
+    if released_before:
+        params['primary_release_date.lte'] = released_before
     if language:
         params["language"] = language
     return await _get(f"{TMDB_BASE}/discover/movie", headers=get_headers(api_key), params=params)
@@ -504,9 +519,12 @@ async def discover_shows(
     watch_region: str = "US",
     with_original_language: str | None = None,
     with_networks: int | None = None,
-    with_companies: int | None = None,
+    with_companies: int | str | None = None,
+    released_before: str | None = None,
     api_key: str = None,
     language: str | None = None,
+    excluded_genre_ids: list[int] | tuple[int, ...] = (),
+    minimum_runtime: int = 0,
 ) -> dict:
     params: dict = {
         "page": page,
@@ -514,6 +532,11 @@ async def discover_shows(
         "include_adult": "false",
         "vote_count.gte": vote_count_min if vote_count_min is not None else 50,
     }
+    if excluded_genre_ids:
+        from core.browse import TV_GENRES
+        allowed = TV_GENRES
+        excluded = sorted(set(excluded_genre_ids) & allowed)
+        if excluded: params["without_genres"] = ",".join(map(str, excluded))
     if genre_ids:
         params["with_genres"] = "|".join(str(g) for g in genre_ids)
     elif genre_id:
@@ -535,6 +558,8 @@ async def discover_shows(
         params["with_networks"] = with_networks
     if with_companies is not None:
         params["with_companies"] = with_companies
+    if released_before:
+        params['first_air_date.lte'] = released_before
     if language:
         params["language"] = language
     return await _get(f"{TMDB_BASE}/discover/tv", headers=get_headers(api_key), params=params)
@@ -557,6 +582,18 @@ async def get_company(company_id: int, api_key: str = None) -> dict:
 async def get_company_images(company_id: int, api_key: str = None) -> dict:
     """Company logo variants with dimensions; cached separately from details."""
     return await _get(f"{TMDB_BASE}/company/{company_id}/images", headers=get_headers(api_key))
+
+
+async def get_company_aliases(company_id: int, api_key: str = None) -> dict:
+    return await _get(f"{TMDB_BASE}/company/{company_id}/alternative_names", headers=get_headers(api_key))
+
+
+async def get_title_images(tmdb_id: int, kind: str, api_key: str = None) -> dict:
+    if kind not in ('movie', 'series'):
+        raise ValueError('Unsupported screen media kind')
+    endpoint = 'movie' if kind == 'movie' else 'tv'
+    return await _get(f"{TMDB_BASE}/{endpoint}/{tmdb_id}/images", headers=get_headers(api_key),
+                      params={'include_image_language': 'en,null'})
 
 
 async def get_person_profile(person_id: int, api_key: str = None) -> dict:

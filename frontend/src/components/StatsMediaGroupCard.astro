@@ -15,7 +15,7 @@ const { group: genre, rank, href, prefix } = Astro.props;
   <div class="stats-genre-posters">
     <div class="stats-genre-track" data-genre-track tabindex="0" role="group" aria-label={`Highest-rated ${genre.label} titles`}>
       {genre.top_titles.map(title => {
-        const artwork = responsiveArtwork(title.poster, { size: 'w185', sizes: '(max-width:650px) 20vw, 90px', route: 'direct' });
+        const artwork = responsiveArtwork(title.poster, { size: 'w185', sizes: '(max-width:650px) 20vw, 90px', route:Astro.locals.imageCacheEnabled?'proxy':'direct' });
         return <a class="stats-genre-poster" href={title.href} aria-label={title.title} draggable="false">
           {artwork ? <img {...artwork} alt="" loading="lazy" draggable="false" /> : <span class="stats-genre-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</span>}
           <span class="stats-genre-tooltip" aria-hidden="true">{title.title}</span>

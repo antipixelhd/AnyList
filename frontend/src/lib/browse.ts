@@ -1,4 +1,5 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
+import { formatDate } from './date-time';
 import {
   isCategoryView,
   hasBrowseFilters,
@@ -12,7 +13,9 @@ import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
+import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
@@ -23,6 +26,7 @@ type Payload = {
   has_more: boolean;
   page: number;
   source: string;
+  cursor?: string | null;
   notice?: string;
 };
 type Section = {
@@ -35,15 +39,12 @@ type Facet = { id: number | string; name: string };
 export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.enhanced = "";
   root.dataset.browseScripted = "";
-  // Start slots only after the native controls have finished their layout handoff.
-  // A repeated page-load event must not restart an already running entrance.
-  const animateInitial = !root.hasAttribute("data-browse-arrivals-ready");
+  // Server-rendered cards stay painted while controls enhance. Only new cards
+  // and later scroll entries need an entrance.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (signal.aborted || !root.isConnected) return;
-    root.setAttribute("data-browse-arrivals-ready", "");
-    root.removeAttribute("data-browse-arrivals-pending");
     initializeScrollMotion(root, signal, '.browse-card-body, .browse-skeleton-body', 'browse-scroll-reveal', {
-      animateInitial, downwardOnly: true, scaleEntrance: true, once: true,
+      animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true,
       appearedAttribute: 'data-browse-appeared',
     });
   }));
@@ -78,6 +79,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let displayedCategories = !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
   const responseCache = createBrowseCache<Payload | SectionsPayload>();
+  const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
+  document.addEventListener('anylist:cache-invalidated',()=>{prediction.cancel();responseCache.clear();},{signal});
   const facetCache = createBrowseCache<typeof facets>();
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
@@ -106,17 +109,19 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       "status",
       "provider",
       "region",
-      "min_votes",
+      "min_score",
     ]) {
       const value = field(name).value.trim();
       if (value) values.set(name, value);
     }
     values.set("media_type", field("type").value);
+    if(field('type').value==='movie'&&(field('cinema') as HTMLInputElement).checked)values.set('cinema','1');
     values.set("sort", sort.value);
+    if(field('view').value==='timeline')values.set('view','timeline');
     return values;
   };
   const requestPath = (values: URLSearchParams) => isCategoryView(values)
-    ? `browse/sections?${new URLSearchParams({media_type: values.get('media_type')!, region: values.get('region')!, min_votes: values.get('min_votes')!})}`
+    ? `browse/sections?${new URLSearchParams({media_type: values.get('media_type')!, region: values.get('region')!, min_score: values.get('min_score')!})}`
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
   initialValues.set('page', '1');
@@ -129,12 +134,23 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if (field("type").value === "series") values.set("type", "series");
     if (values.get("region") === "US") values.delete("region");
     if (values.get("sort") === "all") values.delete("sort");
-    if (values.get("min_votes") === "250") values.delete("min_votes");
+    if (values.get("min_score") === "0") values.delete("min_score");
     history.replaceState(
       history.state,
       "",
       `${location.pathname}${values.size ? `?${values}` : ""}`,
     );
+    root.querySelectorAll<HTMLAnchorElement>('[data-browse-layout]').forEach(link=>{
+      const target=new URLSearchParams(values);
+      if(link.dataset.browseLayout==='timeline')target.set('view','timeline');else target.delete('view');
+      link.href=`${location.pathname}${target.size?'?'+target:''}`;
+      if(link.dataset.browseLayout===field('view').value)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+    });
+    root.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
+      const target=new URLSearchParams(values);target.delete('genres');target.delete('status');target.delete('cinema');
+      if(link.dataset.browseType==='series')target.set('type','series');else target.delete('type');
+      link.href=`${location.pathname}${target.size?'?'+target:''}`;
+    });
   };
   const json = async (path: string, options: RequestInit = {}) => {
     const response = await fetch(`/api/proxy/tracking/${path}`, options);
@@ -184,6 +200,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   };
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
+    const cards:HTMLElement[]=[];
     for (const item of results) {
       if (deduplicate && seen.has(key(item))) continue;
       if (deduplicate) seen.add(key(item));
@@ -207,7 +224,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         applyResponsiveArtwork(img, item.poster, {
           size: "w342",
           sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
-          route: "direct",
+          route:'auto',
         });
       prepareBrowsePoster(img, signal, readyPosters);
       const placeholder = card.querySelector<HTMLElement>(
@@ -229,10 +246,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         });
       paintState(card, item);
       items.set(card, item);
+      cards.push(card);
       if ('entry' in item) editorStore.seed(item as EditorTitle);
       fragment.append(card);
     }
-    destination.append(fragment);
+    if(destination===grid&&field('view').value==='timeline')appendBrowseTimeline(destination,cards,items);
+    else destination.append(fragment);
+    return cards;
   };
   const renderSections = (results: Section[]) => {
     for (const section of results) {
@@ -296,18 +316,18 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           if (input) input.checked = false;
           syncGenres();
         });
-    for (const name of ["start", "end", "status", "provider", "min_votes"])
-      if (field(name).value && (name !== "min_votes" || field(name).value !== "250")) {
+    for (const name of ["start", "end", "status", "provider", "min_score"])
+      if (field(name).value && (name !== "min_score" || field(name).value !== "0")) {
         const label =
           name === "start"
-            ? `After ${field(name).value}`
+            ? `After ${formatDate(field(name).value)}`
             : name === "end"
-              ? `Before ${field(name).value}`
-              : name === "min_votes" ? `${Number(field(name).value).toLocaleString()}+ votes`
+              ? `Before ${formatDate(field(name).value)}`
+              : name === "min_score" ? `${Number(field(name).value).toLocaleString()}+ TMDB score`
               : (field(name) as HTMLSelectElement).selectedOptions[0]
                   ?.textContent || field(name).value;
         add(label, () => {
-          field(name).value = name === "min_votes" ? "250" : "";
+          field(name).value = name === "min_score" ? "0" : "";
           field(name).dispatchEvent(new Event("input", { bubbles: true }));
         });
       }
@@ -315,6 +335,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       add(`“${field("q").value.trim()}”`, () => {
         field("q").value = "";
       });
+    if((field('cinema') as HTMLInputElement).checked&&field('type').value==='movie')
+      add(find<HTMLElement>('[data-browse-cinema]').dataset.cinemaLabel || 'Cinema release',()=>{(field('cinema') as HTMLInputElement).checked=false;});
     if (chips.childElementCount) {
       const reset = document.createElement("button");
       reset.type = "button";
@@ -336,12 +358,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   };
   const updateFooter = () => {
     find("[data-browse-sentinel]").hidden = displayedCategories;
-    more.hidden = !payload.has_more;
+    more.hidden = !payload.has_more || (!!field('q').value.trim() && (seen.size < 24 || loading));
     more.disabled = loading;
     end.hidden = payload.has_more || !grid.childElementCount;
     empty.hidden =
       displayedCategories ||
       loading ||
+      (!!field('q').value.trim() && payload.has_more) ||
       !!grid.childElementCount ||
       !error.hidden;
   };
@@ -379,10 +402,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       region.setAttribute("aria-busy", "false");
       return;
     }
+    if(!append)prediction.cancel();
     const values = params();
     const categoryView = isCategoryView(values);
     values.set("page", String(append ? payload.page + 1 : 1));
-    if (append) values.set("source", payload.source);
+    if (append) {
+      values.set("source", payload.source);
+      if(payload.cursor)values.set('cursor',payload.cursor);
+    }
     const path = requestPath(values);
     if (loading && currentPath === path) return;
     request?.abort();
@@ -390,6 +417,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     request = current;
     currentPath = path;
     const epoch = ++generation;
+    let addedCards = 0;
     loading = true;
     paginationDemand.reset(scrollY);
     suspended = false;
@@ -406,15 +434,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       grid.hidden = true;
       sections.hidden = true;
       notice.textContent = "";
-      loadingView.show(false, categoryView);
-    } else {
-      loadingView.show(true);
+      loadingView.show(false, categoryView, field('view').value==='timeline');
+    } else if (!field('q').value.trim()) {
+      loadingView.show(true, false, field('view').value==='timeline');
     }
     try {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        response = await json(path, {signal: current.signal}) as Payload | SectionsPayload;
+        response = await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload | SectionsPayload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
         responseCache.set(path, response);
         await loadingView.settle(current.signal);
@@ -433,9 +461,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         loadingView.handoff([...sections.querySelectorAll<HTMLElement>('.browse-card-body')]);
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
-        const existing = grid.querySelectorAll('.browse-card-body').length;
-        render(response.results);
-        loadingView.handoff([...grid.querySelectorAll<HTMLElement>('.browse-card-body')].slice(existing));
+        const cards=render(response.results);
+        addedCards = cards.length;
+        loadingView.handoff(cards.map(card=>card.querySelector<HTMLElement>('.browse-card-body')!));
         payload = response;
       }
       notice.textContent = response.notice || "";
@@ -465,6 +493,12 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         sections.hidden = !displayedCategories;
         region.setAttribute("aria-busy", "false");
         updateFooter();
+        if (field('q').value.trim() && payload.has_more && !suspended &&
+            (seen.size < 24 || (append && !addedCards))) {
+          // Provider pages with only duplicates/filtered titles are part of
+          // this search. Drain them without requiring clicks or fake slots.
+          queueMicrotask(() => { if (generation === epoch && !signal.aborted) void load(true); });
+        }
       }
     }
   }
@@ -475,6 +509,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     void load(false, debounce);
   }
   function clear() {
+    (field('cinema') as HTMLInputElement).checked=false;
     for (const name of [
       "q",
       "genres",
@@ -491,7 +526,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       field(name).dispatchEvent(new Event("input", { bubbles: true })),
     );
     sort.value = "all";
-    field("min_votes").value = "250";
+    field("min_score").value = "0";
     syncGenres();
     changed();
   }
@@ -577,7 +612,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         syncGenres();
       } else if (
-        !["status", "provider", "region", "start", "end", "min_votes"].includes(target.name)
+        !["status", "provider", "region", "start", "end", "min_score", "cinema"].includes(target.name)
       )
         return;
       if (target.name === "region") void loadFacets();
@@ -587,6 +622,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   bindBrowseCardTouch(region, signal);
   sort.addEventListener("change", changed, { signal });
+  root.querySelectorAll<HTMLAnchorElement>('[data-browse-layout]').forEach(link=>link.addEventListener('click',event=>{
+    if(event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+    event.preventDefault();
+    const view=link.dataset.browseLayout!;
+    if(field('view').value===view)return;
+    field('view').value=view;root.dataset.browseView=view;
+    grid.className=view==='timeline'?'browse-timeline':'browse-grid';
+    changed();
+  },{signal}));
   root
     .querySelectorAll<HTMLAnchorElement>("[data-browse-type]")
     .forEach((link) =>
@@ -596,6 +640,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           event.preventDefault();
           if (field("type").value === link.dataset.browseType) return;
           field("type").value = link.dataset.browseType!;
+          (field('cinema') as HTMLInputElement).checked=false;
+          find<HTMLElement>('[data-browse-cinema]').hidden=field('type').value!=='movie';
           root
             .querySelectorAll("[data-browse-type]")
             .forEach((a) => a.removeAttribute("aria-current"));
@@ -611,6 +657,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
                 ]
               : [
                   ["airing", "Airing"],
+                  ["returning", "Returning Series"],
                   ["finished", "Finished"],
                   ["cancelled", "Cancelled"],
                   ["upcoming", "Upcoming"],
@@ -702,6 +749,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const sentinel = find<HTMLElement>("[data-browse-sentinel]");
   let sentinelNearEnd = false;
   let paginationFrame = 0;
+  let predictionScrollY=scrollY;
   const canAutoLoad = () => !signal.aborted && !displayedCategories &&
     !loading && !suspended && payload.has_more;
   const autoLoadMore = () => {
@@ -717,15 +765,22 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   observer.observe(sentinel);
   window.addEventListener("scroll", () => {
+    const down=scrollY>predictionScrollY;predictionScrollY=scrollY;
     paginationDemand.advance(scrollY, canAutoLoad());
     if (!paginationFrame) paginationFrame = requestAnimationFrame(() => {
       paginationFrame = 0;
+      if(down&&canAutoLoad()&&paginationPosition(region.getBoundingClientRect(),innerHeight).predict){
+        const next=params();next.set('page',String(payload.page+1));next.set('source',payload.source);
+        if(payload.cursor)next.set('cursor',payload.cursor);
+        const path=requestPath(next);if(!responseCache.get(path))prediction.prefetch(path);
+      }
       autoLoadMore();
     });
   }, { passive: true, signal });
   bindBrowseCardActions(region, items, signal, syncItem, message => { notice.textContent = message; notice.hidden = false; });
   paintChips();
   updateFooter();
+  if (field('q').value.trim() && payload.has_more && seen.size < 24 && error.hidden) void load(true);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||

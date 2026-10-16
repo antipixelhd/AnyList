@@ -1,0 +1,40 @@
+<script is:inline>
+  // Astro leaves restoration manual between visits. Let the browser restore a
+  // hard reload before deferred scripts run, rather than painting the top first.
+  if (performance.getEntriesByType('navigation')[0]?.type === 'reload' && 'scrollRestoration' in history) {
+    history.scrollRestoration = 'auto';
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('anylist:reload-scroll') || 'null');
+      sessionStorage.removeItem('anylist:reload-scroll');
+      if (saved?.url === location.href && typeof history.state?.index === 'number' && saved.index === history.state.index &&
+          Number.isFinite(saved.x) && saved.x >= 0 && Number.isFinite(saved.y) && saved.y >= 0) {
+        history.replaceState({ ...history.state, scrollX: saved.x, scrollY: saved.y }, '');
+      }
+    } catch {}
+  }
+  // Astro saves on scrollend, but a reload can copy its history state earlier.
+  // Keep one per-tab exit position to reconcile that state on the next reload.
+  if (!window.__anyListReloadScrollRestoration) {
+    window.__anyListReloadScrollRestoration = true;
+    // The browser decides whether to restore a reload from the outgoing
+    // document's mode. Changing it only in the next head misses the first reload.
+    // Astro still owns back/forward positions while it swaps the route's DOM.
+    const restoration = (mode) => {
+      if ('scrollRestoration' in history) history.scrollRestoration = mode;
+    };
+    document.addEventListener('astro:page-load', () => restoration('auto'));
+    window.addEventListener('pageshow', () => restoration('auto'));
+    document.addEventListener('astro:before-preparation', () => restoration('manual'));
+    window.addEventListener('popstate', () => restoration('manual'), { capture: true });
+    window.addEventListener('pagehide', () => {
+      const state = history.state;
+      if (typeof state?.index === 'number') {
+        try {
+          sessionStorage.setItem('anylist:reload-scroll', JSON.stringify({
+            url: location.href, index: state.index, x: window.scrollX, y: window.scrollY,
+          }));
+        } catch {}
+      }
+    });
+  }
+</script>

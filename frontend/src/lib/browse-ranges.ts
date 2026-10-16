@@ -13,14 +13,21 @@ export function releaseYearDates(lower: number, upper: number, min: number, max:
   };
 }
 
+export function releaseYearLabel(start: string, end: string, min: number, max: number) {
+  if (!start && !end) return 'Any year';
+  const {lower, upper} = releaseYearBounds(start, end, min, max);
+  if (start && end && lower === upper) return String(lower);
+  return `${start ? lower : 'Any'} – ${end ? upper : 'Any'}`;
+}
+
 export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSignal) {
   const start = form.elements.namedItem("start") as HTMLInputElement;
   const end = form.elements.namedItem("end") as HTMLInputElement;
   const year = form.querySelector<HTMLElement>("[data-year-range]")!;
   const lower = year.querySelector<HTMLInputElement>("[data-range-lower]")!;
   const upper = year.querySelector<HTMLInputElement>("[data-range-upper]")!;
-  const votes = form.elements.namedItem("min_votes") as HTMLInputElement;
-  const voteRange = votes.closest<HTMLElement>("[data-vote-range]")!;
+  const score = form.elements.namedItem("min_score") as HTMLInputElement;
+  const scoreRange = score.closest<HTMLElement>("[data-score-range]")!;
   const min = Number(lower.min), max = Number(upper.max);
   const paint = () => {
     const bounds = releaseYearBounds(start.value, end.value, min, max);
@@ -28,13 +35,15 @@ export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSigna
     upper.value = String(bounds.upper);
     lower.setAttribute("aria-valuemax", upper.value);
     upper.setAttribute("aria-valuemin", lower.value);
+    lower.setAttribute('aria-valuetext', start.value ? lower.value : 'Any minimum');
+    upper.setAttribute('aria-valuetext', end.value ? upper.value : 'Any maximum');
+    year.toggleAttribute('data-range-collapsed', bounds.lower === bounds.upper);
     lower.style.zIndex = bounds.lower === max ? "3" : "";
     year.style.setProperty("--range-start", `${(bounds.lower - min) / (max - min) * 100}%`);
     year.style.setProperty("--range-end", `${(bounds.upper - min) / (max - min) * 100}%`);
-    year.querySelector("output")!.textContent = start.value || end.value
-      ? `${bounds.lower} – ${bounds.upper}` : "Any year";
-    voteRange.style.setProperty("--range-end", `${Number(votes.value) / Number(votes.max) * 100}%`);
-    voteRange.querySelector("output")!.textContent = Number(votes.value).toLocaleString();
+    year.querySelector("output")!.textContent = releaseYearLabel(start.value, end.value, min, max);
+    scoreRange.style.setProperty("--range-end", `${Number(score.value) / Number(score.max) * 100}%`);
+    scoreRange.querySelector("output")!.textContent = Number(score.value).toLocaleString();
   };
   for (const input of [lower, upper]) {
     input.addEventListener("input", () => {
@@ -46,7 +55,7 @@ export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSigna
     }, { signal });
     input.addEventListener("change", () => start.dispatchEvent(new Event("change", { bubbles: true })), { signal });
   }
-  votes.addEventListener("input", paint, { signal });
+  score.addEventListener("input", paint, { signal });
   paint();
   return paint;
 }

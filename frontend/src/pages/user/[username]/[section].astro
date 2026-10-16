@@ -28,7 +28,8 @@ const canIncrement = (entry: any) => entry.type === 'movie'
   ? entry.progress < 1 && (!entry.release_date || entry.release_date.slice(0, 10) <= today)
   : entry.released_episodes !== undefined && entry.progress < entry.released_episodes;
 const compactImageSizes='(max-width:650px) 32px, 42px';
-const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:'direct'})?.src || '';
+const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
+const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:imageRoute})?.src || '';
 const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently airing':'New season available';
 ---
 <Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
@@ -51,18 +52,17 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
         </div>
       </aside>
       <div class="list-content">
-      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span>{entries.length>0&&<div class="view-switch" aria-label="List presentation"><button data-view="list" aria-pressed="true" aria-label="Compact list"><Icon name="list"/></button><button data-view="grid" aria-pressed="false" aria-label="Cover grid"><Icon name="grid"/></button></div>}</div>
+      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span></div>
       <div id="entry-groups">
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
         {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-media-type={entry.type} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
-          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:'direct'}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><div class="entry-title"><a class="entry-title-link" href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a><EntryAnnotations rewatchCount={entry.rewatch_count} notes={entry.notes}/></div>
+          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:imageRoute}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><div class="entry-title"><a class="entry-title-link" href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a><EntryAnnotations rewatchCount={entry.rewatch_count} notes={entry.notes} newSeasons={entry.status==='completed'?entry.new_seasons:0}/></div>
           <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={quickRatePoster(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
           <span class="entry-progress">
             <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
             <span class="entry-mobile-progress" data-mobile-progress-label>{compactListProgress(entry)}</span>
             {data.owner && canIncrement(entry) && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'}>+</button>}
-            {entry.status==='completed'&&entry.new_seasons>0&&<small class="unwatched-indicator">{entry.new_seasons} new {entry.new_seasons===1?'season':'seasons'}</small>}
           </span>
           {isCombined&&<span class="entry-type">{entry.type==='movie'?'Movie':'Series'}</span>}
         </article>)}
@@ -73,6 +73,9 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
     </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>{data.owner && <script id="list-editor-entries" type="application/json" set:html={JSON.stringify(entries).replace(/</g, '\\u003c')}></script>}
     <script is:inline data-astro-rerun>
       (() => {
+        // A reload/back visit belongs to scroll restoration, not the list's
+        // initial landing position. Route swaps align the tabs in NavigationRuntime.
+        if (performance.getEntriesByType('navigation')[0]?.type !== 'navigate' || history.state) return;
         const tabs = document.querySelector('.profile-tabs');
         if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
       })();
@@ -92,12 +95,11 @@ document.addEventListener('astro:page-load', () => {
   if (!document.querySelector('#entry-groups')) return;
   const preview = document.querySelector<HTMLElement>('#cover-preview');
   const previewImage = preview?.querySelector<HTMLImageElement>('img');
-  const compactImageOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'direct' as const};
-  const gridImageOptions={size:'w342',sizes:'(max-width:650px) calc((100vw - 54px) / 2), (max-width:900px) 180px, 215px',route:'direct' as const};
-  const updateEntryImages=(grid:boolean) => document.querySelectorAll<HTMLElement>('.entry-thumbnail').forEach(thumbnail => {
+  const compactImageOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'auto' as const};
+  const updateEntryImages=() => document.querySelectorAll<HTMLElement>('.entry-thumbnail').forEach(thumbnail => {
     const image=thumbnail.querySelector<HTMLImageElement>('.entry-cover');
     const source=thumbnail.dataset.artworkPath;
-    if(image && source) applyResponsiveArtwork(image,source,grid?gridImageOptions:compactImageOptions);
+    if(image && source) applyResponsiveArtwork(image,source,compactImageOptions);
   });
   let previewDismissed = false;
   function syncAvailability(row: HTMLElement, updated: any) {
@@ -112,10 +114,10 @@ document.addEventListener('astro:page-load', () => {
   function showPreview(row: HTMLElement) {
     const thumbnail = row.querySelector<HTMLElement>('.entry-thumbnail');
     const source = thumbnail?.dataset.previewSrc;
-    if (!preview || !previewImage || !source || previewDismissed || row.closest('.grid-view') || !matchMedia('(hover:hover) and (min-width:901px)').matches) return;
+    if (!preview || !previewImage || !source || previewDismissed || !matchMedia('(hover:hover) and (min-width:901px)').matches) return;
     const rect = thumbnail!.getBoundingClientRect();
     const width = 174, height = 248, gap = 18;
-    applyResponsiveArtwork(previewImage,source,{size:'w500',sizes:'174px',route:'direct'});
+    applyResponsiveArtwork(previewImage,source,{size:'w500',sizes:'174px',route:'auto'});
     preview.style.left = `${Math.max(8, Math.min(innerWidth-width-8, rect.left-width-gap >= 8 ? rect.left-width-gap : rect.right+gap))}px`;
     preview.style.top = `${Math.max(8, Math.min(innerHeight-height-8, rect.top-(height-rect.height)/2))}px`;
     preview.hidden = false;
@@ -156,9 +158,13 @@ document.addEventListener('astro:page-load', () => {
       if(indicator) indicator.remove();
       if(updated.status==='completed'&&updated.new_seasons>0){
         const notice=document.createElement('small');notice.className='unwatched-indicator';
-        notice.textContent=`${updated.new_seasons} new ${updated.new_seasons===1?'season':'seasons'}`;
-        row.querySelector('.entry-progress')!.append(notice);
+        notice.textContent=updated.new_seasons===1?'new season':`${updated.new_seasons} new seasons`;
+        let annotations=row.querySelector<HTMLElement>('.entry-annotations');
+        if(!annotations){annotations=document.createElement('span');annotations.className='entry-annotations';row.querySelector('.entry-title')!.append(annotations);}
+        annotations.prepend(notice);
       }
+      const annotations=row.querySelector('.entry-annotations');
+      if(annotations&&!annotations.children.length) annotations.remove();
       if(row.closest<HTMLElement>('[data-group]')?.dataset.group!==updated.status){
         groups?.querySelector<HTMLElement>(`[data-group="${updated.status}"] .entry-table`)?.append(row);
       }
@@ -314,7 +320,6 @@ document.addEventListener('astro:page-load', () => {
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));
     resetButton.addEventListener('click',()=>{['list-search','genre-filter','favorite-filter'].forEach(id=>input(id).value='');yearSlider.value='0';input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
-    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button=>button.addEventListener('click',()=>{hidePreview();const grid=button.dataset.view==='grid';groups.classList.toggle('grid-view',grid);updateEntryImages(grid);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));}));
     const filters=document.querySelector<HTMLElement>('#list-filters')!;
     const filterPanel=document.querySelector<HTMLElement>('#list-filter-panel')!;
     const mobileFilters=matchMedia('(max-width:650px)');
@@ -339,9 +344,8 @@ document.addEventListener('astro:page-load', () => {
     },{signal:pageListeners.signal});
     document.addEventListener('keydown',event=>{if(!event.defaultPrevented&&event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
     document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});
-    updateEntryImages(groups.classList.contains('grid-view'));
+    updateEntryImages();
     filter();
-    document.body.setAttribute('data-list-ready', '');
   }
 });
 </script>

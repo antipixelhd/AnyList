@@ -28,19 +28,12 @@
   --color-bg-card: #18181b;       /* zinc-900 */
   --color-border-base: #27272a;   /* zinc-800 */
   --color-border-muted: #3f3f46;  /* zinc-700 */
-  --color-text-base: #f4f4f5;     /* zinc-100 */
-  --color-text-primary: #e4e4e7;  /* zinc-200 */
-  --color-text-secondary: #d4d4d8;/* zinc-300 */
-  /* On this near-black background the three secondary tiers were too dark:
-     zinc-400 (#a1a1aa ~6.8:1), zinc-500 (#71717a ~3.6:1), zinc-600
-     (#52525b ~2.3:1) - only the first cleared WCAG AA, and none read
-     comfortably. They were never far enough apart here to be worth it, so
-     all three now share one readable grey (~8.5:1, between zinc-300 and
-     zinc-400). The bright end (base/primary/secondary) still carries the
-     hierarchy. */
-  --color-text-description: #b4b4bb;
-  --color-text-muted: #b4b4bb;
-  --color-text-dim: #b4b4bb;
+  --color-text-base: rgb(159, 173, 189);
+  --color-text-primary: rgb(159, 173, 189);
+  --color-text-secondary: rgb(159, 173, 189);
+  --color-text-description: rgb(159, 173, 189);
+  --color-text-muted: rgb(114, 138, 161);
+  --color-text-dim: rgb(114, 138, 161);
 
   --color-brand-jellyfin: #a855f7; /* purple-500 */
   --color-brand-plex: #eab308;    /* yellow-500 */

@@ -93,9 +93,6 @@
   color:var(--muted);
   transition:transform .15s
 }
-.connection-queue[open]>summary>.ui-icon:last-child {
-  transform:rotate(180deg)
-}
 .connection-queue>.notice-list {
   padding:0 10px 10px
 }
@@ -231,7 +228,7 @@ body.tracker {
 .entry-title>a {
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
-  color:#abc3d8
+  color:var(--text)
 }
 .status-section h2 {
   font-size:var(--type-section-size);

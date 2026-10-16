@@ -146,8 +146,8 @@ document.addEventListener('astro:page-load', () => {
       titleLink.href = `/title/${media.id}`;
       titleLink.hidden = false;
       title.append(titleLink);
-      const posterImage = responsiveArtwork(media.poster,{size:'w185',sizes:'185px',route:'direct'});
-      if (posterImage?.src) { applyResponsiveArtwork(poster,media.poster,{size:'w185',sizes:'185px',route:'direct'}); poster.hidden = false; }
+      const posterImage = responsiveArtwork(media.poster,{size:'w185',sizes:'185px',route:'auto'});
+      if (posterImage?.src) { applyResponsiveArtwork(poster,media.poster,{size:'w185',sizes:'185px',route:'auto'}); poster.hidden = false; }
       action.hidden = true;
       rate.hidden = false;
       rate.dataset.quickRateId = String(media.id);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createContentTransition } from '../src/lib/content-motion.ts';
+import { createContentTransition, mountDetailsMotion } from '../src/lib/content-motion.ts';
 
 function fixture() {
   const reduced = new EventTarget(); reduced.matches = false;
@@ -39,4 +39,36 @@ test('navigation cancels deferred changes and restores interaction', async () =>
   const pending = f.transition(()=>f.changes.push('old page'));
   f.controller.abort(); await pending;
   assert.deepEqual(f.changes,[]); assert.equal(f.element.inert,false);
+});
+
+test('season header and native summary share disclosure state and stop responding after navigation', t => {
+  const previousMedia=globalThis.matchMedia, previousElement=globalThis.Element;
+  const reduced=new EventTarget(); reduced.matches=true;
+  class Control extends EventTarget {
+    attributes=new Map();
+    closest(){return null;}
+    setAttribute(name,value){this.attributes.set(name,value);}
+  }
+  globalThis.Element=Control;
+  globalThis.matchMedia=()=>reduced;
+  t.after(()=>{globalThis.matchMedia=previousMedia;globalThis.Element=previousElement;});
+  const summary=new Control(), header=new Control(), details=new Control(), controller=new AbortController();
+  const arrow={style:{}};
+  summary.querySelector=()=>arrow;
+  Object.assign(details,{open:false,style:{removeProperty(){}},querySelector:()=>summary,getBoundingClientRect:()=>({height:details.open?400:50})});
+  mountDetailsMotion(details,controller.signal,[header]);
+  header.dispatchEvent(new Event('click'));
+  assert.equal(details.open,true);
+  assert.equal(arrow.style.transform,'rotate(-180deg)');
+  assert.equal(header.attributes.get('aria-expanded'),'true');
+  summary.dispatchEvent(new Event('click'));
+  assert.equal(details.open,false);
+  assert.equal(arrow.style.transform,'rotate(0deg)');
+  assert.equal(header.attributes.get('aria-expanded'),'false');
+  details.open=true;
+  details.dispatchEvent(new Event('toggle'));
+  assert.equal(header.attributes.get('aria-expanded'),'true');
+  controller.abort();
+  header.dispatchEvent(new Event('click'));
+  assert.equal(details.open,true);
 });

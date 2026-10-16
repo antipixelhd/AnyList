@@ -25,5 +25,5 @@ test('person ages respect birthdays, deaths, and invalid or future dates', () =>
   assert.equal(personAge('1970-01-01','2027-01-01',today),null);
   assert.equal(personAge('1970-01-01','invalid',today),null);
   assert.equal(personDate('1970-02-30'),null);
-  assert.equal(personDate('1970-01-01'),'January 1, 1970');
+  assert.equal(personDate('1970-01-01'),new Intl.DateTimeFormat(undefined,{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}).format(new Date('1970-01-01T00:00:00Z')));
 });

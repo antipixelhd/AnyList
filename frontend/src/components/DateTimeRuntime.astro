@@ -1,0 +1,18 @@
+<script>
+  import { mountDateTimes, localizeDateTimes } from '../lib/date-time-dom';
+  import { clearDateTimeFormatters } from '../lib/date-time';
+  let controller: AbortController | undefined;
+  const mount = () => {
+    controller?.abort(); controller = new AbortController();
+    mountDateTimes(document.body, controller.signal);
+  };
+  document.addEventListener('astro:page-load', mount);
+  document.addEventListener('astro:before-swap', () => controller?.abort());
+  const refresh = () => {
+    clearDateTimeFormatters(); localizeDateTimes(document.body);
+  };
+  window.addEventListener('languagechange', refresh);
+  document.addEventListener('anylist:date-region-change', refresh);
+  // Base also serves legacy pages without a client router.
+  mount();
+</script>

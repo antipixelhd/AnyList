@@ -20,7 +20,7 @@ from core.browse import (
 )
 from db import get_db
 from dependencies import get_current_user, get_optional_user
-from models import Media, User
+from models import Media, User, UserProfileData
 from models.base import MediaType
 from models.tracking import TrackedEntry
 from routers.tracking import browse_ids, router
@@ -37,6 +37,86 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_upcoming_titles_survive_vote_floor_in_any_and_upcoming(self):
+        predicate={k:v for k,v in FILTERS.items() if k!='sort'}
+        for kind,field in [('movie','release_date'),('series','first_air_date')]:
+            item={field:'2099-12-01','vote_count':0,'status':'Returning Series'}
+            self.assertTrue(matches(item,media_type=kind,min_votes=250,**predicate))
+            self.assertTrue(matches(item,media_type=kind,min_votes=250,**{**predicate,'status':'upcoming'}))
+
+    def test_airing_requires_started_season_and_future_episode_returning_excludes_it(self):
+        predicate={k:v for k,v in FILTERS.items() if k!='sort'}
+        active={'status':'Returning Series','first_air_date':'2020-01-01',
+                'seasons':[{'season_number':1,'episode_count':8,'air_date':'2020-01-01'}],
+                'next_episode_to_air':{'season_number':1,'episode_number':5,'air_date':'2099-01-01'}}
+        for item,airing in [(active,True),({**active,'seasons':[{'season_number':1,'episode_count':8,'air_date':'2099-01-01'}]},False),
+                            ({**active,'last_episode_to_air':active['next_episode_to_air']},False)]:
+            for status,expected in [('airing',airing),('returning',not airing)]:
+                self.assertEqual(matches(item,media_type='series',**{**predicate,'status':status}),expected)
+
+    def test_tmdb_score_does_not_use_imdb_score(self):
+        predicate = {k: v for k, v in FILTERS.items() if k != 'sort'}
+        self.assertFalse(matches({'vote_average': 7.4, 'imdb_score': 9}, media_type='movie', min_score=7.5, **predicate))
+        self.assertTrue(matches({'vote_average': 7.5, 'imdb_score': 1}, media_type='movie', min_score=7.5, **predicate))
+        self.assertEqual(remote_params('movie', page=1, **{**FILTERS, 'sort': 'newest', 'min_score': 7.5})['vote_average.gte'], 7.5)
+
+    def test_account_vote_floor_validation(self):
+        from schemas import UserProfileUpdate
+        from pydantic import ValidationError
+        for value in (0, 250, 1000000):
+            self.assertEqual(UserProfileUpdate(minimum_votes=value).model_dump(exclude_unset=True), {'minimum_votes': value})
+        for value in (-1, 1000001, None, 2.5):
+            with self.assertRaises(ValidationError):
+                UserProfileUpdate(minimum_votes=value)
+
+    def test_country_cinema_evidence_cannot_fall_back_to_other_countries(self):
+        from core.cinema_releases import has_cinema_release
+        # The Runner: digital in Germany/US, theatrical in other territories.
+        raw={'release_dates':{'results':[
+            {'iso_3166_1':'DE','release_dates':[{'type':4,'release_date':'2020-01-01'}]},
+            {'iso_3166_1':'US','release_dates':[{'type':4,'release_date':'2020-01-01'}]},
+            {'iso_3166_1':'RU','release_dates':[{'type':3,'release_date':'2020-01-01'}]},
+            {'iso_3166_1':'GB','release_dates':[{'type':2,'release_date':'2099-01-01'}]}]}}
+        stored=metadata_fields(raw)
+        for evidence in (raw,stored):
+            self.assertTrue(has_cinema_release(evidence))
+            self.assertTrue(has_cinema_release(evidence,'RU'))
+            for country in ('DE','US','GB','FR'):self.assertFalse(has_cinema_release(evidence,country))
+        self.assertFalse(has_cinema_release({'theatrical_release_dates':['2020-01-01']},'DE'))
+        filters={**FILTERS,'cinema':True,'cinema_country':'DE','sort':'newest','provider':8,'region':'US'}
+        params=remote_params('movie',page=1,**filters)
+        self.assertEqual(params['region'],'DE');self.assertEqual(params['watch_region'],'US')
+        self.assertFalse(matches(raw,media_type='movie',**{k:v for k,v in filters.items() if k!='sort'}))
+
+    def test_account_country_validation_preserves_partial_update(self):
+        from schemas import UserProfileUpdate
+        from pydantic import ValidationError
+        self.assertEqual(UserProfileUpdate(country='de').model_dump(exclude_unset=True),{'country':'DE'})
+        self.assertEqual(UserProfileUpdate(country=None).model_dump(exclude_unset=True),{'country':None})
+        for value in ('XX','Germany','','123'):
+            with self.assertRaises(ValidationError):UserProfileUpdate(country=value)
+
+    def test_cinema_requires_past_theatrical_evidence_in_any_country(self):
+        predicate={k:v for k,v in FILTERS.items() if k!='sort'}
+        def item(types):
+            return {'release_dates':{'results':[{'iso_3166_1':'GB','release_dates':types}]}}
+        for kind in (2,3):
+            self.assertTrue(matches(item([{'type':kind,'release_date':'2020-01-01T00:00:00Z'}]),media_type='movie',cinema=True,**predicate))
+        for rows in ([{'type':4,'release_date':'2020-01-01'}],[{'type':1,'release_date':'2020-01-01'}],
+                     [{'type':3,'release_date':'2099-01-01'}],[{'type':3,'release_date':'invalid'}],[]):
+            self.assertFalse(matches(item(rows),media_type='movie',cinema=True,**predicate))
+        self.assertTrue(matches(item([{'type':4,'release_date':'2020-01-01'},{'type':2,'release_date':'2021-01-01'}]),media_type='movie',cinema=True,**predicate))
+        self.assertTrue(matches({},media_type='series',cinema=True,**predicate))
+        params=remote_params('movie',page=2,cinema=True,**{**FILTERS,'sort':'newest'})
+        self.assertEqual(params['with_release_type'],'2|3');self.assertNotIn('region',params)
+        self.assertEqual(params['release_date.lte'],date.today().isoformat())
+
+    def test_stored_cinema_dates_are_sorted_deduplicated_and_keep_future_evidence(self):
+        self.assertNotIn('theatrical_release_dates',metadata_fields({'title':'Partial metadata'}))
+        result=metadata_fields({'release_dates':{'results':[{'iso_3166_1':'GB','release_dates':[
+            {'type':3,'release_date':'2099-01-01'},{'type':2,'release_date':'2020-01-01'},
+            {'type':3,'release_date':'2020-01-01T00:00:00Z'},{'type':4,'release_date':'2019-01-01'}]}]}})
+        self.assertEqual(result['theatrical_release_dates'],['2020-01-01','2099-01-01'])
     def test_browse_sections_include_only_the_four_discovery_categories(self):
         self.assertEqual(
             [title for title, _ in section_specs()],
@@ -51,7 +131,7 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(matches({}, media_type="movie", min_votes=0, **predicate))
         self.assertFalse(matches({"imdb_votes": 200, "vote_count": 10000}, media_type="movie", min_votes=250, **predicate))
         params = remote_params("movie", page=1, **{**FILTERS, "sort": "newest", "min_votes": 250})
-        self.assertEqual(params["vote_count.gte"], 250)
+        self.assertEqual(params["vote_count.gte"], 0)
 
     def test_newest_sorts_released_titles_without_a_season_boundary(self):
         for today in [date(2024, 2, 29), date(2026, 12, 31)]:
@@ -98,6 +178,8 @@ class FilterTests(unittest.TestCase):
             "genres": [{"id": 18}, {"id": 35}],
             "first_air_date": "2021-02-03",
             "status": "Returning Series",
+            "seasons": [{"season_number":1,"episode_count":8,"air_date":"2020-01-01"}],
+            "next_episode_to_air": {"season_number":1,"episode_number":3,"air_date":"2099-01-01"},
             "watch/providers": {
                 "results": {
                     "DE": {"flatrate": [{"provider_id": 8}]},
@@ -155,6 +237,65 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_letter_search_bounds_large_catalogue_and_retains_a_continuation(self):
+        feed=[{'id':i,'title':f'A movie {i}','imdb_votes':500} for i in range(1,10001)]
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':500,'results':[]})) as search, \
+             patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(feed,False))):
+            first,rows=await remote_page('a','movie','fixture',FILTERS,1,mdblist_key='fixture')
+            self.assertLessEqual(len(rows),24)
+            self.assertEqual(first['feed_next'],24)
+            self.assertTrue(first['has_more'])
+            next_data,next_rows=await remote_page('a','movie','fixture',FILTERS,501,mdblist_key='fixture',feed_offset=24)
+        self.assertEqual(search.await_count,1)  # No typo expansion or provider fanout for one letter.
+        self.assertEqual(len(next_rows),24)
+        self.assertEqual(next_data['feed_next'],48)
+        self.assertFalse({row['id'] for row in rows}&{row['id'] for row in next_rows})
+
+    async def test_cached_catalogue_adds_predictive_matches_without_extra_searches(self):
+        feed=[{'id':2,'title':'Digger','imdb_votes':500}, {'id':3,'title':'Unrelated','imdb_votes':500}]
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':1,'results':[{'id':1,'title':'The Dig','vote_count':500}]})) as search, \
+             patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(feed,False))):
+            _,rows=await remote_page('dig','movie','fixture',FILTERS,1,mdblist_key='fixture')
+        self.assertEqual({row['title'] for row in rows},{'The Dig','Digger'})
+        search.assert_awaited_once()
+
+    async def test_hidden_translation_matches_do_not_flood_prefix_results(self):
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':1,'results':[
+                {'id':1,'title':'Tenet','vote_count':500}, {'id':2,'title':'Nothing related','original_title':'Nothing related','vote_count':500}]})):
+            _,rows=await remote_page('tene','movie','fixture',FILTERS,1)
+        self.assertEqual([row['title'] for row in rows],['Tenet'])
+
+    async def test_short_search_fetches_all_provider_pages_once_and_deduplicates(self):
+        async def search(term, page=1, **kwargs):
+            return {'total_pages':3,'results':[{'id':page,'title':f'Guardian {page}','vote_count':999},
+                                              {'id':1,'title':'Guardian','vote_count':999}]}
+        with patch('core.tmdb.search_movies',AsyncMock(side_effect=search)) as fetch:
+            data,rows=await remote_page('guardian','movie','fixture',FILTERS,1)
+        self.assertEqual([call.kwargs['page'] for call in fetch.await_args_list],[1,2,3])
+        self.assertEqual({row['id'] for row in rows},{1,2,3})
+        self.assertFalse(data['has_more']);self.assertEqual(data['page'],3)
+
+    async def test_cinema_feed_keeps_rank_order_and_fills_pages_after_filtering(self):
+        rows=[{'id':i,'type':'movie','imdb_id':f'tt{i}','imdb_score':8,'imdb_votes':1000} for i in range(1,61)]
+        async def detail(identifier,api_key):
+            return {'id':identifier,'release_dates':{'results':[{'iso_3166_1':'JP','release_dates':[
+                {'type':3 if identifier%2==0 else 4,'release_date':'2020-01-01'}]}]}}
+        with patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(rows,False))),patch(
+            'core.tmdb.get_movie',AsyncMock(side_effect=detail)):
+            first,items=await remote_page('','movie','fixture',{**FILTERS,'cinema':True},1,mdblist_key='fixture')
+            second,more=await remote_page('','movie','fixture',{**FILTERS,'cinema':True},2,mdblist_key='fixture')
+        self.assertEqual([r['id'] for r in items],list(range(2,49,2)))
+        self.assertEqual([r['id'] for r in more],list(range(50,61,2)))
+        self.assertTrue(first['has_more']);self.assertFalse(second['has_more'])
+
+    async def test_cinema_search_excludes_future_digital_and_unknown_releases(self):
+        async def detail(identifier,api_key):
+            return {'id':identifier,'release_dates':{'results':[{'release_dates':[
+                {'type':3 if identifier!=2 else 4,'release_date':'2099-01-01' if identifier==3 else '2020-01-01'}]}]}}
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'results':[{'id':i,'title':'Title'} for i in range(1,4)],'total_pages':1})),patch(
+            'core.tmdb.get_movie',AsyncMock(side_effect=detail)):
+            _,items=await remote_page('title','movie','fixture',{**FILTERS,'cinema':True},1)
+        self.assertEqual([r['id'] for r in items],[1])
     async def test_vote_floor_is_applied_before_feed_pagination_and_survives_detail_fetch(self):
         rows = [{"id": i, "imdb_id": f"tt{i}", "imdb_score": 8, "imdb_votes": 249 if i < 30 else 250} for i in range(60)]
         async def detail(identifier, api_key):
@@ -169,7 +310,7 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_browse_search_excludes_low_vote_and_unknown_counts(self):
         with patch("core.tmdb.search_movies", AsyncMock(return_value={"results": [
-            {"id": 1, "vote_count": 249}, {"id": 2, "vote_count": 250}, {"id": 3}], "total_pages": 2})):
+            {"id": 1, "title":"Title", "vote_count": 249}, {"id": 2, "title":"Title", "vote_count": 250}, {"id": 3,"title":"Title"}], "total_pages": 2})):
             data, items = await remote_page("title", "movie", "key", {**FILTERS, "min_votes": 250}, 1)
         self.assertEqual([item["id"] for item in items], [2])
         self.assertEqual(data["total_pages"], 2)
@@ -211,7 +352,7 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(first["has_more"])
         self.assertFalse(second["has_more"])
 
-    async def test_filtered_search_uses_requested_page_and_keeps_empty_intermediate_pages(
+    async def test_filtered_search_drains_remaining_provider_pages_and_stops(
         self,
     ):
         with (
@@ -227,7 +368,9 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
             data, items = await remote_page(
                 "series", "series", "key", {**FILTERS, "status": "airing"}, 2
             )
-        search.assert_awaited_once_with("series", page=2, api_key="key")
+        self.assertEqual([call.kwargs["page"] for call in search.await_args_list], [2,3])
+        self.assertEqual(data["page"], 3)
+        self.assertFalse(data["has_more"])
         self.assertEqual(data["total_pages"], 3)
         self.assertEqual(items, [])
 
@@ -259,15 +402,18 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_browse_and_sections_share_default_custom_zero_and_validation(self):
+    async def test_browse_score_is_separate_from_account_vote_floor(self):
         for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
             with patch(target, AsyncMock(return_value={"results": []})) as browse:
-                for params, expected in [({}, 250), ({"min_votes": 500}, 500), ({"min_votes": 0}, 0)]:
-                    response = await self.client.get(f"/tracking/{endpoint}", params=params)
-                    self.assertEqual(response.status_code, 200, response.text)
-                    self.assertEqual(browse.await_args.kwargs["min_votes"], expected)
-                for value in [-1, 1000001, "invalid"]:
-                    response = await self.client.get(f"/tracking/{endpoint}", params={"min_votes": value})
+                for floor in [0, 250, 500]:
+                    with patch("routers.tracking.result_filters", AsyncMock(return_value={"min_votes":floor,"min_runtime":30,"excluded_genres":[]})):
+                        for score in [0, 7.5, 10]:
+                            response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": score, "min_votes": 0})
+                            self.assertEqual(response.status_code, 200, response.text)
+                            self.assertEqual(browse.await_args.kwargs["min_votes"], floor)
+                            self.assertEqual(browse.await_args.kwargs["min_score"], score)
+                for value in [-1, 10.1, "invalid"]:
+                    response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": value})
                     self.assertEqual(response.status_code, 422)
 
     async def test_quick_search_filters_remote_and_local_queries_on_backend_only(self):
@@ -288,6 +434,89 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database"
 )
 class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_cursor_preserves_every_local_and_cached_match_in_bounded_pages(self):
+        feed=[{'id':900000+i,'title':f'Browse Public {i}','imdb_votes':500} for i in range(70)]
+        found=set();cursor=None
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
+             patch('core.external_scores.effective_mdblist_key',AsyncMock(return_value='fixture')), \
+             patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(feed,False))), \
+             patch('core.tmdb.search_movies',AsyncMock(return_value={'results':[],'total_pages':1})):
+            for page in range(1,10):
+                params={'q':'Browse','page':page,'source':'remote'}
+                if cursor:params['cursor']=cursor
+                response=await self.client.get('/tracking/browse',params=params)
+                self.assertEqual(response.status_code,200,response.text)
+                data=response.json();self.assertLessEqual(len(data['results']),48)
+                found.update(row['tmdb_id'] for row in data['results'])
+                if not data['has_more']:break
+                cursor=data['cursor'];self.assertTrue(cursor)
+            else:self.fail('Search pagination did not terminate')
+        self.assertEqual(found,{movie.tmdb_id for movie in self.movies}|{row['id'] for row in feed})
+
+    async def test_invalid_search_cursor_is_a_validation_error(self):
+        response=await self.client.get('/tracking/browse',params={'q':'a','cursor':'not-a-cursor'})
+        self.assertEqual(response.status_code,422)
+
+    async def test_prefix_exact_typo_and_future_titles_use_indexed_local_search(self):
+        titles=[Media(title=title,media_type=MediaType.movie,release_date='2099-01-01',tmdb_data={})
+                for title in ('Dig','Digger','The Dig','Avengers: Doomsday')]
+        self.db.add_all(titles);await self.db.commit()
+        for term,expected in [('dig',['Dig','Digger','The Dig']),('doomsday',['Avengers: Doomsday'])]:
+            response=await self.client.get('/tracking/browse',params={'q':term})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual([row['title'] for row in response.json()['results']],expected)
+        response=await self.client.get('/tracking/browse',params={'q':'diggr'})
+        self.assertIn('Digger',[row['title'] for row in response.json()['results']])
+
+    async def test_airing_sql_and_detail_policy_agree(self):
+        active=Media(title='Active release',media_type=MediaType.series,release_date='2020-01-01',status='Returning Series',
+                     tmdb_data={'vote_count':1000,'status':'Returning Series',
+                                'seasons':[{'season_number':1,'episode_count':8,'air_date':'2020-01-01'}],
+                                'next_episode_to_air':{'season_number':1,'episode_number':5,'air_date':'2099-01-01'}})
+        returning=Media(title='Between seasons',media_type=MediaType.series,release_date='2020-01-01',status='Returning Series',
+                        tmdb_data={'vote_count':1000,'status':'Returning Series',
+                                   'seasons':[{'season_number':2,'episode_count':8,'air_date':'2099-01-01'}]})
+        self.db.add_all([active,returning]);await self.db.commit()
+        for status,expected in [('airing',active.id),('returning',returning.id)]:
+            response=await self.client.get('/tracking/browse',params={'status':status,'media_type':'series','sort':'title'})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual([row['id'] for row in response.json()['results']],[expected])
+
+    async def test_runtime_and_categories_apply_before_paging_and_cached_shorts_cannot_reappear_remotely(self):
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        self.movies[0].runtime=2
+        self.movies[1].runtime=30
+        self.movies[2].tmdb_data={**self.movies[2].tmdb_data,'genres':[{'id':99,'name':'Documentary'}]}
+        await self.db.flush()
+        await update_profile(UserProfileUpdate(minimum_votes=0,excluded_categories=[99,10764]),current_user=self.owner,db=self.db)
+        pages=[(await self.client.get('/tracking/browse',params={'page':page})).json()['results'] for page in (1,2,3)]
+        ids=[row['id'] for page in pages for row in page]
+        self.assertEqual(len(ids),53)
+        self.assertNotIn(self.movies[0].id,ids);self.assertNotIn(self.movies[2].id,ids)
+        self.assertIn(self.movies[1].id,ids)
+        self.key_patch.stop()
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
+             patch('core.tmdb.search_movies',AsyncMock(return_value={'results':[{'id':self.movies[0].tmdb_id,'title':'Remote short','vote_count':500}],'total_pages':1})):
+            for endpoint in ('catalog','browse'):
+                response=await self.client.get(f'/tracking/{endpoint}',params={'q':'Unmatched query'})
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertEqual(response.json()['results'],[])
+        await update_profile(UserProfileUpdate(minimum_movie_runtime=0,excluded_categories=[]),current_user=self.owner,db=self.db)
+        self.assertEqual(len((await self.client.get('/tracking/catalog')).json()['results']),55)
+
+    async def test_saved_vote_floor_applies_to_browse_and_catalog_with_tmdb_only_score(self):
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        await update_profile(UserProfileUpdate(minimum_votes=1000), current_user=self.owner, db=self.db)
+        for endpoint in ('browse', 'catalog'):
+            response = await self.client.get(f'/tracking/{endpoint}')
+            self.assertEqual([row['id'] for row in response.json()['results']], [self.movies[0].id])
+        await update_profile(UserProfileUpdate(minimum_votes=0), current_user=self.owner, db=self.db)
+        response = await self.client.get('/tracking/browse', params={'min_score': 8.99})
+        self.assertEqual({row['id'] for row in response.json()['results']}, {self.movies[0].id, self.movies[1].id})
+        self.assertGreater(self.movies[0].tmdb_rating, self.movies[0].imdb_rating)
+
     async def asyncSetUp(self):
         self.engine = create_async_engine(os.environ["TRACKING_TEST_DATABASE_URL"])
         self.connection = await self.engine.connect()
@@ -390,6 +619,53 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         await self.connection.close()
         await self.engine.dispose()
 
+    async def test_cinema_local_filter_intersects_genres_streaming_and_pagination(self):
+        for index,movie in enumerate(self.movies):
+            movie.tmdb_data={**movie.tmdb_data,'theatrical_release_dates':
+                ['2099-01-01'] if index==0 else ['2020-01-01'] if index%2==0 else []}
+        await self.db.flush()
+        first=await self.client.get('/tracking/browse?cinema=1&genres=18&provider=8&sort=popular')
+        self.assertEqual(first.status_code,200,first.text)
+        self.assertEqual([r['id'] for r in first.json()['results']],[m.id for m in self.movies[2::2]][:24])
+        self.assertTrue(first.json()['has_more'])
+        second=await self.client.get('/tracking/browse?cinema=1&genres=18&provider=8&sort=popular&source=local&page=2')
+        self.assertEqual([r['id'] for r in second.json()['results']],[m.id for m in self.movies[2::2]][24:])
+        self.assertFalse(second.json()['has_more'])
+
+    async def test_cinema_uses_account_country_in_grid_timeline_and_paging(self):
+        profile=UserProfileData(user_id=self.viewer.id,country='DE')
+        self.db.add(profile)
+        for index,movie in enumerate(self.movies):
+            movie.tmdb_data={**movie.tmdb_data,'theatrical_release_dates':['2020-01-01'],
+                'theatrical_release_dates_by_country':{'US':['2020-01-01'],'DE':
+                    ['2099-01-01'] if index==0 else ['2020-01-01'] if index%2==0 else []}}
+        await self.db.flush()
+        expected=[m.id for m in self.movies[2::2]]
+        for sort in ('popular','newest'):
+            found=[]
+            for page in (1,2):
+                response=await self.client.get('/tracking/browse',params={'cinema':1,'sort':sort,'page':page,'source':'local'})
+                self.assertEqual(response.status_code,200,response.text)
+                found.extend(row['id'] for row in response.json()['results'])
+            self.assertEqual(set(found),set(expected))
+        profile.country=None;await self.db.flush()
+        response=await self.client.get('/tracking/browse?cinema=1&source=local&sort=popular')
+        self.assertEqual(len(response.json()['results']),24)
+        self.assertIn(self.movies[0].id,[row['id'] for row in response.json()['results']])
+
+    async def test_account_country_save_preserves_other_profile_settings(self):
+        from routers.profile import update_profile,account_countries
+        from schemas import UserProfileUpdate
+        profile=UserProfileData(user_id=self.viewer.id,country='US',bio='Preserved biography',profile_color='#ff5599',apply_site_wide=True)
+        self.db.add(profile);await self.db.flush()
+        updated=await update_profile(UserProfileUpdate(country='de'),current_user=self.viewer,db=self.db)
+        self.assertEqual(updated.country,'DE');self.assertEqual(updated.bio,'Preserved biography')
+        self.assertEqual(updated.profile_color,'#ff5599');self.assertTrue(updated.apply_site_wide)
+        options=await account_countries(self.viewer)
+        self.assertIn({'code':'DE','name':'Germany'},options)
+        updated=await update_profile(UserProfileUpdate(country=None),current_user=self.viewer,db=self.db)
+        self.assertIsNone(updated.country)
+
     async def test_category_previews_match_view_all_and_keep_viewer_state_private(self):
         self.movies[2].release_date = date.today().isoformat()
         self.movies[3].release_date = (date.today() + timedelta(days=365)).isoformat()
@@ -399,7 +675,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         sections = response.json()["sections"]
         self.assertEqual(len(sections), 4)
-        self.assertEqual(sections[0]["filters"], {"sort": "trending", "min_votes": "250"})
+        self.assertEqual(sections[0]["filters"], {"sort": "trending", "min_score": "0"})
         for section in sections:
             full = (
                 await self.client.get("/tracking/browse", params=section["filters"])
@@ -657,6 +933,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         row = response.json()["results"][0]
         self.assertEqual(row["id"], self.movies[0].id)
         self.assertEqual(row["list_status"], "watching")
+        self.assertEqual(row['release_date'], '2021-02-03')
         self.assertTrue(response.json()["has_more"])
 
     async def test_remote_failure_does_not_change_sources_mid_scroll(self):

@@ -1,4 +1,5 @@
 ---
+import LocalDateTime from '../components/LocalDateTime.astro';
 import DataImportSettings from "../components/settings/DataImportSettings.astro";
 import DataImportDialogs from "../components/settings/DataImportDialogs.astro";
 import TraktSettings from "../components/settings/TraktSettings.astro";
@@ -24,8 +25,6 @@ const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGr
   api.auth.deviceGrants(token!).catch(() => [] as DeviceGrant[]),
   api.sync.getPullSchedule(token!),
 ]);
-const fmtGrantDate = (v: string | null) =>
-  v ? new Date(v.endsWith("Z") ? v : v + "Z").toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 const hasTmdbKey = settings.has_effective_tmdb_key;
 const AUTO_SYNC_INTERVAL_OPTIONS = [
   { value: 0.25, label: "Every 15m" },
@@ -42,7 +41,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 <TrackerSettings title={title}>
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div data-connections-page class="max-w-4xl mx-auto min-w-0 w-full">
-    <div id="js-message" class="hidden fixed right-4 z-[200] max-w-sm p-4 rounded-lg shadow-2xl border"></div>
 
     <div class="settings-stack">
       <div class="settings-stack" hidden={section !== "connections"}>
@@ -819,7 +817,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                 <div class="min-w-0">
                   <p class="font-semibold text-zinc-100 truncate">{g.client_name}</p>
                   <p class="text-xs text-zinc-500 mt-0.5">
-                    Linked {fmtGrantDate(g.approved_at ?? g.created_at)} · Last used {fmtGrantDate(g.last_seen_at)} · Scope: {g.scope}
+                    Linked <LocalDateTime value={g.approved_at ?? g.created_at} style="timestamp-date" fallback="—"/> · Last used <LocalDateTime value={g.last_seen_at} style="timestamp-date" fallback="—"/> · Scope: {g.scope}
                   </p>
                 </div>
                 <button
@@ -967,6 +965,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 </TrackerSettings>
 
 <script>
+  import { formatDateTime, timestamp } from '../lib/date-time';
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import { readTrackingServiceSettings } from '../lib/tracking-service-settings';
   import { wireCancelButton, resetCancelButton } from '../lib/sync-controls';
@@ -3064,10 +3063,11 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       const jobs: any[] = await res.json();
 
       function parseUTC(dateStr: string): Date {
-        return new Date(dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z');
+        return timestamp(dateStr) || new Date(NaN);
       }
       function timeAgo(dateStr: string): string {
         const diff = Math.floor((Date.now() - parseUTC(dateStr).getTime()) / 1000);
+        if (!Number.isFinite(diff)) return 'unknown';
         if (diff < 60) return 'just now';
         if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
         if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -3125,9 +3125,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       }
 
       const formatJobDate = (job: any) => {
-        const raw = job.updated_at as string;
-        const stamped = raw.endsWith('Z') || raw.includes('+') ? raw : raw + 'Z';
-        return new Date(stamped).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+        return formatDateTime(job.updated_at, 'datetime');
       };
 
       // Pull unmatched-TMDB / enrichment vs push lookup-failed must not share a

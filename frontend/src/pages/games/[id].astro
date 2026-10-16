@@ -1,0 +1,13 @@
+---
+import MediaDetailPage from '../../components/MediaDetailPage.astro';
+import {catalogueDetail} from '../../lib/catalogue-detail';
+import {localMediaId} from '../../lib/media-detail-data';
+const id=localMediaId(Astro.params.id);
+let media=null,error='';
+if (!id) { Astro.response.status=404; error='Game not found.'; }
+else {
+  try { media=await catalogueDetail(id,'game',Astro.locals.token); }
+  catch (cause) { error=(cause as Error).message; Astro.response.status=error==='Not found.'?404:503; }
+}
+---
+<MediaDetailPage {media} {error}/>

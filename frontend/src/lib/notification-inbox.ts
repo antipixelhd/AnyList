@@ -31,6 +31,7 @@ import {
   statusLabel,
 } from "./notification-presentation";
 
+import { setLocalDateTime } from './date-time-dom';
 let pageListeners: AbortController | undefined;
 
 document.addEventListener("astro:page-load", () => {
@@ -170,7 +171,7 @@ function mountInbox(
       ? responsiveArtwork(imagePath, {
           size: "w342",
           sizes: "(max-width:460px) 46px, (max-width:760px) 54px, 72px",
-          route: "direct",
+          route:'auto',
         })
       : null;
     visual.classList.toggle("has-image", Boolean(image?.src));
@@ -179,7 +180,7 @@ function mountInbox(
       applyResponsiveArtwork(img, imagePath!, {
         size: "w342",
         sizes: "(max-width:460px) 46px, (max-width:760px) 54px, 72px",
-        route: "direct",
+        route:'auto',
       });
       img.alt = "";
       img.loading = "lazy";
@@ -263,9 +264,9 @@ function mountInbox(
         const label = document.createElement("small");
         label.textContent = historyLabel(change.field);
         const previous = document.createElement("span");
-        previous.textContent = historyValue(change.previous);
+        previous.textContent = historyValue(change.previous, change.field);
         const proposed = document.createElement("strong");
-        proposed.textContent = historyValue(change.proposed);
+        proposed.textContent = historyValue(change.proposed, change.field);
         row.append(label, previous);
         addArrow(row);
         row.append(proposed);
@@ -338,7 +339,7 @@ function mountInbox(
         responsiveArtwork(event.media.poster, {
           size: "w185",
           sizes: "42px",
-          route: "direct",
+          route:'auto',
         })?.src || "";
       rate.dataset.quickRateScore = "";
     }
@@ -417,6 +418,10 @@ function mountInbox(
       eventTitle(event),
     );
     updateMessage(card, eventMessage(event));
+    if (event.kind === 'new_season_release_date' && event.payload?.release_date) {
+      const message = card.querySelector<HTMLElement>('.notice-content > p');
+      if (message) { message.dataset.datePrefix = 'Release date: '; setLocalDateTime(message, String(event.payload.release_date).slice(0,10)); }
+    }
     updateEventDetail(card, event);
     updateEventActions(card, event);
     return card;

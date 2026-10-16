@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update, func
 from sqlalchemy.dialects.postgresql import insert
 
 from core.config import settings
@@ -77,6 +77,7 @@ class _PrivateRequests(logging.Filter):
                 "api.igdb.com",
                 "id.twitch.tv",
                 "api.hardcover.app",
+                "api.themoviedb.org",
             )
         )
 
@@ -154,9 +155,10 @@ class ProviderHTTP:
                 ).scalar_one()
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
                 if row.next_request_at and row.next_request_at > now:
-                    await asyncio.sleep(
-                        min(2, (row.next_request_at - now).total_seconds())
-                    )
+                    delay = (row.next_request_at - now).total_seconds()
+                    if delay > 5:
+                        raise ProviderError('rate_limited', delay)
+                    await asyncio.sleep(delay)
                 month = now.strftime("%Y-%m")
                 if row.month != month:
                     row.month, row.request_count = month, 0
@@ -189,13 +191,25 @@ class ProviderHTTP:
         else:
             lock = _local_locks.setdefault(provider, asyncio.Lock())
             async with lock:
-                await asyncio.sleep(
-                    max(0, _local_next.get(provider, 0) - time.monotonic())
-                )
+                delay = max(0, _local_next.get(provider, 0) - time.monotonic())
+                if delay > 5:
+                    raise ProviderError('rate_limited', delay)
+                await asyncio.sleep(delay)
                 try:
                     yield
                 finally:
                     _local_next[provider] = time.monotonic() + interval
+
+    async def defer(self, provider, delay):
+        """Share cooldowns; callers return a retry state without a long wait."""
+        if self.session_factory:
+            async with self.session_factory() as db:
+                deadline = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=delay)
+                await db.execute(update(MetadataProviderBudget).where(MetadataProviderBudget.provider == provider)
+                    .values(next_request_at=func.greatest(MetadataProviderBudget.next_request_at, deadline)))
+                await db.commit()
+        else:
+            _local_next[provider] = max(_local_next.get(provider, 0), time.monotonic() + delay)
 
     async def request(self, provider, method, url, *, cache=True, **kwargs):
         # Cache keys are digests, never raw credentials. Max 128 responses, 10m.
@@ -239,6 +253,8 @@ class ProviderHTTP:
                         delay = retry_after_seconds(
                             headers.get("Retry-After", ""), 2**attempt
                         )
+                        if status == 429:
+                            await self.defer(provider, delay)
                         if attempt == 2 or delay > 5:
                             raise ProviderError(
                                 "rate_limited" if status == 429 else "unavailable",
@@ -307,7 +323,7 @@ IGDB_FIELDS = (
             "ports",
             "similar_games",
         )
-        for projection in ("name", "version_parent.name")
+        for projection in ("name", "cover.url", "first_release_date", "version_parent.name", "version_parent.cover.url", "version_parent.first_release_date")
     )
 )
 
@@ -515,7 +531,7 @@ class CatalogueProviders:
             for r in rows[(page - 1) * limit : page * limit]
         ]
 
-    async def detail(self, provider, kind, external_id):
+    async def detail(self, provider, kind, external_id, *, credit_groups=None):
         self.validate(provider, kind)
         if provider == "openlibrary":
             from .openlibrary import detail
@@ -524,7 +540,7 @@ class CatalogueProviders:
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
-            self._detail(provider, kind, int(external_id)), timeout=120
+            self._detail(provider, kind, int(external_id), credit_groups=credit_groups), timeout=120
         )
 
     async def openlibrary_isbn(self, value):
@@ -537,7 +553,7 @@ class CatalogueProviders:
 
         return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
-    async def _detail(self, provider, kind, id):
+    async def _detail(self, provider, kind, id, *, credit_groups=None):
         if provider == "igdb":
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
@@ -728,20 +744,44 @@ class CatalogueProviders:
         async with self.http.lane("tvdb"):
             raw = await (tvdb.get_movie(id, self.tvdb_key) if kind == "movie" else tvdb.get_series(id, self.tvdb_key))
         # Verify cross-provider people by authoritative IDs, never by names.
-        # Bound the fan-out to twelve principal cast members per title.
+        # Include principal crew as well as cast so filmmakers receive the same
+        # verified identity bridge. Bound optional enrichment per title.
         people = {}
+        provisional = normalize_tvdb(raw, kind)
+        from core.screen_metadata_policy import credit_group
+        principal_people = {str(c['contributor']['identities'][0]['external_id'])
+                            for c in provisional['credits']
+                            if c['contributor']['kind'] == 'person' and c['attributes']['principal']
+                            and (credit_groups is None or credit_group(c) in credit_groups)}
+        counts = {True: 0, False: 0}
         for member in sorted(raw.get("characters") or [], key=lambda p: p.get("sort") or 0):
             pid = member.get("peopleId") or member.get("personId")
-            if not pid or str(pid) in people or member.get("type") != 3:
+            if not pid or str(pid) in people or str(pid) not in principal_people:
                 continue
-            if len(people) >= 12:
-                break
+            acting = member.get('type') == 3
+            if counts[acting] >= 12:
+                continue
+            counts[acting] += 1
             try:
                 async with self.http.lane("tvdb"):
                     people[str(pid)] = await tvdb.get_person(int(pid), self.tvdb_key)
+                    if str(people[str(pid)].get('id')) != str(pid):
+                        people[str(pid)] = {}
             except Exception:
                 people[str(pid)] = {}  # Retain title credits when optional people enrichment fails.
-        raw = {**raw, "_people": people}
+        companies = {}
+        for c in [c for c in provisional['credits']
+                  if c['contributor']['kind'] == 'organization' and c['role'] == 'producer'
+                  and (credit_groups is None or 'organizations' in credit_groups)][:4]:
+            native = c['contributor']['identities'][0]['external_id']
+            try:
+                async with self.http.lane('tvdb'):
+                    company = await tvdb.get_company(int(native), self.tvdb_key)
+                if str(company.get('id')) == str(native):
+                    companies[str(native)] = company
+            except Exception:
+                pass  # Optional identity evidence must not fail title credits.
+        raw = {**raw, "_people": people, '_companies': companies}
         return normalize_tvdb(raw, kind), raw
 
     async def book_editions_page(self, id, page):

@@ -1,13 +1,16 @@
 ---
 import Tracker from '../layouts/Tracker.astro';
 import Icon from './Icon.astro';
+import ImageLightbox from './ImageLightbox.astro';
 import BrowseCard from './BrowseCard.astro';
-import { tracker, artwork, statuses } from '../lib/tracker';
+import LocalDateTime from './LocalDateTime.astro';
+import { tracker, artwork } from '../lib/tracker';
 import { metadataKey } from '../lib/catalogue-key';
 import { personAge, personDate } from '../lib/person-page-data';
 import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import '../styles/browse.css';
+import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
 interface Props { kind: 'actor' | 'staff' | 'studio' }
 const { kind } = Astro.props;
@@ -31,8 +34,9 @@ const facts = data ? [
   ['Country', data.countries.map(countryLabel).join(', ')], ['Headquarters', data.headquarters],
 ].filter(([,value]) => value) : [];
 const years = [...new Set(data?.works.map(contributorYear) || [])];
-const portrait = artwork(data?.image || null, 'w342');
-const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280');
+const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
+const portrait = artwork(data?.image || null, 'w342',imageRoute);
+const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280',imageRoute);
 const banner = kind === 'studio' ? data?.banner : null;
 const next = new URL(Astro.url);
 if (data) {
@@ -41,13 +45,13 @@ if (data) {
   if (data.next_cursor) next.searchParams.set('cursor', data.next_cursor); else next.searchParams.delete('cursor');
 }
 ---
-<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} preloadBodyFonts>
-  {data ? <article class="contributor-page" data-contributor-page data-view={view} data-endpoint={endpoint}>
-    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}</div>
+<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)}>
+  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-endpoint={endpoint}>
+    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
-        <div class="contributor-portrait">{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></div>
-        {facts.length > 0 && <section class="contributor-facts" aria-label="Information"><h2>Information</h2><dl>{facts.map(([label,value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>}
+        <button class="contributor-portrait" type="button" data-portrait-image={artwork(data.image,'original',imageRoute)} data-portrait-caption={data.name} disabled={!portrait} aria-label={`Expand ${data.name} image`}>{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></button>
+        {facts.length > 0 && <section class="contributor-facts" aria-label="Information"><h2>Information</h2><dl>{facts.map(([label,value]) => <div><dt>{label}</dt><dd>{label==='Born'||label==='Died'?<LocalDateTime value={label==='Born'?data.birthday:data.deathday}/>:value}</dd></div>)}</dl></section>}
         {data.links.length > 0 && <nav class="contributor-links" aria-label="External links">{data.links.map(link => <a href={link.href} target="_blank" rel="noreferrer">{link.label}<Icon name="external" /></a>)}</nav>}
       </aside>
       <div class="contributor-main">
@@ -69,8 +73,8 @@ if (data) {
           </header>
           <form method="get" class="contributor-filters" data-contributor-filters>
             <input type="hidden" name="view" value={view} />
-            <label><span>Media</span><select name="media_type"><option value="all" selected={!params.has('media_type')}>All media</option><option value="movie" selected={params.get('media_type') === 'movie'}>Movies</option><option value="series" selected={params.get('media_type') === 'series'}>Series</option></select></label>
-            {signedIn && <><label><span>List</span><select name="list_scope"><option value="all" selected={!params.has('list_scope')}>All titles</option><option value="in" selected={params.get('list_scope') === 'in'}>In my list</option><option value="out" selected={params.get('list_scope') === 'out'}>Not in my list</option></select></label><label><span>Status</span><select name="status"><option value="" selected={!params.has('status')}>Any status</option>{statuses.map(([id,label]) => <option value={id} selected={params.get('status') === id}>{label}</option>)}</select></label></>}
+            <fieldset class="contributor-filter-switch"><legend>Media</legend><div>{[['all','All','All media'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(params.get('media_type')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
+            {signedIn && <label class="contributor-list-toggle"><input class="sr-only" type="checkbox" role="switch" name="list_scope" value="in" checked={params.get('list_scope')==='in'} aria-label="Only titles in my list"/><span><Icon name="list"/><span>In my list</span><span class="contributor-toggle-track" aria-hidden="true"><span></span></span></span></label>}
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>
@@ -83,6 +87,7 @@ if (data) {
         </section>
       </div>
     </div>
+    <ImageLightbox id="contributor-image-viewer" imageKind={kind==='studio'?'logo':undefined}/>
     <script type="application/json" data-contributor-data set:html={JSON.stringify(data).replaceAll('<','\u003c')} />
   </article> : <div class="page-width contributor-error"><h1>{kind === 'studio' ? 'Studio' : 'Person'}</h1><p role="alert">{error}</p><a href="/browse">Browse titles</a></div>}
 </Tracker>

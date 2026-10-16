@@ -115,7 +115,7 @@
   position:relative;
   width:40px;
   height:40px;
-  color:#d6e2ed!important;
+  color:var(--white)!important;
   cursor:pointer
 }
 .editor-favorite input {
@@ -142,7 +142,7 @@
 .editor-library {
   border:0;
   background:transparent;
-  color:#d6e2ed
+  color:var(--white)
 }
 .editor-library .ui-icon {
   font-size:var(--type-section-size)
@@ -184,7 +184,7 @@
 }
 .editor label,.editor-status-field>label {
   font-size:var(--type-label-size);
-  color:#85a6c1
+  color:var(--muted)
 }
 .editor label input,.editor label textarea,.editor-status-trigger {
   margin-top:6px;
@@ -193,7 +193,7 @@
   background:#0d1926;
   border:1px solid transparent;
   border-radius:4px;
-  color:#bdcbd9;
+  color:var(--text);
   font-size:var(--type-control-size)
 }
 .editor label textarea {
@@ -229,11 +229,12 @@
 }
 .editor-status-trigger .ui-icon {
   font-size:var(--type-meta-size);
-  color:#9cb1c3
+  color:var(--muted)
 }
 .editor-status-trigger:focus-visible {
-  border-color:#3db4f2;
-  outline:2px solid #3db4f21c
+  border-color:var(--blue);
+  outline:none;
+  background:color-mix(in srgb,var(--blue) 11%,var(--panel))
 }
 .editor-status-options {
   position:absolute;
@@ -257,7 +258,7 @@
   border:0;
   border-radius:3px;
   background:transparent;
-  color:#b8c9d9;
+  color:var(--text);
   text-align:left;
   font-size:var(--type-control-size)
 }
@@ -297,7 +298,7 @@
 }
 .editor-score-field>label {
   font-size:var(--type-label-size);
-  color:#85a6c1
+  color:var(--muted)
 }
 .editor-score-field>.score-stepper {
   margin-top:6px
@@ -309,13 +310,13 @@
   background:#0d1926;
   border:1px solid transparent;
   border-radius:4px;
-  color:#bdcbd9;
+  color:var(--text);
   font-size:var(--type-control-size);
   padding:8px 30px 8px 12px
 }
 .editor-score-field .score-stepper input:focus {
-  border-color:#3db4f2;
-  box-shadow:0 0 0 2px #3db4f21c
+  border-color:var(--blue);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 11%,transparent)
 }
 .score-stepper {
   position:relative;
@@ -346,7 +347,7 @@
   border:0;
   border-radius:2px;
   background:transparent;
-  color:#91a7ba;
+  color:var(--muted);
   line-height:1
 }
 .score-stepper-controls button:hover,.score-stepper-controls button:focus-visible {

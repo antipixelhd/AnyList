@@ -3,11 +3,13 @@ import ProgressCard from "../components/ProgressCard.astro";
 import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
+import LocalDateTime from '../components/LocalDateTime.astro';
 import {tracker} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 let activities:any[]=[],error='',seriesInProgress:any[]=[],upcomingSeasons:any[]=[],watchingCount:number|null=null;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
+const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
 const [activityResult,listResult,upcomingResult]=await Promise.allSettled([
   tracker('activity',Astro.locals.token),
   tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token),
@@ -27,20 +29,15 @@ const seriesCards=seriesInProgress.map((entry:any)=>({
   canIncrement:entry.released_episodes!==undefined&&entry.progress<entry.released_episodes,
   caughtUp:entry.released_episodes!==undefined&&entry.progress>=entry.released_episodes,
   latest:entry.latest_released_position?.replace(/(S\d+)(E\d+)/,'$1 $2')||'',
-  artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
+  artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:imageRoute}),
 }));
 const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
   ...entry,
   seasonNumber:Number(entry.season_number),
   releaseDate:String(entry.release_date||''),
   artworkFallback:entry.season_artwork_fallback===true,
-  artwork:responsiveArtwork(entry.season_poster_path||entry.poster,{size:'w185',sizes:'85px',route:'direct'}),
+  artwork:responsiveArtwork(entry.season_poster_path||entry.poster,{size:'w185',sizes:'85px',route:imageRoute}),
 }));
-const formatReleaseDate=(value:string)=>{
-  const [year,month,day]=value.split('-').map(Number);
-  if(!year||!month||!day)return value;
-  return new Date(Date.UTC(year,month-1,day)).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'});
-};
 ---
 <Tracker title="Home"><div class="page-width dashboard home-dashboard" data-username={Astro.locals.user.username} data-watching-count={watchingCount??''}>
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse" data-find-title hidden={watchingCount!==0}>Find your next title</a></header>
@@ -54,7 +51,7 @@ const formatReleaseDate=(value:string)=>{
         </a>
         <div class="progress-card-details" aria-label={`${entry.title}: Season ${entry.seasonNumber}`}>
           <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}: Season {entry.seasonNumber}</a>
-          <span class="upcoming-release-date">Release date: <time datetime={entry.releaseDate}>{formatReleaseDate(entry.releaseDate)}</time></span>
+          <span class="upcoming-release-date">Release date: <LocalDateTime value={entry.releaseDate}/></span>
           <strong class="upcoming-release-countdown" data-upcoming-countdown>Countdown unavailable</strong>
         </div>
       </article>)}</div> : <p class="series-progress-empty" data-upcoming-empty>Tracked series with confirmed upcoming season dates will appear here.</p>}
@@ -72,6 +69,7 @@ const formatReleaseDate=(value:string)=>{
 </Tracker>
 
 <script>
+import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 
 let homeProgressListeners: AbortController | undefined;
@@ -100,7 +98,7 @@ document.addEventListener('astro:page-load', () => {
     const output = card.querySelector<HTMLElement>('[data-countdown]');
     const date = card.dataset.nextAir;
     if (!output || !date) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     if (date === today) { output.textContent = 'Next episode today'; return; }
     if (date < today) { output.textContent = 'Schedule updating'; return; }
     const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
@@ -110,8 +108,7 @@ document.addEventListener('astro:page-load', () => {
     const output = card.querySelector<HTMLElement>('[data-upcoming-countdown]');
     const date = card.dataset.releaseDate;
     if (!output || !date) return;
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const today = localToday();
     const releaseDay = Date.parse(`${date}T00:00:00Z`);
     const todayDay = Date.parse(`${today}T00:00:00Z`);
     if (!Number.isFinite(releaseDay)) { output.textContent = 'Countdown unavailable'; return; }
@@ -281,7 +278,7 @@ document.addEventListener('astro:page-load',()=>{
     const cover=card.querySelector<HTMLAnchorElement>('.event-cover')!;
     cover.href=mediaHref;cover.setAttribute('aria-label',`View ${activity.media.title}`);
     const coverImage=cover.querySelector('img')!;const coverFallback=cover.querySelector<HTMLElement>('.cover-placeholder')!;
-    if(activity.media.poster){applyResponsiveArtwork(coverImage,activity.media.poster,{size:'w342',sizes:'(max-width:700px) 56px, 64px',route:'direct'});coverImage.alt='';coverFallback.hidden=true;}else{coverImage.removeAttribute('src');coverImage.removeAttribute('srcset');coverImage.removeAttribute('sizes');coverFallback.hidden=false;}
+    if(activity.media.poster){applyResponsiveArtwork(coverImage,activity.media.poster,{size:'w342',sizes:'(max-width:700px) 56px, 64px',route:'auto'});coverImage.alt='';coverFallback.hidden=true;}else{coverImage.removeAttribute('src');coverImage.removeAttribute('srcset');coverImage.removeAttribute('sizes');coverFallback.hidden=false;}
     const profileHref=`/user/${encodeURIComponent(activity.username)}`;
     const avatar=card.querySelector<HTMLAnchorElement>('.event-avatar')!;
     avatar.href=profileHref;avatar.setAttribute('aria-label',`View ${activity.display_name}'s profile`);

@@ -1,0 +1,17 @@
+---
+import MediaDetailPerson from './MediaDetailPerson.astro';
+import MediaDetailCastToggle from './MediaDetailCastToggle.astro';
+import type {DetailPerson} from '../lib/media-detail-data';
+interface Props {label:string;rows:DetailPerson[];id:string;limit?:number;secondary?:boolean;loading?:boolean}
+const {label,rows,id,limit=8,secondary=false,loading=false}=Astro.props;
+const deferred=JSON.stringify(rows.slice(limit)).replaceAll('<','\\u003c');
+---
+<section class:list={['lab-module','media-credit-group',{'media-credit-secondary':secondary}]} data-credit-section={id} data-credit-limit={limit} hidden={!rows.length&&!loading}>
+  <div class="lab-section-title"><h2>{label}</h2>{id==='cast'&&<MediaDetailCastToggle/>}</div>
+  <div class="media-credit-content" id={`credits-${id}`} data-credit-content data-cast-content={id==='cast' ? '' : undefined}>
+    <div class="lab-person-grid" data-credit-visible>{rows.slice(0,limit).map(person=><MediaDetailPerson person={person}/>)}{!rows.length&&loading&&Array.from({length:limit},()=> <div class="detail-person-skeleton" aria-hidden="true"><span></span><div></div></div>)}</div>
+    <div class="lab-person-grid media-credit-more" data-credit-rest hidden></div>
+    <script type="application/json" data-credit-deferred set:html={deferred}/>
+  </div>
+  <button class="lab-text-button media-credit-toggle" type="button" data-credit-toggle hidden={rows.length<=limit} aria-expanded="false" aria-controls={`credits-${id}`}>Show more</button>
+</section>

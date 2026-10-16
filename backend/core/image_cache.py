@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import re
+import uuid
+from weakref import WeakValueDictionary
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import httpx
-from sqlalchemy import select, func, delete as sa_delete
+from sqlalchemy import select, func, delete as sa_delete, update
 from sqlalchemy.exc import IntegrityError
 
 from db import AsyncSessionLocal
@@ -14,6 +16,7 @@ from models.image_cache import ImageCache
 from models.media import Media
 from models.show import Show as ShowModel
 from models.collection import Collection
+from models.tracking import TrackedEntry
 from models.global_settings import GlobalSettings
 
 logger = logging.getLogger(__name__)
@@ -22,7 +25,7 @@ TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
 TVDB_IMAGE_BASE = "https://artworks.thetvdb.com"
 
 # Valid TMDB image sizes to prevent traversal / arbitrary requests
-ALLOWED_SIZES = {"w92", "w154", "w185", "w342", "w500", "w780", "w1280", "original"}
+ALLOWED_SIZES = {"w92", "w154", "w185", "w300", "w342", "w500", "w780", "w1280", "original"}
 
 # Synthetic "size" bucket for TheTVDB artwork, which has no size variants - the
 # path alone identifies the image. Stored under image_cache/tvdb/<path>.
@@ -41,6 +44,10 @@ _PRUNE_INTERVAL = timedelta(minutes=5)
 
 # asyncpg hard limit is 32767 parameters per query; stay well under it
 _MAX_IN_PARAMS = 30_000
+_downloads = asyncio.Semaphore(3)
+_fills = WeakValueDictionary()
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_ACCESS_INTERVAL = timedelta(hours=1)
 
 
 def parse_image_url(url: str) -> tuple[Optional[str], Optional[str]]:
@@ -71,6 +78,12 @@ parse_tmdb_url = parse_image_url
 
 
 async def download_and_cache_image(db, size: str, path: str, image_type: str = "ondemand") -> Optional[str]:
+    lock = _fills.setdefault((size, path), asyncio.Lock())
+    async with lock:
+        return await _download_and_cache_image(db, size, path, image_type)
+
+
+async def _download_and_cache_image(db, size: str, path: str, image_type: str) -> Optional[str]:
     """Download an image from TMDB or TheTVDB and cache it locally."""
     if size != TVDB_SIZE and size not in ALLOWED_SIZES:
         return None
@@ -85,45 +98,67 @@ async def download_and_cache_image(db, size: str, path: str, image_type: str = "
     local_path = settings.data_dir / "image_cache" / size / path.lstrip("/")
 
     if cached:
-        if local_path.exists():
-            cached.last_accessed = datetime.now(timezone.utc)
-            await db.commit()
+        if await asyncio.to_thread(local_path.exists):
+            now = datetime.now(timezone.utc)
+            touched = cached.last_accessed.replace(tzinfo=timezone.utc) if cached.last_accessed.tzinfo is None else cached.last_accessed
+            promote = image_type == 'collected' and cached.image_type != 'collected'
+            if now - touched >= _ACCESS_INTERVAL or promote:
+                cached.last_accessed = now
+                if promote: cached.image_type = 'collected'
+                await db.commit()
             return str(local_path)
         else:
             await db.delete(cached)
             await db.commit()
 
     # Fetch from the origin (TMDB or TheTVDB)
+    # Resize variants of a warmed primary retain its eviction priority.
+    if image_type == 'ondemand':
+        primary = await db.scalar(select(ImageCache.id).where(ImageCache.path == path,
+            ImageCache.image_type == 'collected',
+            ImageCache.size == TVDB_SIZE if size == TVDB_SIZE else ImageCache.size != TVDB_SIZE).limit(1))
+        if primary is not None: image_type = 'collected'
     url = upstream_image_url(size, path)
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            r = await client.get(url)
-            if r.status_code == 200:
+        async with _downloads, httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with client.stream('GET', url) as r:
+                if r.status_code != 200 or not r.headers.get('content-type','').startswith('image/'):
+                    return None
+                content = bytearray()
+                async for chunk in r.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > MAX_IMAGE_BYTES: return None
+            def save():
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-                local_path.write_bytes(r.content)
-
-                cache_entry = ImageCache(
-                    path=path,
-                    size=size,
-                    image_type=image_type,
-                    file_size=len(r.content),
-                    last_accessed=datetime.now(timezone.utc),
-                    created_at=datetime.now(timezone.utc),
-                )
+                temporary = local_path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
                 try:
-                    db.add(cache_entry)
+                    temporary.write_bytes(content)
+                    temporary.replace(local_path)
+                finally: temporary.unlink(missing_ok=True)
+            await asyncio.to_thread(save)
+
+            cache_entry = ImageCache(
+                path=path,
+                size=size,
+                image_type=image_type,
+                file_size=len(content),
+                last_accessed=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+            )
+            try:
+                db.add(cache_entry)
+                await db.commit()
+            except IntegrityError:
+                # Another worker may already have inserted this image.
+                await db.rollback()
+                result = await db.execute(
+                    select(ImageCache).where(ImageCache.path == path, ImageCache.size == size)
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    existing.last_accessed = datetime.now(timezone.utc)
                     await db.commit()
-                except IntegrityError:
-                    # Concurrent request already inserted this entry; update last_accessed instead
-                    await db.rollback()
-                    result = await db.execute(
-                        select(ImageCache).where(ImageCache.path == path, ImageCache.size == size)
-                    )
-                    existing = result.scalar_one_or_none()
-                    if existing:
-                        existing.last_accessed = datetime.now(timezone.utc)
-                        await db.commit()
-                return str(local_path)
+            return str(local_path)
     except Exception as e:
         logger.error(f"Error downloading image {url}: {e}")
 
@@ -193,48 +228,61 @@ async def prune_cache_bg(limit_gb: float):
 
 async def pre_cache_all_collected(db):
     """Find all image paths in user collections and pre-cache them."""
-    urls_to_cache: set[str] = set()
+    images_to_cache: set[tuple[str,str]] = set()
+    def queue(url, preferred_size):
+        size, path = parse_image_url(url)
+        if size and path: images_to_cache.add((TVDB_SIZE if size == TVDB_SIZE else preferred_size, path))
 
-    # Movies & Episodes — select only the columns we need
-    for poster_path, backdrop_path in (await db.execute(
-        select(Media.poster_path, Media.backdrop_path)
-        .join(Collection, Collection.media_id == Media.id)
+    # Include current tracking entries as well as legacy collections. Read
+    # only the small curated image fields, never whole provider documents.
+    from types import SimpleNamespace
+    from core.media_images import screen_backdrop, IMAGE_POLICY_VERSION
+    for poster_path, backdrop_path, kind, imdb, external_ids, gallery, backdrop in (await db.execute(
+        select(Media.poster_path, Media.backdrop_path, Media.media_type, Media.imdb_id, Media.tmdb_data['external_ids'],
+            Media.tmdb_data['_anylist_images'], Media.tmdb_data['_anylist_backdrop'])
+        .where(Media.id.in_(select(Collection.media_id)) | Media.id.in_(select(TrackedEntry.media_id)))
         .distinct()
     )).all():
-        if poster_path:
-            urls_to_cache.add(poster_path)
-        if backdrop_path:
-            urls_to_cache.add(backdrop_path)
+        if gallery and gallery.get('version') == IMAGE_POLICY_VERSION:
+            poster_path = gallery.get('primary_poster') or poster_path
+        preferred = screen_backdrop(SimpleNamespace(media_type=kind,imdb_id=imdb,tmdb_data={
+            'external_ids':external_ids or {}, '_anylist_images':gallery or {}, '_anylist_backdrop':backdrop or {}}))['backdrop']
+        if poster_path: queue(poster_path, 'w342')
+        if preferred or backdrop_path: queue(preferred or backdrop_path, 'w1280')
 
     # Shows with collected episodes — select only the columns we need
-    for poster_path, backdrop_path, tmdb_data in (await db.execute(
-        select(ShowModel.poster_path, ShowModel.backdrop_path, ShowModel.tmdb_data)
+    for poster_path, backdrop_path, seasons in (await db.execute(
+        select(ShowModel.poster_path, ShowModel.backdrop_path, ShowModel.tmdb_data['seasons'])
         .join(Media, Media.show_id == ShowModel.id)
         .join(Collection, Collection.media_id == Media.id)
         .distinct()
     )).all():
         if poster_path:
-            urls_to_cache.add(poster_path)
+            queue(poster_path, 'w342')
         if backdrop_path:
-            urls_to_cache.add(backdrop_path)
-        if tmdb_data and "seasons" in tmdb_data:
-            for season in tmdb_data["seasons"]:
+            queue(backdrop_path, 'w1280')
+        if isinstance(seasons, list):
+            for season in seasons:
                 sp = season.get("poster_path")
                 if sp:
-                    urls_to_cache.add(f"https://image.tmdb.org/t/p/w500{sp}")
+                    queue(sp, 'w342')
 
-    parsed_images = [
-        (size, path)
-        for url in urls_to_cache
-        for size, path in [parse_image_url(url)]
-        if size and path
-    ]
+    parsed_images = sorted(images_to_cache, key=lambda item:(item[0]=='w1280',item))
 
     if not parsed_images:
         return
 
+    # Promote already viewed responsive variants without fetching them again.
+    for tvdb in (False, True):
+        paths = [path for size, path in parsed_images if (size == TVDB_SIZE) == tvdb]
+        for offset in range(0, len(paths), _MAX_IN_PARAMS):
+            await db.execute(update(ImageCache).where(ImageCache.path.in_(paths[offset:offset+_MAX_IN_PARAMS]),
+                ImageCache.image_type == 'ondemand',
+                ImageCache.size == TVDB_SIZE if tvdb else ImageCache.size != TVDB_SIZE).values(image_type='collected'))
+    await db.commit()
+
     # Filter out already-cached entries
-    cached_set: set[tuple[str, str]] = set((await db.execute(select(ImageCache.path, ImageCache.size))).all())
+    cached_set: set[tuple[str, str]] = set((await db.execute(select(ImageCache.path, ImageCache.size).where(ImageCache.image_type=='collected'))).all())
     to_download = [img for img in parsed_images if (img[1], img[0]) not in cached_set]
 
     if not to_download:

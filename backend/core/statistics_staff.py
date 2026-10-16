@@ -32,7 +32,10 @@ async def load_staff(db, facts):
         CatalogueCredit.work_id.in_(ids), CatalogueCredit.role.is_not(None), CatalogueCredit.role != "actor",
         CatalogueEntity.kind == "person"))).all()
     by_work = defaultdict(list)
+    from core.person_identities import canonical_people
+    canonical = await canonical_people(db, [person for _, person in rows])
     for credit, person in rows:
+        person = canonical[person.id]
         label = role_label(credit)
         if label.casefold() in ACTING:
             continue
@@ -110,6 +113,8 @@ async def person_detail(db, key, *, show_anime):
             return await person_detail(db, f"catalogue:{mapping.entity_id}", show_anime=show_anime)
     if namespace == "catalogue" and (not person or person.kind != "person"):
         return None
+    if person and person.canonical_person_id:
+        return await person_detail(db, f'catalogue:{person.canonical_person_id}', show_anime=show_anime)
     if person:
         native = await db.scalar(select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id == person.id, CatalogueIdentity.namespace == "tmdb.person"))
     legacy = await db.scalar(select(Media).where(Media.media_type == MediaType.person, Media.tmdb_id == int(native)).order_by(Media.id).limit(1)) if native and native.isdecimal() else None

@@ -4,7 +4,7 @@
 
   const active = new Map<HTMLElement, ReturnType<typeof animate>>();
   const hovered = new Set<HTMLElement>();
-  const selector = 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, a.appbar-icon-link, a.personal-score-button, [data-motion-press]';
+  const selector = 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, a.appbar-icon-link, [data-motion-press]';
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const canHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches && !reduced();
 

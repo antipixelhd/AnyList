@@ -9,16 +9,16 @@
 
 // Keep this list in sync with the backend image cache's supported TMDB
 // buckets.  Asking the proxy for any other width would produce a 400.
-export const ARTWORK_WIDTHS = [92, 154, 185, 342, 500, 780, 1280] as const;
+export const ARTWORK_WIDTHS = [92, 154, 185, 300, 342, 500, 780, 1280] as const;
 
-export type ArtworkRoute = "proxy" | "direct";
+export type ArtworkRoute = "proxy" | "direct" | "auto";
 
 export interface ResponsiveArtworkOptions {
   /** Desired fallback/source bucket, such as `w500` or `w1280`. */
   size?: string;
   /** CSS image width expression, passed through as the `sizes` attribute. */
   sizes?: string;
-  /** Build backend proxy URLs (default) or direct TMDB URLs. */
+  /** Auto follows the page's disk-cache setting; explicit routes override it. */
   route?: ArtworkRoute;
 }
 
@@ -79,6 +79,7 @@ function parseArtwork(path: string): ParsedArtwork {
     try {
       const url = new URL(path);
       const pathname = url.pathname;
+      if(pathname.startsWith(PROXY_PREFIX)&&typeof location!=='undefined'&&url.origin===location.origin)return parseArtwork(`${pathname}${url.search}${url.hash}`);
       if (url.hostname.toLowerCase() === TMDB_HOST) {
         const match = /^\/t\/p\/[^/]+(\/.*)?$/i.exec(pathname);
         if (match) {
@@ -121,6 +122,12 @@ function widthFromSize(size: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/** One identity across provider buckets and the optional local disk proxy. */
+export function artworkIdentity(path:string):string {
+  const parsed=parseArtwork(path);
+  return parsed.kind==='other'?parsed.raw:`${parsed.kind}:${parsed.suffix}`;
+}
+
 function candidateWidths(size: string): number[] {
   const requested = widthFromSize(size);
   if (requested == null || !(ARTWORK_WIDTHS as readonly number[]).includes(requested)) return [];
@@ -143,15 +150,13 @@ export function responsiveArtwork(
   if (!path) return null;
 
   const parsed = parseArtwork(path);
+  const requested=options.route??'proxy';
+  const route=requested==='auto'?(typeof document!=='undefined'&&document.body?.dataset.imageCache==='true'?'proxy':'direct'):requested;
   if (parsed.kind === "tvdb") {
-    if (options.route === "proxy" && !parsed.raw.startsWith(PROXY_PREFIX)) {
-      return { src: `${PROXY_PREFIX}tvdb${parsed.suffix ?? ""}` };
-    }
-    return { src: parsed.raw };
+    return {src:route==='proxy'?`${PROXY_PREFIX}tvdb${parsed.suffix??''}`:`https://${TVDB_HOST}${parsed.suffix??''}`};
   }
   if (parsed.kind !== "tmdb") return { src: parsed.raw };
 
-  const route = options.route ?? "proxy";
   const size = options.size ?? "w500";
   const src = buildUrl(route, size, parsed.suffix ?? "");
   const widths = candidateWidths(size);

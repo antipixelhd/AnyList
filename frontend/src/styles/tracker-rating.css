@@ -192,36 +192,6 @@
 .entry-score-button:hover,.entry-score-button:focus-visible {
   color:#f7b731
 }
-.personal-score-button {
-  display:grid;
-  gap:4px;
-  text-align:left;
-  border:0;
-  background:transparent;
-  color:inherit;
-  padding:0;
-  cursor:pointer;
-  text-decoration:none
-}
-.personal-score-button:hover strong,.personal-score-button:focus-visible strong {
-  color:#f7b731
-}
-.personal-score-button:focus-visible {
-  outline:2px solid var(--blue);
-  outline-offset:6px;
-  border-radius:4px
-}
-.personal-scores>div,.personal-score-button {
-  min-width:0;
-  min-height:126px;
-  grid-template-rows:repeat(3,min-content);
-  align-content:center;
-  gap:4px;
-  padding:16px 18px
-}
-.personal-score-button {
-  border-right:1px solid var(--border)
-}
 .push-notification-setting {
   gap:18px
 }

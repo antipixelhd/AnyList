@@ -1,6 +1,7 @@
 ---
 import RatingPosterSettings from "./RatingPosterSettings.astro";
 import StatisticsRefresh from "./StatisticsRefresh.astro";
+import DateRegionSettings from './DateRegionSettings.astro';
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
@@ -20,6 +21,9 @@ const prefs: UserPreferences = {
   avatar_url: null,
   bio: null,
   country: null,
+  minimum_votes: 250,
+  minimum_movie_runtime: 30,
+  excluded_categories: [],
   streaming_services: [],
   metadata_language: null,
   privacy_level: "private",
@@ -83,31 +87,11 @@ const STREAMING_SERVICES = [
   { id: "15",   name: "Hulu" },
 ];
 
-const COUNTRIES = [
-  ["DZ","Algeria"],["AR","Argentina"],["AU","Australia"],["AT","Austria"],
-  ["AZ","Azerbaijan"],["BH","Bahrain"],["BD","Bangladesh"],["BE","Belgium"],
-  ["BO","Bolivia"],["BA","Bosnia and Herzegovina"],["BR","Brazil"],
-  ["BG","Bulgaria"],["CA","Canada"],["CL","Chile"],["CN","China"],
-  ["CO","Colombia"],["HR","Croatia"],["CY","Cyprus"],["CZ","Czech Republic"],
-  ["DK","Denmark"],["EC","Ecuador"],["EG","Egypt"],["EE","Estonia"],
-  ["FI","Finland"],["FR","France"],["GE","Georgia"],["DE","Germany"],
-  ["GH","Ghana"],["GR","Greece"],["GT","Guatemala"],["HK","Hong Kong"],
-  ["HU","Hungary"],["IS","Iceland"],["IN","India"],["ID","Indonesia"],
-  ["IE","Ireland"],["IL","Israel"],["IT","Italy"],["JM","Jamaica"],
-  ["JP","Japan"],["JO","Jordan"],["KZ","Kazakhstan"],["KE","Kenya"],
-  ["KW","Kuwait"],["LV","Latvia"],["LB","Lebanon"],["LT","Lithuania"],
-  ["LU","Luxembourg"],["MY","Malaysia"],["MT","Malta"],["MX","Mexico"],
-  ["MA","Morocco"],["NL","Netherlands"],["NZ","New Zealand"],["NG","Nigeria"],
-  ["NO","Norway"],["OM","Oman"],["PK","Pakistan"],["PA","Panama"],
-  ["PY","Paraguay"],["PE","Peru"],["PH","Philippines"],["PL","Poland"],
-  ["PT","Portugal"],["QA","Qatar"],["RO","Romania"],["RU","Russia"],
-  ["SA","Saudi Arabia"],["RS","Serbia"],["SG","Singapore"],["SK","Slovakia"],
-  ["SI","Slovenia"],["ZA","South Africa"],["KR","South Korea"],["ES","Spain"],
-  ["LK","Sri Lanka"],["SE","Sweden"],["CH","Switzerland"],["TW","Taiwan"],
-  ["TH","Thailand"],["TN","Tunisia"],["TR","Turkey"],["UA","Ukraine"],
-  ["AE","United Arab Emirates"],["GB","United Kingdom"],["US","United States"],
-  ["UY","Uruguay"],["VE","Venezuela"],["VN","Vietnam"],
-];
+const RESULT_CATEGORIES = [
+  [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
+  [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
+] as const;
+const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).map(row => [row.code, row.name]) : [];
 ---
 
 
@@ -116,6 +100,7 @@ const COUNTRIES = [
     <div id="js-message" class="hidden" role="status" aria-live="polite"></div>
     {category === "profile" && (
     <div class="settings-stack">
+      <DateRegionSettings />
 
       <!-- Profile color -->
       <section class="profile-color-settings" aria-labelledby="profile-color-heading">
@@ -264,6 +249,30 @@ const COUNTRIES = [
       </div>}
       {category === "media" && <div class="settings-stack">
       <StatisticsRefresh />
+      <section>
+        <div class="setting-label-line mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Seasons</h2><span class="setting-save-state" data-save-state="remove-specials-seasons" role="status"></span></div>
+        <label class="setting-switch-row" for="remove-specials-seasons">
+          <span><strong>Remove Specials Seasons</strong></span>
+          <input id="remove-specials-seasons" type="checkbox" checked={trackingPrefs.remove_specials_seasons !== false} />
+        </label>
+      </section>
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
+        <div class="space-y-2 max-w-xs">
+          <div class="setting-label-line"><label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label><span class="setting-save-state" data-save-state="minimum_votes" role="status"></span></div>
+          <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="1000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>
+        <div class="space-y-2 max-w-xs mt-5">
+          <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label><span class="setting-save-state" data-save-state="minimum_movie_runtime" role="status"></span></div>
+          <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>
+        <fieldset id="excluded_categories" class="mt-5 space-y-3">
+          <legend class="setting-label-line"><span class="text-sm font-medium text-zinc-400">Exclude categories</span><span class="setting-save-state" data-save-state="excluded_categories" role="status"></span></legend>
+          <div class="flex flex-wrap gap-2">
+            {RESULT_CATEGORIES.map(([id, label]) => <button type="button" class="chip border text-base font-medium transition-colors cursor-pointer focus:outline-none" data-excluded-category={id} aria-pressed={prefs.excluded_categories?.includes(id) ?? false}>{label}</button>)}
+          </div>
+        </fieldset>
+      </section>
       <!-- Localization -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -283,7 +292,7 @@ const COUNTRIES = [
             ))}
           </select>
           <p class="text-xs text-zinc-500">
-            Streaming availability on title pages uses this region.
+            Streaming and theatrical availability use this country.
           </p>
         </div>
         <div class="space-y-2 max-w-xs">
@@ -610,6 +619,27 @@ const COUNTRIES = [
       saveAppearance();
     });
     siteWideToggle?.addEventListener('change', saveAppearance);
+    for (const [field, fallback] of [['minimum_votes', 250], ['minimum_movie_runtime', 30]] as const) {
+      const input = document.getElementById(field) as HTMLInputElement | null;
+      if (!input) continue;
+      committed.set(field, { [field]: Number(input.value) });
+      input.addEventListener('change', () => {
+        if (!input.reportValidity()) return;
+        queueSave(field, { [field]: Number(input.value) }, previous => {
+          input.value = String(previous[field] ?? fallback);
+        });
+      });
+    }
+    const excludedButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-excluded-category]')];
+    const excludedValues = () => excludedButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => Number(button.dataset.excludedCategory));
+    committed.set('excluded_categories', { excluded_categories: excludedValues() });
+    excludedButtons.forEach(button => button.addEventListener('click', () => {
+      button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
+      queueSave('excluded_categories', { excluded_categories: excludedValues() }, previous => {
+        const values = (previous.excluded_categories ?? []) as number[];
+        excludedButtons.forEach(item => item.setAttribute('aria-pressed', String(values.includes(Number(item.dataset.excludedCategory)))));
+      });
+    }));
     for (const field of ['country', 'metadata_language']) {
       const select = document.getElementById(field) as HTMLSelectElement | null;
       if (!select) continue;
@@ -659,8 +689,10 @@ const COUNTRIES = [
     // Save
     const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
     const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
+    const removeSpecials = document.getElementById('remove-specials-seasons') as HTMLInputElement | null;
     if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
     if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
+    if (removeSpecials) removeSpecials.dataset.savedValue = String(removeSpecials.checked);
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
     function publishCombinePreference(value: boolean) {
@@ -670,8 +702,9 @@ const COUNTRIES = [
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
+      const statusKey = field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
-      setStatus('combine-lists', 'Saving…', 'saving');
+      setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
         try {
           const response = await fetch('/api/proxy/tracking/preferences', {
@@ -679,19 +712,19 @@ const COUNTRIES = [
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(change),
           });
-          if (!response.ok) throw new Error('Could not update your list preferences.');
-          const saved = await response.json() as { combine_lists?: boolean; default_sort?: string };
+          if (!response.ok) throw new Error('Could not update your preferences.');
+          const saved = await response.json() as Record<string, boolean | string>;
           // Keep the last confirmed server value available for rollback, even when
           // a newer change is already queued behind this request.
-          control.dataset.savedValue = field === 'combine_lists' ? String(saved.combine_lists !== false) : saved.default_sort || requestedValue;
-          if (trackingRevisions.get(field) === revision) setStatus('combine-lists', 'Saved');
+          control.dataset.savedValue = String(saved[field] ?? requestedValue);
+          if (trackingRevisions.get(field) === revision) setStatus(statusKey, 'Saved');
         } catch (error) {
           if (trackingRevisions.get(field) === revision) {
             const savedValue = control.dataset.savedValue ?? '';
             if (control instanceof HTMLInputElement) control.checked = savedValue === 'true';
             else control.value = savedValue;
             if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
-            setStatus('combine-lists', error instanceof Error ? error.message : 'Could not update your list preferences.', 'error');
+            setStatus(statusKey, error instanceof Error ? error.message : 'Could not update your preferences.', 'error');
           }
         }
       });
@@ -699,6 +732,7 @@ const COUNTRIES = [
     }
     combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists, 'combine_lists'));
     defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort, 'default_sort'));
+    removeSpecials?.addEventListener('change', () => saveTrackingPreferences({ remove_specials_seasons: removeSpecials.checked }, removeSpecials, 'remove_specials_seasons'));
 
     // Completion-rating Web Push is enrolled per browser/PWA installation.
     const pushButton = document.getElementById('push-notifications-toggle') as HTMLButtonElement | null;

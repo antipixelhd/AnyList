@@ -1,5 +1,9 @@
 /* Stable shared app bar: fixed geometry keeps navigation aligned on every page. */
 .topbar {
+  --bright:var(--white);
+  --type-nav-size:14px;
+  --type-nav-weight:600;
+  color:rgb(229, 231, 234);
   position:sticky;
   top:0;
   z-index:60;
@@ -423,25 +427,7 @@
   }
 }
 @media(max-width:650px) {
-  .detail-facts {
-    grid-row:3
-  }
-  .external-links {
-    grid-row:4
-  }
-  .ratings-overview {
-    grid-row:5
-  }
-  .synopsis-section {
-    grid-row:6
-  }
-  .following-section {
-    grid-row:7
-  }
   .seasons-section {
     grid-row:8
-  }
-  #season-message {
-    grid-row:9
   }
 }

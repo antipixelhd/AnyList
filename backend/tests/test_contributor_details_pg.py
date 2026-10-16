@@ -12,8 +12,222 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reviewed_studio_group_unions_credits_without_merging_historical_identities(self):
+        from core.contributor_search import local_matches
+        from core.studio_discovery import verified_studios
+        async with self.Session() as db:
+            root = CatalogueEntity(kind='organization', name='DC', attributes={})
+            branch = CatalogueEntity(kind='organization', name='DC Entertainment', attributes={})
+            historical = CatalogueEntity(kind='organization', name='DC Films', attributes={})
+            current = CatalogueEntity(kind='organization', name='DC Studios', attributes={})
+            exclusive = CatalogueEntity(kind='movie', name='Branch Film', attributes={'release_date':'2024-01-01'})
+            old_work = CatalogueEntity(kind='movie', name='Historical Film', attributes={'release_date':'2018-01-01'})
+            new_work = CatalogueEntity(kind='movie', name='Current Film', attributes={'release_date':'2025-01-01'})
+            db.add_all([root,branch,historical,current,exclusive,old_work,new_work]); await db.flush()
+            for entity, native in [(root,429),(branch,9993),(historical,128064),(current,184898)]:
+                db.add(CatalogueIdentity(entity_id=entity.id,namespace='tmdb.company',external_id=str(native),source='tmdb'))
+            shared = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie',CatalogueEntity.name=='Fixture movie'))
+            for work in (shared,exclusive,old_work,new_work):
+                work.attributes={**(work.attributes or {}),'vote_count':500,
+                    'release_date':(work.attributes or {}).get('release_date','2020-01-01')}
+            for company, work in [(root,shared),(branch,shared),(branch,exclusive),(historical,old_work),(current,new_work)]:
+                db.add(CatalogueCredit(work_id=work.id,contributor_id=company.id,provider='tmdb',source_key=f'{company.id}-{work.id}',role='producer'))
+            await db.commit()
+            rows = (await local_matches(db,'DC Entertainment','studio'))['studio']
+            grouped, _ = await verified_studios(db,None,rows,None)
+            self.assertEqual(len(grouped),1)
+            self.assertEqual(grouped[0]['name'],'DC Entertainment')
+            self.assertEqual(grouped[0]['url'],'/studio/tmdb:429')
+        for native in [429,9993]:
+            response=await self.request('studio',f'tmdb:{native}')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual({row['title'] for row in response.json()['works']},{'Fixture movie','Branch Film'})
+            self.assertEqual(len(response.json()['works']),2)
+        for native, name in [(128064,'Historical Film'),(184898,'Current Film')]:
+            response=await self.request('studio',f'tmdb:{native}')
+            self.assertEqual([row['title'] for row in response.json()['works']],[name])
+
+    async def test_quick_search_uses_canonical_roles_studio_pages_and_literal_names(self):
+        from core.contributor_search import local_matches
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            person.name = 'Search Person'
+            alias = CatalogueEntity(kind='person', name='Search Old Name', canonical_person_id=person.id, attributes={})
+            db.add(alias); await db.flush()
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=alias.id, provider='tmdb', source_key='search-director', role='director', role_label='Director'))
+            studio = await db.get(CatalogueEntity, self.studio_id)
+            studio.name = 'Search Studio'
+            network = CatalogueEntity(kind='organization', name='Search Network', attributes={})
+            archive = CatalogueEntity(kind='person', name='Search Archive', attributes={})
+            db.add_all([network,archive]); await db.flush()
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=network.id, provider='tmdb', source_key='search-network', role='network'))
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=archive.id, provider='tmdb', source_key='search-archive', role='actor', character_label='Self (archive footage)'))
+            await db.commit()
+            data = await local_matches(db, 'Search', 'all')
+            self.assertEqual([row['key'] for row in data['actor']], [f'catalogue:{person.id}'])
+            self.assertEqual([row['key'] for row in data['staff']], [f'catalogue:{person.id}'])
+            self.assertEqual([row['key'] for row in data['studio']], [f'catalogue:{studio.id}'])
+            self.assertEqual(data['staff'][0]['url'], f'/person/catalogue:{person.id}')
+            alias_data = await local_matches(db, 'Old Name', 'actor')
+            self.assertEqual(alias_data['actor'][0]['name'], 'Search Person')
+            self.assertFalse(alias_data['staff'])
+            self.assertEqual(await local_matches(db, '%', 'all'), {'actor': [], 'staff': [], 'studio': []})
+
+    async def test_cast_completeness_uses_historical_payload_without_dropping_partial_fallback(self):
+        from core.screen_cast import complete_cast_works
+        from models.catalogue import MetadataSnapshot
+        async with self.Session() as db:
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            snapshot = MetadataSnapshot(provider='tmdb', kind='movie', external_id='cast-coverage',
+                entity_id=work.id, coverage={'credits_complete':False},
+                payload={'credits':{'cast':[], 'crew':[]}})
+            db.add(snapshot); await db.commit()
+            self.assertIn(work.id, await complete_cast_works(db, {work.id}))
+            snapshot.payload = {'credits':{'cast':[]}}
+            await db.commit()
+            self.assertNotIn(work.id, await complete_cast_works(db, {work.id}))
+            snapshot.kind = 'series'
+            snapshot.payload = {'credits':{'cast':[], 'crew':[]}}
+            await db.commit()
+            self.assertNotIn(work.id, await complete_cast_works(db, {work.id}))
+            snapshot.payload = {'aggregate_credits':{'cast':[], 'crew':[]}}
+            await db.commit()
+            self.assertIn(work.id, await complete_cast_works(db, {work.id}))
+
+    async def test_unlinked_tvdb_cast_uses_tmdb_profile_and_keeps_role_artwork(self):
+        from core.media_details import work_details
+        from core.statistics_actors import load_actors
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            original = await db.scalar(select(CatalogueCredit).where(
+                CatalogueCredit.work_id == work.id, CatalogueCredit.contributor_id == person.id,
+                CatalogueCredit.role == 'actor'))
+            original.provider = 'tmdb'
+            original.character_image_url = None
+            alias = CatalogueEntity(kind='person', name=person.name, attributes={})
+            db.add(alias); await db.flush()
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=alias.id, provider='tvdb',
+                source_key='unlinked-role', role='actor', character_label=original.character_label,
+                character_image_url='https://example.test/role.jpg'))
+            await db.commit()
+            details = await work_details(db, work, extras=False)
+            actors = [p for p in details['people'] if p['kind'] == 'actor']
+            self.assertEqual(len(actors), 1)
+            self.assertEqual(actors[0]['id'], person.id)
+            self.assertEqual(actors[0]['character_image'], 'https://example.test/role.jpg')
+            self.assertEqual(actors[0]['url'], f'/actors/catalogue:{person.id}')
+            facts = [{'listed':True, 'entity_id':work.id, 'media':[], 'kind':'movie'}]
+            await load_actors(db, facts)
+            self.assertEqual({a['key'] for a in facts[0]['actors']}, {f'catalogue:{person.id}'})
+            self.assertTrue(any(a['character_image'] == 'https://example.test/role.jpg' for a in facts[0]['actors']))
+            self.assertIsNone(alias.canonical_person_id)
+
+    async def test_account_result_filters_apply_to_works_and_preserve_cached_credits(self):
+        from models import UserProfileData
+        self.vote_floor.stop()
+        await self.login()
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.minimum_votes = 250
+            profile.excluded_categories = [99]
+            for i, votes in enumerate((249, 250, 500)):
+                work = CatalogueEntity(kind='movie', name=f'Votes {votes}', attributes={'vote_count': votes, 'release_date': f'202{i}-01-01',
+                                      'runtime': 2 if votes == 500 else 30, 'genres': ['Documentary'] if votes == 249 else ['Drama']})
+                db.add(work); await db.flush()
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=self.person_id, provider='tmdb', source_key=f'votes-{votes}', role='actor'))
+            await db.commit()
+            count = await db.scalar(select(func.count()).select_from(CatalogueCredit))
+        data = (await self.request()).json()
+        self.assertEqual([row['title'] for row in data['works']], ['Votes 250'])
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.minimum_votes = 0
+            profile.minimum_movie_runtime = 0
+            profile.excluded_categories = []
+            await db.commit()
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit)), count)
+        self.assertEqual((await self.request()).json()['total'], 4)
+
+    async def test_verified_person_backfill_unifies_old_urls_credits_and_role_artwork(self):
+        from core.person_identity_backfill import backfill_person_identities
+        from core.media_details import work_details
+        from core.screen_characters import project_characters
+        async with self.Session() as db:
+            person = await db.get(CatalogueEntity, self.person_id)
+            alias = CatalogueEntity(kind='person', name=person.name, attributes={'birthday':'1970-01-01'},
+                protected_fields=['attributes.birthday'])
+            db.add(alias); await db.flush()
+            alias_id = alias.id
+            db.add_all([CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='77', source='tmdb'),
+                        CatalogueIdentity(entity_id=alias.id, namespace='tvdb.person', external_id='88', source='tvdb')])
+            work_id = await db.scalar(select(CatalogueEntity.id).where(CatalogueEntity.kind == 'movie'))
+            db.add_all([CatalogueCredit(work_id=work_id, contributor_id=alias.id, provider='tvdb', source_key='alias-director', role='contributor', role_label='Director'),
+                        CatalogueCredit(work_id=work_id, contributor_id=alias.id, provider='tvdb', source_key='alias-cast', role='actor', character_label='Fixture Character', character_image_url='https://example.test/role.jpg')])
+            await db.flush(); await project_characters(db, work_id); await db.commit()
+            before = list((await db.execute(select(CatalogueCredit.id, CatalogueCredit.contributor_id, CatalogueCredit.screen_character_id).order_by(CatalogueCredit.id))).all())
+            raw = {'id':88, 'remoteIds':[{'sourceName':'TheMovieDB.com', 'id':'77'}]}
+            with patch('core.person_identity_backfill.tvdb.get_person', AsyncMock(return_value=raw)) as fetch:
+                result = await backfill_person_identities(db, 'fixture')
+                self.assertEqual((result['bridged'], result['aliases'], result['failed']), (1,1,0))
+                self.assertEqual((await backfill_person_identities(db, 'fixture'))['examined'], 0)
+                fetch.assert_awaited_once()
+            self.assertEqual((await db.get(CatalogueEntity, alias_id)).canonical_person_id, self.person_id)
+            self.assertEqual(before, list((await db.execute(select(CatalogueCredit.id, CatalogueCredit.contributor_id, CatalogueCredit.screen_character_id).order_by(CatalogueCredit.id))).all()))
+            details = await work_details(db, await db.get(CatalogueEntity, work_id))
+            self.assertEqual({p['id'] for p in details['people']}, {self.person_id})
+            actor = next(p for p in details['people'] if p['kind'] == 'actor')
+            self.assertIn('https://example.test/role.jpg', actor['character_images'])
+        old = (await self.request('staff', f'catalogue:{alias_id}')).json()
+        canonical = (await self.request('staff')).json()
+        self.assertEqual(old['key'], f'catalogue:{self.person_id}')
+        self.assertEqual(old['works'], canonical['works'])
+        self.assertEqual(old['works'][0]['roles'], ['Director'])
+
+    async def test_person_backfill_rejects_mismatched_provider_ids_and_contradictory_links(self):
+        from core.person_identity_backfill import backfill_person_identities
+        async with self.Session() as db:
+            alias = CatalogueEntity(kind='person', name='Similar name', attributes={})
+            db.add(alias); await db.flush()
+            db.add_all([CatalogueIdentity(entity_id=alias.id, namespace='tvdb.person', external_id='88', source='tvdb'),
+                        CatalogueIdentity(entity_id=alias.id, namespace='tmdb.person', external_id='99', source='tmdb'),
+                        CatalogueIdentity(entity_id=self.person_id, namespace='tmdb.person', external_id='77', source='tmdb')])
+            await db.commit()
+            for raw in ({'id':89, 'remoteIds':[{'sourceName':'TheMovieDB.com','id':'77'}]},
+                        {'id':88, 'remoteIds':[{'sourceName':'TheMovieDB.com','id':'77'}]}):
+                with patch('core.person_identity_backfill.tvdb.get_person', AsyncMock(return_value=raw)):
+                    self.assertEqual((await backfill_person_identities(db, 'fixture', native=88))['failed'],1)
+                await db.refresh(alias)
+                self.assertIsNone(alias.canonical_person_id)
+                self.assertEqual(await db.scalar(select(CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='tvdb.person')), alias.id)
+
+    async def test_non_work_roles_filter_local_and_remote_before_merging_and_pagination(self):
+        async with self.Session() as db:
+            for index, role in enumerate(('Thanks','Original Idea','Director')):
+                work = CatalogueEntity(kind='movie', name=f'Credit {index}', attributes={'release_date':f'202{index}-01-01'})
+                db.add(work); await db.flush()
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=self.person_id, provider='tmdb', source_key=f'job-{index}', role='contributor', role_label=role))
+            await db.commit()
+        local = (await self.request('staff')).json()
+        self.assertEqual([w['title'] for w in local['works']], ['Credit 2'])
+        self.key_mock.return_value = 'fixture'
+        raw = {'id':77,'name':'Person','combined_credits':{'crew':[
+            {'id':100,'media_type':'movie','title':'Thanks only','job':'Special Thanks'},
+            {'id':101,'media_type':'movie','title':'Idea only','job':'Idea'},
+            {'id':102,'media_type':'movie','title':'Directed','job':'Director'}], 'cast':[
+            {'id':103,'media_type':'movie','title':'Uncredited','character':'Man (uncredited)'},
+            {'id':104,'media_type':'movie','title':'Archive','character':'Self (archive footage)'},
+            {'id':105,'media_type':'movie','title':'Credited','character':'Named role'}]}}
+        with patch('core.contributor_details.tmdb.get_person', AsyncMock(return_value=raw)):
+            self.assertEqual([w['title'] for w in (await self.request('staff','tmdb:77')).json()['works']], ['Directed'])
+            self.assertEqual([w['title'] for w in (await self.request('actor','tmdb:77')).json()['works']], ['Credited'])
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
+        self.vote_floor = patch('core.contributor_details.result_filters', AsyncMock(return_value={'min_votes':0,'min_runtime':0,'excluded_genres':[]}))
+        self.vote_floor.start()
+        self.addCleanup(self.vote_floor.stop)
         self.keys = patch('core.contributor_details.settings_store.get_user_tmdb_key', AsyncMock(return_value=None))
         self.key_mock = self.keys.start()
         self.addCleanup(self.keys.stop)
@@ -158,13 +372,15 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
             db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='77', source='tmdb'))
             await db.commit()
         with patch('core.contributor_backfill.tmdb.get_person_profile', AsyncMock(return_value={'id':77,'biography':'Saved biography','birthday':'1970-01-01','place_of_birth':'Provider location','homepage':'javascript:bad'})) as people, \
-             patch('core.contributor_backfill.tmdb.get_company', AsyncMock(return_value={'id':99,'description':'Studio biography','headquarters':'HQ'})) as companies:
+             patch('core.contributor_backfill.tmdb.get_company', AsyncMock(return_value={'id':99,'description':'Studio biography','headquarters':'HQ'})) as companies, \
+             patch('core.contributor_backfill.tmdb.get_company_aliases', AsyncMock(return_value={'id':99,'results':[{'name':'Studio Alias'}]})):
             async with self.Session() as db:
                 first = await backfill_contributors(db, 'fixture')
                 person = await db.get(CatalogueEntity, self.person_id)
                 self.assertEqual(person.description, 'Saved biography')
                 self.assertEqual(person.attributes['birthday'], '')
                 self.assertEqual(person.attributes['place_of_birth'], 'My edit')
+                self.assertEqual((await db.get(CatalogueEntity,self.studio_id)).attributes['also_known_as'],['Studio Alias'])
                 self.assertNotIn('homepage', person.attributes)
                 self.assertEqual(first['examined'], 2)
                 self.assertEqual((await backfill_contributors(db, 'fixture'))['examined'], 0)

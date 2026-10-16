@@ -1,0 +1,9 @@
+---
+import { formatDateTime, requestDateLocale, timestamp, type DateTimeStyle } from '../lib/date-time';
+interface Props { value?: string | null; style?: DateTimeStyle; fallback?: string; class?: string; hidden?: boolean }
+const { value, style = 'date', fallback = '', class: className, hidden } = Astro.props;
+const instant = style === 'time' || style === 'datetime' || style === 'timestamp-date';
+const datetime = instant ? timestamp(value)?.toISOString() : value || undefined;
+const text = formatDateTime(value, style, { locale: requestDateLocale(Astro.request.headers.get('accept-language'), Astro.cookies.get('anylist_date_region')?.value), timeZone: 'UTC' }) || fallback;
+---
+<time datetime={datetime} data-local-date-time={style} data-date-fallback={fallback || undefined} class={className} hidden={hidden} title={instant && datetime ? `${datetime} (UTC)` : undefined}>{text}</time>

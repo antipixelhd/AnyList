@@ -57,7 +57,7 @@ class StudioTests(unittest.TestCase):
                               "networks": [{"id": 3, "name": "Network"}]}, "movie")
         company = doc["credits"][0]
         self.assertEqual(company["role"], "producer")
-        self.assertEqual(company["contributor"]["attributes"], {"origin_country": "US"})
+        self.assertEqual(company["contributor"]["attributes"], {"origin_country": "US", "also_known_as": ["Studio"]})
         self.assertEqual(company["contributor"]["image_url"], "https://image.tmdb.org/t/p/original/studio.png")
         self.assertEqual(doc["credits"][1]["role"], "broadcaster")
 

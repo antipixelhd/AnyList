@@ -4,11 +4,64 @@ import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
-  .replace("'./responsive-artwork'", JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href));
+  .replace("'./responsive-artwork'", JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
+  .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
 const {EditorStore} = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
+
+test('predicted metadata preserves pending list edits and existing artwork',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0},favorite:true});
+  const write=store.write(title,{status:'watching'});
+  store.warmMetadata({...draft(),overview:'Preview',runtime:120,poster:'/different.jpg',entry:null,favorite:false});
+  assert.equal(title.entry.status,'watching');assert.equal(title.favorite,true);
+  assert.equal(title.poster,'/poster.jpg');assert.equal(title.overview,'Preview');
+  await turn();pending.resolve({status:'watching',progress:1});await write;
+  assert.equal(title.entry.progress,1);assert.equal(title.runtime,120);
+});
+
+test('favorites preserve absent list membership and roll back independently on errors',async()=>{
+  let pending=deferred();
+  const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1});
+  const first=store.write(title,{favorite:true});
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+  await turn();pending.resolve({id:1,status:null,favorite:true});await first;
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+  pending=deferred();const failed=store.write(title,{favorite:false});
+  assert.equal(title.entry,null);assert.equal(title.favorite,false);
+  await turn();pending.reject(new Error('Unavailable'));await assert.rejects(failed);
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+});
+
+test('favoriting tracked titles preserves status, progress and dates',async()=>{
+  const entry={status:'paused',progress:7,start_date:'2025-01-01',finish_date:null,favorite:false};
+  const store=new EditorStore(async()=>({...entry,favorite:true}));
+  const title=store.seed({...draft(),id:1,entry});
+  const saved=store.write(title,{favorite:true});
+  assert.equal(title.entry.status,'paused');assert.equal(title.entry.progress,7);
+  await saved;assert.equal(title.entry.start_date,'2025-01-01');assert.equal(title.entry.status,'paused');
+});
+
+test('commit notifications follow successful writes and removals, never optimistic or failed writes',async()=>{
+  let pending=deferred();const commits=[];
+  const store=new EditorStore(()=>pending.promise,()=>{},(title,patch)=>commits.push({entry:title.entry&&{...title.entry},patch}));
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  const first=store.write(title,{status:'completed'});
+  assert.equal(commits.length,0);
+  await turn();pending.resolve({status:'completed',progress:5});await first;
+  assert.equal(commits[0].entry.progress,5);
+  assert.deepEqual(commits[0].patch,{status:'completed'});
+  pending=deferred();const failed=store.write(title,{status:'watching'});
+  await turn();pending.reject(new Error('Unavailable'));await assert.rejects(failed);
+  assert.equal(commits.length,1);
+  assert.equal(title.entry.status,'completed');
+  pending=deferred();const removed=store.remove(title);
+  await turn();pending.resolve({});await removed;
+  assert.deepEqual(commits[1],{entry:null,patch:null});
+});
 
 test('seeded editor snapshots open without reads, preserve all fields and share the displayed poster', async () => {
   const calls=[];
@@ -144,4 +197,22 @@ test('cold backdrop decoding never changes the artwork chosen for an open editor
     assert.equal(opened.backdrop,'cached-poster');
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
   } finally {globalThis.Image=previous;}
+});
+
+test('curated artwork updates preserve optimistic intent and ignore an old decode',async()=>{
+  const previous=globalThis.Image,old=deferred(),curated=deferred(),save=deferred();let images=0;
+  globalThis.Image=class {decode(){return images++===0?old.promise:curated.promise;}};
+  try {
+    const store=new EditorStore(()=>save.promise),title=store.seed({...draft(),id:7});
+    store.warmArtwork(title,'cached-poster');
+    const pending=store.write(title,{favorite:true});
+    store.updateArtwork(7,{poster:'/new-poster.jpg',backdrop:'/new-background.jpg'});
+    assert.equal(title.favorite,true);assert.equal(title.entry,null);
+    old.resolve();await turn();
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w342/new-poster.jpg');
+    curated.resolve();await turn();
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/new-background.jpg');
+    save.resolve({id:7,status:null,favorite:true});await pending;
+    assert.equal(title.poster,'/new-poster.jpg');assert.equal(title.favorite,true);
+  }finally{globalThis.Image=previous;}
 });

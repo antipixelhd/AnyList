@@ -2,16 +2,16 @@ import type { ProfileStats } from './profile-stats-data';
 
 // Genre identity stays the same regardless of rank or movie/series mix.
 const genreColors: Record<string, string> = {
-  action: '#83d85a', adventure: '#ad8aff', animation: '#ffc76b',
-  comedy: '#ffd56b', crime: '#ff8b7b', documentary: '#72cbbb',
-  drama: '#58bfff', family: '#9ddc81', fantasy: '#c293ff',
-  history: '#d9b88a', horror: '#ee7b98', music: '#f89ac8',
-  mystery: '#969eff', romance: '#ff93b9', 'science fiction': '#65d4dc',
-  thriller: '#e4a36f', war: '#c2c98a', western: '#d8ad75',
-  'tv movie': '#95b7dd', kids: '#ace181', news: '#8bbce8',
-  reality: '#e8b5e8', talk: '#9ccac8', soap: '#eaa6bc',
-  'action & adventure': '#62c996', 'sci-fi & fantasy': '#82acef',
-  'war & politics': '#b9b298', supernatural: '#da8de8',
+  action: '#68d639', adventure: '#9256f3', animation: '#ff9b54',
+  comedy: '#f4b83f', crime: '#f16e62', documentary: '#26c9a8',
+  drama: '#00aaff', family: '#80d84c', fantasy: '#ed5b78',
+  history: '#e8ad63', horror: '#ed5683', music: '#ed6db7',
+  mystery: '#8870f5', romance: '#f36fa5', 'science fiction': '#20c5df',
+  thriller: '#ff9657', war: '#a4c94f', western: '#e9a15b',
+  'tv movie': '#59a4ef', kids: '#91d83f', news: '#38b8f5',
+  reality: '#d87be9', talk: '#43c9bf', soap: '#ee80a8',
+  'action & adventure': '#36ce8b', 'sci-fi & fantasy': '#648ef5',
+  'war & politics': '#b5c65b', supernatural: '#f673a5',
 };
 const aliases: Record<string, string> = { 'sci-fi': 'science fiction', 'science-fiction': 'science fiction' };
 
@@ -20,7 +20,7 @@ export function genreColor(genre: string): string {
   const known = genreColors[aliases[key] ?? key];
   if (known) return known;
   const hash = [...key].reduce((value, character) => (value * 31 + character.charCodeAt(0)) >>> 0, 0);
-  return `hsl(${hash % 360} 65% 72%)`;
+  return `hsl(${hash % 360} 85% 62%)`;
 }
 
 export function overviewGenres(summaries: (ProfileStats | null)[]) {

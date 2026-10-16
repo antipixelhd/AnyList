@@ -133,8 +133,8 @@ const { hasTmdbKey } = Astro.props;
           <label class="sr-only" for="netflix-remap-input">Search movies and series</label>
           <input id="netflix-remap-input" type="search" placeholder="Search movies and series…" autocomplete="off" spellcheck="false" />
           <button id="netflix-remap-close" class="editor-icon-button" type="button" aria-label="Close remap search">×</button>
+          <div id="netflix-remap-progress" class="quick-search-progress" aria-hidden="true"></div>
         </div>
-        <div id="netflix-remap-progress" class="quick-search-progress" aria-hidden="true"></div>
         <p id="netflix-remap-state" class="quick-search-state" role="status" hidden></p>
         <div id="netflix-remap-results" class="quick-search-results combined" hidden>
           <section class="quick-search-card"><div id="netflix-remap-list"></div></section>

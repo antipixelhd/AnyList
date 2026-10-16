@@ -2,7 +2,7 @@
 import Icon from './Icon.astro';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 const {item, owner = false} = Astro.props;
-const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
+const image = responsiveArtwork(item.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:Astro.locals.imageCacheEnabled?'proxy':'direct'});
 ---
 <article class="favorite-card" data-favorite-card data-media-id={item.id} data-title={item.title}>
             <a class="favorite-poster" href={`/title/${item.id}`} aria-label={item.title} title={item.title}>

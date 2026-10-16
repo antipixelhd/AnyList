@@ -98,6 +98,42 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tvdb_enriches_principals_and_verified_studios_without_fetching_supporting_people(self):
+        from core import tvdb
+        raw={'id':1,'name':'Movie','characters':[
+            {'id':1,'peopleId':88,'personName':'Director','peopleType':'Director','type':1,'sort':1},
+            *[{'id':i+2,'peopleId':i+100,'personName':f'Assistant {i}',
+               'peopleType':'Production Assistant','type':1} for i in range(80)]],
+            'companies':{'studio':[{'id':5,'name':'Studio, LLC'}]}}
+        company={'id':5,'remoteIds':[{'sourceName':'TheMovieDB.com','id':'99'}]}
+        adapter=providers.CatalogueProviders(providers.ProviderHTTP(),tvdb_key='fixture')
+        with patch.object(tvdb,'get_movie',AsyncMock(return_value=raw)), \
+             patch.object(tvdb,'get_person',AsyncMock(return_value={'id':88})) as people, \
+             patch.object(tvdb,'get_company',AsyncMock(return_value=company)) as companies:
+            doc,_=await adapter.detail('tvdb','movie','1')
+        people.assert_awaited_once_with(88,'fixture')
+        companies.assert_awaited_once_with(5,'fixture')
+        self.assertEqual(len(doc['credits']),82)
+        studio=next(c for c in doc['credits'] if c['contributor']['kind']=='organization')
+        self.assertIn({'namespace':'tmdb.company','external_id':'99'},studio['contributor']['identities'])
+
+    async def test_tvdb_principal_staff_and_cast_receive_verified_person_cross_references(self):
+        from core import tvdb
+        raw={'id':1,'name':'Movie','characters':[
+            {'id':1,'peopleId':88,'personName':'Director','peopleType':'Director','type':1,'sort':1},
+            {'id':2,'peopleId':89,'personName':'Actor','peopleType':'Actor','type':3,'sort':2}]}
+        async def profile(native,key):
+            return {'id':native,'remoteIds':[{'sourceName':'TheMovieDB.com','id':str(native+100)}]}
+        adapter=providers.CatalogueProviders(providers.ProviderHTTP(),tvdb_key='fixture')
+        with patch.object(tvdb,'get_movie',AsyncMock(return_value=raw)), patch.object(tvdb,'get_person',AsyncMock(side_effect=profile)) as fetch:
+            doc,_=await adapter.detail('tvdb','movie','1')
+            self.assertEqual(fetch.await_count,2)
+            self.assertEqual({tuple((i['namespace'],i['external_id']) for i in c['contributor']['identities']) for c in doc['credits']},
+                {(('tvdb.person','88'),('tmdb.person','188')), (('tvdb.person','89'),('tmdb.person','189'))})
+        with patch.object(tvdb,'get_movie',AsyncMock(return_value=raw)), patch.object(tvdb,'get_person',AsyncMock(return_value={'id':999,'remoteIds':[{'sourceName':'TheMovieDB.com','id':'525'}]})):
+            doc,_=await adapter.detail('tvdb','movie','1')
+            self.assertTrue(all(len(c['contributor']['identities'])==1 for c in doc['credits']))
+
     def setUp(self):
         self.keys = patch.multiple(
             settings,
@@ -119,6 +155,19 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         providers._local_locks.clear()
         providers._tokens.clear()
         providers._token_locks.clear()
+
+    async def test_imdb_character_person_lookup_uses_access_token_and_rejects_ambiguity(self):
+        from core.screen_character_art import resolve_imdb_person
+        def handle(request):
+            self.assertEqual(request.headers['Authorization'],'Bearer fixture-access-token')
+            self.assertNotIn('api_key',request.url.params)
+            self.assertEqual(request.url.params['external_source'],'imdb_id')
+            return httpx.Response(200,json={'person_results':[{'id':100}]} if request.url.path.endswith('nm100')
+                else {'person_results':[{'id':100},{'id':200}]})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            adapter=providers.CatalogueProviders(providers.ProviderHTTP(client),tmdb_key='fixture-access-token')
+            self.assertEqual(await resolve_imdb_person(adapter,'nm100'),100)
+            self.assertIsNone(await resolve_imdb_person(adapter,'nm200'))
 
     async def test_steam_only_low_date_and_unchanged_link(self):
         requests = []
@@ -318,6 +367,12 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
                     "itad", "GET", "https://api.isthereanydeal.com/test"
                 )
             self.assertEqual(ctx.exception.retry_after, 300)
+            # A different title must share the cooldown rather than hit the provider again.
+            with self.assertRaises(providers.ProviderError) as cooled:
+                await providers.ProviderHTTP(client).request(
+                    'itad', 'GET', 'https://api.isthereanydeal.com/another-title'
+                )
+            self.assertGreater(cooled.exception.retry_after, 290)
 
     async def test_pagination_is_bounded_and_coverage_explicit(self):
         adapter = providers.CatalogueProviders()

@@ -3,11 +3,12 @@
 import asyncio
 from datetime import date, timedelta
 
-from sqlalchemy import Float, and_, func, literal, or_, select, text
+from sqlalchemy import Boolean, Float, and_, case, func, literal, or_, select, text, type_coerce
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
-from core.catalog_search import DEFAULT_MIN_VOTES, stored_vote_count, title_vote_count
+from core.catalog_search import DEFAULT_MIN_VOTES, matches_result_filters, apply_result_filters, known_result_metadata
+from core.cinema_releases import theatrical_dates, theatrical_country_dates, has_cinema_release
 from models import Media
 from models.base import MediaType
 
@@ -61,19 +62,50 @@ TV_GENRES = {
 MOVIE_GENRES = set(GENRES) - (TV_GENRES - {16, 35, 80, 99, 18, 10751, 9648, 37})
 STATUSES = {
     "airing": ["Returning Series"],
+    "returning": ["Returning Series"],
     "finished": ["Ended"],
     "cancelled": ["Canceled"],
     "upcoming": ["Planned", "In Production", "Post Production"],
     "released": ["Released"],
 }
-TV_STATUS = {"airing": "0", "finished": "3", "cancelled": "4", "upcoming": "1|2|5"}
+TV_STATUS = {"airing": "0", "returning": "0", "finished": "3", "cancelled": "4"}
 SORTS = {
+    "trending": "popularity.desc",
+    "popular": "popularity.desc",
+    "score": "vote_average.desc",
     "newest": "primary_release_date.desc",
     "oldest": "primary_release_date.asc",
     "title": "title.asc",
 }
 IMDB_SORTS = {"trending", "popular", "score"}
 PAGE_SIZE = 24
+
+
+def series_airing_clause():
+    """SQL counterpart of current_airing_details, including cached episodes."""
+    return type_coerce(text("""EXISTS (
+      SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(media.tmdb_data->'seasons')='array'
+        THEN media.tmdb_data->'seasons' ELSE '[]'::jsonb END) season
+      WHERE (season->>'season_number')::int > 0 AND (season->>'episode_count')::int > 0
+        AND season->>'air_date' <= :airing_today AND season->>'air_date' <> ''
+        AND (
+          (media.tmdb_data->'next_episode_to_air'->>'season_number' = season->>'season_number'
+            AND media.tmdb_data->'next_episode_to_air'->>'air_date' >= :airing_today
+            AND ((media.tmdb_data->'last_episode_to_air'->>'season_number')::int IS NULL OR
+              ((media.tmdb_data->'next_episode_to_air'->>'season_number')::int,
+               (media.tmdb_data->'next_episode_to_air'->>'episode_number')::int) >
+              ((media.tmdb_data->'last_episode_to_air'->>'season_number')::int,
+               (media.tmdb_data->'last_episode_to_air'->>'episode_number')::int)))
+          OR EXISTS (SELECT 1 FROM media episode JOIN shows ON shows.id=episode.show_id
+            WHERE (shows.tmdb_id=media.tmdb_id OR shows.tvdb_id=media.tvdb_id)
+              AND episode.season_number=(season->>'season_number')::int
+              AND episode.release_date > :airing_today)
+        )
+        AND (SELECT count(*) FROM media episode JOIN shows ON shows.id=episode.show_id
+          WHERE (shows.tmdb_id=media.tmdb_id OR shows.tvdb_id=media.tvdb_id)
+            AND episode.season_number=(season->>'season_number')::int
+            AND episode.release_date <= :airing_today) < (season->>'episode_count')::int
+    )""").bindparams(airing_today=date.today().isoformat()), Boolean)
 
 
 def section_specs(today=None):
@@ -94,7 +126,7 @@ def section_specs(today=None):
 
 async def browse_sections(
     db, viewer, *, media_type, region, show_anime, key, mdblist_key=None,
-    min_votes=DEFAULT_MIN_VOTES,
+    min_votes=DEFAULT_MIN_VOTES, min_score=0, min_runtime=0, excluded_genres=(),
 ):
     specs = section_specs()
     filters = [
@@ -107,6 +139,8 @@ async def browse_sections(
                 provider=None,
                 region=region,
                 min_votes=min_votes,
+                min_score=min_score,
+                min_runtime=min_runtime, excluded_genres=excluded_genres,
             ),
             **values,
         }
@@ -151,7 +185,7 @@ async def browse_sections(
             **full_filters,
         )
         sections.append(
-            {"title": title, "filters": {**values, "min_votes": str(min_votes)}, "results": page["results"][:6]}
+            {"title": title, "filters": {**values, "min_score": f'{min_score:g}'}, "results": page["results"][:6]}
         )
         if page.get("notice"):
             notices.append(page["notice"])
@@ -160,25 +194,41 @@ async def browse_sections(
 
 def metadata_fields(data):
     """Stored in existing JSONB so imports and refreshes retain discovery fields."""
-    return {
+    fields = {
         "popularity": data.get("popularity"),
         "vote_count": data.get("vote_count"),
         "watch_providers": (data.get("watch/providers") or {}).get("results", {}),
     }
+    releases=data.get('release_dates')
+    if isinstance(data.get('theatrical_release_dates'),list) or (
+        isinstance(releases,dict) and isinstance(releases.get('results'),list)):
+        fields['theatrical_release_dates']=theatrical_dates(data)
+    countries=theatrical_country_dates(data)
+    if isinstance(countries,dict):fields['theatrical_release_dates_by_country']=countries
+    return fields
 
 
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
-    min_votes=0,
+    min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
-    params["vote_count.gte"] = min_votes
+    # Future releases cannot yet meet a vote floor. Filter the response locally
+    # when the requested date range can contain unreleased titles.
+    params["vote_count.gte"] = min_votes if end and end <= date.today().isoformat() else 0
+    params["vote_average.gte"] = min_score
     if media_type == "series":
         params["sort_by"] = (
             params["sort_by"]
             .replace("primary_release_date", "first_air_date")
             .replace("title", "name")
         )
+    if excluded_genres:
+        allowed = MOVIE_GENRES if media_type == "movie" else TV_GENRES
+        excluded = sorted(set(excluded_genres) & allowed)
+        if excluded: params["without_genres"] = ",".join(map(str, excluded))
+    if media_type == "movie" and min_runtime:
+        params["with_runtime.gte"] = min_runtime
     if genres:
         params["with_genres"] = ",".join(map(str, genres))
     field = "primary_release_date" if media_type == "movie" else "first_air_date"
@@ -186,8 +236,10 @@ def remote_params(
         params[f"{field}.gte"] = start
     if end:
         params[f"{field}.lte"] = end
-    if media_type == "series" and status:
+    if media_type == "series" and status in TV_STATUS:
         params["with_status"] = TV_STATUS[status]
+    if media_type == 'series' and status == 'upcoming':
+        params[f'{field}.gte'] = max(start or '', (date.today() + timedelta(days=1)).isoformat())
     if media_type == "movie" and status:
         if status == "upcoming":
             params[f"{field}.gte"] = max(
@@ -201,6 +253,9 @@ def remote_params(
             watch_region=region,
             with_watch_monetization_types="flatrate|free|ads",
         )
+    if cinema and media_type=='movie':
+        params.update(with_release_type='2|3', **{'release_date.lte':date.today().isoformat()})
+        if cinema_country:params['region']=cinema_country
     return params
 
 
@@ -217,12 +272,15 @@ def local_query(
     sort,
     show_anime,
     mdblist_key=None,
-    min_votes=0,
+    min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
     )
     data = Media.tmdb_data
+    if cinema and media_type=='movie':
+        dates=data['theatrical_release_dates_by_country'][cinema_country] if cinema_country else data['theatrical_release_dates']
+        query=query.where(dates[0].astext<=date.today().isoformat())
     if not show_anime:
         animated = or_(
             data["genres"].contains(["Animation"]),
@@ -256,6 +314,14 @@ def local_query(
                 if status == "upcoming"
                 else Media.release_date <= date.today().isoformat()
             )
+        elif status in ('airing', 'returning'):
+            active = series_airing_clause()
+            query = query.where(or_(Media.status == 'Returning Series', data['status'].astext == 'Returning Series'),
+                                active if status == 'airing' else ~active,
+                                Media.release_date <= date.today().isoformat())
+        elif status == 'upcoming':
+            query = query.where(or_(Media.release_date > date.today().isoformat(),
+                                    Media.status.in_(STATUSES[status]), data['status'].astext.in_(STATUSES[status])))
         else:
             query = query.where(
                 or_(
@@ -283,10 +349,14 @@ def local_query(
             or_(
                 Media.title.ilike(f"%{escaped}%", escape="\\"),
                 Media.original_title.ilike(f"%{escaped}%", escape="\\"),
-                similarity >= 0.2,
+                Media.title.op('%')(term),
+                Media.original_title.op('%')(term),
             )
         )
-        query = query.order_by(similarity.desc())
+        exact = or_(func.lower(Media.title) == term.lower(), func.lower(Media.original_title) == term.lower())
+        prefix = or_(Media.title.ilike(f'{escaped}%', escape='\\'), Media.original_title.ilike(f'{escaped}%', escape='\\'))
+        substring = or_(Media.title.ilike(f'%{escaped}%', escape='\\'), Media.original_title.ilike(f'%{escaped}%', escape='\\'))
+        query = query.order_by(case((exact, 0), (prefix, 1), (substring, 2), else_=3), similarity.desc())
     ordering = {
         "score": Media.imdb_rating.desc().nulls_last(),
         "newest": Media.release_date.desc().nulls_last(),
@@ -334,9 +404,11 @@ def local_query(
         popular=votes.desc().nulls_last(),
         trending=rank.asc().nulls_last(),
     )
-    if min_votes:
-        query = query.where(stored_vote_count(data, imdb_votes=votes) >= min_votes)
-    if not term:
+    if min_score:
+        query = query.where(func.coalesce(data["vote_average"].astext.cast(Float), Media.tmdb_rating, 0) >= min_score)
+    query = apply_result_filters(query, data, media_type, min_votes=min_votes, min_runtime=min_runtime,
+                                 excluded_genres=excluded_genres, runtime=Media.runtime, imdb_votes=votes, release_date=Media.release_date)
+    if not term and status != 'upcoming':
         if sort == "score":
             query = query.where(score > 0)
         elif sort == "popular":
@@ -346,10 +418,14 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None):
     if item.get("adult"):
         return False
-    if title_vote_count(item) < min_votes:
+    if cinema and media_type=='movie' and not has_cinema_release(item,cinema_country):
+        return False
+    if float(item.get("vote_average") or 0) < min_score:
+        return False
+    if not matches_result_filters(item, media_type, min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres):
         return False
     ids = set(item.get("genre_ids", [])) | {
         g["id"] for g in item.get("genres", []) if isinstance(g, dict) and g.get("id")
@@ -365,7 +441,15 @@ def matches(item, *, media_type, genres, start, end, status, provider, region, m
                 status == "upcoming"
             ):
                 return False
-        elif item.get("status") not in STATUSES[status]:
+        elif status == 'upcoming':
+            if not (released > date.today().isoformat() or item.get('status') in STATUSES[status]):
+                return False
+        elif status in ('airing', 'returning'):
+            from core.season_releases import current_airing_details
+            active, _ = current_airing_details(item, ())
+            if item.get('status') != 'Returning Series' or (released and released > date.today().isoformat()) or active != (status == 'airing'):
+                return False
+        elif item.get('status') not in STATUSES[status]:
             return False
     if provider:
         providers = (
@@ -405,19 +489,22 @@ async def imdb_page(
         media_type, filters["sort"], mdblist_key
     )
     semaphore = asyncio.Semaphore(6)
-    needs_details = filters["provider"]
+    needs_details = filters["provider"] or filters.get('status') in ('airing', 'returning') or (media_type=='movie' and filters.get('cinema'))
     get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
     predicate = {k: v for k, v in filters.items() if k != "sort"}
     if needs_details and not key:
         raise ValueError("A TMDB key is needed for streaming filters")
 
     # Apply cached date/genre/status/adult/anime filters across the full feed first.
-    basic = {**predicate, "provider": None}
+    basic = {**predicate, "provider": None, 'cinema':False}
+    if filters.get('status') in ('airing', 'returning'):
+        basic['status'] = ''  # The ranked feed lacks season/episode evidence.
     candidates = [
         row
         for row in rows
         if matches(row, media_type=media_type, **basic)
         and anime_visible(row, show_anime)
+        and (filters.get('status') not in ('airing', 'returning') or row.get('status') in (None, 'Returning Series'))
     ]
 
     async def detail(row):
@@ -459,13 +546,13 @@ async def imdb_page(
 
 
 async def remote_page(
-    term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True
+    term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None
 ):
     # Imports reuse the same detail cache; at most six concurrent filtered-search lookups.
     from core.catalog_search import fuzzy_remote_terms, is_close_title_match
 
     kind = "movie" if media_type == "movie" else "tv"
-    if not term and filters["sort"] in IMDB_SORTS:
+    if not term and filters["sort"] in IMDB_SORTS and filters.get('status') != 'upcoming':
         return await imdb_page(
             media_type,
             key,
@@ -482,11 +569,29 @@ async def remote_page(
             headers=tmdb.get_headers(key),
             params=remote_params(media_type, page=page, **filters),
         )
-        return data, data.get("results", [])
+        if (media_type=='movie' and filters.get('cinema')) or (media_type=='series' and filters.get('status') in ('airing', 'returning')):
+            semaphore=asyncio.Semaphore(6)
+            async def theatrical(item):
+                async with semaphore:
+                    get = tmdb.get_movie if media_type == 'movie' else tmdb.get_show
+                    return await get(item['id'],api_key=key)
+            items=await asyncio.gather(*(theatrical(item) for item in data.get('results',[])))
+            predicate={k:v for k,v in filters.items() if k!='sort'}
+            return data,[item for item in items if matches(item,media_type=media_type,**predicate)]
+        return data, [item for item in data.get('results', []) if matches_result_filters(
+            item, media_type, min_votes=filters.get('min_votes', 0), min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
     search = tmdb.search_movies if media_type == "movie" else tmdb.search_shows
-    data = await search(term, page=page, api_key=key)
-    items = data.get("results", [])
-    if term and not items and page == 1:
+    data = await search(term, page=page, api_key=key) if page <= 500 else {'results': [], 'total_pages': 500}
+    items = list(data.get("results", []))
+    # Provider pages are small and filters/deduplication can leave only one
+    # viable title. Fetch a bounded batch, including every page of short searches.
+    last = min(page + (4 if len(term.strip()) >= 3 else 0), min(data.get('total_pages', 1), 500))
+    if last > page:
+        batches = await asyncio.gather(*(search(term, page=next_page, api_key=key) for next_page in range(page + 1, last + 1)))
+        items.extend(item for batch in batches for item in batch.get('results', []))
+    data = {**data, 'page': max(page, last), 'has_more': last < min(data.get('total_pages', 1), 500)}
+    data['provider_more'] = data['has_more']
+    if len(term.strip()) >= 3 and not items and page == 1:
         alternatives = await asyncio.gather(
             *(search(candidate, api_key=key) for candidate in fuzzy_remote_terms(term)),
             return_exceptions=True,
@@ -499,8 +604,30 @@ async def remote_page(
             if is_close_title_match(term, item.get("title") or item.get("name") or "")
         ]
         # Corrections form one finite result set, never repeat page one during scrolling.
-        data = {"total_pages": 1}
-    needs_details = filters["status"] or filters["provider"]
+        data = {"total_pages": 1, 'page': 1, 'has_more': False}
+    items = list({item['id']: item for item in items}.values())
+    from core.catalog_search import predictive_titles
+    feed_offset = (0 if page == 1 else -1) if feed_offset is None else feed_offset
+    data['feed_next'] = -1
+    if mdblist_key and feed_offset >= 0:
+        # Reuse the full public catalogue already used by browse rankings.
+        # Keep normalization/fuzzy work in a worker and avoid per-title
+        # remote searches or imports.
+        try:
+            feed, _ = await mdblist_discovery.ranked_rows(media_type, 'popular', mdblist_key)
+            suggestions = await asyncio.to_thread(predictive_titles, feed, term)
+            from core.catalog_search import title_match_rank
+            suggestions.sort(key=lambda row: title_match_rank(term,row.get('title')))
+            if len(suggestions) > feed_offset + PAGE_SIZE:
+                data['feed_next'] = feed_offset + PAGE_SIZE
+                data['has_more'] = True
+            items = list({item['id']: item for item in [*suggestions[feed_offset:feed_offset+PAGE_SIZE], *items]}.values())
+        except mdblist_discovery.DiscoveryUnavailable:
+            pass  # TMDB and the indexed local catalogue remain usable.
+    # TMDB also matches hidden translations. Keep predictive matches in the
+    # displayed/original titles instead of flooding short searches with them.
+    items = await asyncio.to_thread(predictive_titles, items, term)
+    needs_details = filters["status"] or filters["provider"] or (media_type=='movie' and filters.get('cinema'))
     if needs_details:
         semaphore = asyncio.Semaphore(6)
         get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
@@ -528,8 +655,11 @@ async def browse_page(
     key,
     mdblist_key=None,
     prefetched=None,
+    cursor=None,
     **filters,
 ):
+    from core.browse_cursor import encode_search_cursor
+    remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
     )
@@ -538,7 +668,7 @@ async def browse_page(
     named_genre = any(isinstance(value, str) for value in filters.get("genres", []))
     if named_genre:
         source = "local"  # Provider-specific names cannot become TMDB genre IDs.
-    imdb_sort = not term and filters["sort"] in IMDB_SORTS
+    imdb_sort = not term and filters["sort"] in IMDB_SORTS and filters.get('status') != 'upcoming'
     available = bool(mdblist_key) if imdb_sort else bool(key)
     if source == "remote" and not available:
         raise ValueError("The metadata key is no longer available")
@@ -551,9 +681,10 @@ async def browse_page(
                 media_type,
                 key,
                 filters,
-                page,
+                remote_position if term else page,
                 mdblist_key=mdblist_key,
                 show_anime=show_anime,
+                feed_offset=feed_position,
             )
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
@@ -595,12 +726,14 @@ async def browse_page(
         notice = remote.get("notice")
         source = "remote"
         has_more = remote.get("has_more", page < min(remote.get("total_pages", 1), 500))
-        # Local fuzzy matches precede the remote results and are excluded on every page.
-        local = (await db.execute(query.limit(80))).scalars().all() if term else []
+        # Each stream advances independently; provider scans cannot skip local
+        # matches or force the entire cached catalogue into one response.
+        local = (await db.execute(query.offset(local_position).limit(PAGE_SIZE+1))).scalars().all() if term and local_position >= 0 else []
+        local_more = len(local) > PAGE_SIZE
+        local = local[:PAGE_SIZE]
+        has_more = has_more or local_more
         local_ids = {m.tmdb_id for m in local if m.tmdb_id}
-        results = (
-            [tracking_projection.media_data(m) for m in local] if page == 1 else []
-        )
+        results = [tracking_projection.media_data(m) for m in local]
         seen = set(local_ids)
         for item in items:
             if (
@@ -617,13 +750,15 @@ async def browse_page(
                     "type": media_type,
                     "title": item.get("title") or item.get("name"),
                     "poster": item.get("poster_path"),
+                    "release_date": item.get("release_date") or item.get("first_air_date") or None,
                     "year": (
                         item.get("release_date") or item.get("first_air_date") or ""
                     )[:4],
                     "tmdb_score": item.get("vote_average"),
                     "imdb_score": item.get("imdb_score"),
                     "imdb_id": item.get("imdb_id"),
-                    "genres": [GENRES.get(i, "") for i in item.get("genre_ids", [])],
+                    "genres": [GENRES.get(i, "") for i in item.get("genre_ids", [])]
+                        or [g.get('name','') for g in item.get('genres',[]) if isinstance(g,dict)],
                 }
             )
         ids = [r["tmdb_id"] for r in results if r.get("tmdb_id")]
@@ -641,6 +776,11 @@ async def browse_page(
             if ids
             else []
         )
+        remote_metadata = {item['id']: item for item in items}
+        known_metadata = {m.tmdb_id: known_result_metadata(remote_metadata.get(m.tmdb_id, {}), m) for m in known}
+        results = [row for row in results if row['tmdb_id'] not in known_metadata or matches_result_filters(
+            known_metadata[row['tmdb_id']], media_type, min_votes=filters.get('min_votes', 0),
+            min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
         mapping = {m.tmdb_id: m.id for m in known}
         for row in results:
             row["id"] = row.get("id") or mapping.get(row["tmdb_id"])
@@ -648,9 +788,16 @@ async def browse_page(
         row.update(list_status=None, score=None, rating_mode="manual")
     from core.tracking_editor import attach_editor_context
     await attach_editor_context(db, viewer, results, media_rows=known if remote is not None else rows)
+    if term:
+        from core.catalog_search import title_match_rank
+        results.sort(key=lambda row: title_match_rank(term, row.get('title')))
     return {
         "results": results,
         "page": page,
+        "cursor": encode_search_cursor(
+            remote.get('page',remote_position)+1 if remote.get('provider_more',False) else 501,
+            local_position+PAGE_SIZE if local_more else -1,remote.get('feed_next',-1)
+        ) if term and remote is not None and has_more else None,
         "has_more": has_more,
         "source": source,
         "notice": notice,

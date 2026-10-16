@@ -21,6 +21,28 @@ def _media(**overrides):
 
 
 class TrackingProjectionTests(unittest.TestCase):
+    def test_movie_financials_are_projected_from_cached_metadata_only_for_movies(self):
+        data = {'budget': 150_000_000, 'revenue': 825_000_000}
+        movie = tracking_projection.media_data(_media(media_type=MediaType.movie, tmdb_data=data))
+        self.assertEqual(movie['budget'], data['budget'])
+        self.assertEqual(movie['revenue'], data['revenue'])
+        series = tracking_projection.media_data(_media(tmdb_data=data))
+        self.assertNotIn('budget', series)
+        self.assertNotIn('revenue', series)
+
+    def test_primary_artwork_matches_details_without_mutating_metadata(self):
+        from core.media_images import IMAGE_POLICY_VERSION, BACKGROUND_POLICY_VERSION, screen_images
+        metadata={'_anylist_backdrop':{'version':BACKGROUND_POLICY_VERSION,'image':'https://image.tmdb.org/t/p/original/background.jpg'},
+            '_anylist_images':{'version':IMAGE_POLICY_VERSION,'primary_poster':'https://image.tmdb.org/t/p/original/new.jpg',
+            'artwork':['https://artworks.thetvdb.com/banners/background.jpg']}}
+        media=_media(poster_path='/old.jpg',backdrop_path='/old-background.jpg',tmdb_data=metadata)
+        before=copy.deepcopy(metadata)
+        projected=tracking_projection.media_data(media)
+        detail=screen_images(media,{})
+        self.assertEqual(projected['poster'],detail['poster'])
+        self.assertEqual(projected['backdrop'],detail['backdrop'])
+        self.assertEqual(metadata,before)
+
     def test_cached_metadata_fallbacks_ignore_special_seasons_and_empty_names(self):
         metadata = {
             "runtime": 42,

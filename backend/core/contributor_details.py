@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from collections import defaultdict
+from datetime import date
 from urllib.parse import urlsplit
 
 from sqlalchemy import or_, select
@@ -11,9 +12,12 @@ from sqlalchemy import or_, select
 from core import settings_store, tmdb, tracking_projection
 from core.browse import GENRES, anime_visible
 from core.countries import country_codes
+from core.catalog_search import result_filters, matches_result_filters
 from core.statistics_genres import poster
 from core.statistics_staff import ACTING, role_label, role_order
+from core.credit_roles import work_credit
 from core.tracking_editor import attach_editor_context
+from core.studio_groups import studio_root, studio_members, studio_companies, studio_display_name, studio_entity_ids
 from models import Media
 from models.base import MediaType
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink
@@ -57,6 +61,7 @@ def merge_works(rows):
             aliases[external] = key
         for field in ("roles", "characters"):
             item[field] = sorted(set(item[field]) | set(row.get(field) or []), key=lambda label: (role_order(label), label))
+        item["_metadata"] = {**(row.get("_metadata") or {}), **(item.get("_metadata") or {})}
         for field in ("id", "poster", "backdrop", "release_date", "year"):
             if not item.get(field) and row.get(field):
                 item[field] = row[field]
@@ -82,12 +87,15 @@ async def known_works(db, entity, native, kind, viewer):
     media_candidates = defaultdict(list)
     work_identities = defaultdict(dict)
     own = set(await db.scalars(select(TrackedEntry.media_id).where(TrackedEntry.user_id == viewer.id))) if viewer else set()
-    if entity:
+    if entity or (kind == 'studio' and native):
+        person_ids = studio_entity_ids(native, entity.id if entity else None) if kind == 'studio' else select(CatalogueEntity.id).where(or_(CatalogueEntity.id == entity.id,
+            CatalogueEntity.canonical_person_id == entity.id, CatalogueEntity.canonical_company_id == entity.id)).correlate(None)
         credits = list((await db.execute(select(CatalogueCredit, CatalogueEntity).join(
             CatalogueEntity, CatalogueEntity.id == CatalogueCredit.work_id).where(
-            CatalogueCredit.contributor_id == entity.id, CatalogueEntity.kind.in_(("movie", "series")),
+            CatalogueCredit.contributor_id.in_(person_ids), CatalogueEntity.kind.in_(("movie", "series")),
         ).order_by(CatalogueEntity.id, CatalogueCredit.id))).all())
-        credits = [(c, w) for c, w in credits if (c.role == "producer" if kind == "studio" else accepted_role(kind, is_actor(c)))]
+        credits = [(c, w) for c, w in credits if (c.role == "producer" if kind == "studio" else
+                   accepted_role(kind, is_actor(c)) and work_credit(role_label(c), c.character_label if is_actor(c) else None))]
         ids = {w.id for _, w in credits}
         identities = list(await db.scalars(select(CatalogueIdentity).where(
             CatalogueIdentity.entity_id.in_(ids), CatalogueIdentity.namespace.in_(("tmdb.movie", "tmdb.series", "tvdb.movie", "tvdb.series")),
@@ -112,6 +120,8 @@ async def known_works(db, entity, native, kind, viewer):
             candidates = sorted(media_candidates[work.id], key=lambda m: (m.id not in own, m.id))
             media = candidates[0] if candidates else None
             data = {**(media.tmdb_data or {} if media else {}), **(work.attributes or {})}
+            if media and media.runtime:
+                data["runtime"] = media.runtime
             if media and media.adult:
                 data["adult"] = True
             ids = work_identities[work.id]
@@ -125,14 +135,15 @@ async def known_works(db, entity, native, kind, viewer):
                 "href": f"https://www.thetvdb.com/dereferrer/{'movie' if work.kind == 'movie' else 'series'}/{ids['tvdb']}" if not media and not ids.get("tmdb") and ids.get("tvdb") else None,
                 "_metadata": data})
     if native:
+        natives = studio_members(native) if kind == 'studio' else (native,)
         fields = ("studios",) if kind == "studio" else ("cast",) if kind == "actor" else ("directors", "writers")
         cached = list(await db.scalars(select(TitleCredits).where(or_(*[
-            getattr(TitleCredits, field).contains([{"id": native}]) for field in fields
+            getattr(TitleCredits, field).contains([{"id": member}]) for field in fields for member in natives
         ]))))
         terms = [(Media.media_type == MediaType(row.media_type)) & (Media.tmdb_id == row.tmdb_id) for row in cached if row.media_type in ("movie", "series")]
         metadata_field = "production_companies" if kind == "studio" else "created_by"
         if kind != "actor":
-            terms.append(Media.tmdb_data[metadata_field].contains([{"id": native}]))
+            terms.extend(Media.tmdb_data[metadata_field].contains([{"id": member}]) for member in natives)
         local = list(await db.scalars(select(Media).where(Media.media_type.in_((MediaType.movie, MediaType.series)), or_(*terms)))) if terms else []
         for media in sorted(local, key=lambda m: (m.id not in own, m.id)):
             matches = []
@@ -140,15 +151,18 @@ async def known_works(db, entity, native, kind, viewer):
                 if (cached_row.media_type, cached_row.tmdb_id) != (media.media_type.value, media.tmdb_id):
                     continue
                 for field in fields:
-                    matches += [(p, {"cast": "Actor", "directors": "Director", "writers": "Writer", "studios": "Production"}[field]) for p in getattr(cached_row, field) or [] if isinstance(p, dict) and positive_id(p.get("id")) == native]
-            matches += [(p, "Production" if kind == "studio" else "Creator") for p in (media.tmdb_data or {}).get(metadata_field) or [] if kind != "actor" and isinstance(p, dict) and positive_id(p.get("id")) == native]
+                    matches += [(p, {"cast": "Actor", "directors": "Director", "writers": "Writer", "studios": "Production"}[field]) for p in getattr(cached_row, field) or [] if isinstance(p, dict) and positive_id(p.get("id")) in natives]
+            matches += [(p, "Production" if kind == "studio" else "Creator") for p in (media.tmdb_data or {}).get(metadata_field) or [] if kind != "actor" and isinstance(p, dict) and positive_id(p.get("id")) in (studio_members(native) if kind == 'studio' else (native,))]
+            matches = [(p, role) for p, role in matches if kind == 'studio' or work_credit(role, p.get('character'))]
+            if not matches:
+                continue
             item = tracking_projection.media_data(media)
             rows.append({**item, "key": f"{media.media_type.value}:{media.tmdb_id or 'local-' + str(media.id)}",
-                "roles": [role for _, role in matches], "characters": [p["character"] for p, role in matches if role == "Actor" and p.get("character")], "_metadata": {**(media.tmdb_data or {}), "adult": media.adult or (media.tmdb_data or {}).get("adult", False)}})
+                "roles": [role for _, role in matches], "characters": [p["character"] for p, role in matches if role == "Actor" and p.get("character")], "_metadata": {**(media.tmdb_data or {}), "runtime": media.runtime or (media.tmdb_data or {}).get("runtime"), "adult": media.adult or (media.tmdb_data or {}).get("adult", False)}})
     return merge_works(rows)
 
 
-async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope):
+async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope, min_votes=0, min_runtime=0, excluded_genres=()):
     positions = [0, 1, 0, 1, 0]
     if cursor:
         parsed = json.loads(cursor)
@@ -184,12 +198,14 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
                         break
                     requests += 1
                     response = await (tmdb.discover_movies if media == "movie" else tmdb.discover_shows)(
-                        page=provider_page, with_companies=native, vote_count_min=0,
+                        page=provider_page, with_companies=studio_companies(native), vote_count_min=min_votes,
+                        excluded_genre_ids=excluded_genres, minimum_runtime=min_runtime if media == "movie" else 0,
                         sort_by="primary_release_date.desc" if media == "movie" else "first_air_date.desc", api_key=provider_key)
                     raw_rows = response.get("results") or []
                     candidates = [remote_work(r, media) for r in raw_rows]
                     await attach_editor_context(db, viewer, [r for r in candidates if r])
                     candidates = [r if r and (r["type"], r["tmdb_id"]) not in known_external
+                                  and matches_result_filters(r["_metadata"], r["type"], min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres)
                                   and anime_visible(r["_metadata"], show_anime)
                                   and (list_scope != "out" or not r.get("list_status")) else None for r in candidates]
                     buffers[buffer_key] = (candidates, provider_page < min(response.get("total_pages") or 1, 500))
@@ -219,23 +235,31 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
     return output, more, json.dumps({"scope": scope, "positions": positions}, separators=(",", ":")) if more else None
 
 
-async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source=""):
+async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
     namespace, raw_id = key.split(":")
     native = positive_id(raw_id) if namespace == "tmdb" else None
+    if kind == 'studio' and native:
+        native = studio_root(native)
     expected_kind, provider_kind = ("organization", "company") if kind == "studio" else ("person", "person")
     entity = await db.get(CatalogueEntity, int(raw_id)) if namespace == "catalogue" else await db.scalar(select(CatalogueEntity).join(
         CatalogueIdentity, CatalogueIdentity.entity_id == CatalogueEntity.id).where(
-        CatalogueIdentity.namespace == f"tmdb.{provider_kind}", CatalogueIdentity.external_id == raw_id))
+        CatalogueIdentity.namespace == f"tmdb.{provider_kind}", CatalogueIdentity.external_id == (str(native) if native else raw_id)))
     if namespace == "catalogue" and (entity is None or entity.kind != expected_kind):
         return None
     if entity and entity.kind != expected_kind:
         return None
+    if entity and (entity.canonical_person_id or entity.canonical_company_id):
+        entity = await db.get(CatalogueEntity, entity.canonical_person_id or entity.canonical_company_id)
+        if not entity or entity.kind != expected_kind:
+            return None
     identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == entity.id))) if entity else []
     if entity:
         native = next((positive_id(i.external_id) for i in identities if i.namespace == f"tmdb.{provider_kind}"), None)
-        if kind == "studio" and not await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.contributor_id == entity.id, CatalogueCredit.role == "producer").limit(1)):
-            return None
+    if kind == 'studio' and native:
+        native = studio_root(native)
     local = await known_works(db, entity, native, kind, viewer)
+    if kind == 'studio' and entity and not native and not local:
+        return None  # A broadcaster-only organization is not a production studio.
     attrs = dict(entity.attributes or {}) if entity else {}
     legacy = await db.scalar(select(Media).where(Media.media_type == MediaType.person, Media.tmdb_id == native).order_by(Media.id).limit(1)) if native and kind != "studio" else None
     if legacy:
@@ -254,6 +278,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
                 if kind != "studio":
                     field = "cast" if kind == "actor" else "crew"
                     remote = [item for raw in (profile.get("combined_credits") or {}).get(field) or []
+                              if work_credit('Actor' if kind == 'actor' else raw.get('job'), raw.get('character'))
                               if not (kind == "staff" and str(raw.get("job", "")).casefold() in ACTING)
                               and (item := remote_work(raw, None, acting=kind == "actor"))]
         except Exception:
@@ -288,12 +313,33 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     show_anime = True if settings is None else settings.show_anime
     local = [r for r in local if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
     remote = [r for r in remote if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
-    all_known = merge_works(local + (remote if kind != "studio" else []))
+    filters = await result_filters(db, viewer)
+    all_known = [r for r in merge_works(local + (remote if kind != "studio" else []))
+                 if matches_result_filters(r.get("_metadata") or {}, r["type"], **filters)]
     for row in all_known + remote:
         row.update(entry=None, list_status=None, score=None, rating_mode="manual")
     await attach_editor_context(db, viewer, all_known)
     list_count = sum(bool(r.get("list_status")) for r in all_known) if viewer else None
     roles = sorted({role for row in all_known for role in row["roles"]}, key=lambda role: (role_order(role), role))
+    share_summary = None
+    if sharing:
+        share_rows = all_known
+        if kind == 'studio' and native:
+            # Count the complete evidence collection, never a displayed page.
+            from core.contributor_evidence import evidence_key, cached_evidence, eligible_work
+            evidence_id, config = evidence_key('studio', native, filters, show_anime)
+            evidence, _ = await cached_evidence(db, {evidence_id:config}, None, enqueue=False)
+            payload = evidence.get(evidence_id) or {}
+            if payload.get('complete'):
+                discovered = [remote_work(raw, None) for raw in payload.get('works', [])
+                    if eligible_work(raw, {'movie':'movie','tv':'series'}.get(raw.get('media_type')), filters, show_anime, released=True)]
+                share_rows = merge_works(all_known + [row for row in discovered if row])
+        released = sorted((row for row in share_rows if '0000' < (row.get('release_date') or '') <= date.today().isoformat()),
+            key=lambda row:(row['release_date'],row['key']), reverse=True)
+        latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
+        share_summary = {'movies':sum(row['type']=='movie' for row in share_rows),
+            'series':sum(row['type']=='series' for row in share_rows),
+            'background':latest.get('backdrop') or latest.get('poster')}
     filtered = [r for r in all_known if (media_type == "all" or r["type"] == media_type)
                 and (list_scope == "all" or bool(r.get("list_status")) == (list_scope == "in"))
                 and (not status or r.get("list_status") == status)]
@@ -309,7 +355,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             async with asyncio.timeout(12):
                 works, has_more, next_cursor = await studio_timeline(db, viewer, all_known, native, provider_key,
                     media_type=media_type, list_scope=list_scope, show_anime=show_anime, cursor=cursor,
-                    scope=f"{key}:{media_type}:{list_scope}")
+                    scope=f"{key}:{studio_companies(native)}:{media_type}:{list_scope}:{json.dumps(filters, sort_keys=True)}", **filters)
             result_source = "provider"
             total = None  # Local and provider pages overlap; never invent a combined total.
         except (ValueError, json.JSONDecodeError):
@@ -331,6 +377,8 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     banner = public_url(attrs.get('studio_banner')) if kind == 'studio' else None
     if kind == 'studio' and not banner and 'attributes.studio_banner' not in protected:
         banner = profile_image
+    from core.studio_names import studio_name
+    name = studio_display_name(native, studio_name(name)) if kind == 'studio' else name
     return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
         "banner": banner,
         "image": profile_image,
@@ -340,4 +388,5 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         "countries": country_codes(attrs.get("origin_country") or attrs.get("country")), "headquarters": attrs.get("headquarters"),
         "links": links, "roles": roles, "works": works, "known_works": len(all_known), "list_count": list_count,
         "total": total, "page": page, "has_more": has_more, "notice": notice,
-        "next_cursor": next_cursor, "source": result_source}
+        "next_cursor": next_cursor, "source": result_source,
+        **({'share_summary':share_summary} if sharing else {})}

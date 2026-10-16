@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
+from core.studio_names import studio_name, studio_attributes
+from core.movie_financials import movie_financials
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -150,6 +152,8 @@ def normalize_tmdb(raw, kind):
             attributes={
                 "release_date": raw.get("release_date") or raw.get("first_air_date"),
                 "runtime": raw.get("runtime"),
+                **(movie_financials(raw) if kind == 'movie' else {}),
+                **{k: raw[k] for k in ('vote_count', 'vote_average') if raw.get(k) is not None},
                 "origin_countries": raw.get("origin_country"),
                 "production_countries": [
                     c.get("iso_3166_1") for c in raw.get("production_countries", [])
@@ -215,6 +219,12 @@ def normalize_tmdb(raw, kind):
                         if raw.get("aggregate_credits")
                         else "title",
                         "position": p.get("order"),
+                        "attributes": {k: value for k, value in {
+                            "episode_count": r.get("episode_count"),
+                            "total_episode_count": p.get("total_episode_count"),
+                            "popularity": p.get("popularity"),
+                            "department": p.get("department"),
+                        }.items() if value is not None},
                     }
                 )
     for p in raw.get("created_by") or []:
@@ -233,10 +243,11 @@ def normalize_tmdb(raw, kind):
                         "organization",
                         namespace,
                         p,
+                        name=studio_name(p.get('name')),
                         artwork="https://image.tmdb.org/t/p/original" + p["logo_path"]
                         if p.get("logo_path")
                         else None,
-                        attributes={"origin_country": p["origin_country"]} if p.get("origin_country") else None,
+                        attributes=studio_attributes(p),
                     ),
                     "role": role,
                     "source_key": f"{field}:{p['id']}",
@@ -253,11 +264,15 @@ def normalize_tmdb(raw, kind):
         if r.get("id"):
             doc["relationships"].append(
                 {
-                    "target": entity(kind, f"tmdb.{kind}", r),
+                    "target": entity(kind, f"tmdb.{kind}", r,
+                        artwork=f'https://image.tmdb.org/t/p/w500{r["poster_path"]}' if r.get('poster_path') else None,
+                        attributes={'release_date':r.get('release_date') or r.get('first_air_date'), 'adult':bool(r.get('adult')),
+                                    **{k: r[k] for k in ('vote_count', 'vote_average', 'runtime', 'genres', 'genre_ids') if r.get(k) is not None}}),
                     "relation": "recommendation",
                 }
             )
-    return doc
+    from core.principal_credits import project_selection
+    return project_selection(doc)
 
 
 def normalize_tvdb(raw, kind="series"):
@@ -315,6 +330,7 @@ def normalize_tvdb(raw, kind="series"):
                 ),
                 "source_key": str(p["id"]),
                 "position": p.get("sort"),
+                "attributes": {"featured": p["isFeatured"]} if type(p.get("isFeatured")) is bool else {},
             }
         )
         # TVDB Character records are title/performer associations, not global
@@ -333,16 +349,25 @@ def normalize_tvdb(raw, kind="series"):
             "Studio": "producer",
             "Distributor": "distributor",
         }.get(label, "contributor")
+        profile = (raw.get('_companies') or {}).get(str(p.get('id')), {})
+        company = entity('organization', 'tvdb.company', p, name=studio_name(p.get('name')),
+                         attributes=studio_attributes({**p, **profile}))
+        external_ids = {str(item.get('id')) for item in (profile or p).get('remoteIds') or []
+                        if item.get('sourceName') == 'TheMovieDB.com' and str(item.get('id', '')).isdecimal()
+                        and 0 < int(item['id']) <= 2147483647}
+        if len(external_ids) == 1:
+            company['identities'].append(identity('tmdb.company', external_ids.pop()))
         doc["credits"].append(
             {
-                "contributor": entity("organization", "tvdb.company", p),
+                "contributor": company,
                 "role": role,
                 "role_label": label,
                 "source_key": f"company:{p['id']}:{role}",
             }
         )
     doc["coverage"] = {"characters": "title_performer_associations_only"}
-    return doc
+    from core.principal_credits import project_selection
+    return project_selection(doc)
 
 
 def normalize_igdb(raw):
@@ -436,9 +461,11 @@ def normalize_igdb(raw):
                     "game",
                     "igdb.game",
                     parent if isinstance(parent, dict) else {"id": parent},
+                    artwork=parent.get('cover') if isinstance(parent, dict) else None,
+                    attributes={'release_date':date(parent.get('first_release_date'))} if isinstance(parent, dict) else {},
                 )
                 if parent
-                else entity("game", "igdb.game", r)
+                else entity("game", "igdb.game", r, artwork=r.get('cover'), attributes={'release_date':date(r.get('first_release_date'))})
             )
             if parent:
                 target["identities"].append(identity("igdb.game", r["id"]))

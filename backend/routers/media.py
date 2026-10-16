@@ -32,6 +32,7 @@ from core.episode_order import (
     is_aired_order,
 )
 from core import tmdb
+from core.principal_credits import remote_person_kind
 from core.identity import find_media
 from core.networks import search_curated_networks
 from core.translations import (
@@ -43,7 +44,6 @@ from core.translations import (
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, get_optional_user, ANON_USER_ID, require_admin
 from models.users import User, UserSettings
 from models.show import Show as ShowModel
-from models.global_settings import GlobalSettings
 
 router = APIRouter()
 _PLAYABLE_COLLECTION_SOURCES = {
@@ -307,6 +307,7 @@ async def search_media(
                     "in_library": False,
                 }
                 for p in data.get("results", [])
+                if remote_person_kind(p) is not None
             ]
         except Exception as e:
             print(f"TMDB people search error: {e}")
@@ -511,7 +512,8 @@ async def search_media(
             show_results = show_data.get("results", [])
             for res in show_results:
                 res["media_type"] = "tv"
-            people_results = people_data.get("results", [])
+            people_results = [person for person in people_data.get("results", [])
+                              if remote_person_kind(person) is not None]
             for res in people_results:
                 res["media_type"] = "person"
             # Interleave by popularity so relevance is preserved across all three lists
@@ -2080,8 +2082,7 @@ async def serve_image(
     upstream = upstream_image_url(size, path)
 
     # Check settings
-    settings_stmt = select(GlobalSettings).where(GlobalSettings.id == 1)
-    gs = (await db.execute(settings_stmt)).scalar_one_or_none()
+    gs = await settings_store.get_global_settings(db)
 
     if not gs or not gs.image_cache_enabled:
         return RedirectResponse(upstream)

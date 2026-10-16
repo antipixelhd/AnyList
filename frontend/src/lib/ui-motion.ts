@@ -1,4 +1,5 @@
 import { animate } from 'motion/mini';
+import { createDropdownArrowMotion, dropdownTiming } from './dropdown-arrow-motion.ts';
 
 type MotionControl = ReturnType<typeof animate>;
 const running = new Map<HTMLElement, MotionControl>();
@@ -7,6 +8,7 @@ const boundDialogs = new WeakSet<HTMLDialogElement>();
 let sequence = 0;
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const arrows = createDropdownArrowMotion((arrow, values, timing) => animate(arrow, values, timing), reduced);
 
 function stop(element: HTMLElement) {
   const control = running.get(element);
@@ -17,10 +19,15 @@ function stop(element: HTMLElement) {
   element.style.removeProperty('transform');
 }
 
-function play(element: HTMLElement, entering: boolean, distance: number) {
+function play(element: HTMLElement, entering: boolean, distance: number, dropdown = false) {
   stop(element);
-  if (reduced()) return null;
   const fading = element.hasAttribute('data-motion-fade');
+  const timing = dropdown ? dropdownTiming(entering, fading) : {
+    duration: fading ? (entering ? .16 : .1) : (entering ? .18 : .12),
+    ease: entering ? [0.2, 0.7, 0.2, 1] as [number, number, number, number] : 'easeIn' as const,
+  };
+  if (dropdown) arrows.play(element, entering, timing);
+  if (reduced()) return null;
   const control = animate(element, {
     opacity: entering ? [0, 1] : [1, 0],
     ...(!fading ? {
@@ -28,7 +35,7 @@ function play(element: HTMLElement, entering: boolean, distance: number) {
         ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
         : ['translateY(0) scale(1)', `translateY(${Math.max(2, distance / 2)}px) scale(.995)`],
     } : {}),
-  }, { duration: fading ? (entering ? .16 : .1) : (entering ? .18 : .12), ease: entering ? [0.2, 0.7, 0.2, 1] : 'easeIn' });
+  }, timing);
   running.set(element, control);
   void control.finished.then(() => {
     if (running.get(element) === control) stop(element);
@@ -38,6 +45,7 @@ function play(element: HTMLElement, entering: boolean, distance: number) {
 
 export function showDialog(dialog: HTMLDialogElement) {
   closing.set(dialog, ++sequence);
+  dialog.removeAttribute('data-motion-closing');
   dialog.style.removeProperty('pointer-events');
   if (!boundDialogs.has(dialog)) {
     boundDialogs.add(dialog);
@@ -63,6 +71,7 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   if (!dialog.open) return;
   const token = ++sequence;
   closing.set(dialog, token);
+  dialog.setAttribute('data-motion-closing','');
   dialog.style.pointerEvents = 'none';
   const control = play(dialog, false, 8);
   if (control) await control.finished.catch(() => {});
@@ -70,36 +79,47 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   stop(dialog);
   dialog.style.removeProperty('pointer-events');
   dialog.close(returnValue);
+  dialog.removeAttribute('data-motion-closing');
 }
 
-export function showMenu(menu: HTMLElement) {
+export function showMenu(menu: HTMLElement, immediate = false) {
   closing.set(menu, ++sequence);
   menu.hidden = false;
   menu.inert = false;
   menu.style.removeProperty('pointer-events');
-  play(menu, true, 5);
+  if (immediate) {
+    stop(menu);
+    arrows.play(menu, true, { ...dropdownTiming(true), duration: 0 });
+  } else play(menu, true, 5, true);
 }
 
 export function reveal(element: HTMLElement) {
   closing.set(element, ++sequence);
-  play(element, true, 6);
+  play(element, true, 6, element.parentElement?.matches('details[data-motion-details]') ?? false);
 }
 
 export async function dismiss(element: HTMLElement) {
   const token = ++sequence;
   closing.set(element, token);
-  const control = play(element, false, 6);
+  const control = play(element, false, 6, element.parentElement?.matches('details[data-motion-details]') ?? false);
   if (control) await control.finished.catch(() => {});
   return closing.get(element) === token;
 }
 
-export async function hideMenu(menu: HTMLElement) {
+export async function hideMenu(menu: HTMLElement, immediate = false) {
   if (menu.hidden) return;
   const token = ++sequence;
   closing.set(menu, token);
   menu.inert = true;
+  if (immediate) {
+    stop(menu);
+    arrows.play(menu, false, { ...dropdownTiming(false), duration: 0 });
+    menu.hidden = true;
+    menu.style.removeProperty('pointer-events');
+    return;
+  }
   menu.style.pointerEvents = 'none';
-  const control = play(menu, false, 5);
+  const control = play(menu, false, 5, true);
   if (control) await control.finished.catch(() => {});
   if (closing.get(menu) !== token) return;
   stop(menu);
@@ -111,7 +131,7 @@ export function showCollapsible(section: HTMLElement) {
   closing.set(section, ++sequence);
   section.classList.remove('hidden');
   section.inert = false;
-  play(section, true, 4);
+  play(section, true, 4, true);
 }
 
 export async function hideCollapsible(section: HTMLElement) {
@@ -119,7 +139,7 @@ export async function hideCollapsible(section: HTMLElement) {
   const token = ++sequence;
   closing.set(section, token);
   section.inert = true;
-  const control = play(section, false, 4);
+  const control = play(section, false, 4, true);
   if (control) await control.finished.catch(() => {});
   if (closing.get(section) !== token) return;
   stop(section);
@@ -152,6 +172,7 @@ export async function hideOverlay(overlay: HTMLElement) {
 }
 
 export function cancelUiMotion(root?: HTMLElement) {
+  arrows.cancel(root);
   for (const element of running.keys()) {
     if (!root || root.contains(element)) stop(element);
   }

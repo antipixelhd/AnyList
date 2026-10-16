@@ -1,4 +1,6 @@
 import { cancelUiMotion, dismiss, reveal } from './ui-motion.ts';
+import { animate } from 'motion/mini';
+import { createDropdownArrowMotion, dropdownTiming } from './dropdown-arrow-motion.ts';
 
 /** Share browse's short exit/entrance, keeping only the latest requested view. */
 export function createContentTransition(element: HTMLElement, signal: AbortSignal, motion = {dismiss, reveal, cancel:cancelUiMotion}) {
@@ -26,32 +28,49 @@ export function createContentTransition(element: HTMLElement, signal: AbortSigna
 }
 
 /** Animate a native disclosure without losing its keyboard or no-JS behavior. */
-export function mountDetailsMotion(details: HTMLDetailsElement, signal: AbortSignal) {
+export function mountDetailsMotion(details: HTMLDetailsElement, signal: AbortSignal, triggers: HTMLButtonElement[] = []) {
   const summary = details.querySelector<HTMLElement>(':scope > summary');
   if (!summary) return;
   let expanded = details.open, animation: Animation | undefined;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const syncTriggers = () => triggers.forEach(trigger => trigger.setAttribute('aria-expanded', String(expanded)));
+  const arrows = createDropdownArrowMotion((arrow, values, timing) => animate(arrow, values, timing),
+    () => reduced.matches, () => summary.querySelector<SVGElement>('svg[data-icon="chevron-down"]'));
   const settle = () => {
     animation?.cancel(); animation = undefined;
+    arrows.play(details, expanded, {...dropdownTiming(expanded), duration:0});
     details.open = expanded;
     details.style.removeProperty('overflow');
+    syncTriggers();
   };
-  summary.addEventListener('click', event => {
+  const toggle = (event: Event) => {
     event.preventDefault();
     const start = details.getBoundingClientRect().height;
     animation?.cancel();
     expanded = !expanded;
+    const timing = dropdownTiming(expanded);
+    syncTriggers();
     details.style.overflow = 'hidden';
     details.open = expanded;
     const end = details.getBoundingClientRect().height;
     if (reduced.matches || start === end) { settle(); return; }
     details.open = true;
+    arrows.play(details, expanded, timing);
     const current = details.animate([{height:`${start}px`},{height:`${end}px`}], {
-      duration:260, easing:'cubic-bezier(.2,.7,.2,1)', fill:'both',
+      duration:timing.duration * 1000, easing:Array.isArray(timing.ease) ? `cubic-bezier(${timing.ease.join(',')})` : 'ease-in', fill:'both',
     });
     animation = current;
     current.finished.then(() => { if (animation === current) settle(); }).catch(() => {});
+  };
+  summary.addEventListener('click', event => {
+    if (event.target instanceof Element && event.target.closest('button,a,input,select,textarea,label')) return;
+    toggle(event);
   }, {signal});
+  triggers.forEach(trigger => trigger.addEventListener('click', toggle, {signal}));
+  details.addEventListener('toggle', () => {
+    if (!animation) { expanded = details.open; settle(); }
+  }, {signal});
+  settle();
   reduced.addEventListener('change', settle, {signal});
   signal.addEventListener('abort', settle, {once:true});
 }

@@ -24,10 +24,14 @@ import Icon from './Icon.astro';
 <script>
 import { applyResponsiveArtwork } from '../lib/responsive-artwork';
 import { showDialog, closeDialog } from '../lib/ui-motion';
+import {editorStore} from '../lib/editor-store';
+import {showToast} from '../lib/toasts';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
+  const {signal} = pageListeners;
+  document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{signal,once:true});
   if (!document.querySelector('#quick-rating')) {
     delete (window as any).anyListQuickRate;
     return;
@@ -78,7 +82,7 @@ document.addEventListener('astro:page-load', () => {
     }
   }
   function choose(score: number) {
-    if (!active) return;
+    if (!active || stars.classList.contains('saving')) return;
     if (active.ratingMode === 'average') {
       pendingScore = score;
       paint(score);
@@ -126,20 +130,15 @@ document.addEventListener('astro:page-load', () => {
       }
       return;
     }
-    const mediaTitle = active.title;
+    const current = active;
+    const mediaTitle = current.title;
     error.hidden = true;
     stars.classList.add('saving');
     try {
-      if (active.id == null) throw new Error('This title cannot be rated yet.');
-      const response = await fetch(`/api/proxy/tracking/entry/${active.id}`, {
-        method: 'PATCH', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ ...(changeToManual ? { rating_mode: 'manual' } : {}), manual_score: score ?? 0 }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail || 'Unable to save this rating.');
-      }
-      const saved = await response.json();
+      if (current.id == null) throw new Error('This title cannot be rated yet.');
+      const context=editorStore.find(current.id)||await editorStore.load(current.id);
+      const saved=await editorStore.write(context,{...(changeToManual ? {rating_mode:'manual'} : {}),manual_score:score??0});
+      if(active!==current || signal.aborted)return;
       savedScore = saved.score == null ? null : Number(saved.score);
       const ratingMode = saved.rating_mode === 'average' ? 'average' : 'manual';
       active.ratingMode = ratingMode;
@@ -153,20 +152,22 @@ document.addEventListener('astro:page-load', () => {
         }
         const label = control.querySelector<HTMLElement>('[data-score-label]');
         if (label) label.textContent = savedScore == null ? '—' : label.dataset.scoreFormat === 'out-of-ten' ? `${savedScore.toFixed(1)} / 10` : Number(savedScore.toFixed(1)).toString();
-        if (control.classList.contains('personal-score-button')) {
+        if (control.classList.contains('media-personal-score')) {
           control.setAttribute('aria-label', `Rate ${mediaTitle}. Current score: ${savedScore == null ? '—' : `${savedScore.toFixed(1)} / 10`}`);
         }
         const modeLabel = control.querySelector<HTMLElement>('[data-rating-mode-label]');
         if (modeLabel) modeLabel.textContent = savedScore == null ? 'Unrated' : ratingMode === 'average' ? 'Rated-season average' : 'Manual rating';
       });
       document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: {...saved, id:active.id, score:savedScore} }));
-      setTimeout(() => { void closeDialog(dialog); }, 140);
+      showToast(score==null?'Rating removed.':'Rating saved.','success');
+      setTimeout(() => { if(active===current && !signal.aborted)void closeDialog(dialog); }, 140);
     } catch (cause) {
+      if(active!==current || signal.aborted)return;
       error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
       error.hidden = false;
       paint(savedScore);
     } finally {
-      stars.classList.remove('saving');
+      if(active===current && !signal.aborted)stars.classList.remove('saving');
     }
   }
   function open(detail: QuickRateDetail) {
@@ -175,7 +176,7 @@ document.addEventListener('astro:page-load', () => {
     pendingScore = null;
     title.textContent = detail.title;
     if (detail.posterSrc) { poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.src = detail.posterSrc; }
-    else if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'direct'});
+    else if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'auto'});
     else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
     poster.hidden = !detail.poster && !detail.posterSrc;
     remove.hidden = savedScore == null || detail.ratingMode === 'average';

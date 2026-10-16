@@ -19,6 +19,7 @@ export function createBrowseCache<T>(now = () => Date.now(), ttl = 5 * 60_000, l
       while (entries.size > limit) entries.delete(entries.keys().next().value!);
     },
     values() { return [...entries.values()].map(entry => entry.value); },
+    clear() { entries.clear(); },
   };
 }
 

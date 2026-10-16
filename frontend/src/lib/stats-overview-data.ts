@@ -94,7 +94,11 @@ export function distributionRows(data: Overview, kind: 'statuses' | 'formats' | 
 export function knownRows<T extends { key: string }>(rows: T[]): T[] {
   return rows.filter(row => row.key !== 'Unknown');
 }
-/** Range selection belongs only to Watch Year; lifetime graphs never change. */
-export function watchYearRows(rows: MetricGroup[], from: string, through: string): MetricGroup[] {
-  return rows.filter(row => (!from || Number(row.key) >= Number(from)) && (!through || Number(row.key) <= Number(through)));
+/** Keep empty histogram buckets in the payload, outside the visible chart. */
+export function barChartRows(rows: MetricGroup[]): MetricGroup[] {
+  return knownRows(rows).filter(row => row.titles > 0);
+}
+/** Show every recorded watch year; empty calendar gaps stay in the payload. */
+export function watchYearRows(rows: MetricGroup[]): MetricGroup[] {
+  return knownRows(rows).filter(row => row.titles > 0);
 }

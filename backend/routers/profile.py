@@ -50,6 +50,7 @@ async def get_public_access_status(db: AsyncSession = Depends(get_db)):
         # was removed after the admin enabled it.
         "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation),
         "disable_comments": bool(gs and gs.disable_comments),
+        "image_cache_enabled": bool(gs and gs.image_cache_enabled),
         "show_anime": bool(gs and gs.show_anime),
     }
 
@@ -124,6 +125,12 @@ async def get_profile(
     if profile.avatar_path:
         resp.avatar_url = f"/profile/avatar/{current_user.id}"
     return resp
+
+
+@router.get('/me/countries')
+async def account_countries(current_user: Annotated[User, Depends(get_current_user)]) -> list[dict[str,str]]:
+    import pycountry
+    return sorted([{'code':country.alpha_2,'name':country.name} for country in pycountry.countries],key=lambda row:row['name'])
 
 
 @router.patch("/me", response_model=schemas.UserProfileResponse)

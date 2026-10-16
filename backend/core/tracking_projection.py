@@ -5,6 +5,7 @@ These functions read already-loaded values; they do not query or mutate state.
 
 from models.media import Media
 from core.tracking_rules import effective_score
+from core.movie_financials import movie_financials
 
 
 def is_anime(media: Media) -> bool:
@@ -29,6 +30,10 @@ def is_anime(media: Media) -> bool:
 
 def media_data(media):
     data = media.tmdb_data or {}
+    from core.media_images import screen_backdrop, IMAGE_POLICY_VERSION
+    backdrop = screen_backdrop(media)['backdrop'] or media.backdrop_path
+    gallery = data.get('_anylist_images') or {}
+    poster = gallery.get('primary_poster') if gallery.get('version') == IMAGE_POLICY_VERSION else None
     regular_seasons = [
         season
         for season in data.get("seasons", [])
@@ -38,13 +43,14 @@ def media_data(media):
         "id": media.id,
         "title": media.title,
         "type": media.media_type.value,
-        "poster": media.poster_path,
-        "backdrop": media.backdrop_path,
+        "poster": poster or media.poster_path,
+        "backdrop": backdrop,
         "overview": media.overview,
         "year": (media.release_date or "")[:4],
         "release_date": media.release_date,
         "original_title": media.original_title,
         "runtime": media.runtime or data.get("runtime"),
+        **(movie_financials(data) if media.media_type.value == 'movie' else {}),
         "tmdb_score": media.tmdb_rating,
         "imdb_score": media.imdb_rating,
         "rt_critic_score": media.rt_critic_score,
@@ -85,7 +91,7 @@ def media_data(media):
     }
 
 
-def entry_data(entry, media, owner=False):
+def entry_data(entry, media, owner=False, *, favorite=None):
     result = {
         **media_data(media),
         "status": entry.status,
@@ -95,7 +101,7 @@ def entry_data(entry, media, owner=False):
         ),
         "season_scores": entry.season_scores,
         "progress": entry.progress,
-        "favorite": entry.favorite,
+        "favorite": entry.favorite if favorite is None else favorite,
         "start_date": entry.start_date,
         "finish_date": entry.finish_date,
         "rewatch_count": entry.rewatch_count,

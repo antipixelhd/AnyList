@@ -18,7 +18,7 @@ export function mountStatisticsNavigation(root: HTMLElement, signal: AbortSignal
     button.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} statistics sections`);
     if (restoreFocus && mobile.matches) button.focus();
     if (!mobile.matches) {
-      showMenu(menu); cancelUiMotion(menu);
+      showMenu(menu, true);
     } else if (changed) {
       if (open) showMenu(menu); else void hideMenu(menu);
     } else if (!open) { cancelUiMotion(menu); menu.hidden = true; menu.inert = true; }
@@ -44,7 +44,7 @@ export function mountStatisticsNavigation(root: HTMLElement, signal: AbortSignal
   reduced.addEventListener('change', () => {
     settleHeight();
     const open = button.getAttribute('aria-expanded') === 'true';
-    showMenu(menu); cancelUiMotion(menu); menu.hidden = mobile.matches && !open; menu.inert = menu.hidden;
+    showMenu(menu, true); menu.hidden = mobile.matches && !open; menu.inert = menu.hidden;
   }, {signal});
   signal.addEventListener('abort', () => { settleHeight(); cancelUiMotion(menu); }, {once:true});
 }

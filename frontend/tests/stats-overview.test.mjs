@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { headlineValues, distributionRows, knownRows, metricValue, watchYearRows } from '../src/lib/stats-overview-data.ts';
+import { barChartRows, headlineValues, distributionRows, knownRows, metricValue, watchYearRows } from '../src/lib/stats-overview-data.ts';
 import { createOverviewLoader } from '../src/lib/stats-overview-request.ts';
 
 test('incomplete runtime is a lower bound and unavailable means remain absent', () => {
@@ -27,10 +27,17 @@ test('visible breakdowns omit unknown metadata without changing stored rows or t
   assert.deepEqual(distributionRows({countries:[{key:'Unknown',titles:1,share:1}]}, 'countries'), []);
 });
 
-test('watch-year range leaves lifetime rows untouched', () => {
+test('watch years include all recorded years without calendar gaps or changing lifetime rows', () => {
   const rows = [2024, 2025, 2026].map(year => ({ key: String(year), titles: year === 2025 ? 0 : 1, mean_score: null }));
-  assert.equal(watchYearRows(rows, '2025', '2026').length, 2);
+  assert.deepEqual(watchYearRows(rows).map(row=>row.key), ['2024','2026']);
   assert.equal(rows.length, 3);
+});
+
+test('bar charts omit empty buckets while preserving populated order and source data', () => {
+  const rows = [{ key: '1', titles: 0 }, { key: '2', titles: 3, minutes: 0 }, { key: '3', titles: 0 }, { key: '4', titles: 1 }, { key: 'Unknown', titles: 2 }];
+  assert.deepEqual(barChartRows(rows).map(row => row.key), ['2', '4']);
+  assert.equal(rows.length, 5);
+  assert.deepEqual(barChartRows([{ key: '1', titles: 0 }]), []);
 });
 
 test('latest media request wins, privacy denial clears data, and navigation cancels callbacks', async t => {

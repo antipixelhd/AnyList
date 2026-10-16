@@ -1,0 +1,21 @@
+---
+import Icon from './Icon.astro';
+import '../styles/toasts.css';
+---
+<div class="toast-stack" data-toast-host aria-label="Notifications"></div>
+<template data-toast-template>
+  <div class="app-toast" role="status" aria-live="polite" aria-atomic="true">
+    <span data-toast-icon="success"><Icon name="check"/></span>
+    <span data-toast-icon="error" hidden><Icon name="close"/></span>
+    <span data-toast-icon="info" hidden><Icon name="info"/></span>
+    <span data-toast-icon="warning" hidden><Icon name="warning"/></span>
+    <p data-toast-message></p>
+    <button type="button" data-toast-action hidden></button>
+    <button type="button" data-toast-close aria-label="Dismiss notification"><Icon name="close"/></button>
+  </div>
+</template>
+<script>
+  import { mountToasts } from '../lib/toasts';
+  mountToasts();
+  document.addEventListener('astro:page-load', mountToasts);
+</script>

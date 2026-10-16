@@ -27,10 +27,7 @@
       if (control.trigger.getAttribute('aria-expanded') !== 'true') return;
       control.trigger.setAttribute('aria-expanded', 'false');
       if (openControl === control) openControl = null;
-      if (immediate) {
-        control.menu.hidden = true;
-        control.menu.inert = true;
-      } else void hideMenu(control.menu);
+      void hideMenu(control.menu, immediate);
       if (restoreFocus) control.trigger.focus();
     }
 

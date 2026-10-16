@@ -281,6 +281,9 @@ export interface PersonalDataSelection {
 }
 
 export interface UserPreferences {
+  minimum_votes?: number;
+  minimum_movie_runtime?: number;
+  excluded_categories?: number[];
   background_url?: string | null;
   profile_color: string;
   apply_site_wide: boolean;
@@ -752,12 +755,13 @@ export const api = {
   },
 
   profile: {
+    countries: (token: string) => get<{code:string;name:string}[]>("/profile/me/countries", undefined, token),
     get: (token: string) =>
       get<UserPreferences>("/profile/me", undefined, token),
     getPublic: (userId: number, token?: string) =>
       get<PublicProfile>(`/profile/${userId}`, undefined, token),
     publicAccessStatus: () =>
-      get<{ enable_logged_out_navigation: boolean; disable_comments: boolean }>("/profile/public-access-status"),
+      get<{ enable_logged_out_navigation: boolean; disable_comments: boolean; image_cache_enabled: boolean }>("/profile/public-access-status"),
   },
 
   admin: {

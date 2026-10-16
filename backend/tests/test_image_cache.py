@@ -1,4 +1,5 @@
 import os
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -106,6 +107,42 @@ class DownloadAndCacheTvdbImageTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_path_traversal(self):
         async with self.Session() as db:
             self.assertIsNone(await image_cache.download_and_cache_image(db, "tvdb", "/../../etc/passwd"))
+
+    async def test_concurrent_requests_share_download_and_hot_hits_do_not_write(self):
+        seen=[]
+        async def fetch():
+            async with self.Session() as db:
+                return await image_cache.download_and_cache_image(db,'w342','/shared.jpg')
+        with patch.object(image_cache.httpx,'AsyncClient',side_effect=lambda **kw:_REAL_ASYNC_CLIENT(transport=self._transport(seen),**kw)):
+            results=await asyncio.gather(fetch(),fetch())
+            self.assertEqual(results[0],results[1]);self.assertEqual(len(seen),1)
+            async with self.Session() as db:
+                with patch.object(db,'commit',wraps=db.commit) as commit:
+                    await image_cache.download_and_cache_image(db,'w342','/shared.jpg')
+                    commit.assert_not_called()
+                    await image_cache.download_and_cache_image(db,'w342','/shared.jpg',image_type='collected')
+                    commit.assert_awaited_once()
+                row=(await db.execute(ImageCache.__table__.select())).first()
+                self.assertEqual(row.image_type,'collected')
+                self.assertEqual(len(seen),1)
+
+    async def test_oversized_images_are_not_buffered_into_disk_cache(self):
+        seen=[]
+        with patch.object(image_cache,'MAX_IMAGE_BYTES',4),patch.object(image_cache.httpx,'AsyncClient',side_effect=lambda **kw:_REAL_ASYNC_CLIENT(transport=self._transport(seen),**kw)):
+            async with self.Session() as db:
+                self.assertIsNone(await image_cache.download_and_cache_image(db,'w1280','/large.jpg'))
+                self.assertEqual((await db.execute(ImageCache.__table__.select())).all(),[])
+        self.assertFalse((self.tmp/'image_cache'/'w1280'/'large.jpg').exists())
+
+    async def test_new_responsive_primary_variants_keep_collected_priority(self):
+        seen=[]
+        with patch.object(image_cache.httpx,'AsyncClient',side_effect=lambda **kw:_REAL_ASYNC_CLIENT(transport=self._transport(seen),**kw)):
+            async with self.Session() as db:
+                await image_cache.download_and_cache_image(db,'w342','/primary.jpg',image_type='collected')
+            async with self.Session() as db:
+                await image_cache.download_and_cache_image(db,'w185','/primary.jpg')
+                rows=(await db.execute(ImageCache.__table__.select())).all()
+                self.assertEqual({row.image_type for row in rows},{'collected'})
 
     async def test_prune_cache_honours_a_fractional_gb_limit(self):
         # Two 800-byte entries; a ~1000-byte limit (fractional GB) must evict

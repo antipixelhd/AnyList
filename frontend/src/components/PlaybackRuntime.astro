@@ -1,17 +1,15 @@
 ---
 interface Props {
   token?: string;
-  use24h: boolean;
   isAdmin: boolean;
   radarrCustomizeOnAdd: boolean;
   sonarrCustomizeOnAdd: boolean;
 }
-const { token = '', use24h, isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astro.props;
+const { token = '', isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astro.props;
 ---
-<script define:vars={{ __layoutAuthToken: token, __use24h: use24h, __isAdmin: isAdmin, __radarrCustomizeOnAdd: radarrCustomizeOnAdd, __sonarrCustomizeOnAdd: sonarrCustomizeOnAdd }}>
+<script define:vars={{ __layoutAuthToken: token, __isAdmin: isAdmin, __radarrCustomizeOnAdd: radarrCustomizeOnAdd, __sonarrCustomizeOnAdd: sonarrCustomizeOnAdd }}>
     // Expose the server-side token for the card action script (httpOnly cookie is not JS-readable)
     window.__AUTH_TOKEN__ = __layoutAuthToken;
-    window.__USE_24H__ = __use24h;
     window.__IS_ADMIN__ = __isAdmin;
     window.__RADARR_CUSTOMIZE_ON_ADD__ = __radarrCustomizeOnAdd;
     window.__SONARR_CUSTOMIZE_ON_ADD__ = __sonarrCustomizeOnAdd;
@@ -67,9 +65,8 @@ const { token = '', use24h, isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd 
 
     // Local end time in the viewer's own timezone - "ends 22:47".
     function fmtEta(ms) {
-      return 'ends ' + new Date(ms).toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit', hour12: !window.__USE_24H__,
-      });
+      const iso = new Date(ms).toISOString();
+      return `ends <time datetime="${iso}" data-local-date-time="time">${iso.slice(11,16)} UTC</time>`;
     }
 
     function renderNowPlaying(sessions) {
@@ -116,7 +113,7 @@ const { token = '', use24h, isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd 
           ? `<span data-npremain="${sessionKey}" class="text-[10px] text-zinc-500 tabular-nums leading-tight">${esc(fmtRemaining(remainingSeconds))}</span>`
           : '';
         const etaLine = remainingSeconds != null && !isPaused
-          ? `<span data-npeta="${sessionKey}" class="text-[10px] text-zinc-500 tabular-nums leading-tight">${esc(fmtEta(Date.now() + remainingSeconds * 1000))}</span>`
+          ? `<span data-npeta="${sessionKey}" class="text-[10px] text-zinc-500 tabular-nums leading-tight">${fmtEta(Date.now() + remainingSeconds * 1000)}</span>`
           : '';
 
         const statusLabel = isPaused ? 'Paused' : 'Now Playing';
@@ -202,7 +199,7 @@ const { token = '', use24h, isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd 
         const remainEl = document.querySelector(`[data-npremain="${key}"]`);
         if (remainEl) remainEl.textContent = fmtRemaining(remainingSeconds);
         const etaEl = document.querySelector(`[data-npeta="${key}"]`);
-        if (etaEl) etaEl.textContent = fmtEta(Date.now() + remainingSeconds * 1000);
+        if (etaEl) etaEl.innerHTML = fmtEta(Date.now() + remainingSeconds * 1000);
       });
     }
 

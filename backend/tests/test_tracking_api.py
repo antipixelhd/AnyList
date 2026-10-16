@@ -1694,6 +1694,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'low_priority_notifications':True,'low_priority_retention_days':7,
             'show_new_ratings_popup':True,
             'new_season_release_dates':True,'new_season_releases':True,
+            'remove_specials_seasons':True,
         })
         changed=await self.client.patch('/tracking/preferences',json={
             'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,
@@ -1709,6 +1710,23 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(changed.json()['new_season_releases'])
         invalid=await self.client.patch('/tracking/preferences',json={'default_sort':'random'})
         self.assertEqual(invalid.status_code,422,invalid.text)
+
+    async def test_specials_visibility_is_saved_per_viewer_and_survives_unrelated_changes(self):
+        disabled = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': False})
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertFalse(disabled.json()['remove_specials_seasons'])
+        changed = await self.client.patch('/tracking/preferences', json={'default_sort': 'score'})
+        self.assertFalse(changed.json()['remove_specials_seasons'])
+        self.viewer = self.friend
+        other = await self.client.get('/tracking/preferences')
+        self.assertTrue(other.json()['remove_specials_seasons'])
+        self.viewer = self.owner
+        saved = await self.client.get('/tracking/preferences')
+        self.assertFalse(saved.json()['remove_specials_seasons'])
+        invalid = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': None})
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        enabled = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': True})
+        self.assertTrue(enabled.json()['remove_specials_seasons'])
 
     async def test_profile_partial_patch_and_markdown_bio_limit(self):
         changed = await self.client.patch('/profile/me', json={'country': 'DE'})
@@ -1894,6 +1912,68 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             TrackingDeliveryJob.media_id == self.movie.id,
         ))).scalars().all())
         self.assertEqual(jobs_after, jobs_before)
+        self.local_outbound.assert_not_awaited()
+
+    async def test_unlisted_favorite_preserves_absent_status_and_survives_list_addition(self):
+        from models.tracking import MediaFavorite
+        response = await self.save(self.movie, favorite=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()['status'])
+        self.assertIsNone(await self.db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.movie.id)))
+        self.assertIsNotNone(await self.db.get(MediaFavorite, (self.owner.id, self.movie.id)))
+        editor = (await self.client.get(f'/tracking/editor/{self.movie.id}')).json()
+        self.assertTrue(editor['favorite']); self.assertIsNone(editor['entry'])
+        profile = (await self.client.get(f'/tracking/people/{self.owner.username}')).json()
+        self.assertEqual(profile['counts']['movies'], 0)
+        self.assertEqual(profile['counts']['favorites'], 1)
+        self.assertEqual(profile['favorites'][0]['id'], self.movie.id)
+        self.local_outbound.assert_not_awaited()
+        listed = await self.save(self.movie, status='paused')
+        self.assertTrue(listed.json()['favorite'])
+        unfavorite = await self.save(self.movie, favorite=False)
+        self.assertEqual(unfavorite.json()['status'], 'paused')
+        self.assertFalse(unfavorite.json()['favorite'])
+
+    async def test_independent_favorite_survives_rating_created_entry_in_all_projections(self):
+        self.assertEqual((await self.save(self.movie,favorite=True)).status_code,200)
+        rated=await self.client.post('/ratings',json={'media_id':self.movie.id,'media_type':'movie','rating':8})
+        self.assertEqual(rated.status_code,200,rated.text)
+        entry=await self.db.scalar(select(TrackedEntry).where(
+            TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.movie.id))
+        self.assertFalse(entry.favorite)
+        for viewer in (self.owner,self.friend):
+            self.viewer=viewer
+            for kind in ('movie','all'):
+                response=await self.client.get(f'/tracking/profile/{self.owner.username}/{kind}')
+                self.assertEqual(response.status_code,200,response.text)
+                listed=next(row for row in response.json()['entries'] if row['id']==self.movie.id)
+                self.assertTrue(listed['favorite'])
+        self.viewer=self.owner
+        details=(await self.client.get(f'/tracking/title/{self.movie.id}')).json()
+        self.assertTrue(details['favorite']);self.assertTrue(details['entry']['favorite'])
+        self.assertTrue((await self.save(self.movie,notes='Local edit')).json()['favorite'])
+        self.assertFalse((await self.save(self.movie,favorite=False,notes='Unfavorite')).json()['favorite'])
+        listed=(await self.client.get(f'/tracking/profile/{self.owner.username}/movie')).json()['entries']
+        self.assertFalse(next(row for row in listed if row['id']==self.movie.id)['favorite'])
+
+    async def test_favorites_preserve_every_existing_status_and_tracking_history(self):
+        entry = TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='planning',
+            progress=1, manual_score=8, rating_mode='manual', season_scores={},
+            start_date=date(2024, 1, 1), finish_date=date(2024, 2, 1))
+        self.db.add(entry); await self.db.commit()
+        for status in ('planning', 'watching', 'completed', 'paused', 'dropped'):
+            entry.status = status; await self.db.commit()
+            for favorite in (True, False):
+                saved = await self.save(self.movie, favorite=favorite)
+                self.assertEqual(saved.status_code, 200, saved.text)
+                result = saved.json()
+                self.assertEqual(result['status'], status)
+                self.assertEqual(result['progress'], 1)
+                self.assertEqual(result['score'], 8)
+                self.assertEqual(result['start_date'], '2024-01-01')
+                self.assertEqual(result['finish_date'], '2024-02-01')
+        self.assertIsNone(await self.db.scalar(select(TrackingActivity.id).where(TrackingActivity.user_id == self.owner.id)))
+        self.assertIsNone(await self.db.scalar(select(TrackingDeliveryJob.id).where(TrackingDeliveryJob.user_id == self.owner.id)))
         self.local_outbound.assert_not_awaited()
 
     async def test_library_action_saves_without_a_connection_and_survives_refresh(self):
@@ -3046,7 +3126,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         details={'status':'Returning Series','next_episode_to_air':{'season_number':1,'episode_number':2,'air_date':'2999-01-01'},
                  'seasons':[{'season_number':1,'episode_count':2,'name':'Season 1','air_date':'2020-01-01'}]}
-        season={'episodes':[{'id':987654310,'episode_number':1,'name':'First','air_date':'2020-01-01'},
+        season={'episodes':[{'id':987654310,'episode_number':1,'name':'First','air_date':'2020-01-01','still_path':'/first-still.jpg','overview':'First synopsis'},
                             {'id':987654311,'episode_number':2,'name':'Future','air_date':'2999-01-01'}]}
         with patch('core.settings_store.get_user_tmdb_key',new=AsyncMock(return_value='fixture-key')), \
              patch('core.tmdb.get_show',new=AsyncMock(return_value=details)), \
@@ -3054,6 +3134,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             res=await self.client.post(f'/tracking/title/{self.show.id}/refresh-episodes')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['episodes'],2)
+        first=(await self.db.execute(select(Media).where(Media.tmdb_id==987654310))).scalar_one()
+        self.assertEqual(first.poster_path,'/first-still.jpg')
+        self.assertEqual(first.overview,'First synopsis')
         res=await self.save(self.show,status='completed')
         self.assertEqual(res.status_code,200,res.text)
         self.assertEqual(res.json()['progress'],1)

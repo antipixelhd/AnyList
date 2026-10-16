@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from core.statistics_genres import poster
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 from models.title_credits import TitleCredits
-from core.screen_characters import character_images
+from core.screen_characters import character_images, role_image_candidates
 
 
 async def load_actors(db, facts, *, show_anime=True):
@@ -17,7 +17,12 @@ async def load_actors(db, facts, *, show_anime=True):
         CatalogueEntity, CatalogueEntity.id == CatalogueCredit.contributor_id).where(
         CatalogueCredit.work_id.in_(entity_ids), CatalogueCredit.role == "actor", CatalogueEntity.kind == "person"))).all())
     by_work = defaultdict(list)
-    images = await character_images(db, {c.screen_character_id for c, _ in credits if getattr(c, 'screen_character_id', None)})
+    images = await character_images(db, {c.screen_character_id for c, _ in credits if getattr(c, 'screen_character_id', None)}, show_anime=show_anime)
+    from core.person_identities import canonical_people
+    canonical = await canonical_people(db, [person for _, person in credits])
+    from core.screen_cast import complete_cast_works, preferred_cast
+    credits = preferred_cast([(credit, canonical[person.id]) for credit, person in credits],
+                             await complete_cast_works(db, entity_ids))
     for credit, person in credits:
         character_id = getattr(credit, 'screen_character_id', None)
         candidates = images.get(character_id, [])
@@ -25,8 +30,7 @@ async def load_actors(db, facts, *, show_anime=True):
             from core.statistics_facts import anime
             candidates = [i for i in candidates if not anime(i['attributes'])]
         current = poster(credit.character_image_url)
-        alternatives = list(dict.fromkeys(([current] if current else []) + [i['url'] for i in candidates if i['work_id'] == credit.work_id]
-            + [i['url'] for i in candidates if i['work_id'] != credit.work_id]))[:4]
+        alternatives = role_image_candidates(credit, candidates)
         by_work[credit.work_id].append({"key": f"catalogue:{person.id}", "label": person.name,
             "image": poster(person.image_url), "character": credit.character_label,
             "character_image": current, "character_images": alternatives, "character_id": character_id,
@@ -44,9 +48,6 @@ async def load_actors(db, facts, *, show_anime=True):
         CatalogueIdentity.namespace == "tmdb.person", CatalogueIdentity.external_id.in_(person_ids)))} if person_ids else {}
     for title in titles:
         actors = list(by_work.get(title["entity_id"], []))
-        primary = {a["key"] for a in actors if a["provider"] == "tmdb"}
-        if primary:
-            actors = [a for a in actors if a["provider"] == "tmdb" or a["key"] in primary]
         # Reduced legacy credits are only a fallback; never duplicate or replace
         # the complete canonical actor/role list for a title.
         if not actors:

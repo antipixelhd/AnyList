@@ -34,7 +34,7 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
       const link = posterTemplate.content.firstElementChild!.cloneNode(true) as HTMLAnchorElement;
       link.href = title.href; link.setAttribute('aria-label', title.title);
       const img = query<HTMLImageElement>(link, 'img'), placeholder = query(link, '.stats-genre-placeholder');
-      const art = responsiveArtwork(title.poster, { size: 'w185', sizes: '(max-width:650px) 20vw, 90px', route: 'direct' });
+      const art = responsiveArtwork(title.poster, { size: 'w185', sizes: '(max-width:650px) 20vw, 90px', route:'auto' });
       if (art) { img.src = art.src; if (art.srcset) img.srcset = art.srcset; if (art.sizes) img.sizes = art.sizes; placeholder.remove(); }
       else { img.remove(); placeholder.textContent = title.title.slice(0, 1); }
       query(link, '.stats-genre-tooltip').textContent = title.title;

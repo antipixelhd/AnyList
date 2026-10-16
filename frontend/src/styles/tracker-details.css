@@ -1,103 +1,4 @@
-/* AniList-derived title composition with AnyList score and season tools. */
-.detail-body {
-  min-width:0
-}
-.detail-poster-placeholder {
-  aspect-ratio:2/3;
-  display:grid;
-  place-items:center;
-  background:linear-gradient(145deg,#263d52,#172738);
-  color:var(--blue);
-  font-size:52px;
-  font-weight:var(--type-stat-weight)
-}
-.detail-heading {
-  margin-bottom:20px
-}
-.detail-heading h1 {
-  margin:6px 0 0;
-  font-size:var(--type-page-size);
-  line-height:1.25
-}
-.detail-kicker {
-  display:flex;
-  gap:9px;
-  align-items:center;
-  flex-wrap:wrap;
-  margin:0;
-  color:var(--muted);
-  font-size:var(--type-meta-size)
-}
-.detail-kicker span+span:before {
-  content:'·';
-  margin-right:9px;
-  color:#496178
-}
-.original-title {
-  font-size:var(--type-label-size);
-  color:var(--muted);
-  margin:5px 0
-}
-.detail-tagline {
-  color:#7fc7ee;
-  font-size:var(--type-row-size);
-  font-style:italic;
-  margin:14px 0 0
-}
-.detail-tabs {
-  display:flex;
-  gap:34px;
-  border-bottom:1px solid var(--border);
-  margin:0 0 24px;
-  overflow-x:auto;
-  scrollbar-width:none
-}
-.detail-tabs::-webkit-scrollbar {
-  display:none
-}
-.detail-tabs a {
-  padding:10px 1px 11px;
-  font-size:var(--type-meta-size);
-  color:var(--muted);
-  border-bottom:2px solid transparent;
-  white-space:nowrap
-}
-.detail-tabs a:hover,.detail-tabs a.active {
-  color:var(--blue);
-  border-bottom-color:var(--blue)
-}
-.score-overview {
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
-  background:var(--panel);
-  border-radius:5px;
-  margin:24px 0 32px;
-  overflow:hidden
-}
-.score-overview>div {
-  padding:17px 18px;
-  border-right:1px solid var(--border);
-  display:grid;
-  gap:2px
-}
-.score-overview>div:last-child {
-  border-right:0
-}
-.score-overview span {
-  font-size:var(--type-caption-size);
-  text-transform:uppercase;
-  letter-spacing:.8px;
-  color:var(--muted)
-}
-.score-overview strong {
-  color:var(--bright);
-  font-size:var(--type-stat-size);
-  font-weight:var(--type-action-weight)
-}
-.score-overview small {
-  color:var(--muted);
-  font-size:var(--type-caption-size)
-}
+
 .detail-section {
   margin-top:34px;
   scroll-margin-top:18px
@@ -107,25 +8,6 @@
   font-weight:var(--type-panel-weight);
   color:var(--text);
   margin:0
-}
-.synopsis-section>p {
-  max-width:880px;
-  line-height:1.75;
-  margin:14px 0;
-  color:#9eb2c8
-}
-.genre-pills {
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  margin-top:18px
-}
-.genre-pills span {
-  background:var(--panel);
-  color:#8fc9e9;
-  padding:5px 10px;
-  border-radius:12px;
-  font-size:var(--type-caption-size)
 }
 .detail-section-heading {
   display:flex;
@@ -143,71 +25,11 @@
   color:var(--blue);
   font-weight:var(--type-action-weight)
 }
-.following-scores {
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:10px
-}
-.following-scores .social-score {
-  display:grid;
-  grid-template-columns:38px minmax(0,1fr) auto;
-  align-items:center;
-  gap:12px;
-  padding:12px 14px;
-  margin:0;
-  border-radius:4px;
-  transition:background-color .15s
-}
-.following-scores .social-score:hover {
-  background:#1c3043
-}
-.social-avatar {
-  width:38px;
-  height:38px;
-  border-radius:4px;
-  background:#24445c;
-  display:grid;
-  place-items:center;
-  color:var(--blue);
-  font-weight:var(--type-profile-weight)
-}
-.following-scores .social-score>span:nth-child(2) {
-  display:grid
-}
-.following-scores .social-score strong {
-  color:var(--bright);
-  font-size:var(--type-label-size)
-}
-.following-scores .social-score small {
-  text-transform:capitalize;
-  color:var(--muted);
-  font-size:var(--type-caption-size)
-}
-.following-scores .social-score b {
-  font-size:var(--type-panel-size);
-  color:var(--blue)
-}
 .section-empty {
   background:var(--panel);
   border-radius:5px;
   padding:22px;
   color:var(--muted)
-}
-.external-links {
-  display:grid;
-  gap:5px;
-  margin-top:12px
-}
-.external-links a {
-  background:var(--panel);
-  border-radius:4px;
-  padding:9px 12px;
-  font-size:var(--type-meta-size);
-  display:flex;
-  justify-content:space-between
-}
-.external-links a span {
-  color:var(--blue)
 }
 .seasons-section .season-card {
   display:grid;
@@ -299,25 +121,7 @@
 .season-mode-actions .button-primary {
   width:auto
 }
-.detail-facts dd {
-  line-height:1.45
-}
-.detail-facts dt:first-child {
-  margin-top:0
-}
 @media(max-width:1000px) {
-  .score-overview {
-    grid-template-columns:repeat(2,minmax(0,1fr))
-  }
-  .score-overview>div {
-    border-bottom:1px solid var(--border)
-  }
-  .score-overview>div:nth-child(even) {
-    border-right:0
-  }
-  .score-overview>div:nth-last-child(-n+2) {
-    border-bottom:0
-  }
   .seasons-section .season-card {
     grid-template-columns:60px minmax(0,1fr)
   }
@@ -334,91 +138,9 @@
   }
 }
 @media(max-width:650px) {
-  .detail-layout {
-    display:grid;
-    grid-template-columns:100px minmax(0,1fr);
-    gap:0 18px
-  }
-  .detail-sidebar,.detail-body {
-    display:contents
-  }
-  .detail-sidebar>.detail-poster {
-    grid-column:1;
-    grid-row:1
-  }
-  .detail-sidebar>.detail-controls {
-    grid-column:2;
-    grid-row:1;
-    align-self:end
-  }
-  .detail-heading {
-    grid-column:1/-1;
-    grid-row:2;
-    margin:24px 0 10px
-  }
-  .detail-tabs {
-    grid-column:1/-1;
-    grid-row:3;
-    margin-bottom:18px
-  }
-  .detail-facts {
-    grid-column:1/-1;
-    grid-row:4;
-    display:grid;
-    grid-template-columns:105px minmax(0,1fr);
-    gap:7px 12px;
-    font-size:var(--type-caption-size)
-  }
-  .detail-facts dt {
-    margin:0
-  }
-  .detail-facts dd {
-    margin:0
-  }
-  .external-links {
-    grid-column:1/-1;
-    grid-row:5;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    margin:14px 0 0
-  }
-  .external-links a {
-    font-size:var(--type-caption-size)
-  }
-  .score-overview {
-    grid-column:1/-1;
-    grid-row:6;
-    margin:22px 0 28px
-  }
-  .synopsis-section {
-    grid-column:1/-1;
-    grid-row:7
-  }
-  .following-section {
-    grid-column:1/-1;
-    grid-row:8
-  }
   .seasons-section {
     grid-column:1/-1;
     grid-row:9
-  }
-  #season-message {
-    grid-column:1/-1;
-    grid-row:10
-  }
-  .detail-heading h1 {
-    font-size:var(--type-section-size)
-  }
-  .detail-tagline {
-    font-size:var(--type-label-size)
-  }
-  .score-overview>div {
-    padding:13px
-  }
-  .score-overview strong {
-    font-size:var(--type-section-size)
-  }
-  .following-scores {
-    grid-template-columns:1fr
   }
   .seasons-section .detail-section-heading {
     align-items:start;
@@ -438,11 +160,6 @@
   }
   .season-score {
     grid-column:1/-1
-  }
-}
-@media(prefers-reduced-motion:reduce) {
-  .following-scores .social-score {
-    transition:none
   }
 }
 .entry-head.combined-row,.entry-row.combined-row {
@@ -630,77 +347,4 @@
 .list-shell {
   max-width:var(--page-max-width);
   gap:var(--content-column-gap)
-}
-.ratings-overview {
-  display:grid;
-  grid-template-columns:minmax(260px,1fr) minmax(360px,1.5fr);
-  gap:12px;
-  margin:24px 0 32px
-}
-.personal-scores,.provider-scores {
-  display:grid;
-  background:var(--panel);
-  border-radius:5px;
-  overflow:hidden
-}
-.personal-scores {
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  background:linear-gradient(135deg,#1d3448,#172738)
-}
-.provider-scores {
-  grid-template-columns:repeat(4,minmax(0,1fr))
-}
-.personal-scores>div,.provider-scores>div {
-  display:grid;
-  gap:3px;
-  padding:16px 18px;
-  border-right:1px solid var(--border)
-}
-.personal-scores>div:last-child,.provider-scores>div:last-child {
-  border-right:0
-}
-.ratings-overview span {
-  font-size:var(--type-caption-size);
-  text-transform:uppercase;
-  letter-spacing:.8px;
-  color:var(--muted)
-}
-.ratings-overview strong {
-  font-size:var(--type-section-size);
-  color:var(--bright);
-  font-weight:var(--type-action-weight)
-}
-.personal-scores strong {
-  color:#77d2ff
-}
-.ratings-overview small {
-  font-size:var(--type-caption-size);
-  color:var(--muted)
-}
-@media(max-width:900px) {
-  .ratings-overview {
-    grid-template-columns:1fr
-  }
-  .provider-scores {
-    grid-template-columns:repeat(4,minmax(80px,1fr))
-  }
-}
-@media(max-width:650px) {
-  .ratings-overview {
-    grid-column:1/-1;
-    grid-row:6;
-    margin:22px 0 28px
-  }
-  .provider-scores {
-    grid-template-columns:repeat(2,minmax(0,1fr))
-  }
-  .provider-scores>div:nth-child(2) {
-    border-right:0
-  }
-  .provider-scores>div:nth-child(-n+2) {
-    border-bottom:1px solid var(--border)
-  }
-  .ratings-overview strong {
-    font-size:var(--type-section-size)
-  }
 }

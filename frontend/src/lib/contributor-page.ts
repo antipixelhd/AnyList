@@ -1,5 +1,5 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, sameBrowseTitle } from './browse-card-actions';
-import { contributorParams, contributorYear, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
+import { contributorParams, contributorYear, contributorMediaLabel, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
 import { editorStore } from './editor-store';
 import { applyResponsiveArtwork } from './responsive-artwork';
 import { prepareBrowsePoster } from './browse-loading';
@@ -7,9 +7,13 @@ import { mountContributorBiography } from './contributor-biography';
 import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { initializeScrollMotion } from './scroll-motion';
 import { cancelUiMotion, reveal } from './ui-motion';
+import { mountPortraitViewer } from './image-viewer';
+import {createPrediction,bindPredictivePagination} from './predictive-loading';
+import { setLocalDateTime } from './date-time-dom';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
+  mountPortraitViewer(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
   const switchView = createContentTransition(region, signal);
@@ -17,10 +21,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const aliases = root.querySelector<HTMLDetailsElement>('.contributor-aliases');
   if (aliases) mountDetailsMotion(aliases, signal);
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (!signal.aborted && root.isConnected) initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
+    if (!signal.aborted && root.isConnected) initializeScrollMotion(root, signal, '.browse-card-body', 'contributor-scroll-reveal', {
       // SSR content is already painted, including restored scroll positions.
       // Animate only cards that arrive later or enter from below the viewport.
-      animateInitial:false, downwardOnly:true, scaleEntrance:true, once:true,
+      animateInitial:false, downwardOnly:true, once:true,
       appearedAttribute:'data-browse-appeared',
     });
     root.setAttribute('data-contributor-arrivals-ready','');
@@ -47,6 +51,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const portrait = root.querySelector<HTMLImageElement>('.contributor-portrait img');
   const missingPortrait = () => {
     if (portrait) portrait.hidden = true;
+    root.querySelector<HTMLButtonElement>('[data-portrait-image]')!.disabled = true;
     root.querySelector<HTMLElement>('[data-contributor-portrait-fallback]')!.hidden = false;
   };
   portrait?.addEventListener('error', missingPortrait, {signal});
@@ -69,10 +74,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     }, {signal});
   });
   const showError = (message: string) => { error.textContent = message; error.hidden = false; error.setAttribute('data-motion-fade',''); reveal(error); };
-  const visible = (item: ContributorWork) =>
-    (params.get('list_scope') !== 'in' || !!item.list_status) &&
-    (params.get('list_scope') !== 'out' || !item.list_status) &&
-    (!params.get('status') || params.get('status') === item.list_status);
+  const visible = (item: ContributorWork) => params.get('list_scope') !== 'in' || !!item.list_status;
   const updateEmpty = () => {
     region.querySelectorAll<HTMLElement>('[data-contributor-year]').forEach(group => {
       group.hidden = ![...group.querySelectorAll<HTMLElement>('[data-browse-card]')].some(card => !card.hidden);
@@ -135,10 +137,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       credit.textContent = [...item.characters,...item.roles.filter(role => !['Actor','Production'].includes(role))].join(' / ');
       credit.title = credit.textContent;
       const date = card.querySelector<HTMLTimeElement>('[data-work-date]')!;
-      date.hidden = !item.release_date; date.dateTime = item.release_date || ''; date.textContent = item.release_date;
+      date.hidden = !item.release_date; setLocalDateTime(date, item.release_date, 'month-day');
+      card.querySelector<HTMLElement>('[data-work-type]')!.textContent = contributorMediaLabel(item.type);
       const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
       image.hidden = !item.poster;
-      if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'direct'});
+      if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'auto'});
       const placeholder = card.querySelector<HTMLElement>('.browse-placeholder')!;
       placeholder.hidden = !!item.poster; placeholder.textContent = item.title.slice(0,1);
       if (!item.id && !item.tmdb_id) card.querySelector('.browse-actions')?.remove();
@@ -152,21 +155,35 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   root.querySelector<HTMLElement>('[data-contributor-next]')!.hidden = true;
   more.hidden = !data.has_more;
-  more.addEventListener('click', async () => {
-    if (more.disabled) return;
-    more.disabled = true; more.textContent = 'Loading…'; error.hidden = true;
-    const query = new URLSearchParams(params);
-    query.set('page', String(data.page + 1)); query.set('source', data.source);
-    if (data.next_cursor) query.set('cursor', data.next_cursor); else query.delete('cursor');
-    try {
-      const response = await fetch(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`, {signal,cache:'no-store'});
-      if (!response.ok) throw new Error('Unable to load more works. Please try again.');
-      const next: ContributorPage = await response.json();
-      if (signal.aborted) return;
+  const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{
+    const response=await fetch(path,{signal:requestSignal,cache:'no-store'});
+    if(!response.ok)throw new Error('Unable to load more works. Please try again.');
+    return response.json();
+  };
+  const prediction=createPrediction<ContributorPage>(requestPage,signal);
+  document.addEventListener('anylist:cache-invalidated',prediction.cancel,{signal});
+  const nextPath=()=>{
+    const query=new URLSearchParams(params);
+    query.set('page',String(data.page+1));query.set('source',data.source);
+    if(data.next_cursor)query.set('cursor',data.next_cursor);else query.delete('cursor');
+    return `/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
+  };
+  const loadMore=async()=>{
+    if(more.disabled||!data.has_more||signal.aborted)return;
+    more.disabled=true;more.textContent='Loading…';error.hidden=true;
+    try{
+      const path=nextPath();
+      const next=await prediction.consume(path,signal)??await requestPage(path,signal);
+      if(signal.aborted)return;
       append(next.works);
-      data.page = next.page; data.source = next.source; data.next_cursor = next.next_cursor; data.has_more = next.has_more;
-      more.hidden = !data.has_more;
-    } catch (cause) { if (!signal.aborted) showError(cause instanceof Error ? cause.message : 'Unable to load more works.'); }
-    finally { if (!signal.aborted) { more.disabled = false; more.textContent = 'Load more'; } }
-  }, {signal});
+      data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
+      more.hidden=!data.has_more;
+    }catch(cause){if(!signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load more works.');}
+    finally{if(!signal.aborted){more.disabled=false;more.textContent='Load more';}}
+  };
+  more.addEventListener('click',()=>void loadMore(),{signal});
+  form.addEventListener('submit',prediction.cancel,{signal});
+  bindPredictivePagination(region,signal,()=>data.has_more&&!more.disabled&&error.hidden,
+    ()=>prediction.prefetch(nextPath()),()=>void loadMore());
+
 }

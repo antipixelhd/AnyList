@@ -47,12 +47,21 @@ class CatalogueEntity(Base):
             name="ck_catalogue_kind",
         ),
         Index("ix_catalogue_kind_name", "kind", "name"),
+        CheckConstraint("canonical_person_id IS NULL OR (kind = 'person' AND canonical_person_id <> id)", name="ck_catalogue_person_alias"),
+        CheckConstraint("canonical_company_id IS NULL OR (kind = 'organization' AND canonical_company_id <> id)", name="ck_catalogue_company_alias"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None] = mapped_column(Text)
+    # Preserve old contributor URLs and credits after a verified person bridge.
+    canonical_person_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalogue_entities.id", ondelete="RESTRICT"), index=True
+    )
+    canonical_company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("catalogue_entities.id", ondelete="RESTRICT", name="fk_catalogue_company_alias"), index=True
+    )
     # Normalized descriptive fields only. Provider responses live in snapshots.
     attributes: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
@@ -69,6 +78,21 @@ class CatalogueEntity(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class ContributorSearch(Base):
+    """Transactionally maintained quick-search projection, never source credits."""
+    __tablename__ = 'catalogue_contributor_search'
+    entity_id: Mapped[int] = mapped_column(ForeignKey('catalogue_entities.id', ondelete='CASCADE'), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    work_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    actor_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    staff_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    screen_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    roles: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='[]')
 
 
 class CatalogueIdentity(Base):
@@ -225,6 +249,7 @@ class CatalogueCredit(Base):
         String(80), nullable=False, default="title", server_default="title"
     )
     position: Mapped[int | None] = mapped_column(Integer)
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
 
 
 class CharacterAppearance(Base):
@@ -292,7 +317,7 @@ class CatalogueRelationship(Base):
             "source_id <> target_id", name="ck_catalogue_relationship_distinct"
         ),
         CheckConstraint(
-            "relation IN ('dlc','expansion','standalone_expansion','remake','remaster','port','version','series_member','recommendation')",
+            "relation IN ('dlc','expansion','standalone_expansion','remake','remaster','port','version','series_member','recommendation','adaptation','based_on','prequel','sequel','spin_off','shared_universe')",
             name="ck_catalogue_relationship_type",
         ),
         Index("ix_catalogue_relationship_target", "target_id", "relation"),
@@ -339,6 +364,23 @@ class MetadataSnapshot(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
     lease_token: Mapped[str | None] = mapped_column(String(40))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ContributorEvidence(Base):
+    """Public discovery evidence and durable, deduplicated verification jobs."""
+    __tablename__ = 'catalogue_contributor_evidence'
+    __table_args__ = (Index('ix_contributor_evidence_due', 'next_attempt_at'),)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    native_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variant: Mapped[str] = mapped_column(String(64), primary_key=True)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lease_token: Mapped[str | None] = mapped_column(String(40))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
 
 
 class MetadataProviderBudget(Base):

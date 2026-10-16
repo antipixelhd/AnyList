@@ -321,6 +321,15 @@ class MDBListRateLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(requests), 1)
         sleep.assert_not_awaited()
 
+    async def test_optional_catalogue_rating_defers_the_full_provider_cooldown(self):
+        _,error,requests,sleep=await self._call(
+            [httpx.Response(429,headers={'Retry-After':'3600'},json={})],
+            mdblist.get_catalog_rating,'fixture','movie',42,'imdb')
+        self.assertIsInstance(error,mdblist.MDBListAPIError)
+        self.assertEqual(error.retry_after,3600)
+        self.assertEqual(len(requests),1)
+        sleep.assert_not_awaited()
+
     async def test_gives_up_after_the_retry_budget(self) -> None:
         limited = httpx.Response(429, json={"error": "API rate limit exceeded!"})
         _, error, requests, _ = await self._call(

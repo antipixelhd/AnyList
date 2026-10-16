@@ -17,9 +17,7 @@ export function contributorParams(search: URLSearchParams, signedIn: boolean) {
   const type = search.get('media_type');
   if (type === 'movie' || type === 'series') params.set('media_type', type);
   const list = search.get('list_scope');
-  if (signedIn && (list === 'in' || list === 'out')) params.set('list_scope', list);
-  const status = search.get('status');
-  if (signedIn && ['watching','completed','planning','paused','dropped'].includes(status || '')) params.set('status', status!);
+  if (signedIn && list === 'in') params.set('list_scope', list);
   const page = Number(search.get('page'));
   if (Number.isInteger(page) && page > 1 && page <= 500) params.set('page', String(page));
   if (search.get('cursor')) params.set('cursor', search.get('cursor')!.slice(0,400));
@@ -29,6 +27,9 @@ export function contributorParams(search: URLSearchParams, signedIn: boolean) {
 export function contributorYear(work: Pick<ContributorWork, 'release_date' | 'year'>) {
   const year = (work.release_date || work.year || '').slice(0,4);
   return /^[0-9]{4}$/.test(year) ? year : 'Undated';
+}
+export function contributorMediaLabel(type: string) {
+  return ({movie:'Movie',series:'Series',game:'Game',book:'Book'} as Record<string,string>)[type] || '';
 }
 export function workHref(work: BrowseItem & {href?:string|null}) {
   return work.id ? `/title/${work.id}` : work.tmdb_id ? `/discover-title?type=${work.type}&id=${work.tmdb_id}` : work.href || null;

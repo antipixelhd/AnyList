@@ -37,7 +37,7 @@ const pwColumns: { poster: (typeof posters)[number] | null; depth: number }[][] 
           poster ? (
             <div class="pw-card pw-card--poster">
               <img
-                {...responsiveArtwork(poster.poster_path, { size: "w342", route: "direct", sizes: "clamp(140px, 13vw, 210px)" })}
+                {...responsiveArtwork(poster.poster_path, { size: "w342", route:Astro.locals.imageCacheEnabled?'proxy':'direct', sizes: "clamp(140px, 13vw, 210px)" })}
                 alt=""
                 loading="lazy"
                 referrerpolicy="no-referrer"

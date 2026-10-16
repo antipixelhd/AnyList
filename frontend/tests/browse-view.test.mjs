@@ -7,7 +7,7 @@ import {
 } from "../src/lib/browse-view.ts";
 
 test("browse starts with categories, while searches, filters and explicit sorts use full results", () => {
-  for (const query of ["", "type=series", "sort=all&region=DE", "min_votes=250", "min_votes=1000"]) {
+  for (const query of ["", "type=series", "sort=all&region=DE", "min_score=0"]) {
     assert.equal(isCategoryView(new URLSearchParams(query)), true, query);
   }
   for (const query of [
@@ -19,14 +19,25 @@ test("browse starts with categories, while searches, filters and explicit sorts 
     "provider=8",
     "sort=popular",
     "sort=trending",
+    "cinema=1",
+    "min_score=7.5",
   ]) {
     assert.equal(isCategoryView(new URLSearchParams(query)), false, query);
   }
 });
 
-test('vote thresholds survive full-result requests and section links', () => {
-  assert.equal(browseRequestParams(new URLSearchParams('q=Arrival&min_votes=500')).get('min_votes'), '500');
-  assert.equal(new URL(sectionHref('movie', 'US', {sort: 'popular', min_votes: '0'}), 'https://anylist.test').searchParams.get('min_votes'), '0');
+test('cinema filter survives timeline, search, genre and pagination parameters',()=>{
+  const values=new URLSearchParams('cinema=1&view=timeline&q=Arrival&genres=18&page=3&source=remote');
+  const request=browseRequestParams(values);
+  assert.equal(request.get('cinema'),'1');assert.equal(request.get('sort'),'newest');
+  assert.equal(request.get('q'),'Arrival');assert.equal(request.get('genres'),'18');
+  assert.equal(request.get('page'),'3');assert.equal(request.get('source'),'remote');
+  assert.equal(isCategoryView(values),false);
+});
+
+test('score thresholds survive full-result requests and section links', () => {
+  assert.equal(browseRequestParams(new URLSearchParams('q=Arrival&min_score=7.5')).get('min_score'), '7.5');
+  assert.equal(new URL(sectionHref('movie', 'US', {sort: 'popular', min_score: '0'}), 'https://anylist.test').searchParams.get('min_score'), '0');
 });
 
 test("all-category selection can search using the paginated API without mutating the view", () => {

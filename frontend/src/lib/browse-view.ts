@@ -1,4 +1,5 @@
-const filters = ["q", "genres", "start", "end", "status", "provider"];
+const filters = ["q", "genres", "start", "end", "status", "provider", "cinema", "min_score"];
+export function browseLayout(values: URLSearchParams) { return values.get('view')==='timeline'||values.get('sort')==='newest'?'timeline':'grid'; }
 export function genreSelectionLabel(value: string, genres: { id: number | string; name: string }[]) {
   const selected = value.split(',').filter(Boolean);
   if (!selected.length) return 'Any';
@@ -7,18 +8,25 @@ export function genreSelectionLabel(value: string, genres: { id: number | string
 }
 
 export function hasBrowseFilters(values: URLSearchParams) {
-  return filters.some(name => values.get(name)?.trim());
+  return filters.some(name => name === "min_score" ? Number(values.get(name)) > 0 : values.get(name)?.trim());
 }
 
 export function isCategoryView(values: URLSearchParams) {
   return (
-    (!values.get("sort") || values.get("sort") === "all") &&
+    browseLayout(values)!=='timeline' && (!values.get("sort") || values.get("sort") === "all") &&
     !hasBrowseFilters(values)
   );
 }
 
-export function browseRequestParams(values: URLSearchParams) {
+export function browseRequestParams(values: URLSearchParams, today = new Date().toISOString().slice(0,10)) {
   const request = new URLSearchParams(values);
+  request.delete('view');
+  request.delete('min_votes');
+  if(browseLayout(values)==='timeline'){
+    request.set('sort','newest');
+    if(!request.has('end')&&request.get('status')!=='upcoming'&&!(request.get('start')!>today))request.set('end',today);
+    return request;
+  }
   if (!request.get("sort") || request.get("sort") === "all")
     request.set("sort", "popular");
   return request;

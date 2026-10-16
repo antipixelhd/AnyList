@@ -445,7 +445,26 @@ class UserProfileUpdate(BaseModel):
         return value
 
     bio: Optional[str] = Field(default=None, max_length=5000)
+    minimum_votes: int = Field(default=250, ge=0, le=1000000)
+    minimum_movie_runtime: int = Field(default=30, ge=0, le=1440)
+    excluded_categories: list[int] = Field(default_factory=list, max_length=7)
+
+    @field_validator('excluded_categories')
+    @classmethod
+    def validate_excluded_categories(cls, value):
+        from core.catalog_search import EXCLUDABLE_CATEGORIES
+        if not set(value).issubset(EXCLUDABLE_CATEGORIES):
+            raise ValueError('Choose valid result categories')
+        return sorted(set(value))
     country: Optional[str] = None
+    @field_validator('country')
+    @classmethod
+    def validate_country(cls, value: str | None) -> str | None:
+        if value is None:return None
+        from core.countries import country_code
+        if len(value.strip())!=2 or not (code:=country_code(value)):
+            raise ValueError('Choose a valid country')
+        return code
     streaming_services: Optional[list[str]] = None
     metadata_language: Optional[str] = None
     privacy_level: Optional[PrivacyLevel] = None
@@ -460,6 +479,9 @@ class UserProfileUpdate(BaseModel):
         return value.lower()
 
 class UserProfileResponse(BaseModel):
+    minimum_votes: int = 250
+    minimum_movie_runtime: int = 30
+    excluded_categories: list[int] = Field(default_factory=list)
     background_url: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None

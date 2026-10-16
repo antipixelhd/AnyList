@@ -1,0 +1,5 @@
+---
+// Shared first-paint typography must not depend on the route or page title.
+---
+{[400, 500, 600, 700].map(weight => <link rel="preload" href={`/fonts/roboto-${weight}-latin.woff2`} as="font" type="font/woff2" crossorigin/>)}
+<link rel="preload" href="/fonts/overpass-latin.woff2" as="font" type="font/woff2" crossorigin/>

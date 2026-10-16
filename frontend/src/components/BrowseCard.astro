@@ -1,6 +1,8 @@
 ---
 import Icon from "./Icon.astro";
 import { responsiveArtwork } from "../lib/responsive-artwork";
+import { formatDateTime, requestDateLocale } from '../lib/date-time';
+import { contributorMediaLabel } from '../lib/contributor-page-data';
 const {
   item = { title: "", type: "movie" },
   signedIn = false,
@@ -10,7 +12,7 @@ const {
 const image = responsiveArtwork(item.poster, {
   size: "w342",
   sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
-  route: "direct",
+  route:Astro.locals.imageCacheEnabled?'proxy':'direct',
 });
 const state = item.list_status;
 const labels: Record<string, string> = {
@@ -130,7 +132,8 @@ const href = item.id
     </span>
   </div>
   {credits && <p class="browse-credit" data-work-credit title={[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}>{[...(item.characters || []), ...(item.roles || []).filter((role: string) => role !== 'Actor' && role !== 'Production')].join(' / ')}</p>}
-  {credits && <time class="browse-work-date" datetime={item.release_date} data-work-date hidden={!item.release_date}>{item.release_date}</time>}
+  {credits && <time class="browse-work-date" datetime={item.release_date} data-local-date-time="month-day" data-work-date hidden={!item.release_date}>{formatDateTime(item.release_date,'month-day',{locale:requestDateLocale(Astro.request.headers.get('accept-language'), Astro.cookies.get('anylist_date_region')?.value)})}</time>}
+  {credits && <span class="browse-work-type" data-work-type>{contributorMediaLabel(item.type)}</span>}
   </div>
   </div>
 </article>

@@ -5,18 +5,15 @@ import { ratingPosterUrl } from "../lib/posters";
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { episodeHref } from "../lib/episodeHref";
 import { displaySeasonEpisode } from "../lib/media-format";
+import LocalDateTime from './LocalDateTime.astro';
 
 interface Props {
   event: WatchEvent;
-  use24h?: boolean;
 }
 
-const { event, use24h = false } = Astro.props;
+const { event } = Astro.props;
 const { media, watched_at } = event;
 
-const timeString = watched_at
-  ? new Date(watched_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !use24h })
-  : 'Unknown';
 
 const isEpisode = media.type === 'episode';
 const { season: dispSeason, episode: dispEpisode } = displaySeasonEpisode(media);
@@ -62,7 +59,7 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
     <div class="flex items-center justify-between gap-3">
       <div class="flex items-center gap-2 min-w-0">
         <span class="text-xs font-bold text-zinc-400 bg-zinc-950/50 border border-zinc-800 px-2 py-1 rounded-lg uppercase tracking-wider shrink-0">
-          {timeString}
+          <LocalDateTime value={watched_at} style="time" fallback="Unknown"/>
         </span>
         {media.user_rating != null && (
           <span class="flex items-center gap-0.5 text-xs font-bold text-amber-400">

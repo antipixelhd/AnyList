@@ -43,6 +43,7 @@ dependencies = [
     "pyotp>=2.9.0",
     "slowapi>=0.1.9",
     "pycountry>=26.2.16",
+    "pillow>=12.3,<13",
 ]
 
 [dependency-groups]
