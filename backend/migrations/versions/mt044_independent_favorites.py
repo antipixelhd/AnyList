@@ -16,6 +16,6 @@ def upgrade():
 
 
 def downgrade():
-    if op.get_bind().scalar(sa.text('SELECT EXISTS (SELECT 1 FROM media_favorites f LEFT JOIN tracked_entries e ON e.user_id=f.user_id AND e.media_id=f.media_id WHERE e.id IS NULL)')):
-        raise RuntimeError('Unlisted favorites must be preserved before downgrading')
+    if op.get_bind().scalar(sa.text('SELECT EXISTS (SELECT 1 FROM media_favorites f LEFT JOIN tracked_entries e ON e.user_id=f.user_id AND e.media_id=f.media_id WHERE e.favorite IS NOT TRUE)')):
+        raise RuntimeError('Independent favorites must be preserved before downgrading')
     op.drop_table('media_favorites')

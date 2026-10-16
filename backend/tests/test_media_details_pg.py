@@ -304,6 +304,29 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.client.patch(url+str(ids[3]),json={'watched':True})).status_code,409)
             self.assertEqual((await self.client.patch(url+str(self.media_id),json={'watched':True})).status_code,409)
 
+    async def test_favorite_downgrade_requires_legacy_favorite_evidence(self):
+        def migrate(conn):
+            migration = importlib.import_module('migrations.versions.mt044_independent_favorites')
+            params = {'user':self.user_id, 'media':self.media_id}
+            conn.execute(text('INSERT INTO media_favorites(user_id,media_id) VALUES (:user,:media)'), params)
+            with Operations.context(MigrationContext.configure(conn)):
+                # A later import can create an entry with the legacy flag false.
+                self.assertFalse(conn.scalar(text('SELECT favorite FROM tracked_entries WHERE user_id=:user AND media_id=:media'), params))
+                with self.assertRaisesRegex(RuntimeError, 'favorites must be preserved'):
+                    migration.downgrade()
+                conn.execute(text('DELETE FROM tracked_entries WHERE user_id=:user AND media_id=:media'), params)
+                with self.assertRaisesRegex(RuntimeError, 'favorites must be preserved'):
+                    migration.downgrade()
+                self.assertEqual(conn.scalar(text('SELECT count(*) FROM media_favorites')), 1)
+                conn.execute(TrackedEntry.__table__.insert().values(
+                    user_id=self.user_id,media_id=self.media_id,status='planning',rating_mode='manual',favorite=True))
+                migration.downgrade()
+                self.assertTrue(conn.scalar(text('SELECT favorite FROM tracked_entries WHERE user_id=:user AND media_id=:media'), params))
+                migration.upgrade()
+                self.assertEqual(conn.scalar(text('SELECT count(*) FROM media_favorites')), 1)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(migrate)
+
     async def test_relation_migration_preserves_existing_edges_and_refuses_lossy_downgrade(self):
         def migrate(conn):
             migration = importlib.import_module('migrations.versions.mt043_media_relations')
