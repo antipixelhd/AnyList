@@ -26,6 +26,7 @@ type Payload = {
   has_more: boolean;
   page: number;
   source: string;
+  cursor?: string | null;
   notice?: string;
 };
 type Section = {
@@ -405,7 +406,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     const values = params();
     const categoryView = isCategoryView(values);
     values.set("page", String(append ? payload.page + 1 : 1));
-    if (append) values.set("source", payload.source);
+    if (append) {
+      values.set("source", payload.source);
+      if(payload.cursor)values.set('cursor',payload.cursor);
+    }
     const path = requestPath(values);
     if (loading && currentPath === path) return;
     request?.abort();
@@ -767,6 +771,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       paginationFrame = 0;
       if(down&&canAutoLoad()&&paginationPosition(region.getBoundingClientRect(),innerHeight).predict){
         const next=params();next.set('page',String(payload.page+1));next.set('source',payload.source);
+        if(payload.cursor)next.set('cursor',payload.cursor);
         const path=requestPath(next);if(!responseCache.get(path))prediction.prefetch(path);
       }
       autoLoadMore();

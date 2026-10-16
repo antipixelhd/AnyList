@@ -546,7 +546,7 @@ async def imdb_page(
 
 
 async def remote_page(
-    term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True
+    term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None
 ):
     # Imports reuse the same detail cache; at most six concurrent filtered-search lookups.
     from core.catalog_search import fuzzy_remote_terms, is_close_title_match
@@ -581,16 +581,17 @@ async def remote_page(
         return data, [item for item in data.get('results', []) if matches_result_filters(
             item, media_type, min_votes=filters.get('min_votes', 0), min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
     search = tmdb.search_movies if media_type == "movie" else tmdb.search_shows
-    data = await search(term, page=page, api_key=key)
+    data = await search(term, page=page, api_key=key) if page <= 500 else {'results': [], 'total_pages': 500}
     items = list(data.get("results", []))
     # Provider pages are small and filters/deduplication can leave only one
     # viable title. Fetch a bounded batch, including every page of short searches.
-    last = min(page + 4, min(data.get('total_pages', 1), 500))
+    last = min(page + (4 if len(term.strip()) >= 3 else 0), min(data.get('total_pages', 1), 500))
     if last > page:
         batches = await asyncio.gather(*(search(term, page=next_page, api_key=key) for next_page in range(page + 1, last + 1)))
         items.extend(item for batch in batches for item in batch.get('results', []))
     data = {**data, 'page': max(page, last), 'has_more': last < min(data.get('total_pages', 1), 500)}
-    if term and not items and page == 1:
+    data['provider_more'] = data['has_more']
+    if len(term.strip()) >= 3 and not items and page == 1:
         alternatives = await asyncio.gather(
             *(search(candidate, api_key=key) for candidate in fuzzy_remote_terms(term)),
             return_exceptions=True,
@@ -606,14 +607,21 @@ async def remote_page(
         data = {"total_pages": 1, 'page': 1, 'has_more': False}
     items = list({item['id']: item for item in items}.values())
     from core.catalog_search import predictive_titles
-    if mdblist_key and page == 1:
+    feed_offset = (0 if page == 1 else -1) if feed_offset is None else feed_offset
+    data['feed_next'] = -1
+    if mdblist_key and feed_offset >= 0:
         # Reuse the full public catalogue already used by browse rankings.
         # Keep normalization/fuzzy work in a worker and avoid per-title
         # remote searches or imports.
         try:
             feed, _ = await mdblist_discovery.ranked_rows(media_type, 'popular', mdblist_key)
             suggestions = await asyncio.to_thread(predictive_titles, feed, term)
-            items = list({item['id']: item for item in [*suggestions, *items]}.values())
+            from core.catalog_search import title_match_rank
+            suggestions.sort(key=lambda row: title_match_rank(term,row.get('title')))
+            if len(suggestions) > feed_offset + PAGE_SIZE:
+                data['feed_next'] = feed_offset + PAGE_SIZE
+                data['has_more'] = True
+            items = list({item['id']: item for item in [*suggestions[feed_offset:feed_offset+PAGE_SIZE], *items]}.values())
         except mdblist_discovery.DiscoveryUnavailable:
             pass  # TMDB and the indexed local catalogue remain usable.
     # TMDB also matches hidden translations. Keep predictive matches in the
@@ -647,8 +655,11 @@ async def browse_page(
     key,
     mdblist_key=None,
     prefetched=None,
+    cursor=None,
     **filters,
 ):
+    from core.browse_cursor import encode_search_cursor
+    remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
     )
@@ -670,9 +681,10 @@ async def browse_page(
                 media_type,
                 key,
                 filters,
-                page,
+                remote_position if term else page,
                 mdblist_key=mdblist_key,
                 show_anime=show_anime,
+                feed_offset=feed_position,
             )
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
@@ -714,12 +726,14 @@ async def browse_page(
         notice = remote.get("notice")
         source = "remote"
         has_more = remote.get("has_more", page < min(remote.get("total_pages", 1), 500))
-        # Local fuzzy matches precede the remote results and are excluded on every page.
-        local = (await db.execute(query.limit(80))).scalars().all() if term else []
+        # Each stream advances independently; provider scans cannot skip local
+        # matches or force the entire cached catalogue into one response.
+        local = (await db.execute(query.offset(local_position).limit(PAGE_SIZE+1))).scalars().all() if term and local_position >= 0 else []
+        local_more = len(local) > PAGE_SIZE
+        local = local[:PAGE_SIZE]
+        has_more = has_more or local_more
         local_ids = {m.tmdb_id for m in local if m.tmdb_id}
-        results = (
-            [tracking_projection.media_data(m) for m in local] if page == 1 else []
-        )
+        results = [tracking_projection.media_data(m) for m in local]
         seen = set(local_ids)
         for item in items:
             if (
@@ -779,7 +793,11 @@ async def browse_page(
         results.sort(key=lambda row: title_match_rank(term, row.get('title')))
     return {
         "results": results,
-        "page": remote.get('page', page) if remote is not None else page,
+        "page": page,
+        "cursor": encode_search_cursor(
+            remote.get('page',remote_position)+1 if remote.get('provider_more',False) else 501,
+            local_position+PAGE_SIZE if local_more else -1,remote.get('feed_next',-1)
+        ) if term and remote is not None and has_more else None,
         "has_more": has_more,
         "source": source,
         "notice": notice,

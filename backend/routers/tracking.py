@@ -1257,9 +1257,15 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
                  min_score: Annotated[float, Query(ge=0, le=10)] = 0,
                  cinema: Annotated[bool, Query()] = False,
+                 cursor: Annotated[str | None, Query(max_length=160)] = None,
                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
+    from core.browse_cursor import decode_search_cursor
+    try:
+        positions=decode_search_cursor(cursor)
+    except ValueError:
+        raise HTTPException(422,'Invalid search cursor') from None
     await catalog_access(db, viewer)
     genre_ids = browse_genres(genres)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
@@ -1272,7 +1278,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
     try:
-        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source,
+        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
             status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)), min_score=min_score, cinema=cinema and media_type=='movie',

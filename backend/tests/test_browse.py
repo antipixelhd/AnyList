@@ -237,6 +237,20 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_letter_search_bounds_large_catalogue_and_retains_a_continuation(self):
+        feed=[{'id':i,'title':f'A movie {i}','imdb_votes':500} for i in range(1,10001)]
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':500,'results':[]})) as search, \
+             patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(feed,False))):
+            first,rows=await remote_page('a','movie','fixture',FILTERS,1,mdblist_key='fixture')
+            self.assertLessEqual(len(rows),24)
+            self.assertEqual(first['feed_next'],24)
+            self.assertTrue(first['has_more'])
+            next_data,next_rows=await remote_page('a','movie','fixture',FILTERS,501,mdblist_key='fixture',feed_offset=24)
+        self.assertEqual(search.await_count,1)  # No typo expansion or provider fanout for one letter.
+        self.assertEqual(len(next_rows),24)
+        self.assertEqual(next_data['feed_next'],48)
+        self.assertFalse({row['id'] for row in rows}&{row['id'] for row in next_rows})
+
     async def test_cached_catalogue_adds_predictive_matches_without_extra_searches(self):
         feed=[{'id':2,'title':'Digger','imdb_votes':500}, {'id':3,'title':'Unrelated','imdb_votes':500}]
         with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':1,'results':[{'id':1,'title':'The Dig','vote_count':500}]})) as search, \
@@ -420,6 +434,29 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database"
 )
 class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_cursor_preserves_every_local_and_cached_match_in_bounded_pages(self):
+        feed=[{'id':900000+i,'title':f'Browse Public {i}','imdb_votes':500} for i in range(70)]
+        found=set();cursor=None
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
+             patch('core.external_scores.effective_mdblist_key',AsyncMock(return_value='fixture')), \
+             patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=(feed,False))), \
+             patch('core.tmdb.search_movies',AsyncMock(return_value={'results':[],'total_pages':1})):
+            for page in range(1,10):
+                params={'q':'Browse','page':page,'source':'remote'}
+                if cursor:params['cursor']=cursor
+                response=await self.client.get('/tracking/browse',params=params)
+                self.assertEqual(response.status_code,200,response.text)
+                data=response.json();self.assertLessEqual(len(data['results']),48)
+                found.update(row['tmdb_id'] for row in data['results'])
+                if not data['has_more']:break
+                cursor=data['cursor'];self.assertTrue(cursor)
+            else:self.fail('Search pagination did not terminate')
+        self.assertEqual(found,{movie.tmdb_id for movie in self.movies}|{row['id'] for row in feed})
+
+    async def test_invalid_search_cursor_is_a_validation_error(self):
+        response=await self.client.get('/tracking/browse',params={'q':'a','cursor':'not-a-cursor'})
+        self.assertEqual(response.status_code,422)
+
     async def test_prefix_exact_typo_and_future_titles_use_indexed_local_search(self):
         titles=[Media(title=title,media_type=MediaType.movie,release_date='2099-01-01',tmdb_data={})
                 for title in ('Dig','Digger','The Dig','Avengers: Doomsday')]
