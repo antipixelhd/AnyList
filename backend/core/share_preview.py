@@ -81,7 +81,7 @@ def profile_card(user, overview):
 
 
 async def card_data(db, path):
-    from routers.tracking import catalog_access, profile_access, anime_is_visible
+    from core.tracking_access import catalog_access, profile_access, anime_is_visible
     from core import tracking_projection
     from models.media import Media
     from models.base import MediaType

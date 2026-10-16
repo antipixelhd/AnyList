@@ -23,7 +23,7 @@
   transition:background-color .15s,border-color .15s,color .15s,transform .15s
 }
 .button-primary:hover,.button-primary:focus-visible {
-  background:#55baf0;
+  background:color-mix(in srgb,var(--blue) 85%,white);
   color:white
 }
 .button-quiet {
@@ -117,7 +117,7 @@
   box-shadow:0 8px 28px #03091218
 }
 .notice-info {
-  --notice-accent:#3db4f2
+  --notice-accent:var(--blue)
 }
 .notice-warning {
   --notice-accent:var(--alert)
@@ -364,8 +364,8 @@
   resize:vertical
 }
 .editor label input:focus,.editor label select:focus,.editor label textarea:focus {
-  border-color:#3db4f2;
-  box-shadow:0 0 0 2px #3db4f21c
+  border-color:var(--blue);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 11%,transparent)
 }
 .editor .hint {
   display:block;
@@ -464,7 +464,7 @@
 }
 .setting-switch-row input:checked {
   background:#1d5f85;
-  border-color:#3db4f2
+  border-color:var(--blue)
 }
 .setting-switch-row input:checked:before {
   transform:translateX(17px);

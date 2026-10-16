@@ -141,7 +141,7 @@
 .profile-tabs {
   min-height:46px;
   gap:50px;
-  font-size:var(--type-nav-size)
+  font-size:14px
 }
 .profile-tabs a {
   padding:11px 0

@@ -357,12 +357,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   };
   const updateFooter = () => {
     find("[data-browse-sentinel]").hidden = displayedCategories;
-    more.hidden = !payload.has_more;
+    more.hidden = !payload.has_more || (!!field('q').value.trim() && (seen.size < 24 || loading));
     more.disabled = loading;
     end.hidden = payload.has_more || !grid.childElementCount;
     empty.hidden =
       displayedCategories ||
       loading ||
+      (!!field('q').value.trim() && payload.has_more) ||
       !!grid.childElementCount ||
       !error.hidden;
   };
@@ -412,6 +413,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     request = current;
     currentPath = path;
     const epoch = ++generation;
+    let addedCards = 0;
     loading = true;
     paginationDemand.reset(scrollY);
     suspended = false;
@@ -429,7 +431,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       sections.hidden = true;
       notice.textContent = "";
       loadingView.show(false, categoryView, field('view').value==='timeline');
-    } else {
+    } else if (!field('q').value.trim()) {
       loadingView.show(true, false, field('view').value==='timeline');
     }
     try {
@@ -456,6 +458,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
         const cards=render(response.results);
+        addedCards = cards.length;
         loadingView.handoff(cards.map(card=>card.querySelector<HTMLElement>('.browse-card-body')!));
         payload = response;
       }
@@ -486,6 +489,12 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         sections.hidden = !displayedCategories;
         region.setAttribute("aria-busy", "false");
         updateFooter();
+        if (field('q').value.trim() && payload.has_more && !suspended &&
+            (seen.size < 24 || (append && !addedCards))) {
+          // Provider pages with only duplicates/filtered titles are part of
+          // this search. Drain them without requiring clicks or fake slots.
+          queueMicrotask(() => { if (generation === epoch && !signal.aborted) void load(true); });
+        }
       }
     }
   }
@@ -644,6 +653,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
                 ]
               : [
                   ["airing", "Airing"],
+                  ["returning", "Returning Series"],
                   ["finished", "Finished"],
                   ["cancelled", "Cancelled"],
                   ["upcoming", "Upcoming"],
@@ -765,6 +775,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   bindBrowseCardActions(region, items, signal, syncItem, message => { notice.textContent = message; notice.hidden = false; });
   paintChips();
   updateFooter();
+  if (field('q').value.trim() && payload.has_more && seen.size < 24 && error.hidden) void load(true);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||

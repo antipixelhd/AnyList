@@ -5,6 +5,7 @@ import {detailBackground,type DetailLoadState} from './detail-background';
 import {responsiveArtwork,applyResponsiveArtwork,artworkIdentity} from './responsive-artwork';
 import {reconcileGalleryChildren,createGalleryThumbnailWatcher,createGalleryImageLoader} from './detail-gallery-dom';
 import {createDetailImageCarousel} from './detail-image-carousel';
+import {bindDetailImageWheel} from './detail-image-wheel';
 import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
@@ -32,6 +33,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   let pending=!!info.imagesAvailable&&info.imageStatus?.state!=='ready';
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
+  const announcement=lightbox.querySelector<HTMLElement>('[data-image-viewer-announcement]');
   let active:keyof Galleries='artwork',current=0;
   const loadViewerImage=createDetailViewerImageLoader(signal);
   const preparedImages=new WeakMap<HTMLImageElement,string>();
@@ -127,6 +129,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(current!==previous)revealPreviews();
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
+    if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${pending?'':` of ${count}`}`:'No images available';
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
     fitViewer(image,group);
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=count<2;});
@@ -294,6 +297,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(info.imagesAvailable&&artworkPanel&&!artworkPanel.hidden)void loadImages();
   }
   bindImageViewerDismissal(lightbox,signal);
+  bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true));
   lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}},{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep),true),{signal}));
   return loadImages;

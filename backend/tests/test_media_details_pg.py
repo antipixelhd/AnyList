@@ -64,17 +64,18 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_id = 99
             media.tmdb_data = {'protected_fixture': 'keep'}
             await db.commit()
-        raw = {'id':99, 'posters':[{'file_path':'/poster.jpg','iso_639_1':'en','aspect_ratio':.667}],
-               'backdrops':[{'file_path':'/scene.jpg','iso_639_1':None,'aspect_ratio':1.778},
-                            {'file_path':'/text.jpg','iso_639_1':'en','aspect_ratio':1.778}]}
+        raw = {'id':99, 'posters':[{'file_path':'https://artworks.thetvdb.com/banners/poster.jpg','iso_639_1':'en','aspect_ratio':.667}],
+               'backdrops':[{'file_path':'https://artworks.thetvdb.com/banners/scene.jpg','iso_639_1':None,'aspect_ratio':1.778},
+                            {'file_path':'https://artworks.thetvdb.com/banners/text.jpg','iso_639_1':'en','aspect_ratio':1.778}]}
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.settings_store.get_user_tvdb_key', AsyncMock(return_value='fixture')),
               patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99,'poster_path':'/primary.jpg','backdrop_path':'/text.jpg'})),
               patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
-              patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
+              patch('core.screen_artwork.title_artwork', AsyncMock(return_value=raw)) as fetch):
             data = (await self.client.get(f'/tracking/title/{self.media_id}/images')).json()
-            self.assertIn('https://image.tmdb.org/t/p/original/poster.jpg', data['posters'])
+            self.assertIn('https://artworks.thetvdb.com/banners/poster.jpg', data['posters'])
             self.assertEqual(data['posters'][0], 'https://image.tmdb.org/t/p/original/primary.jpg')
-            self.assertEqual(data['artwork'], ['https://image.tmdb.org/t/p/original/scene.jpg'])
+            self.assertEqual(data['artwork'], ['https://artworks.thetvdb.com/banners/scene.jpg'])
             await self.client.get(f'/tracking/title/{self.media_id}/images')
             fetch.assert_awaited_once()
         async with self.Session() as db:
@@ -149,16 +150,17 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media=await db.get(Media,self.media_id);media.tmdb_id=99;media.backdrop_path='/primary.jpg'
             media.tmdb_data={'protected_fixture':'keep'};await db.commit()
         raw={'id':99,'posters':[],'backdrops':[
-            {'file_path':'/text.jpg','iso_639_1':'en','aspect_ratio':1.778},
-            {'file_path':'/alternative.jpg','iso_639_1':None,'aspect_ratio':1.778,'vote_count':50},
-            {'file_path':'/primary.jpg','iso_639_1':None,'aspect_ratio':1.778}]}
+            {'file_path':'https://artworks.thetvdb.com/banners/text.jpg','iso_639_1':'en','aspect_ratio':1.778},
+            {'file_path':'https://artworks.thetvdb.com/banners/alternative.jpg','iso_639_1':None,'aspect_ratio':1.778,'vote_count':50},
+            {'file_path':'https://artworks.thetvdb.com/banners/primary.jpg','iso_639_1':None,'aspect_ratio':1.778}]}
         with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
-              patch('core.tmdb.get_title_images',AsyncMock(return_value=raw)) as fetch,
+              patch('core.settings_store.get_user_tvdb_key',AsyncMock(return_value='fixture')),
+              patch('core.screen_artwork.title_artwork',AsyncMock(return_value=raw)) as fetch,
               patch('core.tmdb.get_movie_light',AsyncMock()) as details,
               patch('core.media_image_analysis.inspect_image',AsyncMock()) as inspect):
             response=await self.client.get(f'/tracking/title/{self.media_id}/background')
             self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(response.json()['backdrop'],'https://image.tmdb.org/t/p/original/primary.jpg')
+            self.assertEqual(response.json()['backdrop'],'https://artworks.thetvdb.com/banners/alternative.jpg')
             self.assertEqual(response.json()['background_status']['state'],'ready')
             await self.client.get(f'/tracking/title/{self.media_id}/background')
             projected=(await self.client.get(f'/tracking/title/{self.media_id}')).json()
@@ -185,7 +187,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             media=await db.get(Media,self.media_id);media.tmdb_id=99;media.tmdb_data={};await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
-              patch('core.tmdb.get_title_images',AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
+              patch('core.settings_store.get_user_tvdb_key',AsyncMock(return_value='fixture')),
+              patch('core.screen_artwork.title_artwork',AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
             for _ in range(2):
                 response=await self.client.get(f'/tracking/title/{self.media_id}/background')
                 self.assertEqual(response.status_code,200,response.text)
@@ -202,8 +205,9 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_data = {'_anylist_images': {'version':IMAGE_POLICY_VERSION, 'posters':['https://example.test/old.jpg']}}
             await db.commit()
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.settings_store.get_user_tvdb_key', AsyncMock(return_value='fixture')),
               patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99})),
-              patch('core.tmdb.get_title_images', AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
+              patch('core.screen_artwork.title_artwork', AsyncMock(side_effect=RuntimeError('Unavailable'))) as fetch):
             for _ in range(2):
                 response = await self.client.get(f'/tracking/title/{self.media_id}/images')
                 self.assertEqual(response.status_code, 200)
@@ -219,14 +223,15 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 'retry_after':'2099-01-01T00:00:00+00:00', 'retry_version':0,
                 'posters':['https://example.test/unverified.jpg']}}
             await db.commit()
-        raw = {'id':99,'posters':[{'file_path':'/foreign.jpg','iso_639_1':'de'},
-            {'file_path':'/english.jpg','iso_639_1':'en'}],'backdrops':[]}
+        raw = {'id':99,'posters':[{'file_path':'https://artworks.thetvdb.com/banners/foreign.jpg','iso_639_1':'de'},
+            {'file_path':'https://artworks.thetvdb.com/banners/english.jpg','iso_639_1':'en'}],'backdrops':[]}
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
+              patch('core.settings_store.get_user_tvdb_key', AsyncMock(return_value='fixture')),
               patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99,'poster_path':'/english.jpg'})),
               patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
-              patch('core.tmdb.get_title_images', AsyncMock(return_value=raw)) as fetch):
+              patch('core.screen_artwork.title_artwork', AsyncMock(return_value=raw)) as fetch):
             response = await self.client.get(f'/tracking/title/{self.media_id}/images')
-            self.assertEqual(response.json()['posters'], ['https://image.tmdb.org/t/p/original/english.jpg'])
+            self.assertEqual(response.json()['posters'], ['https://image.tmdb.org/t/p/original/english.jpg', 'https://artworks.thetvdb.com/banners/english.jpg'])
             fetch.assert_awaited_once()
 
     async def test_episode_rows_use_canonical_catalogue_and_private_watch_history(self):

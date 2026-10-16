@@ -11,18 +11,19 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Qu
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from db import get_db
 from dependencies import get_current_user, get_optional_user, get_tracking_write_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
-from models import Media, User, UserSettings, UserProfileData, GlobalSettings, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
+from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
 from schemas_contributors import ContributorKind, ContributorPage, ListScope
+
+from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
 router = APIRouter()
 
@@ -845,12 +846,7 @@ async def save_external_entry(media_id: int, body: ExternalEntryPatch, backgroun
     return await save_entry(media_id, EntryPatch(**body.model_dump(exclude_unset=True)), background_tasks, db, viewer)
 
 
-async def catalog_access(db, viewer):
-    if viewer:
-        return
-    settings = await db.get(GlobalSettings, 1)
-    if not settings or not settings.enable_logged_out_navigation:
-        raise HTTPException(401, "Sign in to browse")
+
 
 
 @router.get('/contributors/{kind}/{contributor_key}')
@@ -920,20 +916,10 @@ async def staff_metadata(
     return PersonDetail.model_validate(result)
 
 
-async def profile_access(db, username, viewer):
-    user = (await db.execute(select(User).where(User.username == username).options(selectinload(User.profile)))).scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, "Profile not found")
-    owner = bool(viewer and viewer.id == user.id)
-    if not owner and (not user.profile or user.profile.privacy_level != PrivacyLevel.public):
-        raise HTTPException(403, "This profile is private")
-    await catalog_access(db, viewer)
-    return user, owner
 
 
-async def anime_is_visible(db: AsyncSession) -> bool:
-    settings=await db.get(GlobalSettings,1)
-    return bool(settings and settings.show_anime)
+
+
 
 
 def encode_activity_cursor(created_at: datetime, row_id: int) -> str:
@@ -1266,7 +1252,7 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
 @router.get('/browse')
 async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
                  page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200),
-                 start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'finished', 'cancelled', 'upcoming', 'released'] = '',
+                 start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'returning', 'finished', 'cancelled', 'upcoming', 'released'] = '',
                  provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
                  sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
                  min_score: Annotated[float, Query(ge=0, le=10)] = 0,
@@ -1548,9 +1534,10 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):raise HTTPException(404,'Title not found')
     from core.media_images import fill_screen_backdrop,screen_backdrop
     key=await settings_store.get_user_tmdb_key(db,viewer.id if viewer else -1)
-    await fill_screen_backdrop(db,media,key)
+    tvdb_key=await settings_store.get_user_tvdb_key(db,viewer.id if viewer else -1)
+    await fill_screen_backdrop(db,media,key,tvdb_key)
     data=screen_backdrop(media)
-    if not key:data['background_status']={'state':'unavailable','error':'missing_key','retry_after':0}
+    if not tvdb_key:data['background_status']={'state':'unavailable','error':'missing_key','retry_after':0}
     return data
 
 
@@ -1564,9 +1551,10 @@ async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
         raise HTTPException(404, 'Title not found')
     from core.media_images import fill_screen_images, screen_images
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
-    await fill_screen_images(db, media, key)
+    tvdb_key = await settings_store.get_user_tvdb_key(db, viewer.id)
+    await fill_screen_images(db, media, key, tvdb_key)
     data = screen_images(media, {})
-    if not key:
+    if not tvdb_key:
         data['image_status'] = {'state': 'unavailable', 'error': 'missing_key', 'retry_after': 0}
     return data
 

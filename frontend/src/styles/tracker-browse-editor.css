@@ -232,8 +232,9 @@
   color:var(--muted)
 }
 .editor-status-trigger:focus-visible {
-  border-color:#3db4f2;
-  outline:2px solid #3db4f21c
+  border-color:var(--blue);
+  outline:none;
+  background:color-mix(in srgb,var(--blue) 11%,var(--panel))
 }
 .editor-status-options {
   position:absolute;
@@ -314,8 +315,8 @@
   padding:8px 30px 8px 12px
 }
 .editor-score-field .score-stepper input:focus {
-  border-color:#3db4f2;
-  box-shadow:0 0 0 2px #3db4f21c
+  border-color:var(--blue);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 11%,transparent)
 }
 .score-stepper {
   position:relative;

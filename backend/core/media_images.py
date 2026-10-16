@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from core.catalogue_normalize import image
 from models import Media
 
-IMAGE_POLICY_VERSION = 4
+IMAGE_POLICY_VERSION = 5
 _fills = WeakValueDictionary()
 _backdrop_fills = WeakValueDictionary()
 logger = logging.getLogger(__name__)
@@ -91,26 +91,24 @@ def screen_backdrop(media):
             'error':cache.get('last_error') if retry else None,'retry_after':retry}}
 
 
-async def fill_screen_backdrop(db,media,api_key):
+async def fill_screen_backdrop(db,media,api_key,tvdb_key=None):
     """Choose one textless hero from metadata; never download/inspect a gallery."""
     lock=_backdrop_fills.setdefault(media.id,asyncio.Lock())
     async with lock:
         await db.refresh(media)
         if ((media.tmdb_data or {}).get('_anylist_images') or {}).get('version')==IMAGE_POLICY_VERSION:return
-        if not api_key or not media.tmdb_id:return
+        if not tvdb_key:return
         cache=dict((media.tmdb_data or {}).get('_anylist_backdrop') or {})
         if screen_backdrop(media)['background_status']['retry_after']:return
         now=datetime.now(timezone.utc)
         try:
             if cache.get('version')==IMAGE_POLICY_VERSION and datetime.fromisoformat(cache.get('expires_at',''))>now:return
         except (ValueError,TypeError):pass
-        from core import tmdb
+        from core.screen_artwork import title_artwork
         try:
-            raw=await tmdb.get_title_images(media.tmdb_id,media.media_type.value,api_key)
-            if raw.get('id')!=media.tmdb_id or not isinstance(raw.get('backdrops'),list):raise ValueError('Invalid image response')
-            candidates=provider_images(raw)['artwork']
-            primary=tmdb_image_url((media.tmdb_data or {}).get('backdrop_path') or media.backdrop_path)
-            selected=next((url for url in candidates if primary and image_key(url)==image_key(primary)),next(iter(candidates),None))
+            raw=await title_artwork(db,media,tvdb_key,api_key)
+            candidates=provider_images(raw,'tvdb')['artwork']
+            selected=next(iter(candidates),None)
             cache={'image':selected,'version':IMAGE_POLICY_VERSION,'fetched_at':now.isoformat(),'expires_at':(now+timedelta(days=30)).isoformat()}
         except Exception as error:
             logger.warning('Background artwork failed for media %s (%s)',media.id,type(error).__name__)
@@ -149,15 +147,15 @@ def screen_images(media, details):
             'artwork': unique_images([backdrop]), 'image_replacements': {}, 'image_status': status}
 
 
-async def fill_screen_images(db, media, api_key):
+async def fill_screen_images(db, media, api_key, tvdb_key=None):
     lock = _fills.setdefault(media.id, asyncio.Lock())
     async with lock:
         await db.refresh(media)
-        await _fill_screen_images(db, media, api_key)
+        await _fill_screen_images(db, media, api_key, tvdb_key)
 
 
-async def _fill_screen_images(db, media, api_key):
-    if not api_key or not media.tmdb_id:
+async def _fill_screen_images(db, media, api_key, tvdb_key=None):
+    if not tvdb_key:
         return
     cache = dict((media.tmdb_data or {}).get('_anylist_images') or {})
     now = datetime.now(timezone.utc)
@@ -171,18 +169,14 @@ async def _fill_screen_images(db, media, api_key):
         except (ValueError, TypeError):
             pass
     from core import tmdb
+    from core.screen_artwork import title_artwork
     try:
         fetch_primary = tmdb.get_movie_light if media.media_type.value == 'movie' else tmdb.get_show_light
-        raw, defaults = await asyncio.gather(
-            tmdb.get_title_images(media.tmdb_id, media.media_type.value, api_key),
-            fetch_primary(media.tmdb_id, api_key, language='en-US'))
-        if raw.get('id') != media.tmdb_id or not all(isinstance(raw.get(field), list) for field in ('posters', 'backdrops')):
-            raise ValueError('Invalid image response')
-        if defaults.get('id') != media.tmdb_id:
-            raise ValueError('Invalid primary image response')
+        raw = await title_artwork(db, media, tvdb_key, api_key)
+        defaults = await fetch_primary(media.tmdb_id, api_key, language='en-US') if api_key and media.tmdb_id else {}
         from core.media_image_analysis import inspect_image, select_galleries
-        candidates = image_candidates(raw)
-        primary = tmdb_image_url(defaults.get('poster_path'))
+        candidates = image_candidates(raw, 'tvdb')
+        primary = tmdb_image_url(defaults.get('poster_path') or (media.tmdb_data or {}).get('poster_path') or media.poster_path)
         if primary:
             primary_row = next((row for row in candidates['posters'] if image_key(row['url']) == image_key(primary)),
                                {'url': primary, 'language': 'en', 'width': 0, 'votes': 0})
@@ -196,7 +190,7 @@ async def _fill_screen_images(db, media, api_key):
         selections = await select_galleries(candidates)
         selected = {field: selection['images'] for field, selection in selections.items()}
         selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
-        cache = {**selected, 'primary_poster': primary, 'primary_backdrop': tmdb_image_url(defaults.get('backdrop_path')),
+        cache = {**selected, 'primary_poster': primary, 'primary_backdrop': next(iter(selected['artwork']), None),
                  'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
     except Exception as error:
         logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)

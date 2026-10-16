@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import func, select, update
 
 import test_statistics_pg as fixture
 from core import contributor_evidence as evidence
-from models.catalogue import CatalogueCredit, CatalogueEntity, ContributorEvidence
+from models.catalogue import CatalogueEntity, ContributorEvidence
 from test_contributor_evidence import FILTERS, film
 
 

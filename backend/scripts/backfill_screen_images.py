@@ -14,8 +14,9 @@ from models.base import MediaType
 async def main():
     async with AsyncSessionLocal() as db:
         key = await settings_store.get_user_tmdb_key(db, None)
-        if not key:
-            raise RuntimeError('A server TMDB key is required for the image backfill')
+        tvdb_key = await settings_store.get_user_tvdb_key(db, None)
+        if not tvdb_key:
+            raise RuntimeError('A server TVDB key is required for the image backfill')
         cursor = 0
         version = Media.tmdb_data['_anylist_images']['version'].as_integer()
         while True:
@@ -29,7 +30,7 @@ async def main():
                 break
             refreshed, failed = 0, []
             for media in rows:
-                await fill_screen_images(db, media, key)
+                await fill_screen_images(db, media, key, tvdb_key)
                 cache = (media.tmdb_data or {}).get('_anylist_images') or {}
                 if cache.get('version') == IMAGE_POLICY_VERSION:
                     refreshed += 1

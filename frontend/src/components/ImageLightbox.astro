@@ -10,5 +10,5 @@ const {id,gallery=false,imageKind}=Astro.props;
   {gallery?<div class="image-viewer-track" data-image-viewer-track></div>:<img data-image-viewer-image alt=""/>}
   {gallery&&<button class="image-viewer-button" type="button" data-image-viewer-step="1" aria-label="Next image"><Icon name="chevron-right"/></button>}
   {!gallery&&<p id={`${id}-caption`}></p>}
-  {gallery&&<><div class="image-viewer-slots" data-image-viewer-slots></div><div class="detail-load-status" data-image-viewer-status hidden></div></>}
+  {gallery&&<><div class="image-viewer-slots" data-image-viewer-slots></div><span class="sr-only" data-image-viewer-announcement aria-live="polite" aria-atomic="true"></span><div class="detail-load-status" data-image-viewer-status hidden></div></>}
 </dialog>
