@@ -541,7 +541,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
                 await queue_restorations(db, viewer.id, media)
                 dispatch_hidden_status = True
             from core.activity import record_daily_activity, series_activity_details
-            position, finished = await series_activity_details(db, media, entry.progress)
+            position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
             await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                 progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed,
@@ -1726,6 +1726,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             marking = [episode for episode in episodes if episode.id == episode_id and episode.id not in watched] if episode_watched else []
             removing = watched - desired
         else:
+            desired = set(ids[:target])
             marking = episodes[:target]
             removing = watched.intersection(ids[target:]) if not status_driven_movie else set()
         from core.watch_dates import inferred_watch_datetime
@@ -1804,9 +1805,9 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
                 status_changed=status_changed and 'status' in fields, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
-                previous_score=old_score)
+                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired)
         elif status_changed or not suppress_initial_import_rating(entry):
-            position, finished = await series_activity_details(db, media, entry.progress)
+            position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,
                 position=position, status_changed=status_changed, rating_changed=rating_changed,

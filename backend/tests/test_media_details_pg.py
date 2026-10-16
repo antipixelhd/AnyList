@@ -11,7 +11,7 @@ import test_statistics_pg as fixture
 from dependencies import get_current_user
 from core.media_details import work_details
 from core.media_images import IMAGE_POLICY_VERSION
-from models import Follow, Media, Show, TrackedEntry, User, UserProfileData, WatchEvent
+from models import Follow, Media, Show, TrackedEntry, TrackingActivity, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
@@ -278,14 +278,24 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([series,*episodes]);await db.commit();series_id=series.id;ids=[episode.id for episode in episodes]
         with patch('core.local_outbound.dispatch_local_tracking_delta',new=AsyncMock()):
             url=f'/tracking/entry/{series_id}/episode/'
+            async def check_activity(count, first, last):
+                async with self.Session() as db:
+                    card=await db.scalar(select(TrackingActivity).where(
+                        TrackingActivity.user_id==self.user_id,TrackingActivity.media_id==series_id))
+                    self.assertEqual(card.payload['episodes_watched'],count)
+                    self.assertEqual(card.payload['position_start'],first)
+                    self.assertEqual(card.payload['position'],last)
+                    self.assertEqual(card.payload['finished_seasons'],[])
             response=await self.client.patch(url+str(ids[2]),json={'watched':True})
             self.assertEqual(response.status_code,200,response.text)
             self.assertEqual(response.json()['status'],'watching')
             self.assertEqual(response.json()['progress'],1)
             self.assertEqual(response.json()['season_position'],'S1E3')
+            await check_activity(1,'S1E3','S1E3')
             data=(await self.client.get(f'/tracking/title/{series_id}')).json()
             self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,False,True,False])
             await self.client.patch(url+str(ids[2]),json={'watched':True})
+            await check_activity(1,'S1E3','S1E3')
             async with self.Session() as db:
                 self.assertEqual(len(list(await db.scalars(select(WatchEvent).where(WatchEvent.user_id==self.user_id,WatchEvent.media_id==ids[2])))),1)
                 self.assertEqual((await db.scalar(select(TrackedEntry).where(
@@ -294,10 +304,12 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 response=await self.client.patch(url+str(identifier),json={'watched':True})
             self.assertEqual(response.json()['status'],'completed')
             self.assertEqual(response.json()['progress'],3)
+            await check_activity(3,'S1E1','S1E3')
             response=await self.client.patch(url+str(ids[0]),json={'watched':False})
             self.assertEqual(response.json()['status'],'watching')
             self.assertEqual(response.json()['progress'],2)
             self.assertEqual(response.json()['season_position'],'S1E3')
+            await check_activity(2,'S1E2','S1E3')
             data=(await self.client.get(f'/tracking/title/{series_id}')).json()
             self.assertEqual(data['seasons'][0]['watched_count'],2)
             self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,True,True,False])

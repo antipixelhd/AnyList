@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, update
 
-from models import Media, Show
+from models import Media, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import TrackedEntry, TrackingActivity
 
@@ -142,16 +142,24 @@ def _record_rating_details(details: dict, *, rating_changed: bool,
         details.pop("previous_score", None)
 
 
-async def series_activity_details(db, media: Media, progress: int) -> tuple[str | None, list[int]]:
-    """Return the cumulative SxEy position and fully released, watched seasons."""
+async def series_activity_details(db, media: Media, progress: int, *, user_id: int | None = None) -> tuple[str | None, list[int]]:
+    """Return the watched position and fully released, watched seasons."""
     if media.media_type != MediaType.series or progress <= 0:
         return None, []
     episodes, expected = await _series_activity_catalog(db, media)
     if not episodes:
         return None, []
-    watched = episodes[:min(progress, len(episodes))]
+    if user_id is None:
+        watched = episodes[:min(progress, len(episodes))]
+    else:
+        ids = set(await db.scalars(select(WatchEvent.media_id).where(
+            WatchEvent.user_id == user_id, WatchEvent.completed.is_(True),
+            WatchEvent.media_id.in_([episode.id for episode in episodes]))))
+        watched = [episode for episode in episodes if episode.id in ids]
+    if not watched:
+        return None, []
     latest = watched[-1]
-    return f"S{latest.season_number}E{latest.episode_number}", _finished_seasons(episodes, expected, progress)
+    return f"S{latest.season_number}E{latest.episode_number}", _finished_watched_seasons(episodes, expected, watched)
 
 
 async def _series_activity_catalog(db, media: Media):
@@ -189,6 +197,10 @@ async def _series_activity_catalog(db, media: Media):
 
 def _finished_seasons(episodes, expected: dict[int, int], progress: int) -> list[int]:
     watched = episodes[:min(progress, len(episodes))]
+    return _finished_watched_seasons(episodes, expected, watched)
+
+
+def _finished_watched_seasons(episodes, expected, watched):
     finished = []
     for season_number in {episode.season_number for episode in watched if (episode.season_number or 0) > 0}:
         released_count = sum(1 for episode in episodes if episode.season_number == season_number)
@@ -245,8 +257,10 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
                                    status_changed: bool = False, rating_changed: bool = False,
                                    previous_status: str | None = None, first_watching: bool | None = None,
                                    previous_score: float | None = None,
+                                   previous_watched_ids: set[int] | None = None,
+                                   watched_ids: set[int] | None = None,
                                    now: datetime | None = None) -> TrackingActivity | None:
-    """Keep the fixed-window episode card equal to net forward progress."""
+    """Keep the fixed-window card equal to net progress and exact episode evidence."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     rating_changed, _ = await _prepare_rating_activity(
         db, user_id=user_id, media_id=media.id, status=status, score=score,
@@ -265,9 +279,36 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
     details["episodes_watched"] = watched
     details["progress_start"] = baseline
     details["progress"] = progress
-    details["position_start"], details["position"], details["finished_seasons"] = (
-        await series_activity_span(db, media, baseline, progress)
-    )
+    if watched_ids is not None or 'watched_start_ids' in details:
+        episodes, expected = await _series_activity_catalog(db, media)
+        catalogue_ids = {episode.id for episode in episodes}
+        if watched_ids is None:
+            watched_ids = set(await db.scalars(select(WatchEvent.media_id).where(
+                WatchEvent.user_id == user_id, WatchEvent.completed.is_(True),
+                WatchEvent.media_id.in_(catalogue_ids))))
+        current_ids = watched_ids & catalogue_ids
+        start_ids = details.get('watched_start_ids')
+        if start_ids is None:
+            previous_ids = previous_watched_ids if previous_watched_ids is not None else catalogue_ids
+            # Legacy count-only cards represented a contiguous prefix. Keep
+            # that window baseline when first adding exact episode evidence.
+            previous = [episode.id for episode in episodes if episode.id in previous_ids]
+            start_ids = previous[:baseline] if row else previous
+        start_ids = set(start_ids) & catalogue_ids
+        details['watched_start_ids'] = sorted(start_ids)
+        new = [episode for episode in episodes if episode.id in current_ids - start_ids]
+        details['episodes_watched'] = max(0, len(current_ids) - len(start_ids))
+        def position(episode):
+            return f'S{episode.season_number}E{episode.episode_number}'
+        details['position_start'] = position(new[0]) if new and details['episodes_watched'] else None
+        details['position'] = position(new[-1]) if new and details['episodes_watched'] else None
+        before = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in start_ids])
+        after = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in current_ids])
+        details['finished_seasons'] = sorted(set(after) - set(before))
+    else:
+        details["position_start"], details["position"], details["finished_seasons"] = (
+            await series_activity_span(db, media, baseline, progress)
+        )
     _record_status_details(details, status=status, status_changed=status_changed,
                            previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
