@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import dataclass
 from functools import cached_property
+from hashlib import sha256
 from io import BytesIO
 import json
 import math
@@ -97,11 +98,29 @@ def same_composition(a, b):
     return _same_composition(_prepare_composition(a), _prepare_composition(b))
 
 
-async def inspect_image(url, client):
+def _tvdb_image(parsed):
+    return (parsed.scheme == 'https' and parsed.netloc == 'artworks.thetvdb.com'
+            and not parsed.query and not parsed.fragment
+            and re.fullmatch(r'/banners/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.(jpg|png|webp)', parsed.path)
+            and '..' not in parsed.path)
+
+
+async def inspect_image(url, client, thumbnail=None):
     parsed = urlsplit(url)
-    if parsed.scheme != 'https' or parsed.hostname != 'image.tmdb.org' or not re.fullmatch(r'/t/p/original/[A-Za-z0-9_.-]+\.(jpg|png|webp)', parsed.path):
+    if _tvdb_image(parsed):
+        # Prefer the API's thumbnail; old records use the conventional _t name.
+        download_url = thumbnail or url.rsplit('.', 1)[0] + '_t.' + url.rsplit('.', 1)[1]
+        if not _tvdb_image(urlsplit(download_url)):
+            return None
+        cache_name = 'tvdb-' + sha256(url.encode()).hexdigest()
+    elif (parsed.scheme == 'https' and parsed.netloc == 'image.tmdb.org'
+          and not parsed.query and not parsed.fragment
+          and re.fullmatch(r'/t/p/original/[A-Za-z0-9_.-]+\.(jpg|png|webp)', parsed.path)):
+        download_url = url.replace('/original/', '/w500/')
+        cache_name = parsed.path.rsplit('/', 1)[-1]
+    else:
         return None
-    cache_path = settings.data_dir / 'image_analysis' / (parsed.path.rsplit('/', 1)[-1] + '.json')
+    cache_path = settings.data_dir / 'image_analysis' / (cache_name + '.json')
     try:
         cached = json.loads(await asyncio.to_thread(cache_path.read_text))
         valid = (isinstance(cached, dict) and isinstance(cached.get('gray'), list) and len(cached['gray']) == 768
@@ -116,7 +135,7 @@ async def inspect_image(url, client):
     try:
         async with _downloads:
             content = bytearray()
-            async with client.stream('GET', url.replace('/original/', '/w500/'), timeout=8, follow_redirects=False) as response:
+            async with client.stream('GET', download_url, timeout=8, follow_redirects=False) as response:
                 response.raise_for_status()
                 if not response.headers.get('content-type', '').startswith('image/'):
                     return None

@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from core.catalogue_normalize import image
 from models import Media
 
-IMAGE_POLICY_VERSION = 5
+IMAGE_POLICY_VERSION = 6
 _fills = WeakValueDictionary()
 _backdrop_fills = WeakValueDictionary()
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def image_candidates(raw, provider='tmdb'):
             path = row.get('file_path')
             url = tmdb_image_url(path) if provider == 'tmdb' else image(path)
             if url:
-                result[target].append({'url': url, 'language': row.get('iso_639_1'),
+                result[target].append({'url': url, 'thumbnail': row.get('thumbnail'), 'language': row.get('iso_639_1'),
                     'width': row.get('width') or 0, 'votes': row.get('vote_count') or 0})
     for field, rows in result.items():
         if field == 'posters' and any(row['language'] == 'en' for row in rows):
@@ -184,7 +184,7 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
             candidates['posters'] = [primary_row, *(row for row in candidates['posters'] if image_key(row['url']) != image_key(primary))]
         async with httpx.AsyncClient() as client:
             for rows in candidates.values():
-                analyses = await asyncio.gather(*(inspect_image(row['url'], client) for row in rows))
+                analyses = await asyncio.gather(*(inspect_image(row['url'], client, row.get('thumbnail')) for row in rows))
                 for row, analysis in zip(rows, analyses):
                     row['analysis'] = analysis
         selections = await select_galleries(candidates)

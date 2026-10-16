@@ -23,7 +23,8 @@ def artwork_candidates(raw, types, kind):
         if not url or not url.startswith('https://artworks.thetvdb.com/'):
             continue
         result['posters' if name == 'poster' else 'backdrops'].append({
-            'file_path': url, 'iso_639_1': 'en' if name == 'poster' and language in ('en', 'eng') else None,
+            'file_path': url, 'thumbnail': tvdb._image_url(row.get('thumbnail')),
+            'iso_639_1': 'en' if name == 'poster' and language in ('en', 'eng') else None,
             'width': row.get('width') or info.get('width'), 'height': row.get('height') or info.get('height'),
             'vote_count': row.get('score') or 0})
     return result

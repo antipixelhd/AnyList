@@ -64,18 +64,21 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_id = 99
             media.tmdb_data = {'protected_fixture': 'keep'}
             await db.commit()
-        raw = {'id':99, 'posters':[{'file_path':'https://artworks.thetvdb.com/banners/poster.jpg','iso_639_1':'en','aspect_ratio':.667}],
+        raw = {'id':99, 'posters':[{'file_path':'https://artworks.thetvdb.com/banners/poster.jpg',
+                                  'thumbnail':'https://artworks.thetvdb.com/banners/poster_t.jpg','iso_639_1':'en','aspect_ratio':.667}],
                'backdrops':[{'file_path':'https://artworks.thetvdb.com/banners/scene.jpg','iso_639_1':None,'aspect_ratio':1.778},
                             {'file_path':'https://artworks.thetvdb.com/banners/text.jpg','iso_639_1':'en','aspect_ratio':1.778}]}
         with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')),
               patch('core.settings_store.get_user_tvdb_key', AsyncMock(return_value='fixture')),
               patch('core.tmdb.get_movie_light', AsyncMock(return_value={'id':99,'poster_path':'/primary.jpg','backdrop_path':'/text.jpg'})),
-              patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)),
+              patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)) as inspect,
               patch('core.screen_artwork.title_artwork', AsyncMock(return_value=raw)) as fetch):
             data = (await self.client.get(f'/tracking/title/{self.media_id}/images')).json()
             self.assertIn('https://artworks.thetvdb.com/banners/poster.jpg', data['posters'])
             self.assertEqual(data['posters'][0], 'https://image.tmdb.org/t/p/original/primary.jpg')
             self.assertEqual(data['artwork'], ['https://artworks.thetvdb.com/banners/scene.jpg'])
+            inspect.assert_any_await('https://artworks.thetvdb.com/banners/poster.jpg',
+                                    unittest.mock.ANY, 'https://artworks.thetvdb.com/banners/poster_t.jpg')
             await self.client.get(f'/tracking/title/{self.media_id}/images')
             fetch.assert_awaited_once()
         async with self.Session() as db:
@@ -278,16 +281,23 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.patch(url+str(ids[2]),json={'watched':True})
             self.assertEqual(response.status_code,200,response.text)
             self.assertEqual(response.json()['status'],'watching')
+            self.assertEqual(response.json()['progress'],1)
+            self.assertEqual(response.json()['season_position'],'S1E3')
             data=(await self.client.get(f'/tracking/title/{series_id}')).json()
             self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,False,True,False])
             await self.client.patch(url+str(ids[2]),json={'watched':True})
             async with self.Session() as db:
                 self.assertEqual(len(list(await db.scalars(select(WatchEvent).where(WatchEvent.user_id==self.user_id,WatchEvent.media_id==ids[2])))),1)
+                self.assertEqual((await db.scalar(select(TrackedEntry).where(
+                    TrackedEntry.user_id==self.user_id,TrackedEntry.media_id==series_id))).progress,1)
             for identifier in ids[:2]:
                 response=await self.client.patch(url+str(identifier),json={'watched':True})
             self.assertEqual(response.json()['status'],'completed')
+            self.assertEqual(response.json()['progress'],3)
             response=await self.client.patch(url+str(ids[0]),json={'watched':False})
             self.assertEqual(response.json()['status'],'watching')
+            self.assertEqual(response.json()['progress'],2)
+            self.assertEqual(response.json()['season_position'],'S1E3')
             data=(await self.client.get(f'/tracking/title/{series_id}')).json()
             self.assertEqual(data['seasons'][0]['watched_count'],2)
             self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,True,True,False])

@@ -2,6 +2,8 @@ import os
 import unittest
 from io import BytesIO
 import random
+import tempfile
+from pathlib import Path
 from copy import deepcopy
 from unittest.mock import patch
 
@@ -9,8 +11,59 @@ os.environ.setdefault('SECRET_KEY', 'test-only-secret')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
 from PIL import Image, ImageDraw
+import httpx
 from core.media_image_analysis import fingerprint, same_composition, select_variants
 from core import media_image_analysis
+
+
+class ImageDownloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tvdb_thumbnails_are_analyzed_and_cached_by_full_image_identity(self):
+        requests = []
+        def respond(request):
+            requests.append(str(request.url))
+            return httpx.Response(200, headers={'content-type':'image/png'}, content=fixture(len(requests)))
+        with tempfile.TemporaryDirectory() as directory, patch.object(media_image_analysis.settings, 'data_dir', Path(directory)):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                first = 'https://artworks.thetvdb.com/banners/v4/movie/1/posters/shared.jpg'
+                second = 'https://artworks.thetvdb.com/banners/v4/movie/2/posters/shared.jpg'
+                thumbnail = 'https://artworks.thetvdb.com/banners/v4/movie/1/posters/api-small.jpg'
+                a = await media_image_analysis.inspect_image(first, client, thumbnail)
+                b = await media_image_analysis.inspect_image(second, client)
+                self.assertEqual(a, fingerprint(fixture(1)))
+                self.assertEqual(b, fingerprint(fixture(2)))
+                self.assertEqual(await media_image_analysis.inspect_image(first, client, thumbnail), a)
+                self.assertEqual(requests, [thumbnail, second.replace('.jpg', '_t.jpg')])
+                self.assertEqual(len(list((Path(directory) / 'image_analysis').glob('*.json'))), 2)
+
+    async def test_downloads_reject_untrusted_sources_redirects_and_oversized_content(self):
+        requests = []
+        def respond(request):
+            requests.append(str(request.url))
+            if request.url.path.endswith('redirect_t.jpg'):
+                return httpx.Response(302, headers={'location':'https://untrusted.test/image.jpg'})
+            return httpx.Response(200, headers={'content-type':'image/png'}, content=b'x'*2_000_001)
+        with tempfile.TemporaryDirectory() as directory, patch.object(media_image_analysis.settings, 'data_dir', Path(directory)):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                valid = 'https://artworks.thetvdb.com/banners/poster.jpg'
+                invalid = ['https://untrusted.test/banners/poster.jpg',
+                           'https://artworks.thetvdb.com.untrusted.test/banners/poster.jpg',
+                           'http://artworks.thetvdb.com/banners/poster.jpg',
+                           'https://artworks.thetvdb.com/banners/../poster.jpg']
+                for url in invalid:
+                    self.assertIsNone(await media_image_analysis.inspect_image(url, client))
+                self.assertIsNone(await media_image_analysis.inspect_image(valid, client, invalid[0]))
+                self.assertEqual(requests, [])
+                self.assertIsNone(await media_image_analysis.inspect_image(valid, client))
+                self.assertIsNone(await media_image_analysis.inspect_image(valid.replace('poster','redirect'), client))
+                self.assertEqual(len(requests), 2)
+
+    async def test_tmdb_primary_still_uses_a_resized_thumbnail(self):
+        def respond(request):
+            self.assertEqual(str(request.url), 'https://image.tmdb.org/t/p/w500/primary.jpg')
+            return httpx.Response(200, headers={'content-type':'image/png'}, content=fixture())
+        with tempfile.TemporaryDirectory() as directory, patch.object(media_image_analysis.settings, 'data_dir', Path(directory)):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                self.assertEqual(await media_image_analysis.inspect_image('https://image.tmdb.org/t/p/original/primary.jpg', client), fingerprint(fixture()))
 
 
 def fixture(seed=1, shift=0, title=False):

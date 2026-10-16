@@ -1722,7 +1722,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             if episode_id not in ids:
                 raise HTTPException(409, 'A released episode from this series is required')
             desired = watched | {episode_id} if episode_watched else watched - {episode_id}
-            target = max((index + 1 for index, identifier in enumerate(ids) if identifier in desired), default=0)
+            target = len(desired)
             marking = [episode for episode in episodes if episode.id == episode_id and episode.id not in watched] if episode_watched else []
             removing = watched - desired
         else:
@@ -1880,7 +1880,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     else:
         result['availability_dot'], result['availability_reason'] = False, None
     if media.media_type == MediaType.series and episodes:
-        latest = episodes[entry.progress - 1] if 0 < entry.progress <= len(episodes) else None
+        watched_episodes = [episode for episode in episodes if episode.id in desired] if episode_change else episodes[:entry.progress]
+        latest = watched_episodes[-1] if watched_episodes else None
         result["season_position"] = f"S{latest.season_number}E{latest.episode_number}" if latest else None
         result["released_episodes"] = len(episodes)
         result["new_seasons"] = len({episode.season_number for episode in episodes[entry.progress:]}) if entry.status == "completed" else 0
