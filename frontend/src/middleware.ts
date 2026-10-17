@@ -31,7 +31,8 @@ const PUBLIC_TOP_RATED_PAGE_RE = /^\/top-rated-(?:movies|shows)\/\d+\/?$/;
 const PUBLIC_RECENTLY_WATCHED_PAGE_RE = /^\/recently-watched-(?:movies|shows)\/\d+\/?$/;
 // The read-only browse pages, allowed anonymously only when the admin has
 // enabled logged-out navigation (Admin Settings) and a global TMDB key is set.
-const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|discover)?|trending\/(?:movies|shows))\/?$/;
+const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|discover|discover-title)?|trending\/(?:movies|shows))\/?$/;
+const PUBLIC_CATALOG_IMPORT_RE = /^\/api\/proxy\/tracking\/catalog\/(?:movie|series)\/[1-9][0-9]*\/?$/;
 // Movie/episode and show/season/episode detail pages (TMDB- and TVDB-numbered
 // variants), gated the same way as PUBLIC_EXPLORE_PAGE_RE above.
 const PUBLIC_MEDIA_DETAIL_PAGE_RE =
@@ -119,6 +120,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
       PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||
       PUBLIC_EXPLORE_PAGE_RE.test(pathname) ||
+      (context.request.method === 'POST' && PUBLIC_CATALOG_IMPORT_RE.test(pathname)) ||
       PUBLIC_MEDIA_DETAIL_PAGE_RE.test(pathname) ||
       PUBLIC_RECOMMENDATIONS_PARTIAL_RE.test(pathname) ||
       PUBLIC_PERSON_CREDITS_PARTIAL_RE.test(pathname) ||

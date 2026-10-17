@@ -1,5 +1,4 @@
 import type { APIRoute } from "astro";
-import { sessionCookieName } from "../../../lib/session-cookies.ts";
 
 const BACKEND_PORT = (process.env.BACKEND_PORT as string | undefined) ?? "7331";
 const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
@@ -12,7 +11,7 @@ const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
 // TheTVDB when the local image cache is disabled or misses.
 const ALLOWED_REDIRECT_HOSTS = new Set(["image.tmdb.org", "artworks.thetvdb.com"]);
 
-async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Response> {
+async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Promise<Response> {
   const path = params.path ?? "";
   const search = new URL(request.url).search;
   const backendUrl = `${BACKEND}/${path}${search}`;
@@ -24,15 +23,13 @@ async function handle({ params, request }: Parameters<APIRoute>[0]): Promise<Res
     if (auth) {
       forwardHeaders.set("Authorization", auth);
     } else {
-      // Video elements use query tokens or the session cookie.
+      // Video elements use query tokens or the session verified by middleware.
       const tokenQuery = new URL(request.url).searchParams.get("token");
       if (tokenQuery) {
         forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
       } else {
-        const tokenMatch = new RegExp(`(?:^|;\\s*)${sessionCookieName("token")}=([^;]+)`)
-          .exec(request.headers.get("Cookie") ?? "");
-        if (tokenMatch) {
-          forwardHeaders.set("Authorization", `Bearer ${decodeURIComponent(tokenMatch[1])}`);
+        if (locals.token) {
+          forwardHeaders.set("Authorization", `Bearer ${locals.token}`);
         }
       }
     }

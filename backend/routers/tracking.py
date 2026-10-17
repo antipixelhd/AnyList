@@ -1385,9 +1385,10 @@ async def catalog_preview(
 
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
-async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.enrichment import create_media_safely, enrich_media
-    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    await catalog_access(db, viewer)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
     if not key:
         raise HTTPException(409, 'A TMDB key is required to load this title')
     media = (await db.execute(select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType(media_type)))).scalar_one_or_none()
