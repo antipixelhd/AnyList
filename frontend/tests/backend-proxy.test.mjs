@@ -2,38 +2,32 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GET, HEAD, POST } from '../src/pages/api/proxy/[...path].ts';
 
-function context(method = 'GET', headers = {}, query = '') {
-  return { params: { path: 'media/example' }, request: new Request(`http://localhost/api/proxy/media/example${query}`, { method, headers }) };
+function context(method = 'GET', headers = {}, query = '', locals = {}) {
+  return { params: { path: 'media/example' }, request: new Request(`http://localhost/api/proxy/media/example${query}`, { method, headers }), locals };
 }
 
-test('cookie authentication uses only the selected preview slot with production defaults preserved', async (t) => {
-  const previousSlot = process.env.PREVIEW_SLOT;
-  t.after(() => {
-    if (previousSlot === undefined) delete process.env.PREVIEW_SLOT;
-    else process.env.PREVIEW_SLOT = previousSlot;
-  });
+test('proxy forwards only the verified middleware token, never raw session cookies', async (t) => {
   const forwarded = [];
   t.mock.method(globalThis, 'fetch', async (_, options) => {
     forwarded.push(options.headers.get('Authorization'));
     return new Response(null, { status: 204 });
   });
   const cookies = 'token=production; anylist_beta_token=beta; anylist_development_1_token=feature';
-  for (const slot of ['beta', 'development-1', undefined]) {
-    if (slot === undefined) delete process.env.PREVIEW_SLOT;
-    else process.env.PREVIEW_SLOT = slot;
-    await GET(context('GET', { Cookie: cookies }));
+  for (const token of ['beta', 'feature', 'production', undefined]) {
+    await GET(context('GET', { Cookie: cookies }, '', token ? { token } : {}));
   }
-  process.env.PREVIEW_SLOT = 'development-2';
-  await GET(context('GET', { Cookie: cookies }));
   assert.deepEqual(forwarded, ['Bearer beta', 'Bearer feature', 'Bearer production', null]);
 });
 
-test('malformed credentials return 400 before contacting the backend', async (t) => {
-  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('unexpected fetch'); });
+test('raw cookies are ignored and malformed query credentials return 400 before forwarding', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async (_, options) => {
+    assert.equal(options.headers.get('Authorization'), null);
+    return new Response(null, { status: 204 });
+  });
   const response = await GET(context('GET', { Cookie: 'token=%ZZ' }));
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 204);
   assert.equal((await GET(context('GET', {}, '?token=invalid%0Aheader'))).status, 400);
-  assert.equal(fetch.mock.callCount(), 0);
+  assert.equal(fetch.mock.callCount(), 1);
 });
 
 test('proxy forwards explicit credentials and download headers', async (t) => {
