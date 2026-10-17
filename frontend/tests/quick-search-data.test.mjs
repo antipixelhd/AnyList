@@ -22,7 +22,7 @@ test('verification polling is bounded and cancelled on query change',async()=>{
 });
 
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{
-  const requests=quickSearchRequests('James & Co',false,'actor');
+  const requests=quickSearchRequests('James & Co');
   assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors','contributors']);
   const params=new URL(requests[2].url,'https://anylist.test').searchParams;
   assert.equal(params.get('q'),'James & Co');assert.equal(params.get('kind'),'people');
@@ -36,13 +36,10 @@ test('independent studio verification never erases people, regardless of respons
     assert.deepEqual(values,{actor:['Actor'],staff:['Director'],studio:['DC']});
   }
 });
-test('mobile searches only the selected section, defaulting to series and movies',()=>{
-  assert.deepEqual(quickSearchRequests('James',true,'all').map(row=>row.kind),['movie','series']);
-  for(const section of ['actor','staff','studio']){
-    const requests=quickSearchRequests('James',true,section);
-    assert.equal(requests.length,1);assert.equal(requests[0].kind,'contributors');
-    assert.equal(new URL(requests[0].url,'https://anylist.test').searchParams.get('kind'),section);
-  }
+test('mobile tabs share the same simultaneous media and contributor requests',()=>{
+  const requests=quickSearchRequests('James');
+  assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors','contributors']);
+  assert.deepEqual(requests.slice(2).map(row=>new URL(row.url,'https://anylist.test').searchParams.get('kind')),['people','studio']);
 });
 test('desktop shows only matching sections and respects combined media; mobile displays one section',()=>{
   const counts={all:3,movie:1,series:2,actor:2,staff:0,studio:1};

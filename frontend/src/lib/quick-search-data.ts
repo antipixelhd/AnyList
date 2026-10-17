@@ -29,11 +29,9 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
     await pause(signal);
   }
 }
-export function quickSearchRequests(query:string, mobile:boolean, section:SearchSection): SearchRequest[] {
-  const media = !mobile || section === 'all';
-  const requests:SearchRequest[] = media ? (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query})}`})) : [];
-  const scopes:ContributorScope[] = mobile ? section === 'all' ? [] : [section] : ['people','studio'];
-  for(const scope of scopes)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
+export function quickSearchRequests(query:string): SearchRequest[] {
+  const requests:SearchRequest[] = (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query})}`}));
+  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
   return requests;
 }
 export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studio',T[]>, incoming:Partial<Record<'actor'|'staff'|'studio',T[]>>, scope?:ContributorScope) {

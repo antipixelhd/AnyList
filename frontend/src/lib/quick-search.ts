@@ -3,6 +3,7 @@ import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog, reveal } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
 import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
+import { animate } from 'motion/mini';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -18,7 +19,15 @@ export function mountQuickSearch() {
   mountedDialog=dialog;
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
   const mobile=matchMedia('(max-width:650px)');
-  const scope=dialog.querySelector<HTMLSelectElement>('[data-search-scope]')!;
+  const tabs: ReadonlyArray<{kind:SearchSection;label:string}> = [
+    {kind:'all',label:'Movies & Series'}, {kind:'actor',label:'Actors'},
+    {kind:'staff',label:'Crew'}, {kind:'studio',label:'Studios'},
+  ];
+  let activeTab:SearchSection='all';
+  const tabTitle=dialog.querySelector<HTMLElement>('[data-search-tab-title]')!;
+  const tabButtons=[...dialog.querySelectorAll<HTMLButtonElement>('[data-search-tab-step]')];
+  const tabMarkers=[...dialog.querySelectorAll<HTMLElement>('[data-search-tab-marker]')];
+  let tabAnimations:Array<ReturnType<typeof animate>>=[];
   type ContributorResult={key:string;name:string;image?:string|null;roles:string[];url:string};
   const closeButton = dialog?.querySelector<HTMLButtonElement>('[data-quick-search-close]');
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
@@ -36,8 +45,19 @@ export function mountQuickSearch() {
   let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
   let pending=0,failed=0;
-  const selected=()=>scope.value as SearchSection;
-  const updatePlaceholder=()=>{input!.placeholder=mobile.matches ? selected()==='all'?'Search movies and series…':`Search ${selected()==='staff'?'crew':selected()==='actor'?'actors':'studios'}…` : 'Search titles, people and studios…';};
+  const selected=()=>activeTab;
+  const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
+  function updateTabs() {
+    const index=tabs.findIndex(tab=>tab.kind===activeTab);
+    tabTitle.textContent=tabs[index].label;
+    tabButtons.forEach(button=>{
+      const next=tabs[index+Number(button.dataset.searchTabStep)];
+      button.disabled=!next;
+      if(next)button.setAttribute('aria-label',`Show ${next.label}`);
+    });
+    tabMarkers.forEach(marker=>marker.toggleAttribute('data-active',marker.dataset.searchTabMarker===activeTab));
+  }
+  updateTabs();
   updatePlaceholder();
 
   const resultUrl = (item: SearchResult) => item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
@@ -124,7 +144,7 @@ export function mountQuickSearch() {
     state.textContent = message;
     state.hidden = !message;
   }
-  function render(updated?:'movie'|'series'|'contributors') {
+  function render(updated?:'movie'|'series'|'contributors', tabChange=false) {
     if(updated==='movie'||updated==='series'){
       fill(updated,latest[updated]);fill('all', interleave(latest.movie, latest.series));
     }
@@ -138,12 +158,26 @@ export function mountQuickSearch() {
     if (resultShell) {
       const wasHidden=resultShell.hidden;
       resultShell.hidden = !visible.length;
-      if (wasHidden&&!resultShell.hidden) reveal(resultShell);
+      if (wasHidden&&!resultShell.hidden&&!tabChange) reveal(resultShell);
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
-    showState(pending ? '' : failed ? visible.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length?'':'No matching results.');
+    const emptyLabel=mobile.matches?tabs.find(tab=>tab.kind===activeTab)!.label.toLowerCase():'results';
+    showState(pending ? '' : failed ? visible.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length?'':`No matching ${emptyLabel}.`);
     if (announcement) announcement.textContent = visible.map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
+  }
+  function setActiveTab(next:SearchSection) {
+    if (next===activeTab) return;
+    const direction=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
+    activeTab=next;
+    updateTabs();
+    if ((input?.value.trim().length||0)>=2) render(undefined,true);
+    tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
+    if (!mobile.matches||matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+    const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};
+    tabAnimations.push(animate(tabTitle,{opacity:[.45,1],transform:[`translateX(${direction*14}px)`,'translateX(0)']},timing));
+    const content=resultShell&&!resultShell.hidden?resultShell:state&&!state.hidden?state:null;
+    if(content)tabAnimations.push(animate(content,{opacity:[.5,1],transform:[`translateX(${direction*22}px)`,'translateX(0)']},timing));
   }
   async function search() {
     const query = input?.value.trim() || '';
@@ -165,7 +199,7 @@ export function mountQuickSearch() {
     clearTimeout(progressTimer);
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
-      const requests=quickSearchRequests(query,mobile.matches,selected());pending=requests.length;
+      const requests=quickSearchRequests(query);pending=requests.length;
       await Promise.all(requests.map(async request=>{
         try{
           await readQuickSearch(request,current.signal,data=>{
@@ -185,7 +219,8 @@ export function mountQuickSearch() {
     clearTimeout(timer);
     clearTimeout(progressTimer);progress?.classList.remove('visible');
     controller?.abort();
-    scope.value='all';scope.dispatchEvent(new Event('input'));updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
+    activeTab='all';updateTabs();updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
+    tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (input) input.value = '';
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
@@ -228,9 +263,28 @@ export function mountQuickSearch() {
     showState('');
     timer = window.setTimeout(search, 180);
   },{signal:pageListeners.signal});
-  scope.addEventListener('change',()=>{clearTimeout(timer);updatePlaceholder();void search();},{signal:pageListeners.signal});
-  mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open){clearTimeout(timer);void search();}},{signal:pageListeners.signal});
-  pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();},{once:true});
+  tabButtons.forEach(button=>button.addEventListener('click',()=>{
+    const next=tabs[tabs.findIndex(tab=>tab.kind===activeTab)+Number(button.dataset.searchTabStep)];
+    if(next)setActiveTab(next.kind);
+  },{signal:pageListeners.signal}));
+  let touchStart:{x:number;y:number}|null=null;
+  dialog.addEventListener('touchstart',event=>{
+    touchStart=null;
+    if((event.target as Element).closest('.quick-search-bar'))return;
+    const touch=event.changedTouches[0];touchStart={x:touch.clientX,y:touch.clientY};
+  },{passive:true,signal:pageListeners.signal});
+  dialog.addEventListener('touchend',event=>{
+    if(!touchStart||!mobile.matches)return;
+    const touch=event.changedTouches[0];
+    const dx=touch.clientX-touchStart.x,dy=touch.clientY-touchStart.y;
+    touchStart=null;
+    if(Math.abs(dx)<45||Math.abs(dx)<Math.abs(dy)*1.25)return;
+    const next=tabs[tabs.findIndex(tab=>tab.kind===activeTab)+(dx<0?1:-1)];
+    if(next){event.preventDefault();setActiveTab(next.kind);}
+  },{passive:false,signal:pageListeners.signal});
+  dialog.addEventListener('touchcancel',()=>{touchStart=null;},{signal:pageListeners.signal});
+  mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open&&(input?.value.trim().length||0)>=2)render();},{signal:pageListeners.signal});
+  pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
   }, { signal: pageListeners.signal });
