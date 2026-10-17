@@ -96,5 +96,12 @@ html.light .overview-metrics button[aria-pressed=true] { color:#fff; }
 }
 @container stats-content (min-width:1000px) { .overview-totals { grid-template-columns:repeat(6,max-content); column-gap:18px; } }
 @container stats-content (max-width:600px) { .overview-totals { grid-template-columns:repeat(2,max-content); gap:32px 16px; } }
-@container stats-content (max-width:340px) { .overview-totals { grid-template-columns:max-content; gap:24px; } }
+@container stats-content (max-width:340px) {
+  .overview-totals { grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px 12px; }
+  .overview-totals>div { min-width:0; grid-template-columns:30px minmax(0,1fr); column-gap:8px; }
+  .overview-total-icon { width:30px; height:30px; }
+  .overview-total-icon .ui-icon { font-size:14px; }
+  .overview-totals dd { font-size:22px; }
+  .overview-totals [data-headline-label] { font-size:12px; white-space:normal; }
+}
 @media(prefers-reduced-motion:reduce) { .stats-overview-page * { transition:none!important; animation:none!important; } }
