@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
+import {commitDetailHero} from '../src/lib/detail-hero.ts';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
   .replace("'./decoded-artwork.ts'", JSON.stringify(new URL('../src/lib/decoded-artwork.ts', import.meta.url).href))
@@ -210,6 +211,29 @@ test('background enrichment does not download editor artwork until intent, and r
     await turn();
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/original/selected.jpg');
     store.warmArtwork(title);assert.equal(images,1);
+  }finally{globalThis.Image=previous;}
+});
+
+test('a committed MetaHub fallback is reused when opening the editor without a gallery read',async()=>{
+  const previous=globalThis.Image,requests=[];
+  globalThis.Image=class {set src(value){this.url=value;requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const original='https://images.metahub.space/background/high/tt0133093/img';
+    const fallback='https://artworks.thetvdb.com/banners/fallback.jpg';
+    const save=deferred(),store=new EditorStore(()=>save.promise);
+    const title=store.seed({...draft(),id:7,backdrop:original});
+    const pending=store.write(title,{favorite:true});
+    const hero={className:'lab-hero-image',replaceWith(image){this.replacement=image;}};
+    const candidate={hidden:true},button={dataset:{},hidden:true};
+    commitDetailHero(hero,candidate,fallback,button,backdrop=>store.updateArtwork(7,{backdrop}));
+    assert.strictEqual(hero.replacement,candidate);assert.equal(candidate.hidden,false);
+    assert.equal(button.dataset.detailImage,fallback);assert.equal(title.backdrop,fallback);
+    assert.equal(title.favorite,true);assert.equal(title.entry,null);
+    assert.deepEqual(requests,[]);
+    store.warmArtwork(title,'cached-poster',fallback);await turn();
+    assert.equal(store.artwork(title).backdrop,fallback);assert.deepEqual(requests,[fallback]);
+    save.resolve({id:7,status:null,favorite:true});await pending;
+    assert.equal(title.favorite,true);
   }finally{globalThis.Image=previous;}
 });
 
