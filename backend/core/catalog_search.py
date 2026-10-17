@@ -44,10 +44,19 @@ def known_result_metadata(item, media):
     return merged
 
 
-def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excluded_genres=()):
+def exact_title_match(term, item):
+    """An explicit title lookup should find its title even before votes accrue."""
+    query = (term or '').strip().casefold()
+    return bool(query) and any(
+        (item.get(field) or '').strip().casefold() == query
+        for field in ('title', 'name', 'original_title', 'original_name')
+    )
+
+
+def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), search_term=''):
     from core.browse import GENRES
     upcoming = (item.get('release_date') or item.get('first_air_date') or '') > date.today().isoformat()
-    if not upcoming and title_vote_count(item) < min_votes:
+    if not upcoming and title_vote_count(item) < min_votes and not exact_title_match(search_term, item):
         return False
     runtime = title_runtime(item)
     if media_type == 'movie' and runtime is not None and runtime < min_runtime:
@@ -63,12 +72,20 @@ def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excl
     return not any(native in ids or GENRES.get(native, '').casefold() in names for native in excluded_genres)
 
 
-def apply_result_filters(query, data, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), runtime=None, imdb_votes=None, release_date=None):
+def apply_result_filters(query, data, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), runtime=None, imdb_votes=None, release_date=None, search_term='', title=None, original_title=None):
     from sqlalchemy import or_
     from core.browse import GENRES
     if min_votes:
         votes = stored_vote_count(data, imdb_votes=imdb_votes) >= min_votes
-        query = query.where(or_(votes, release_date > date.today().isoformat()) if release_date is not None else votes)
+        allowed = [votes]
+        if release_date is not None:
+            allowed.append(release_date > date.today().isoformat())
+        if search_term:
+            if title is not None:
+                allowed.append(func.lower(title) == search_term.casefold())
+            if original_title is not None:
+                allowed.append(func.lower(original_title) == search_term.casefold())
+        query = query.where(or_(*allowed))
     if media_type == 'movie' and min_runtime:
         duration = func.nullif(func.coalesce(runtime, data['runtime'].astext.cast(Float)), 0)
         query = query.where(or_(duration.is_(None), duration >= min_runtime))

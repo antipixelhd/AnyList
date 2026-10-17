@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import result_filters, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match
+from core.catalog_search import result_filters, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, title_match_rank, exact_title_match
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1298,7 +1298,8 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
     filters = await result_filters(db, viewer)
     term = q.strip()[:200]
     query = apply_result_filters(select(Media).where(Media.media_type == MediaType(media_type)),
-                                 Media.tmdb_data, media_type, runtime=Media.runtime, **filters)
+                                 Media.tmdb_data, media_type, runtime=Media.runtime,
+                                 search_term=term, title=Media.title, original_title=Media.original_title, **filters)
     if term:
         similarity = func.similarity(Media.title, term)
         query = query.where(or_(Media.title.ilike(f"%{term}%"), similarity >= 0.2)).order_by(similarity.desc(), Media.title)
@@ -1316,6 +1317,20 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 search = tmdb.search_movies if media_type == 'movie' else tmdb.search_shows
                 remote = await search(term, api_key=key)
                 remote_results = remote.get('results', [])
+                # Short titles can rank behind more popular partial matches.
+                # Browse already scans this bounded provider window; quick
+                # search should find the same exact title.
+                if 3 <= len(term) <= 4 and not any(exact_title_match(term, item) for item in remote_results):
+                    last = min(remote.get('total_pages', 1), 5)
+                    if last > 1:
+                        extra = await asyncio.gather(
+                            *(search(term, page=page, api_key=key) for page in range(2, last + 1)),
+                            return_exceptions=True,
+                        )
+                        remote_results = [*remote_results, *(
+                            item for response in extra if isinstance(response, dict)
+                            for item in response.get('results', [])
+                        )]
                 # Search an unimported title with a few safe corrections only
                 # when the literal request came back empty. This preserves
                 # normal TMDB ranking and keeps the fallback within its API
@@ -1340,8 +1355,9 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                         item = known_result_metadata(item, cached[item['id']])
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
-                    if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
+                    if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, search_term=term, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
+                    known.add(item['id'])
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
                         'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
             except Exception:
@@ -1349,6 +1365,8 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
         else:
             notice = 'Add a TMDB key in Settings, or ask your administrator, to search beyond the local catalogue.'
     from core.tracking_editor import attach_editor_context
+    if term:
+        results.sort(key=lambda item: title_match_rank(term, item.get('title')))
     await attach_editor_context(db, viewer, results)
     return {"results": results, "notice": notice}
 

@@ -407,7 +407,8 @@ def local_query(
     if min_score:
         query = query.where(func.coalesce(data["vote_average"].astext.cast(Float), Media.tmdb_rating, 0) >= min_score)
     query = apply_result_filters(query, data, media_type, min_votes=min_votes, min_runtime=min_runtime,
-                                 excluded_genres=excluded_genres, runtime=Media.runtime, imdb_votes=votes, release_date=Media.release_date)
+                                 excluded_genres=excluded_genres, runtime=Media.runtime, imdb_votes=votes, release_date=Media.release_date,
+                                 search_term=term, title=Media.title, original_title=Media.original_title)
     if not term and status != 'upcoming':
         if sort == "score":
             query = query.where(score > 0)
@@ -418,14 +419,14 @@ def local_query(
     return query.order_by(ordering[sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_votes=0, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None, search_term=''):
     if item.get("adult"):
         return False
     if cinema and media_type=='movie' and not has_cinema_release(item,cinema_country):
         return False
     if float(item.get("vote_average") or 0) < min_score:
         return False
-    if not matches_result_filters(item, media_type, min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres):
+    if not matches_result_filters(item, media_type, min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres, search_term=search_term):
         return False
     ids = set(item.get("genre_ids", [])) | {
         g["id"] for g in item.get("genres", []) if isinstance(g, dict) and g.get("id")
@@ -638,6 +639,7 @@ async def remote_page(
 
         items = await asyncio.gather(*(detail(item) for item in items))
     predicate = {k: v for k, v in filters.items() if k != "sort"}
+    predicate['search_term'] = term
     return data, [
         item for item in items if matches(item, media_type=media_type, **predicate)
     ]
@@ -780,7 +782,7 @@ async def browse_page(
         known_metadata = {m.tmdb_id: known_result_metadata(remote_metadata.get(m.tmdb_id, {}), m) for m in known}
         results = [row for row in results if row['tmdb_id'] not in known_metadata or matches_result_filters(
             known_metadata[row['tmdb_id']], media_type, min_votes=filters.get('min_votes', 0),
-            min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
+            min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()), search_term=term)]
         mapping = {m.tmdb_id: m.id for m in known}
         for row in results:
             row["id"] = row.get("id") or mapping.get(row["tmdb_id"])

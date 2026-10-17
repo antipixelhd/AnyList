@@ -133,6 +133,14 @@ class FilterTests(unittest.TestCase):
         params = remote_params("movie", page=1, **{**FILTERS, "sort": "newest", "min_votes": 250})
         self.assertEqual(params["vote_count.gte"], 0)
 
+    def test_exact_title_search_survives_vote_floor_without_lifting_other_filters(self):
+        from core.catalog_search import matches_result_filters
+        exact = {'name': 'War', 'vote_count': 4, 'genre_ids': [18]}
+        self.assertTrue(matches_result_filters(exact, 'series', min_votes=250, search_term=' WAR '))
+        self.assertFalse(matches_result_filters(exact, 'series', min_votes=250))
+        self.assertFalse(matches_result_filters({'name': 'War Stories', 'vote_count': 4}, 'series', min_votes=250, search_term='war'))
+        self.assertFalse(matches_result_filters(exact, 'series', min_votes=250, excluded_genres=[18], search_term='war'))
+
     def test_newest_sorts_released_titles_without_a_season_boundary(self):
         for today in [date(2024, 2, 29), date(2026, 12, 31)]:
             values = section_specs(today)[1][1]
@@ -310,10 +318,18 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_browse_search_excludes_low_vote_and_unknown_counts(self):
         with patch("core.tmdb.search_movies", AsyncMock(return_value={"results": [
-            {"id": 1, "title":"Title", "vote_count": 249}, {"id": 2, "title":"Title", "vote_count": 250}, {"id": 3,"title":"Title"}], "total_pages": 2})):
+            {"id": 1, "title":"Title One", "vote_count": 249}, {"id": 2, "title":"Title Two", "vote_count": 250}, {"id": 3,"title":"Title Three"}], "total_pages": 2})):
             data, items = await remote_page("title", "movie", "key", {**FILTERS, "min_votes": 250}, 1)
         self.assertEqual([item["id"] for item in items], [2])
         self.assertEqual(data["total_pages"], 2)
+
+    async def test_browse_search_keeps_new_exact_series_title(self):
+        with patch('core.tmdb.search_shows', AsyncMock(return_value={'results': [
+            {'id': 1, 'name': 'War Stories', 'vote_count': 12},
+            {'id': 2, 'name': 'War', 'vote_count': 12},
+        ], 'total_pages': 1})):
+            _, items = await remote_page('war', 'series', 'key', {**FILTERS, 'min_votes': 250}, 1)
+        self.assertEqual([item['id'] for item in items], [2])
 
     async def test_filtered_feed_is_paged_after_matching_and_excluding_anime(self):
         rows = [
@@ -516,6 +532,32 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/tracking/browse', params={'min_score': 8.99})
         self.assertEqual({row['id'] for row in response.json()['results']}, {self.movies[0].id, self.movies[1].id})
         self.assertGreater(self.movies[0].tmdb_rating, self.movies[0].imdb_rating)
+
+    async def test_exact_series_title_is_findable_in_catalog_and_browse(self):
+        series = Media(title='War', media_type=MediaType.series, release_date='2026-10-01',
+                       tmdb_data={'vote_count': 12})
+        near = Media(title='War Stories', media_type=MediaType.series, release_date='2026-10-01',
+                     tmdb_data={'vote_count': 12})
+        self.db.add_all([series, near])
+        await self.db.flush()
+        for endpoint in ('catalog', 'browse'):
+            response = await self.client.get(f'/tracking/{endpoint}', params={'q': 'war', 'media_type': 'series'})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual([row['title'] for row in response.json()['results']], ['War'])
+
+        async def provider_search(query, page=1, **kwargs):
+            return {'results': [
+                {'id': 900002, 'name': 'War Stories', 'vote_count': 12} if page == 1 else
+                {'id': 900001, 'name': 'War', 'vote_count': 12}
+            ], 'total_pages': 2}
+
+        with patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')), \
+             patch('core.tmdb.search_shows', AsyncMock(side_effect=provider_search)):
+            for endpoint in ('catalog', 'browse'):
+                response = await self.client.get(f'/tracking/{endpoint}', params={'q': 'war', 'media_type': 'series'})
+                self.assertEqual(response.status_code, 200, response.text)
+                titles = [row['title'] for row in response.json()['results']]
+                self.assertEqual(titles, ['War', 'War'])
 
     async def asyncSetUp(self):
         self.engine = create_async_engine(os.environ["TRACKING_TEST_DATABASE_URL"])
