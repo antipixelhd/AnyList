@@ -23,6 +23,7 @@ import { themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
 import ReloadScrollRestoration from '../components/ReloadScrollRestoration.astro';
 import PrimaryFontPreloads from '../components/PrimaryFontPreloads.astro';
+import SharePreview from '../components/SharePreview.astro';
 import { settingsGroups, isSettingsLinkActive } from '../lib/settings-navigation';
 
 const { title = 'Settings' } = Astro.props;
@@ -40,6 +41,7 @@ const pathname = Astro.url.pathname;
     <ProfileImageFallback />
     <meta name="theme-color" content="#0b1622" />
     <title>{title} · AnyList</title>
+    <SharePreview {title} />
     <link rel="icon" type="image/png" href="/favicon-96x96.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
