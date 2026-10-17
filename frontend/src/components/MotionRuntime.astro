@@ -83,13 +83,15 @@
     if (!details || !content) return;
     event.preventDefault();
     if (!details.open || content.inert) {
+      details.removeAttribute('data-motion-closing');
       details.open = true;
       content.inert = false;
       reveal(content);
     } else {
+      details.setAttribute('data-motion-closing', '');
       content.inert = true;
       void dismiss(content).then(current => {
-        if (current) { details.open = false; content.inert = false; }
+        if (current) { details.open = false; details.removeAttribute('data-motion-closing'); content.inert = false; }
       });
     }
   });
