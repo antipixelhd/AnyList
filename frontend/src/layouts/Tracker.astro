@@ -22,7 +22,7 @@ import DateTimeRuntime from '../components/DateTimeRuntime.astro';
 import { profileColor, themeVariables, viewerProfileTheme } from '../lib/profile-theme';
 import { ClientRouter } from 'astro:transitions';
 import type {ResponsiveArtworkAttributes} from '../lib/responsive-artwork';
-const {shareDescription, title = 'AnyList', favicon = '/favicon.svg', listLanding = false, ownerProfileColor, ownerIsViewer = false, predictionArtwork = [], preloadArtwork = []} = Astro.props;
+const {shareDescription, title = 'AnyList', favicon = '/favicon-96x96.png', listLanding = false, ownerProfileColor, ownerIsViewer = false, predictionArtwork = [], preloadArtwork = []} = Astro.props;
 const viewerTheme = await viewerProfileTheme(Astro.locals.token);
 const ownerColor = ownerProfileColor ? profileColor(ownerProfileColor) : undefined;
 const activeColor = ownerColor ?? (viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined);

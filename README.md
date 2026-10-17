@@ -1,3 +1,5 @@
+<img src="frontend/public/brand-mark.png" alt="AnyList icon" width="88" />
+
 # AnyList
 
 A self-hosted movie and TV tracker for personal lists and shared discoveries.
