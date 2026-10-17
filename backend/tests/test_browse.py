@@ -432,7 +432,7 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
                     response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": value})
                     self.assertEqual(response.status_code, 422)
 
-    async def test_quick_search_filters_remote_and_local_queries_on_backend_only(self):
+    async def test_quick_search_retains_low_vote_and_unknown_titles(self):
         with patch("core.tmdb.search_movies", AsyncMock(return_value={"results": [
             {"id": 1, "title": "Low vote title", "vote_count": 249},
             {"id": 2, "title": "Qualified title", "vote_count": 250},
@@ -440,9 +440,9 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
         ]})):
             response = await self.client.get("/tracking/catalog", params={"q": "title"})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual([row["tmdb_id"] for row in response.json()["results"]], [2])
+        self.assertEqual({row["tmdb_id"] for row in response.json()["results"]}, {1, 2, 3})
         query = self.db.execute.await_args_list[0].args[0]
-        self.assertIn(250, query.compile().params.values())
+        self.assertNotIn(250, query.compile().params.values())
         self.assertNotIn("votes", response.text)
 
 
@@ -543,7 +543,9 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         for endpoint in ('catalog', 'browse'):
             response = await self.client.get(f'/tracking/{endpoint}', params={'q': 'war', 'media_type': 'series'})
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual([row['title'] for row in response.json()['results']], ['War'])
+            titles = [row['title'] for row in response.json()['results']]
+            self.assertEqual(titles[0], 'War')
+            self.assertIn('War Stories', titles)
 
         async def provider_search(query, page=1, **kwargs):
             return {'results': [
@@ -557,7 +559,8 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.get(f'/tracking/{endpoint}', params={'q': 'war', 'media_type': 'series'})
                 self.assertEqual(response.status_code, 200, response.text)
                 titles = [row['title'] for row in response.json()['results']]
-                self.assertEqual(titles, ['War', 'War'])
+                self.assertEqual(titles[0], 'War')
+                self.assertIn('War Stories', titles)
 
     async def asyncSetUp(self):
         self.engine = create_async_engine(os.environ["TRACKING_TEST_DATABASE_URL"])

@@ -661,6 +661,13 @@ async def browse_page(
     **filters,
 ):
     from core.browse_cursor import encode_search_cursor
+
+    if term:
+        filters = {**filters, 'min_votes': 0}
+        from core.catalog_search import search_preferences
+        ranking = await search_preferences(db, viewer)
+    else:
+        ranking = {}
     remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
@@ -688,6 +695,10 @@ async def browse_page(
                 show_anime=show_anime,
                 feed_offset=feed_position,
             )
+            if term:
+                from core.catalog_search import enrich_search_evidence
+                await enrich_search_evidence(items, term, media_type, key, filters.get('region', 'US'),
+                    theatrical=media_type == 'movie' and ranking.get('prefer_theatrical_movies', False))
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
             if source == "remote" or page > 1:
@@ -791,8 +802,22 @@ async def browse_page(
     from core.tracking_editor import attach_editor_context
     await attach_editor_context(db, viewer, results, media_rows=known if remote is not None else rows)
     if term:
-        from core.catalog_search import title_match_rank
-        results.sort(key=lambda row: title_match_rank(term, row.get('title')))
+        from core.catalog_search import search_rank, has_streaming_offer
+        from core.cinema_releases import theatrical_dates
+        media_by_id = {media.id: media for media in (known if remote is not None else rows)}
+        remote_by_id = {item['id']: item for item in items} if remote is not None else {}
+        for row in results:
+            media = media_by_id.get(row.get('id'))
+            metadata = {**(media.tmdb_data or {})} if media else {}
+            metadata.update(remote_by_id.get(row.get('tmdb_id'), {}))
+            metadata.update(title=row.get('title'), original_title=media.original_title if media else metadata.get('original_title'),
+                            poster_path=row.get('poster'))
+            row['search_rank'] = search_rank(term, metadata,
+                streaming_available=has_streaming_offer(metadata, filters.get('region', 'US')),
+                theatrical=bool(theatrical_dates(metadata, filters.get('region', 'US'))) if media_type == 'movie' else False,
+                prefer_streaming=ranking.get('prefer_streaming_series', True) if media_type == 'series' else True,
+                prefer_theatrical=ranking.get('prefer_theatrical_movies', False))
+        results.sort(key=lambda row: row['search_rank'], reverse=True)
     return {
         "results": results,
         "page": page,

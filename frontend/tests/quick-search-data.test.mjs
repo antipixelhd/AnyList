@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {quickSearchRequests,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,rankCombinedMedia,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
 test('pending contributor evidence renders immediately and refreshes only its own request',async()=>{
   const values=[],requests=[];
@@ -40,6 +40,12 @@ test('mobile tabs share the same simultaneous media and contributor requests',()
   const requests=quickSearchRequests('James');
   assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors','contributors']);
   assert.deepEqual(requests.slice(2).map(row=>new URL(row.url,'https://anylist.test').searchParams.get('kind')),['people','studio']);
+});
+test('combined movie and series results follow shared relevance instead of alternating types',()=>{
+  const movies=[{title:'War movie',search_rank:305},{title:'War stories',search_rank:210}];
+  const series=[{title:'War series',search_rank:314},{title:'War report',search_rank:208}];
+  assert.deepEqual(rankCombinedMedia(movies,series).map(row=>row.title),
+    ['War series','War movie','War stories','War report']);
 });
 test('desktop shows only matching sections and respects combined media; mobile displays one section',()=>{
   const counts={all:3,movie:1,series:2,actor:2,staff:0,studio:1};

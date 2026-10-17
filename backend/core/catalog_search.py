@@ -2,6 +2,7 @@
 
 import re
 import math
+import asyncio
 from datetime import date
 from difflib import SequenceMatcher
 
@@ -23,6 +24,18 @@ async def result_filters(db, viewer):
     if row is None:
         return defaults
     return dict(min_votes=row.minimum_votes, min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
+
+
+async def search_preferences(db, viewer):
+    """Optional per-account ranking preferences stored in user settings JSON."""
+    from sqlalchemy import select
+    from models.users import UserSettings
+    defaults = {'prefer_streaming_series': True, 'prefer_theatrical_movies': True}
+    if viewer is None:
+        return defaults
+    saved = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == viewer.id))
+    return {name: saved.get(name, default) if isinstance(saved, dict) else default
+            for name, default in defaults.items()}
 
 
 def title_runtime(item):
@@ -51,6 +64,14 @@ def exact_title_match(term, item):
         (item.get(field) or '').strip().casefold() == query
         for field in ('title', 'name', 'original_title', 'original_name')
     )
+
+
+def has_streaming_offer(item: dict, region: str) -> bool:
+    providers = item.get('watch_providers') or (item.get('watch/providers') or {}).get('results') or {}
+    if not isinstance(providers, dict):
+        return False
+    offers = providers.get(region) or {}
+    return isinstance(offers, dict) and any(offers.get(kind) for kind in ('flatrate', 'free', 'ads'))
 
 
 def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), search_term=''):
@@ -190,3 +211,74 @@ def title_match_rank(term, title):
     query, value = term.casefold().strip(), (title or '').casefold()
     return (0 if query == value else 1 if value.startswith(query) else 2 if query in value else 3,
             -SequenceMatcher(None, query, value).ratio())
+
+
+def search_rank(term: str, item: dict, *, streaming_available: bool = False,
+                theatrical: bool = False, prefer_streaming: bool = True,
+                prefer_theatrical: bool = False) -> float:
+    """One comparable search score for movies and series, using list metadata only."""
+    query = term.strip().casefold()
+    names = [str(item.get(field) or '').casefold() for field in
+             ('title', 'name', 'original_title', 'original_name')]
+    names = [name for name in names if name]
+    if not names or not query:
+        return 0.0
+    if query in names:
+        relevance = 40
+    elif any(name.startswith(query) for name in names):
+        relevance = 30
+    elif any(re.search(r'(?<!\w)' + re.escape(query), name) for name in names):
+        relevance = 20
+    elif any(query in name for name in names):
+        relevance = 12
+    else:
+        similarity = max(SequenceMatcher(None, query, name).ratio() for name in names)
+        relevance = 15 * similarity if similarity >= .5 else -30
+    votes = item.get('vote_count')
+    if votes is None:
+        votes = item.get('imdb_votes') or (item.get('imdb') or {}).get('votes')
+    def logarithmic_signal(value, weight):
+        try:
+            number = float(value or 0)
+            return weight * math.log10(max(0, number) + 1) if math.isfinite(number) else 0
+        except (TypeError, ValueError):
+            return 0
+    vote_weight = logarithmic_signal(votes, 5)
+    popularity_weight = logarithmic_signal(item.get('popularity'), 2)
+    poster_weight = .5 if item.get('poster_path') or item.get('poster') else 0
+    return round(relevance + vote_weight + popularity_weight +
+                 (15 if streaming_available and prefer_streaming else 0) +
+                 (15 if theatrical and prefer_theatrical else 0) + poster_weight, 3)
+
+
+async def enrich_search_evidence(items: list[dict], term: str, media_type: str,
+                                 api_key: str | None, region: str, *, theatrical=False,
+                                 limit=8, timeout=.9) -> None:
+    """Check only the leading search candidates; reuse TMDB's shared TTL cache."""
+    if not api_key or len(term) < 3:
+        return
+    from core import tmdb
+    candidates = sorted((item for item in items if isinstance(item.get('id'), int)),
+                        key=lambda item: search_rank(term, item), reverse=True)[:limit]
+    semaphore = asyncio.Semaphore(4)
+
+    async def load(item):
+        async with semaphore:
+            identifier = item['id']
+            calls = []
+            if 'watch/providers' not in item and 'watch_providers' not in item:
+                provider = tmdb.get_movie_watch_providers if media_type == 'movie' else tmdb.get_show_watch_providers
+                calls.append(('watch/providers', provider(identifier, api_key=api_key)))
+            if theatrical and media_type == 'movie' and 'release_dates' not in item and 'theatrical_release_dates_by_country' not in item:
+                calls.append(('release_dates', tmdb.get_movie_release_dates(identifier, api_key=api_key)))
+            if not calls:
+                return
+            responses = await asyncio.gather(*(call for _, call in calls), return_exceptions=True)
+            for (name, _), response in zip(calls, responses):
+                if isinstance(response, dict):
+                    item[name] = response
+
+    try:
+        await asyncio.wait_for(asyncio.gather(*(load(item) for item in candidates)), timeout)
+    except TimeoutError:
+        pass

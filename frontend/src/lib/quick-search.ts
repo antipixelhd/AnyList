@@ -2,8 +2,9 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog, reveal } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,rankCombinedMedia,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
+import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -12,7 +13,7 @@ export function mountQuickSearch() {
   if(nextDialog===mountedDialog&&pageListeners&&!pageListeners.signal.aborted)return;
   pageListeners?.abort();
   pageListeners = new AbortController();
-  type SearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null };
+  type SearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null; search_rank?:number };
   const dialog = document.querySelector<HTMLDialogElement>('[data-quick-search]');
   const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
   if (!dialog || !openButton) return;
@@ -69,14 +70,6 @@ export function mountQuickSearch() {
   updatePlaceholder();
 
   const resultUrl = (item: SearchResult) => item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
-  function interleave(first: SearchResult[], second: SearchResult[]) {
-    const merged: SearchResult[] = [];
-    for (let index = 0; index < Math.max(first.length, second.length); index++) {
-      if (first[index]) merged.push(first[index]);
-      if (second[index]) merged.push(second[index]);
-    }
-    return merged;
-  }
   function unique(items: SearchResult[]) {
     const seen = new Set<string>();
     return items.filter(item => {
@@ -154,7 +147,7 @@ export function mountQuickSearch() {
   }
   function render(updated?:'movie'|'series'|'contributors', tabChange=false) {
     if(updated==='movie'||updated==='series'){
-      fill(updated,latest[updated]);fill('all', interleave(latest.movie, latest.series));
+      fill(updated,latest[updated]);fill('all', rankCombinedMedia(latest.movie, latest.series));
     }
     if(updated==='contributors')for(const kind of ['actor','staff','studio'] as const)fillContributors(kind);
     const counts=resultCounts();
@@ -209,7 +202,9 @@ export function mountQuickSearch() {
     clearTimeout(progressTimer);
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
-      const requests=quickSearchRequests(query);pending=requests.length;
+      const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part=>part.trim())
+        .find(part=>part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length+1));
+      const requests=quickSearchRequests(query,savedRegion?.country||deviceStreamingCountry());pending=requests.length;
       updateTabs();
       await Promise.all(requests.map(async request=>{
         try{

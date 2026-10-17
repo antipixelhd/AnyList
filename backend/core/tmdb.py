@@ -620,5 +620,9 @@ async def get_movie_watch_providers(movie_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/movie/{movie_id}/watch/providers", headers=get_headers(api_key))
 
 
+async def get_movie_release_dates(movie_id: int, api_key: str = None) -> dict:
+    return await _get(f"{TMDB_BASE}/movie/{movie_id}/release_dates", headers=get_headers(api_key))
+
+
 async def get_show_watch_providers(show_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/tv/{show_id}/watch/providers", headers=get_headers(api_key))

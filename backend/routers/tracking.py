@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import result_filters, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, title_match_rank, exact_title_match
+from core.catalog_search import result_filters, search_preferences, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, exact_title_match, search_rank, has_streaming_offer, enrich_search_evidence
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1292,11 +1292,18 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
 
 
 @router.get("/catalog")
-async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
+                  region: str | None = Query(None, pattern='^[A-Z]{2}$'),
+                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)
     show_anime=await anime_is_visible(db)
     filters = await result_filters(db, viewer)
     term = q.strip()[:200]
+    if term:
+        filters = {**filters, 'min_votes': 0}
+    region = region or await account_cinema_country(db, viewer) or 'US'
+    ranking = await search_preferences(db, viewer) if term else {}
+    from core.cinema_releases import theatrical_dates
     query = apply_result_filters(select(Media).where(Media.media_type == MediaType(media_type)),
                                  Media.tmdb_data, media_type, runtime=Media.runtime,
                                  search_term=term, title=Media.title, original_title=Media.original_title, **filters)
@@ -1307,7 +1314,18 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
         query = query.order_by(Media.title)
     rows = (await db.execute(query.limit(80))).scalars().all()
     if not show_anime:rows=[m for m in rows if not tracking_projection.is_anime(m)]
-    results = [tracking_projection.media_data(m) for m in rows]
+    results = []
+    for media in rows:
+        result = tracking_projection.media_data(media)
+        if term:
+            metadata = {**(media.tmdb_data or {}), 'title': media.title,
+                        'original_title': media.original_title, 'poster_path': result.get('poster')}
+            result['search_rank'] = search_rank(term, metadata,
+                streaming_available=has_streaming_offer(metadata, region),
+                theatrical=bool(theatrical_dates(metadata, region)) if media_type == 'movie' else False,
+                prefer_streaming=ranking.get('prefer_streaming_series', True) if media_type == 'series' else True,
+                prefer_theatrical=ranking.get('prefer_theatrical_movies', False))
+        results.append(result)
     notice = None
     if term:
         from core import tmdb
@@ -1350,23 +1368,29 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 remote_ids = [item['id'] for item in remote_results if isinstance(item.get('id'), int)]
                 cached = {m.tmdb_id: m for m in await db.scalars(select(Media).where(
                     Media.media_type == MediaType(media_type), Media.tmdb_id.in_(remote_ids)))} if remote_ids else {}
+                remote_results = [known_result_metadata(item, cached[item['id']]) if item.get('id') in cached else item
+                                  for item in remote_results]
+                await enrich_search_evidence([item for item in remote_results if item.get('id') not in known and not item.get('adult')],
+                    term, media_type, key, region, theatrical=media_type == 'movie' and ranking.get('prefer_theatrical_movies', False))
                 for item in remote_results:
-                    if item.get('id') in cached:
-                        item = known_result_metadata(item, cached[item['id']])
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
                     if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, search_term=term, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
                     known.add(item['id'])
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
-                        'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
+                        'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4],
+                        'search_rank':search_rank(term, item, streaming_available=has_streaming_offer(item, region),
+                            theatrical=bool(theatrical_dates(item, region)) if media_type == 'movie' else False,
+                            prefer_streaming=ranking.get('prefer_streaming_series', True) if media_type == 'series' else True,
+                            prefer_theatrical=ranking.get('prefer_theatrical_movies', False))})
             except Exception:
                 notice = 'Metadata search is temporarily unavailable. Showing local matches.'
         else:
             notice = 'Add a TMDB key in Settings, or ask your administrator, to search beyond the local catalogue.'
     from core.tracking_editor import attach_editor_context
     if term:
-        results.sort(key=lambda item: title_match_rank(term, item.get('title')))
+        results.sort(key=lambda item: item.get('search_rank', 0), reverse=True)
     await attach_editor_context(db, viewer, results)
     return {"results": results, "notice": notice}
 

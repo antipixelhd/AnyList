@@ -22,6 +22,8 @@ const prefs: UserPreferences = {
   country: null,
   minimum_votes: 250,
   minimum_movie_runtime: 30,
+  prefer_streaming_series: true,
+  prefer_theatrical_movies: true,
   excluded_categories: [],
   streaming_services: [],
   metadata_language: null,
@@ -254,7 +256,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
         <div class="space-y-2 max-w-xs">
-          <div class="setting-label-line"><label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label></div>
+          <div class="setting-label-line"><label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum discovery votes</label></div>
           <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="1000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
         <div class="space-y-2 max-w-xs mt-5">
@@ -267,6 +269,16 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             {RESULT_CATEGORIES.map(([id, label]) => <button type="button" class="chip border text-base font-medium transition-colors cursor-pointer focus:outline-none" data-excluded-category={id} aria-pressed={prefs.excluded_categories?.includes(id) ?? false}>{label}</button>)}
           </div>
         </fieldset>
+        <div class="mt-6 space-y-3">
+          <label class="setting-switch-row" for="prefer_streaming_series">
+            <span><strong>Series on streaming services first</strong></span>
+            <input id="prefer_streaming_series" type="checkbox" checked={prefs.prefer_streaming_series !== false} />
+          </label>
+          <label class="setting-switch-row" for="prefer_theatrical_movies">
+            <span><strong>Theatrical movies first</strong></span>
+            <input id="prefer_theatrical_movies" type="checkbox" checked={prefs.prefer_theatrical_movies !== false} />
+          </label>
+        </div>
       </section>
       <!-- Localization -->
       <section>
@@ -393,8 +405,9 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       if (state === 'saving' || !message) return;
       const names: Record<string, string> = {
         'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
-        'remove-specials-seasons': 'Seasons', minimum_votes: 'Minimum votes',
+        'remove-specials-seasons': 'Seasons', minimum_votes: 'Minimum discovery votes',
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
+        prefer_streaming_series: 'Series search order', prefer_theatrical_movies: 'Movie search order',
         country: 'Country', metadata_language: 'Metadata language',
         'combine-lists': 'List preferences', streaming_services: 'Streaming services',
       };
@@ -615,6 +628,14 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           input.value = String(previous[field] ?? fallback);
         });
       });
+    }
+    for (const field of ['prefer_streaming_series', 'prefer_theatrical_movies'] as const) {
+      const input = document.getElementById(field) as HTMLInputElement | null;
+      if (!input) continue;
+      committed.set(field, { [field]: input.checked });
+      input.addEventListener('change', () => queueSave(field, { [field]: input.checked }, previous => {
+        input.checked = previous[field] === true;
+      }));
     }
     const excludedButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-excluded-category]')];
     const excludedValues = () => excludedButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => Number(button.dataset.excludedCategory));

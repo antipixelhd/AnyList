@@ -19,7 +19,7 @@ from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
-from models.users import User
+from models.users import User, UserSettings
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
 from models.collection import Collection
@@ -120,10 +120,11 @@ async def get_profile(
         select(UserProfileData).where(UserProfileData.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
-    if profile is None:
-        return schemas.UserProfileResponse()
-    resp = schemas.UserProfileResponse.model_validate(profile)
-    if profile.avatar_path:
+    resp = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
+    from core.catalog_search import search_preferences
+    for name, value in (await search_preferences(db, current_user)).items():
+        setattr(resp, name, value)
+    if profile and profile.avatar_path:
         resp.avatar_url = f"/profile/avatar/{current_user.id}"
     return resp
 
@@ -149,12 +150,25 @@ async def update_profile(
         profile = UserProfileData(user_id=current_user.id)
         db.add(profile)
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    values = body.model_dump(exclude_unset=True)
+    ranking = {name: values.pop(name) for name in ('prefer_streaming_series', 'prefer_theatrical_movies') if name in values}
+    for field, value in values.items():
         setattr(profile, field, value)
+
+    if ranking:
+        user_settings = await db.scalar(select(UserSettings).where(UserSettings.user_id == current_user.id))
+        if user_settings is None:
+            user_settings = UserSettings(user_id=current_user.id)
+            db.add(user_settings)
+        user_settings.preferences = {**(user_settings.preferences or {}), **ranking}
 
     await db.commit()
     await db.refresh(profile)
-    return profile
+    resp = schemas.UserProfileResponse.model_validate(profile)
+    from core.catalog_search import search_preferences
+    for name, value in (await search_preferences(db, current_user)).items():
+        setattr(resp, name, value)
+    return resp
 
 
 CurrentAccount = Annotated[User, Depends(get_current_user)]
