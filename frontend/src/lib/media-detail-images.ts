@@ -49,7 +49,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     watchThumbnail(button);
   });
   const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-image-viewer-step]')];
-  const mobileViewer=matchMedia('(max-width:650px)');
+  const mobileViewer=matchMedia('(max-width:650px), (max-height:650px)');
   let previewTimer:ReturnType<typeof setTimeout>|undefined;
   let previewInteracting=false;
   let previewGesture:{x:number;y:number;moved:boolean}|undefined;

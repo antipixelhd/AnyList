@@ -69,4 +69,16 @@ test('poster framing is ready before opening, with resize work limited to visibl
   fit(undefined,'posters');
   assert.equal(properties.get('--viewer-image-height'),'402px');
   assert.equal(dialog.dataset.viewerPreviewsBelow,'false');
+  window.innerWidth=844;
+  window.innerHeight=390;
+  fit({naturalWidth:1920,naturalHeight:1080},'artwork');
+  assert.equal(properties.get('--viewer-image-height'),'390px');
+  assert.ok(Math.abs(parseFloat(properties.get('--viewer-image-width'))-390*16/9)<1e-10);
+  assert.equal(dialog.dataset.viewerPreviewsBelow,'false');
+  window.innerWidth=390;
+  window.innerHeight=844;
+  events.get('resize')();
+  assert.equal(properties.get('--viewer-image-width'),'390px');
+  assert.equal(properties.get('--viewer-image-height'),'219.375px');
+  assert.equal(dialog.dataset.viewerPreviewsBelow,'true');
 });

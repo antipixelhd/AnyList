@@ -14,10 +14,11 @@ export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSigna
   let selected:HTMLImageElement|undefined,group:'posters'|'artwork'='artwork';
   const fit=()=>{
     const ready=selected?.naturalWidth&&selected?.naturalHeight;
-    const mobile=window.innerWidth<=650;
+    const landscapeShort=window.innerWidth>650&&window.innerHeight<=650;
+    const mobile=window.innerWidth<=650||landscapeShort;
     const width=group==='posters'?780:ready?selected!.naturalWidth:1280;
     const height=group==='posters'?1170:ready?selected!.naturalHeight:720;
-    const scale=Math.min(1,window.innerWidth/width,Math.max(1,window.innerHeight-48)/height);
+    const scale=Math.min(1,window.innerWidth/width,Math.max(1,window.innerHeight-(landscapeShort?0:48))/height);
     const dimensions=mobile?{width:width*scale,height:height*scale}
       :group==='posters'?detailPosterViewerFrame(window.innerWidth,window.innerHeight)
       :detailViewerFrame(ready?selected!.naturalWidth:1280,ready?selected!.naturalHeight:720,window.innerWidth,window.innerHeight);

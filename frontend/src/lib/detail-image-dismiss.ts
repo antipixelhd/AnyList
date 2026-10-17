@@ -1,6 +1,6 @@
 /** Keep horizontal swipes native; own only a single-finger downward drag. */
 export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLElement,signal:AbortSignal) {
-  const mobile=matchMedia('(max-width:650px)');
+  const mobile=matchMedia('(max-width:650px), (max-height:650px)');
   const reduced=matchMedia('(prefers-reduced-motion:reduce)');
   let unlock:(()=>void)|undefined;
   let gesture:{id:number;x:number;y:number;axis?:'horizontal'|'vertical';distance:number;samples:{y:number;time:number}[]}|undefined;
