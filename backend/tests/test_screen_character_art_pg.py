@@ -89,6 +89,39 @@ class CharacterArtTests(unittest.IsolatedAsyncioTestCase):
             with patch('core.screen_character_art.request_tvdb',AsyncMock(side_effect=self.replies())):
                 self.assertEqual((await fill_character_art(db,media,providers=adapter))['state'],'ready')
 
+    async def check_existing_credit_identity(self, *, matching):
+        async with self.Session() as db:
+            media,work=await self.seed(db)
+            actor=await catalogue.resolve_identity(db,'tmdb.person','100')
+            other=await catalogue.resolve_identity(db,'tmdb.person','200')
+            alias=CatalogueEntity(kind='person',name='Old TVDB actor',attributes={},
+                canonical_person_id=actor.entity_id if matching else other.entity_id)
+            db.add(alias);await db.flush()
+            await catalogue.bind_identity(db,actor.entity_id,'tvdb.person','10','tvdb')
+            old=CatalogueCredit(work_id=work.id,contributor_id=alias.id,provider='tvdb',
+                source_key='1',role='actor',character_label='Fixture Character',
+                character_image_url='https://example.test/cached.jpg')
+            db.add(old);await db.commit()
+            alias_id,actor_id=alias.id,actor.entity_id
+            with patch('core.screen_character_art.request_tvdb',AsyncMock(side_effect=self.replies())):
+                result=await fill_character_art(db,media,providers=SimpleNamespace(tvdb_key='fixture'))
+            await db.refresh(old)
+            if matching:
+                self.assertEqual(result['state'],'ready')
+                self.assertIsNone(result['error'])
+                self.assertEqual(old.contributor_id,actor_id)
+                self.assertEqual(old.character_image_url,'https://example.test/first.jpg')
+            else:
+                self.assertEqual(result['error'],'identity_conflict')
+                self.assertEqual(old.contributor_id,alias_id)
+                self.assertEqual(old.character_image_url,'https://example.test/cached.jpg')
+
+    async def test_existing_credit_accepts_a_verified_canonical_actor_alias(self):
+        await self.check_existing_credit_identity(matching=True)
+
+    async def test_existing_credit_rejects_a_different_canonical_actor(self):
+        await self.check_existing_credit_identity(matching=False)
+
     async def test_wrong_title_identity_never_binds_artwork(self):
         async with self.Session() as db:
             media,work=await self.seed(db)

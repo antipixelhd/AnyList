@@ -10,12 +10,13 @@ from core import catalogue, settings_store, tvdb, tmdb
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError, retry_after_seconds
 from core.catalogue_normalize import normalize_tvdb
 from core.principal_credits import principal_clause
+from core.person_identities import canonical_people
 from core.media_details import screen_work
 from core.screen_characters import project_characters
 from db import AsyncSessionLocal
 from models import Media
 from models.base import MediaType
-from models.catalogue import CatalogueCredit, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
 
 KIND = 'character_art'
 VERSION = 3
@@ -186,8 +187,15 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
                         {'basis': 'verified_person_remote_ids'})
                 old = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id == work.id,
                     CatalogueCredit.provider == 'tvdb', CatalogueCredit.source_key == credit['source_key']))
-                if old and (old.contributor_id != actor_id or old.role != 'actor'):
+                if old and old.role != 'actor':
                     raise ProviderError('identity_conflict')
+                if old and old.contributor_id != actor_id:
+                    # Verified identity bridges leave historical credits on aliases.
+                    # Compare their canonical actor before treating this as a conflict.
+                    old_person = await db.get(CatalogueEntity, old.contributor_id)
+                    canonical = await canonical_people(db, [old_person])
+                    if canonical[old_person.id].id != actor_id:
+                        raise ProviderError('identity_conflict')
                 values = {k: credit[k] for k in ('role', 'role_label', 'character_label', 'character_image_url', 'source_key', 'position', 'attributes')}
                 await catalogue.upsert(db, CatalogueCredit, {**values, 'work_id': work.id,
                     'contributor_id': actor_id, 'provider': 'tvdb'}, ['work_id', 'provider', 'source_key'], preserve_missing=True)
