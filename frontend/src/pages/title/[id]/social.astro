@@ -1,0 +1,18 @@
+---
+import MediaDetailSocial from '../../../components/MediaDetailSocial.astro';
+import {localMediaId} from '../../../lib/media-detail-data';
+import {tracker} from '../../../lib/tracker';
+const id=localMediaId(Astro.params.id);
+if(!id||!Astro.locals.user)Astro.response.status=404;
+Astro.response.headers.set('Cache-Control','private, no-store');
+let data:{people:any[];activities:any[]}={people:[],activities:[]};
+let type:'movie'|'series'='movie';
+if(id&&Astro.locals.user){
+  try {
+    const result=await tracker(`title/${id}/social`,Astro.locals.token);
+    data={people:result.people||[],activities:result.activities||[]};
+    type=result.type==='series'?'series':'movie';
+  } catch {Astro.response.status=503;}
+}
+---
+{Astro.response.status===200&&<MediaDetailSocial {data} {type}/>}
