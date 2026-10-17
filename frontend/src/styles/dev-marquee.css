@@ -44,7 +44,7 @@
   .concept-marquee .lab-status-field { grid-column: 1; grid-row: 1; }
   .concept-marquee .lab-rating-field { grid-column: 2; grid-row: 1; }
   .concept-marquee .lab-rating-control { gap: 7px; min-height: 32px; padding: 0; }
-  .concept-marquee .lab-rating-control > span:not(.ui-icon) { display: none; }
+  .concept-marquee .lab-rating-control:not(.media-personal-score) > span:not(.ui-icon) { display: none; }
   .concept-marquee .lab-favorite { grid-column: 3; grid-row: 1; padding: 10px 7px; }
   .concept-marquee .lab-library { grid-column: 1 / -1; grid-row: 2; padding: 11px; }
   .concept-marquee .lab-progress-field { grid-column: 1 / -1; grid-row: 3; }
