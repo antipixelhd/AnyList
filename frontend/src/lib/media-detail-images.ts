@@ -191,27 +191,66 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   };
   root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(loadThumbnail);
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
+  let previewInfo=info.artworkPreview as {image?:string;thumbnail?:string}|undefined;
+  let thumbnails:Record<string,string>=info.artworkThumbnails||{};
+  const paintPreview=()=>{
+    const button=root.querySelector<HTMLButtonElement>('.lab-art-image');
+    const image=button?.querySelector('img');
+    if(!button||!image)return;
+    const url=previewInfo?.image||galleries.artwork[0];
+    if(!url)return;
+    button.closest<HTMLElement>('.lab-art-preview')?.removeAttribute('hidden');
+    // Enrichment must not replace an already displayed full image with its thumbnail.
+    if(image.complete&&image.naturalWidth&&imageKey(button.dataset.detailImage||'')===imageKey(url))return;
+    button.dataset.detailImage=url;
+    const art=detailSceneArtwork(url,null,'auto',previewInfo?.image===url?previewInfo.thumbnail:thumbnails[url]);
+    if(art&&image.getAttribute('src')!==art.src)applyResponsiveArtwork(image,art.src,{size:'w780',route:'auto'});
+    watchThumbnail(button);
+  };
+  let loadPreview=()=>Promise.resolve();
+  const failedHeroes=new Set<string>();
+  let fallback=info.backdropFallback as string|undefined;
+  let heroRevision=0;
   const paintHero=(url:string|undefined)=>{
     if(!url)return;
-    galleries.hero=[url];
+    if(failedHeroes.has(url))return;
     const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
     const button=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
-    if(button){button.dataset.detailImage=url;button.hidden=false;}
     if(!hero)return;
     const sameImage=imageKey(hero.src)===imageKey(url);
-    if(sameImage&&hero.complete&&hero.naturalWidth){hero.hidden=false;return;}
-    if(!sameImage)hero.hidden=true;
-    hero.onload=()=>{if(signal.aborted)return;hero.hidden=false;reveal(hero);};
-    hero.onerror=()=>{hero.hidden=true;};
-    if(sameImage)return;
+    const revision=++heroRevision;
+    const candidate=sameImage?hero:new Image();
+    const commit=()=>{
+      if(signal.aborted||revision!==heroRevision)return;
+      if(candidate!==hero){candidate.className=hero.className;candidate.alt='';hero.replaceWith(candidate);}
+      candidate.hidden=false;galleries.hero=[url];
+      if(button){button.dataset.detailImage=url;button.hidden=false;}
+    };
+    const failed=()=>{
+      if(signal.aborted||revision!==heroRevision)return;
+      failedHeroes.add(url);
+      const recover=()=>{
+        if(signal.aborted)return;
+        const next=[previewInfo?.image,fallback,...(info.backdropFallbacks||[])].find(next=>next&&!failedHeroes.has(next));
+        if(next){paintHero(next);return;}
+        if(!hero.naturalWidth){hero.hidden=true;if(button)button.hidden=true;}
+      };
+      if(previewInfo?.image||fallback)recover();else void loadPreview().then(recover);
+    };
+    candidate.onload=()=>{void candidate.decode().then(commit,failed);};
+    candidate.onerror=failed;
+    if(sameImage){if(hero.complete){if(hero.naturalWidth)commit();else failed();}return;}
     const artwork=detailHeroArtwork(url);
-    if(artwork?.srcset)hero.srcset=artwork.srcset;else hero.removeAttribute('srcset');
-    hero.sizes=artwork?.sizes||'100vw';hero.src=artwork?.src||url;
+    candidate.fetchPriority='high';candidate.decoding='async';
+    if(artwork?.srcset)candidate.srcset=artwork.srcset;
+    candidate.sizes=artwork?.sizes||'100vw';candidate.src=artwork?.src||url;
   };
-  const applyImages=(data:Galleries&{poster?:string;backdrop?:string;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
+  const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
       galleries.posters=uniqueDetailImages(data.posters||[]);
       galleries.artwork=uniqueDetailImages(data.artwork||[]);
+      if(lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
+      thumbnails={...thumbnails,...data.artwork_thumbnails};
       pending=!!data.image_status&&['pending','deferred'].includes(data.image_status.state||'');
       if(galleryStatus){galleryStatus.hidden=!!galleries.artwork.length;galleryStatus.textContent='No artwork available.';}
       const cover=root.querySelector<HTMLButtonElement>('.media-cover');
@@ -222,22 +261,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
       const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
+      fallback=data.backdrop_fallback||fallback;
       paintHero(data.backdrop);
       editorStore.updateArtwork(info.id,{poster:primary,backdrop:heroButton?.dataset.detailImage});
-      const preview=root.querySelector<HTMLButtonElement>('.lab-art-image');
-      if(preview){
-        if(galleries.artwork.length){
-          const preferred=galleries.artwork.includes(preview.dataset.detailImage||'')?preview.dataset.detailImage!:galleries.artwork[0];
-          preview.dataset.detailImage=preferred;
-          const thumbnail=preview.querySelector('img');if(thumbnail){
-            const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
-            const heroArt=hero?{src:hero.src,srcset:hero.srcset||undefined,sizes:hero.sizes||undefined}:null;
-            const art=detailSceneArtwork(preferred,heroArt);
-            if(art){if(art.srcset)thumbnail.srcset=art.srcset;else thumbnail.removeAttribute('srcset');if(art.sizes)thumbnail.sizes=art.sizes;else thumbnail.removeAttribute('sizes');if(thumbnail.getAttribute('src')!==art.src)thumbnail.src=art.src;}
-            watchThumbnail(preview);
-          }
-        }else {preview.classList.toggle('detail-image-skeleton',pending);const thumbnail=preview.querySelector('img');if(thumbnail)thumbnail.hidden=true;}
-      }
+      paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
         const existing=new Map([...grid.querySelectorAll<HTMLButtonElement>('[data-detail-image]')].map((button,index)=>[
@@ -247,7 +274,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
           let button=existing.get(url?imageKey(url):`pending:${index}`);
           if(!button){
             button=document.createElement('button');button.type='button';button.dataset.detailImage=url||'';
-            if(url){const thumbnail=document.createElement('img');thumbnail.dataset.gallerySrc=responsiveArtwork(url,{size:'original',route:'auto'})?.src||url;thumbnail.alt=`${name} artwork`;button.append(thumbnail);}
+            if(url){const thumbnail=document.createElement('img');thumbnail.dataset.gallerySrc=detailSceneArtwork(url,null,'auto',thumbnails[url])?.src||url;thumbnail.alt=`${name} artwork`;button.append(thumbnail);}
             else button.className='detail-image-skeleton';
           }
           button.setAttribute('aria-label',`Expand ${name} artwork ${index+1}`);loadThumbnail(button);return button;
@@ -270,7 +297,27 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(galleryStatus){galleryStatus.hidden=state!=='retry'&&(!!galleries.artwork.length||pending);galleryStatus.textContent=state==='retry'?error||'Artwork is temporarily unavailable. Retrying automatically.':'No artwork available.';}
   });
   const loadImages=()=>info.imagesAvailable?resource.load():Promise.resolve();
+  const previewResource=detailBackground<{artwork_preview?:{image?:string;thumbnail?:string};preview_status?:DetailLoadState}>(
+    `/api/proxy/tracking/title/${info.id}/artwork-preview`,signal,data=>{
+      if(data.artwork_preview?.image){
+        previewInfo=data.artwork_preview;
+        if(!galleries.artwork.length)galleries.artwork=[data.artwork_preview.image];
+        paintPreview();
+      }else if(!galleries.artwork.length){
+        const button=root.querySelector<HTMLButtonElement>('.lab-art-image');
+        button?.classList.remove('detail-image-skeleton');
+        if(button)button.closest<HTMLElement>('.lab-art-preview')!.hidden=true;
+      }
+      return data.preview_status;
+    },()=>{});
+  loadPreview=()=>previewResource.load();
   if(pending)applyImages({...galleries,image_status:{state:'pending'}});
+  if(info.heroAvailable){
+    // One preview is visible content; full gallery analysis still waits for intent.
+    if(info.previewStatus?.state!=='ready')void loadPreview();
+    else if(!previewInfo?.image&&!galleries.artwork.length)root.querySelector<HTMLElement>('.lab-art-preview')?.setAttribute('hidden','');
+    if(initialHero)paintHero(initialHero);
+  }
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-detail-image]');
     if(!button)return;
@@ -278,6 +325,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(active==='hero')galleries.hero=[button.dataset.detailImage!];
     lightbox.dataset.gallery=viewerGroup();
     const url=button.dataset.detailImage!;
+    if(active==='artwork'&&url&&!galleries.artwork.includes(url))galleries.artwork.unshift(url);
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
     prepareViewer();
@@ -287,12 +335,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
   if(info.heroAvailable){
-    const background=detailBackground<{backdrop?:string;background_status?:DetailLoadState}>(
+    const background=detailBackground<{backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(
       `/api/proxy/tracking/title/${info.id}/background`,signal,data=>{
+        fallback=data.backdrop_fallback||fallback;
         if(data.backdrop){paintHero(data.backdrop);editorStore.updateArtwork(info.id,{backdrop:data.backdrop});}
         return data.background_status;
       },()=>{});
-    void background.load();
+    if(!initialHero||info.backgroundStatus?.state!=='ready')void background.load();
     const artworkPanel=root.querySelector<HTMLElement>('[data-detail-panel="artwork"]');
     if(info.imagesAvailable&&artworkPanel&&!artworkPanel.hidden)void loadImages();
   }

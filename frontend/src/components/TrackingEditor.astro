@@ -130,8 +130,14 @@ document.addEventListener('astro:page-load', () => {
     document.querySelector('#editor-title')!.textContent = title.title;
     document.querySelector('#editor-media-type')!.textContent = title.type === 'series' ? 'TV series' : 'Movie';
     const poster = document.querySelector<HTMLImageElement>('#editor-poster')!;
-    const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
+    let backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
     const artwork = editorStore.artwork(title);
+    // Move the prepared node itself. Reassigning src can expose the previous entry while loading.
+    const prepared=artwork.backdropImage;
+    if(prepared&&prepared!==backdrop){
+      prepared.id='editor-backdrop';prepared.className='editor-backdrop';prepared.alt='';
+      backdrop.replaceWith(prepared);backdrop=prepared;
+    }
     [poster, backdrop].forEach(image => { image.removeAttribute('srcset'); image.removeAttribute('sizes'); });
     if (artwork.poster) {
       poster.src = artwork.poster;
@@ -141,8 +147,12 @@ document.addEventListener('astro:page-load', () => {
     }
     poster.hidden = !title.poster;
     const backdropPath = artwork.backdrop;
-    if (backdropPath) backdrop.src = backdropPath;
-    else { backdrop.removeAttribute('src'); backdrop.removeAttribute('srcset'); backdrop.removeAttribute('sizes'); }
+    if (backdropPath && !prepared) {
+      // Never overwrite a retained entry's background with another entry's poster fallback.
+      const fallback=new Image();fallback.id='editor-backdrop';fallback.className='editor-backdrop';fallback.alt='';
+      fallback.src=backdropPath;backdrop.replaceWith(fallback);backdrop=fallback;
+    }
+    else if(!backdropPath) { backdrop.removeAttribute('src'); backdrop.removeAttribute('srcset'); backdrop.removeAttribute('sizes'); }
     backdrop.hidden = !backdropPath;
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
     syncStatus(); closeStatus();
@@ -207,7 +217,7 @@ document.addEventListener('astro:page-load', () => {
     const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
     if (cached) {
       const image = button.closest('.browse-card, .entry-row, .quick-search-result')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
-      editorStore.warmArtwork(cached, image?.currentSrc || image?.src);
+      editorStore.warmArtwork(cached, image?.currentSrc || image?.src, document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc);
       populateEditor(cached);
       showDialog(dialog);
       return;
@@ -313,7 +323,7 @@ document.addEventListener('astro:page-load', () => {
     const id = Number(button.dataset.editEntry);
     const image = button.closest('.entry-row')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
     const title = editorStore.find(id);
-    if (title) editorStore.warmArtwork(title, image?.currentSrc || image?.src);
+    if (title) editorStore.warmArtwork(title, image?.currentSrc || image?.src, document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc);
     else void editorStore.load(id).then(title => editorStore.warmArtwork(title, image?.currentSrc || image?.src)).catch(() => {});
   };
   document.addEventListener('pointerover', prepare, {signal:pageListeners.signal});

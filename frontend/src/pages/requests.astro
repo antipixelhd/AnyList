@@ -40,7 +40,7 @@ const itemUrl = (r: MediaRequestItem) =>
             const poster = responsiveArtwork(posterPath, {
               size: "w500",
               sizes: "40px",
-              route: posterPath?.startsWith("/api/proxy/") ? "proxy" : "direct",
+              route: "direct",
             });
             return (
             <div class="flex items-center gap-4 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3" data-request-id={r.id}>
@@ -96,7 +96,7 @@ const itemUrl = (r: MediaRequestItem) =>
             const poster = responsiveArtwork(posterPath, {
               size: "w500",
               sizes: "32px",
-              route: posterPath?.startsWith("/api/proxy/") ? "proxy" : "direct",
+              route: "direct",
             });
             return (
             <div class="flex items-center gap-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-3 opacity-75">
@@ -138,7 +138,7 @@ const itemUrl = (r: MediaRequestItem) =>
             const poster = responsiveArtwork(posterPath, {
               size: "w500",
               sizes: "32px",
-              route: posterPath?.startsWith("/api/proxy/") ? "proxy" : "direct",
+              route: "direct",
             });
             return (
             <div class="flex items-center gap-4 bg-zinc-900/50 border border-zinc-800/60 rounded-xl px-4 py-3 opacity-75" data-request-id={r.id}>

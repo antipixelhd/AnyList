@@ -18,7 +18,7 @@ export interface ResponsiveArtworkOptions {
   size?: string;
   /** CSS image width expression, passed through as the `sizes` attribute. */
   sizes?: string;
-  /** Auto follows the page's disk-cache setting; explicit routes override it. */
+  /** Public provider images use their CDN; proxy is an explicit opt-in. */
   route?: ArtworkRoute;
 }
 
@@ -150,8 +150,7 @@ export function responsiveArtwork(
   if (!path) return null;
 
   const parsed = parseArtwork(path);
-  const requested=options.route??'proxy';
-  const route=requested==='auto'?(typeof document!=='undefined'&&document.body?.dataset.imageCache==='true'?'proxy':'direct'):requested;
+  const route=options.route==='proxy'?'proxy':'direct';
   if (parsed.kind === "tvdb") {
     return {src:route==='proxy'?`${PROXY_PREFIX}tvdb${parsed.suffix??''}`:`https://${TVDB_HOST}${parsed.suffix??''}`};
   }

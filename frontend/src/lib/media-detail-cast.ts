@@ -4,8 +4,10 @@ import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
 import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
 import {createProgressiveCredits} from './progressive-credits';
+import {visibleArtwork} from './visible-artwork';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
+  const whenVisible=visibleArtwork(signal);
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const animations = new Set<Animation>();
   const stop = () => { animations.forEach(animation => animation.cancel()); animations.clear(); };
@@ -53,7 +55,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       if(!active())return;
       const art=responsiveArtwork(urls[index++],{size:'w185',sizes:'57px',route:'auto'});
       if(!art){current?.remove();current=null;placeholder.hidden=false;delete holder.dataset.castLoading;return;}
-      if(current?.getAttribute('src')===art.src&&(!current.complete||current.naturalWidth>0)) {
+      if((current?.getAttribute('src')===art.src||current?.dataset.deferredSrc===art.src)&&(!current.complete||current.naturalWidth>0||!!current.dataset.deferredSrc)) {
         current.onerror=next;current.hidden=false;placeholder.hidden=true;delete holder.dataset.castLoading;return;
       }
       if(character){holder.dataset.castLoading='';if(current)current.hidden=true;placeholder.hidden=true;}
@@ -70,7 +72,10 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
         if(!reduced.matches){const animation=candidate.animate([{opacity:0},{opacity:1}],{duration:240,easing:'ease-out'});animations.add(animation);void animation.finished.catch(()=>{}).then(()=>animations.delete(animation));}
       };
       holder.prepend(candidate);
-      if(art.srcset)candidate.srcset=art.srcset;if(art.sizes)candidate.sizes=art.sizes;candidate.src=art.src;
+      whenVisible(candidate,()=>{
+        if(!active())return;
+        if(art.srcset)candidate.srcset=art.srcset;if(art.sizes)candidate.sizes=art.sizes;candidate.src=art.src;
+      });
     };
     next();
   }

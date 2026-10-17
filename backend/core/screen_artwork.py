@@ -49,8 +49,9 @@ async def title_artwork(db, media, tvdb_key, tmdb_key=None):
         if not native:
             raise ValueError('No verified TVDB title identity')
         path = f'/series/{native}/artworks' if kind == 'series' else f'/movies/{native}/extended'
-        raw = (await tvdb._get(path, tvdb_key)).get('data') or {}
+        artwork, taxonomy = await asyncio.gather(tvdb._get(path,tvdb_key),tvdb._get('/artwork/types',tvdb_key))
+        raw = artwork.get('data') or {}
         if str(raw.get('id')) != str(native) or not isinstance(raw.get('artworks'), list):
             raise ValueError('Invalid TVDB artwork response')
-        types = (await tvdb._get('/artwork/types', tvdb_key)).get('data') or []
+        types = taxonomy.get('data') or []
     return artwork_candidates(raw, types, kind)

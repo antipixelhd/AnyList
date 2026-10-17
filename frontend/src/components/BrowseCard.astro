@@ -12,7 +12,7 @@ const {
 const image = responsiveArtwork(item.poster, {
   size: "w342",
   sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
-  route:Astro.locals.imageCacheEnabled?'proxy':'direct',
+  route:'direct',
 });
 const state = item.list_status;
 const labels: Record<string, string> = {

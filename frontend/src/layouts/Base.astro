@@ -194,7 +194,7 @@ const mobileGroups: MobileNavigationGroup[] = [
     // Inline counterpart of lib/posters.ts, for define:vars scripts that can't import.
     window.ratingPosterUrl = function (fallback, item, enabled) {
       var fb = fallback ?? null;
-      if (!enabled || !fb || fb.indexOf('/api/proxy/media/image/') !== 0) return fb;
+      if (!enabled || !fb || !(/^(?:\/api\/proxy\/media\/image\/|https:\/\/(?:image\.tmdb\.org|artworks\.thetvdb\.com)\/)/.test(fb))) return fb;
       var type = item.type ?? item.media_type;
       var isEpisode = type === 'episode';
       if (type !== 'movie' && type !== 'series' && !isEpisode) return fb;
@@ -220,7 +220,7 @@ const mobileGroups: MobileNavigationGroup[] = [
     };
   </script>
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden" data-image-cache={String(!!Astro.locals.imageCacheEnabled)} data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)}>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden" data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)}>
   {!hideNav && (
     <nav class="legacy-navigation px-4 md:px-6 py-3 md:py-4 text-sm relative z-30 bg-zinc-950 md:bg-transparent" data-legacy-navigation>
       <!-- Default bar -->

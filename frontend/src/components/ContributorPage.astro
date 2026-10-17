@@ -34,7 +34,7 @@ const facts = data ? [
   ['Country', data.countries.map(countryLabel).join(', ')], ['Headquarters', data.headquarters],
 ].filter(([,value]) => value) : [];
 const years = [...new Set(data?.works.map(contributorYear) || [])];
-const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
+const imageRoute='direct';
 const portrait = artwork(data?.image || null, 'w342',imageRoute);
 const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280',imageRoute);
 const banner = kind === 'studio' ? data?.banner : null;

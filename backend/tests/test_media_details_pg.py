@@ -22,6 +22,26 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_preview_is_cached_without_gallery_downloads_and_preserves_existing_data(self):
+        await self.login()
+        raw={'backdrops':[
+            {'file_path':'https://artworks.thetvdb.com/full.jpg','thumbnail':'https://artworks.thetvdb.com/small.jpg',
+             'iso_639_1':None,'aspect_ratio':1.778,'vote_count':10}]}
+        with (patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')),
+              patch('core.settings_store.get_user_tvdb_key',AsyncMock(return_value='fixture')),
+              patch('core.screen_artwork.title_artwork',AsyncMock(return_value=raw)) as provider,
+              patch('core.media_image_analysis.inspect_image',AsyncMock()) as inspect):
+            response=await self.client.get(f'/tracking/title/{self.media_id}/artwork-preview')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['artwork_preview'],{'image':'https://artworks.thetvdb.com/full.jpg',
+                'thumbnail':'https://artworks.thetvdb.com/small.jpg'})
+            await self.client.get(f'/tracking/title/{self.media_id}/artwork-preview')
+            provider.assert_awaited_once();inspect.assert_not_awaited()
+        async with self.Session() as db:
+            media=await db.get(Media,self.media_id)
+            self.assertNotIn('_anylist_images',media.tmdb_data)
+            self.assertTrue(media.tmdb_data['_anylist_artwork_preview']['expires_at'])
+
     async def test_cast_images_prefer_current_title_then_verified_actor_role_elsewhere(self):
         from core.screen_characters import project_characters
         async with self.Session() as db:

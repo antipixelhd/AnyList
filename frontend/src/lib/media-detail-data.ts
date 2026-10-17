@@ -28,6 +28,11 @@ export type DetailMedia = EditorTitle & {
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
+  backdrop_fallback?:string;
+  backdrop_fallbacks?:string[];
+  preview_status?:{state:string;retry_after?:number};
+  artwork_preview?:{image?:string|null;thumbnail?:string|null};
+  artwork_thumbnails?:Record<string,string>;
   scores_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];

@@ -1,5 +1,6 @@
 import { localToday } from './date-time';
 import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
+import { DecodedArtwork } from './decoded-artwork.ts';
 
 export type EditorTitle = {
   id: number | null; tmdb_id?: number | null; type: string; title: string;
@@ -14,7 +15,7 @@ type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
   pending: { patch: Record<string, any> | null }[]; tail: Promise<unknown>;
   importing?: Promise<number>; stale?: boolean;
-  posterSrc?: string; backdropSrc?: string; backdropReady?: boolean;
+  posterSrc?: string; backdropSrc?: string;
   libraryCommitted?: EditorTitle['editor_library']; libraryPending: {desired: boolean}[];
   favoriteCommitted: boolean;
 };
@@ -25,6 +26,7 @@ export class EditorStore {
   private records = new Map<string, RecordState>();
   private viewer = '';
   private reads = new Map<number, Promise<EditorTitle>>();
+  private decodedArtwork=new DecodedArtwork();
   private request: Transport;
   private changed: (title: EditorTitle) => void;
   private committed: (title:EditorTitle,patch:Record<string,any>|null) => void;
@@ -38,6 +40,7 @@ export class EditorStore {
     this.viewer = viewer;
     this.records.clear();
     this.reads.clear();
+    this.decodedArtwork.clear();
   }
   private key(title: Pick<EditorTitle, 'id' | 'type' | 'tmdb_id'>) {
     return title.tmdb_id ? `${title.type}:${title.tmdb_id}` : `id:${title.id}`;
@@ -198,18 +201,15 @@ export class EditorStore {
     record.tail = task;
     return task;
   }
-  warmArtwork(title: EditorTitle, posterSrc?: string) {
+  warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string) {
     const record = this.record(title)!;
     if (posterSrc) record.posterSrc = posterSrc;
-    if (!title.backdrop || record.backdropSrc || typeof Image === 'undefined') return;
-    record.backdropSrc = responsiveArtwork(title.backdrop, {size:'w1280', route:'auto'})?.src;
+    if (!title.backdrop) return;
+    // A details-page editor reuses the hero's selected source instead of warming another bucket.
+    if(backdropSrc&&artworkIdentity(backdropSrc)===artworkIdentity(title.backdrop))record.backdropSrc=backdropSrc;
+    record.backdropSrc ||= responsiveArtwork(title.backdrop, {size:'w1280', route:'auto'})?.src;
     if (!record.backdropSrc) return;
-    const image = new Image();
-    const src=record.backdropSrc;
-    image.src = src;
-    void image.decode().then(() => { if(record.backdropSrc===src)record.backdropReady = true; }).catch(() => {
-      if(record.backdropSrc===src)record.backdropSrc = undefined;
-    });
+    void this.decodedArtwork.warm(record.backdropSrc);
   }
   warmMetadata(title:EditorTitle) {
     const record=this.record(title);
@@ -230,17 +230,17 @@ export class EditorStore {
     }
     if(artwork.backdrop){
       if(artworkIdentity(record.title.backdrop||'')!==artworkIdentity(artwork.backdrop)){
-        record.backdropSrc=undefined;record.backdropReady=false;
+        record.backdropSrc=undefined;
       }
       record.title.backdrop=artwork.backdrop;
-      this.warmArtwork(record.title);
     }
   }
   artwork(title: EditorTitle, posterSrc?: string) {
     const record = this.record(title)!;
     const poster = posterSrc || record.posterSrc || responsiveArtwork(title.poster, {size:'w342', route:'auto'})?.src;
     // Choose once before opening. Never swap artwork under an active editor.
-    return {poster, backdrop: record.backdropReady ? record.backdropSrc : poster};
+    const backdropImage=this.decodedArtwork.get(record.backdropSrc);
+    return {poster, backdrop: backdropImage ? record.backdropSrc : poster, backdropImage};
   }
 }
 

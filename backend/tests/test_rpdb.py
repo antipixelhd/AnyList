@@ -170,6 +170,17 @@ class ServeRatingPosterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(r.status_code, 400)
 
+    async def test_public_provider_fallbacks_redirect_directly_but_spoofed_hosts_are_rejected(self):
+        self.settings_row.rpdb_api_key=None
+        for fallback in ('https://image.tmdb.org/t/p/w500/x.jpg','https://artworks.thetvdb.com/x.jpg'):
+            response=await self.client.get('/media/rating-poster/tmdb/movie-603',params={'fallback':fallback})
+            self.assertEqual(response.status_code,302)
+            self.assertEqual(response.headers['location'],fallback)
+        for fallback in ('https://image.tmdb.org.evil.test/x.jpg','https://evil@image.tmdb.org/x.jpg',
+                         '//evil.test/x.jpg','https://[invalid/x.jpg','https://image.tmdb.org/\\evil'):
+            response=await self.client.get('/media/rating-poster/tmdb/movie-603',params={'fallback':fallback})
+            self.assertEqual(response.status_code,400)
+
     async def test_no_key_redirects_to_the_fallback(self):
         self.settings_row.rpdb_api_key = None
         r = await self.client.get(

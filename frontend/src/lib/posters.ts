@@ -11,9 +11,9 @@ export interface PosterMedia {
 
 // #377: for a movie/show portrait poster, route through the backend
 // rating-poster proxy so the RPDB image (rating overlay) is served with the
-// user's key kept server-side - exactly like `/api/proxy/media/image/` for
-// TMDB. `enabled` is a plain boolean (the viewer has an RPDB key); when false
-// or the slot isn't eligible, the caller's already-proxied poster is returned
+// user's key kept server-side. Public provider images go straight to their CDN.
+// `enabled` is a plain boolean (the viewer has an RPDB key); when false
+// or the slot isn't eligible, the caller's provider poster is returned
 // unchanged. Never call for episode stills or season artwork.
 //
 // Keep the inline counterpart in Base.astro's <head> script in sync -
@@ -24,7 +24,7 @@ export function ratingPosterUrl(
   enabled?: boolean,
 ): string | null {
   const fb = fallback ?? null;
-  if (!enabled || !fb || !fb.startsWith("/api/proxy/media/image/")) return fb;
+  if (!enabled || !fb || !(/^(?:\/api\/proxy\/media\/image\/|https:\/\/(?:image\.tmdb\.org|artworks\.thetvdb\.com)\/)/.test(fb))) return fb;
 
   const type = item.type ?? item.media_type;
   const isEpisode = type === "episode";

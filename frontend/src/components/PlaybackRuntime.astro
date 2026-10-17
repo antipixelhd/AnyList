@@ -28,12 +28,12 @@ const { token = '', isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astr
       if (!path) return null;
       if (path.startsWith('http://') || path.startsWith('https://')) {
         const m = /image\.tmdb\.org\/t\/p\/([^/]+)(\/.+)$/.exec(path);
-        if (m) return `/api/proxy/media/image/${m[1]}${m[2]}`;
+        if (m) return `https://image.tmdb.org/t/p/${m[1]}${m[2]}`;
         const t = /artworks\.thetvdb\.com(\/.+)$/.exec(path);
-        if (t) return `/api/proxy/media/image/tvdb${t[1]}`;
+        if (t) return `https://artworks.thetvdb.com${t[1]}`;
         return path;
       }
-      return `/api/proxy/media/image/${size}${path.startsWith('/') ? path : '/' + path}`;
+      return `https://image.tmdb.org/t/p/${size}${path.startsWith('/') ? path : '/' + path}`;
     }
 
     // Live playhead position in seconds: the server's progress_seconds plus
@@ -225,7 +225,7 @@ const { token = '', isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astr
             applyArtwork(img, img.dataset.artworkPath, {
               size: 'w185',
               sizes: '28px',
-              route: 'proxy',
+              route: 'direct',
             });
           });
         } else {

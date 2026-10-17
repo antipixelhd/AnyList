@@ -16,6 +16,7 @@ IMAGE_POLICY_VERSION = 6
 BACKGROUND_POLICY_VERSION = 7
 _fills = WeakValueDictionary()
 _backdrop_fills = WeakValueDictionary()
+_preview_fills = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 
 
@@ -87,13 +88,24 @@ def metahub_backdrop(media):
 def screen_backdrop(media):
     cache=(media.tmdb_data or {}).get('_anylist_backdrop') or {}
     direct=metahub_backdrop(media)
-    if direct:return {'backdrop':direct,'background_status':{'state':'ready'}}
+    fallbacks=[]
+    if getattr(getattr(media,'media_type',None),'value',None)=='movie':
+        gallery=(media.tmdb_data or {}).get('_anylist_images') or {}
+        preview=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
+        previous=next((url for url in [preview.get('image'),*(gallery.get('artwork') or [])]
+                       if isinstance(url,str) and url.startswith('https://artworks.thetvdb.com/')),None)
+        fallbacks=unique_images([previous,tmdb_image_url(getattr(media,'backdrop_path',None))])
+    fallback={'backdrop_fallback':next(iter(fallbacks),None),'backdrop_fallbacks':fallbacks}
+    if direct:
+        return {'backdrop':direct,**fallback,
+                'background_status':{'state':'ready'}}
     retry=0
     try:
         if cache.get('version')==BACKGROUND_POLICY_VERSION:
             retry=max(0,int((datetime.fromisoformat(cache.get('retry_after',''))-datetime.now(timezone.utc)).total_seconds())+1)
     except (ValueError,TypeError):pass
-    return {'backdrop':image(cache.get('image')) if cache.get('version')==BACKGROUND_POLICY_VERSION else None,
+    selected=image(cache.get('image')) if cache.get('version')==BACKGROUND_POLICY_VERSION else None
+    return {'backdrop':selected or next(iter(fallbacks),None),**fallback,
         'background_status':{'state':'deferred' if retry else 'ready' if cache.get('version')==BACKGROUND_POLICY_VERSION else 'pending',
             'error':cache.get('last_error') if retry else None,'retry_after':retry}}
 
@@ -144,6 +156,47 @@ async def fill_screen_backdrop(db,media,api_key):
         await db.commit();await db.refresh(media)
 
 
+def screen_artwork_preview(media):
+    cache=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
+    remaining=0
+    try:remaining=max(0,int((datetime.fromisoformat(cache.get('expires_at',''))-datetime.now(timezone.utc)).total_seconds()))
+    except (ValueError,TypeError):pass
+    return {'artwork_preview':{'image':image(cache.get('image')),'thumbnail':image(cache.get('thumbnail'))},
+            'preview_status':{'state':'deferred' if remaining and cache.get('last_error') else 'ready' if remaining else 'pending',
+                              'retry_after':remaining if cache.get('last_error') else 0}}
+
+
+async def fill_artwork_preview(db,media,api_key,tvdb_key):
+    """One ranked, textless TVDB preview, without downloading or curating galleries."""
+    if not tvdb_key:return
+    lock=_preview_fills.setdefault(media.id,asyncio.Lock())
+    async with lock:
+        await db.refresh(media)
+        cache=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
+        now=datetime.now(timezone.utc)
+        try:
+            if datetime.fromisoformat(cache.get('expires_at',''))>now:return
+        except (ValueError,TypeError):pass
+        from core.screen_artwork import title_artwork
+        try:
+            raw=await title_artwork(db,media,tvdb_key,api_key)
+            rows=image_candidates(raw,'tvdb')['artwork']
+            first=next(iter(rows),{})
+            cache={'image':first.get('url'),'thumbnail':image(first.get('thumbnail')),
+                   'expires_at':(now+timedelta(days=30)).isoformat()}
+        except Exception as error:
+            logger.warning('Artwork preview failed for media %s (%s)',media.id,type(error).__name__)
+            # Preserve a usable preview and bound retries during provider outages.
+            delay=600
+            if isinstance(error,httpx.HTTPStatusError) and error.response.status_code==429:
+                from core.catalogue_providers import retry_after_seconds
+                delay=max(delay,retry_after_seconds(error.response.headers.get('Retry-After',''),delay))
+            cache={**cache,'last_error':'unavailable','expires_at':(now+timedelta(seconds=delay)).isoformat()}
+        await db.execute(update(Media).where(Media.id==media.id).values(
+            tmdb_data=func.coalesce(Media.tmdb_data,literal({},type_=JSONB)).op('||')({'_anylist_artwork_preview':cache})))
+        await db.commit();await db.refresh(media)
+
+
 def screen_images(media, details):
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
     retry = 0
@@ -154,13 +207,14 @@ def screen_images(media, details):
     status = {'state': 'deferred' if retry else 'ready' if cache.get('version') == IMAGE_POLICY_VERSION else 'pending',
               'error': cache.get('last_error') if retry else None, 'retry_after': retry}
     primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
-    background=screen_backdrop(media)
+    background={**screen_backdrop(media),**screen_artwork_preview(media)}
     if cache.get('version') == IMAGE_POLICY_VERSION:
         primary = image(cache.get('primary_poster')) or primary
         posters = unique_images([primary, *(cache.get('posters') or [])])
         artwork = unique_images(cache.get('artwork') or [])
         return {'poster': primary or next(iter(posters), None), **background,
                 'posters': posters, 'artwork': artwork,
+                'artwork_thumbnails':cache.get('thumbnails') or {},
                 'image_replacements': cache.get('replacements') or {}, 'image_status': status}
     # Never paint the old unfiltered gallery while a new policy is being filled.
     return {'poster': primary, **background, 'posters': unique_images([primary]),
@@ -210,7 +264,8 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
         selections = await select_galleries(candidates)
         selected = {field: selection['images'] for field, selection in selections.items()}
         selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
-        cache = {**selected, 'primary_poster': primary,
+        thumbnails={row['url']:image(row.get('thumbnail')) for row in candidates['artwork'] if row.get('thumbnail')}
+        cache = {**selected, 'primary_poster': primary, 'thumbnails':thumbnails,
                  'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
     except Exception as error:
         logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)

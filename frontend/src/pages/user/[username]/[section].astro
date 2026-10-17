@@ -28,7 +28,7 @@ const canIncrement = (entry: any) => entry.type === 'movie'
   ? entry.progress < 1 && (!entry.release_date || entry.release_date.slice(0, 10) <= today)
   : entry.released_episodes !== undefined && entry.progress < entry.released_episodes;
 const compactImageSizes='(max-width:650px) 32px, 42px';
-const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
+const imageRoute='direct';
 const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:imageRoute})?.src || '';
 const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently airing':'New season available';
 ---

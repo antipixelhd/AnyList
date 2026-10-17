@@ -98,8 +98,11 @@ function mountNetflixImport() {
 
   function posterSrc(path?: string | null): string {
     if (!path) return "";
-    if (path.startsWith("/api/proxy/media/image/") || path.startsWith("/api/proxy/media/rating-poster/")) return path;
-    if (path.startsWith("/")) return `/api/proxy/media/image/w342/${path.replace(/^\/+/, "")}`;
+    if(path.startsWith('/api/proxy/media/rating-poster/'))return path;
+    const legacy=/^\/api\/proxy\/media\/image\/(w\d+|original)(\/[^?#]+)$/.exec(path);
+    if(legacy)return `https://image.tmdb.org/t/p/${legacy[1]}${legacy[2]}`;
+    if(path.startsWith('/api/proxy/media/image/tvdb/'))return `https://artworks.thetvdb.com/${path.slice('/api/proxy/media/image/tvdb/'.length)}`;
+    if (path.startsWith("/")) return `https://image.tmdb.org/t/p/w342/${path.replace(/^\/+/, "")}`;
     try {
       const url = new URL(path);
       if (url.protocol === "https:" && (url.hostname === "image.tmdb.org" || url.hostname === "artworks.thetvdb.com")) return path;

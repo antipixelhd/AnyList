@@ -4,6 +4,7 @@ import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
+  .replace("'./decoded-artwork.ts'", JSON.stringify(new URL('../src/lib/decoded-artwork.ts', import.meta.url).href))
   .replace("'./responsive-artwork'", JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
   .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
 const {EditorStore} = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
@@ -199,6 +200,19 @@ test('cold backdrop decoding never changes the artwork chosen for an open editor
   } finally {globalThis.Image=previous;}
 });
 
+test('background enrichment does not download editor artwork until intent, and reuses the detail source',async()=>{
+  const previous=globalThis.Image;let images=0;
+  globalThis.Image=class {constructor(){images++;}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{}),title=store.seed({...draft(),id:7});
+    store.updateArtwork(7,{backdrop:'/selected.jpg'});assert.equal(images,0);
+    store.warmArtwork(title,undefined,'https://image.tmdb.org/t/p/original/selected.jpg');
+    await turn();
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/original/selected.jpg');
+    store.warmArtwork(title);assert.equal(images,1);
+  }finally{globalThis.Image=previous;}
+});
+
 test('curated artwork updates preserve optimistic intent and ignore an old decode',async()=>{
   const previous=globalThis.Image,old=deferred(),curated=deferred(),save=deferred();let images=0;
   globalThis.Image=class {decode(){return images++===0?old.promise:curated.promise;}};
@@ -207,6 +221,7 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
     store.warmArtwork(title,'cached-poster');
     const pending=store.write(title,{favorite:true});
     store.updateArtwork(7,{poster:'/new-poster.jpg',backdrop:'/new-background.jpg'});
+    store.warmArtwork(title);
     assert.equal(title.favorite,true);assert.equal(title.entry,null);
     old.resolve();await turn();
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w342/new-poster.jpg');
