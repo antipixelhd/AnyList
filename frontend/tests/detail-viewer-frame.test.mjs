@@ -40,7 +40,7 @@ test('poster framing is ready before opening, with resize work limited to visibl
   globalThis.window={innerWidth:1440,innerHeight:1000,addEventListener:(name,callback)=>events.set(name,callback)};
   globalThis.matchMedia=()=>({matches:true,addEventListener(){}});
   t.after(()=>{globalThis.window=previousWindow;globalThis.matchMedia=previousMatchMedia;});
-  const dialog={open:false,style:{setProperty:(name,value)=>properties.set(name,value)},addEventListener:(name,callback)=>events.set(name,callback)};
+  const dialog={open:false,dataset:{},style:{setProperty:(name,value)=>properties.set(name,value)},addEventListener:(name,callback)=>events.set(name,callback)};
   const fit=bindDetailViewerFrame(dialog,new AbortController().signal);
   fit(undefined,'posters');
   assert.equal(properties.get('--viewer-image-height'),'952px');
@@ -58,9 +58,15 @@ test('poster framing is ready before opening, with resize work limited to visibl
   window.innerWidth=390;
   window.innerHeight=844;
   fit({naturalWidth:1920,naturalHeight:1080},'artwork');
-  assert.equal(properties.get('--viewer-image-width'),'342px');
-  assert.equal(properties.get('--viewer-image-height'),'192.375px');
+  assert.equal(properties.get('--viewer-image-width'),'390px');
+  assert.equal(properties.get('--viewer-image-height'),'219.375px');
+  assert.equal(dialog.dataset.viewerPreviewsBelow,'true');
   fit(undefined,'posters');
-  assert.equal(properties.get('--viewer-image-width'),'342px');
-  assert.equal(properties.get('--viewer-image-height'),'513px');
+  assert.equal(properties.get('--viewer-image-width'),'390px');
+  assert.equal(properties.get('--viewer-image-height'),'585px');
+  assert.equal(dialog.dataset.viewerPreviewsBelow,'true');
+  window.innerHeight=450;
+  fit(undefined,'posters');
+  assert.equal(properties.get('--viewer-image-height'),'402px');
+  assert.equal(dialog.dataset.viewerPreviewsBelow,'false');
 });
