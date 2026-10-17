@@ -18,12 +18,12 @@
     background: color-mix(in srgb, var(--blue) 85%, transparent);
   }
 }
-.tracker[data-theme-active] .settings-app input:focus,
-.tracker[data-theme-active] .settings-app select:focus,
-.tracker[data-theme-active] .settings-app textarea:focus,
-.tracker.settings-app[data-theme-active] input:focus,
-.tracker.settings-app[data-theme-active] select:focus,
-.tracker.settings-app[data-theme-active] textarea:focus {
+.tracker[data-theme-active] .settings-app .settings-content input:focus,
+.tracker[data-theme-active] .settings-app .settings-content select:focus,
+.tracker[data-theme-active] .settings-app .settings-content textarea:focus,
+.tracker.settings-app[data-theme-active] .settings-content input:focus,
+.tracker.settings-app[data-theme-active] .settings-content select:focus,
+.tracker.settings-app[data-theme-active] .settings-content textarea:focus {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 16%, transparent);
 }
 .tracker.settings-app[data-theme-active] .setting-switch-row input:checked {

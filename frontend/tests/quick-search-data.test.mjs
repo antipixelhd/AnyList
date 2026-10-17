@@ -55,6 +55,7 @@ test('mobile navigation removes empty tabs, recovers selection, and wraps throug
   assert.deepEqual(availableQuickSearchTabs(counts,false),['all','actor','staff','studio']);
   const available=availableQuickSearchTabs(counts,true);
   assert.deepEqual(available,['actor','studio']);
+  assert.deepEqual(availableQuickSearchTabs(counts,true,true),['all','actor','studio']);
   assert.equal(resolvedQuickSearchTab('all',available),'actor');
   assert.equal(steppedQuickSearchTab('actor',available,-1),'studio');
   assert.equal(steppedQuickSearchTab('studio',available,1),'actor');

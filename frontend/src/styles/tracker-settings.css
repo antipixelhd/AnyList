@@ -66,8 +66,8 @@ body.settings-app {
 .settings-app .section-headline::before { display: none; }
 .settings-stack > section > div:has(> .section-headline) { border: 0; padding-bottom: 0; margin-bottom: 20px; }
 .settings-stack > section > div > .section-headline { margin-bottom: 0; }
-.settings-app input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
-.settings-app textarea, .settings-app select {
+.settings-app .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
+.settings-app .settings-content textarea, .settings-app .settings-content select {
   border-radius: 4px;
   background-color: var(--field);
   border-color: var(--border);
@@ -76,7 +76,7 @@ body.settings-app {
   min-height: 44px;
 }
 .settings-content .rounded-xl, .settings-content .rounded-2xl, .settings-content .rounded-lg { border-radius: 5px; }
-.settings-app input:focus-visible, .settings-app select:focus-visible, .settings-app textarea:focus-visible,
+.settings-app .settings-content input:focus-visible, .settings-app .settings-content select:focus-visible, .settings-app .settings-content textarea:focus-visible,
 .settings-menu-toggle:focus-visible, .settings-nav a:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .settings-app .bg-zinc-900 { background-color: var(--panel); }
 .settings-app .bg-zinc-950 { background-color: var(--field); }
@@ -113,8 +113,8 @@ body.settings-app {
   .settings-category-title { margin-bottom: 16px; font-size: var(--type-control-size); }
   .settings-stack { gap: 20px; }
   .settings-stack > section { padding: 24px 20px; }
-  .settings-app input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
-  .settings-app textarea, .settings-app select { font-size: 16px; }
+  .settings-app .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
+  .settings-app .settings-content textarea, .settings-app .settings-content select { font-size: 16px; }
   .settings-app .profile-color-swatches { display: grid; grid-template-columns: repeat(4, minmax(0, 54px)); gap: 12px; }
   .settings-app .profile-color-swatch, .settings-app .profile-color-custom { width: 100%; height: auto; aspect-ratio: 1; }
   .settings-app .setting-switch-row { flex-direction: row; }

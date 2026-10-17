@@ -45,8 +45,8 @@ export function visibleQuickSearchSections(mobile:boolean, selected:SearchSectio
 }
 
 const mobileTabOrder:SearchSection[]=['all','actor','staff','studio'];
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean):SearchSection[] {
-  return searching?mobileTabOrder.filter(kind=>counts[kind]>0):[...mobileTabOrder];
+export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false):SearchSection[] {
+  return searching?mobileTabOrder.filter(kind=>counts[kind]>0||(kind==='all'&&mediaPending)):[...mobileTabOrder];
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

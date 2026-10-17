@@ -120,7 +120,8 @@
   padding:0;
   margin-top:22px;
   gap:20px;
-  align-items:start
+  align-items:start;
+  overflow-x:hidden
 }
 .quick-search-results.combined {
   grid-template-columns:minmax(0,1fr)
@@ -172,6 +173,7 @@
     background:#192737;
     touch-action:pan-y;
   }
+  .quick-search-mobile-tabs[hidden] { display:none; }
   .quick-search-mobile-tabs > button {
     display:grid;
     place-items:center;

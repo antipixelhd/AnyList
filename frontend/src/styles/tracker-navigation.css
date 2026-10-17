@@ -161,6 +161,7 @@
   border:0
 }
 .quick-search-dialog {
+  --bright:var(--white);
   font-family:var(--font-body);
   font-size:var(--type-body-size);
   font-weight:var(--type-body-weight);

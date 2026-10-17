@@ -44,13 +44,15 @@ export function mountQuickSearch() {
   let progressTimer = 0;
   let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
-  let pending=0,failed=0;
+  let pending=0,failed=0,mediaPending=0;
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
   const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
-  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2);
+  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0);
+  const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
   function updateTabs(available=availableTabs()) {
     activeTab=resolvedQuickSearchTab(activeTab,available);
+    tabNav.hidden=mobile.matches&&(input?.value.trim().length||0)>=2&&!available.length;
     tabTitle.textContent=tabs.find(tab=>tab.kind===activeTab)!.label;
     tabButtons.forEach(button=>{
       const next=steppedQuickSearchTab(activeTab,available,Number(button.dataset.searchTabStep));
@@ -184,13 +186,13 @@ export function mountQuickSearch() {
     const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};
     tabAnimations.push(animate(tabTitle,{opacity:[.45,1],transform:[`translateX(${direction*14}px)`,'translateX(0)']},timing));
     const content=resultShell&&!resultShell.hidden?resultShell:state&&!state.hidden?state:null;
-    if(content)tabAnimations.push(animate(content,{opacity:[.5,1],transform:[`translateX(${direction*22}px)`,'translateX(0)']},timing));
+    if(content)tabAnimations.push(animate(content,{opacity:[.5,1],transform:['translateY(6px)','translateY(0)']},timing));
   }
   async function search() {
     const query = input?.value.trim() || '';
     controller?.abort();
     clearTimeout(progressTimer);progress?.classList.remove('visible');
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2?2:0;
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     if (query.length < 2) {
@@ -218,7 +220,7 @@ export function mountQuickSearch() {
             render(request.kind);
           });
         }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
-        finally{if(controller===current&&!current.signal.aborted){pending--;render();}}
+        finally{if(controller===current&&!current.signal.aborted){pending--;if(request.kind==='movie'||request.kind==='series')mediaPending--;render();}}
       }));
     } catch (cause) {
       if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
@@ -231,7 +233,7 @@ export function mountQuickSearch() {
     activeTab='all';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (input) input.value = '';
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=0;
     updateTabs();
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
@@ -248,7 +250,9 @@ export function mountQuickSearch() {
     if (!title || !dialog?.open) return;
     const image = button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
     editorStore.warmArtwork(title, image?.currentSrc || image?.src);
-    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener:input || openButton}}));
+    dialog.close();
+    const opener=mobile.matches?document.querySelector<HTMLElement>('[data-mobile-navigation] .mobile-navigation-trigger')||openButton:openButton;
+    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener}}));
   }, {signal: pageListeners.signal});
   const prepareEditor = (event: Event) => {
     const button = (event.target as Element).closest<HTMLButtonElement>('[data-search-add]');
@@ -269,7 +273,7 @@ export function mountQuickSearch() {
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); },{signal:pageListeners.signal});
   input?.addEventListener('input', () => {
     clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=input.value.trim().length>=2?2:0;
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
