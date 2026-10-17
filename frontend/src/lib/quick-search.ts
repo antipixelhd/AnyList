@@ -95,6 +95,9 @@ export function mountQuickSearch() {
     add.title = `Open list editor for ${item.title}`;
     editorTitles.set(add, editorStore.seed(item as unknown as EditorTitle));
     if (addIcon) add.append(addIcon.content.cloneNode(true));
+    const addLabel = document.createElement('span');
+    addLabel.textContent = 'List';
+    add.append(addLabel);
     row.append(link, add);
     return row;
   }
