@@ -43,3 +43,17 @@ export function visibleQuickSearchSections(mobile:boolean, selected:SearchSectio
   const sections:ResultSection[] = mobile ? [selected] : [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
   return sections.filter(section=>counts[section]>0);
 }
+
+const mobileTabOrder:SearchSection[]=['all','actor','staff','studio'];
+export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean):SearchSection[] {
+  return searching?mobileTabOrder.filter(kind=>counts[kind]>0):[...mobileTabOrder];
+}
+export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
+  return available.includes(selected)?selected:available[0]??'all';
+}
+export function steppedQuickSearchTab(selected:SearchSection, available:SearchSection[], direction:number):SearchSection|null {
+  if(available.length<2)return null;
+  const index=available.indexOf(selected);
+  if(index<0)return available[0];
+  return available[(index+direction+available.length)%available.length];
+}

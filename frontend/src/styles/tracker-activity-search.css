@@ -186,6 +186,7 @@
   }
   .quick-search-mobile-tabs > button:is(:hover,:focus-visible) { outline:none; background:#25445d; color:var(--bright); }
   .quick-search-mobile-tabs > button:disabled { opacity:.35; cursor:default; background:transparent; }
+  .quick-search-mobile-tabs > button[hidden],.quick-search-tab-markers span[hidden] { display:none; }
   .quick-search-tab-current { display:grid; justify-items:center; gap:8px; min-width:0; }
   .quick-search-tab-current h2 { margin:0; color:var(--bright); font-size:15px; font-weight:650; text-align:center; }
   .quick-search-tab-markers { display:flex; align-items:center; gap:5px; }

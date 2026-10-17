@@ -2,7 +2,7 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog, reveal } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 
 let pageListeners: AbortController;
@@ -47,15 +47,21 @@ export function mountQuickSearch() {
   let pending=0,failed=0;
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
-  function updateTabs() {
-    const index=tabs.findIndex(tab=>tab.kind===activeTab);
-    tabTitle.textContent=tabs[index].label;
+  const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
+  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2);
+  function updateTabs(available=availableTabs()) {
+    activeTab=resolvedQuickSearchTab(activeTab,available);
+    tabTitle.textContent=tabs.find(tab=>tab.kind===activeTab)!.label;
     tabButtons.forEach(button=>{
-      const next=tabs[index+Number(button.dataset.searchTabStep)];
+      const next=steppedQuickSearchTab(activeTab,available,Number(button.dataset.searchTabStep));
+      button.hidden=!next;
       button.disabled=!next;
-      if(next)button.setAttribute('aria-label',`Show ${next.label}`);
+      if(next)button.setAttribute('aria-label',`Show ${tabs.find(tab=>tab.kind===next)!.label}`);
     });
-    tabMarkers.forEach(marker=>marker.toggleAttribute('data-active',marker.dataset.searchTabMarker===activeTab));
+    tabMarkers.forEach(marker=>{
+      marker.hidden=!available.includes(marker.dataset.searchTabMarker as SearchSection);
+      marker.toggleAttribute('data-active',available.includes(activeTab)&&marker.dataset.searchTabMarker===activeTab);
+    });
   }
   updateTabs();
   updatePlaceholder();
@@ -149,7 +155,9 @@ export function mountQuickSearch() {
       fill(updated,latest[updated]);fill('all', interleave(latest.movie, latest.series));
     }
     if(updated==='contributors')for(const kind of ['actor','staff','studio'] as const)fillContributors(kind);
-    const counts={all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length};
+    const counts=resultCounts();
+    const available=availableTabs();
+    updateTabs(available);
     const visible=visibleQuickSearchSections(mobile.matches,selected(),dialog?.dataset.combined==='yes',counts);
     for (const kind of ['all','movie','series','actor','staff','studio'] as const) {
       const section = dialog?.querySelector<HTMLElement>(`[data-search-section="${kind}"]`);
@@ -162,13 +170,12 @@ export function mountQuickSearch() {
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
-    const emptyLabel=mobile.matches?tabs.find(tab=>tab.kind===activeTab)!.label.toLowerCase():'results';
-    showState(pending ? '' : failed ? visible.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length?'':`No matching ${emptyLabel}.`);
+    showState(pending ? '' : failed ? available.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length?'':'No matching results.');
     if (announcement) announcement.textContent = visible.map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
   }
-  function setActiveTab(next:SearchSection) {
+  function setActiveTab(next:SearchSection,direction?:number) {
     if (next===activeTab) return;
-    const direction=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
+    direction??=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
     activeTab=next;
     updateTabs();
     if ((input?.value.trim().length||0)>=2) render(undefined,true);
@@ -187,6 +194,7 @@ export function mountQuickSearch() {
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     if (query.length < 2) {
+      updateTabs();
       showState(query ? 'Type one more character.' : '');
       fill('movie',[]); fill('series',[]); fill('all',[]);
       if (resultShell) resultShell.setAttribute('aria-busy','false');
@@ -200,6 +208,7 @@ export function mountQuickSearch() {
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
       const requests=quickSearchRequests(query);pending=requests.length;
+      updateTabs();
       await Promise.all(requests.map(async request=>{
         try{
           await readQuickSearch(request,current.signal,data=>{
@@ -219,9 +228,11 @@ export function mountQuickSearch() {
     clearTimeout(timer);
     clearTimeout(progressTimer);progress?.classList.remove('visible');
     controller?.abort();
-    activeTab='all';updateTabs();updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
+    activeTab='all';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (input) input.value = '';
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};
+    updateTabs();
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
@@ -258,14 +269,17 @@ export function mountQuickSearch() {
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); },{signal:pageListeners.signal});
   input?.addEventListener('input', () => {
     clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
+    updateTabs();
     timer = window.setTimeout(search, 180);
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
-    const next=tabs[tabs.findIndex(tab=>tab.kind===activeTab)+Number(button.dataset.searchTabStep)];
-    if(next)setActiveTab(next.kind);
+    const direction=Number(button.dataset.searchTabStep);
+    const next=steppedQuickSearchTab(activeTab,availableTabs(),direction);
+    if(next)setActiveTab(next,direction);
   },{signal:pageListeners.signal}));
   let touchStart:{x:number;y:number}|null=null;
   dialog.addEventListener('touchstart',event=>{
@@ -279,8 +293,9 @@ export function mountQuickSearch() {
     const dx=touch.clientX-touchStart.x,dy=touch.clientY-touchStart.y;
     touchStart=null;
     if(Math.abs(dx)<45||Math.abs(dx)<Math.abs(dy)*1.25)return;
-    const next=tabs[tabs.findIndex(tab=>tab.kind===activeTab)+(dx<0?1:-1)];
-    if(next){event.preventDefault();setActiveTab(next.kind);}
+    const direction=dx<0?1:-1;
+    const next=steppedQuickSearchTab(activeTab,availableTabs(),direction);
+    if(next){event.preventDefault();setActiveTab(next,direction);}
   },{passive:false,signal:pageListeners.signal});
   dialog.addEventListener('touchcancel',()=>{touchStart=null;},{signal:pageListeners.signal});
   mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open&&(input?.value.trim().length||0)>=2)render();},{signal:pageListeners.signal});

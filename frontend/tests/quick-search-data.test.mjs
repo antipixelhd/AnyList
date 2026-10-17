@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {quickSearchRequests,visibleQuickSearchSections,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
 test('pending contributor evidence renders immediately and refreshes only its own request',async()=>{
   const values=[],requests=[];
@@ -48,4 +48,16 @@ test('desktop shows only matching sections and respects combined media; mobile d
   assert.deepEqual(visibleQuickSearchSections(true,'all',false,counts),['all']);
   assert.deepEqual(visibleQuickSearchSections(true,'studio',true,counts),['studio']);
   assert.deepEqual(visibleQuickSearchSections(true,'staff',true,counts),[]);
+});
+
+test('mobile navigation removes empty tabs, recovers selection, and wraps through available results',()=>{
+  const counts={all:0,movie:0,series:0,actor:2,staff:0,studio:1};
+  assert.deepEqual(availableQuickSearchTabs(counts,false),['all','actor','staff','studio']);
+  const available=availableQuickSearchTabs(counts,true);
+  assert.deepEqual(available,['actor','studio']);
+  assert.equal(resolvedQuickSearchTab('all',available),'actor');
+  assert.equal(steppedQuickSearchTab('actor',available,-1),'studio');
+  assert.equal(steppedQuickSearchTab('studio',available,1),'actor');
+  assert.equal(steppedQuickSearchTab('actor',['actor'],1),null);
+  assert.equal(resolvedQuickSearchTab('staff',[]),'all');
 });
