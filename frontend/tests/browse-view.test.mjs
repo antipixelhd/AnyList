@@ -64,6 +64,6 @@ test("view-all links retain category dates and the selected media type and strea
   assert.equal(values.get("end"), "2026-12-31");
   assert.equal(
     sectionHref("movie", "US", { sort: "score" }),
-    "/browse?sort=score",
+    "/browse?sort=score&region=US",
   );
 });

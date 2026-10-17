@@ -1,6 +1,7 @@
 ---
 import Tracker from "../layouts/Tracker.astro";
 import { formatDate, requestDateLocale } from '../lib/date-time';
+import { STREAMING_REGION_COOKIE, streamingCountry, streamingRegionPreference } from '../lib/streaming-region';
 import BrowseCard from "../components/BrowseCard.astro";
 import BrowseSkeleton from "../components/BrowseSkeleton.astro";
 import BrowseSelect from "../components/BrowseSelect.astro";
@@ -17,6 +18,8 @@ import {
   browseLayout,
 } from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
+const region = streamingCountry(params.get('region')) || streamingRegionPreference(Astro.cookies.get(STREAMING_REGION_COOKIE)?.value)?.country || 'US';
+params.set('region', region);
 const view = browseLayout(params);
 if(params.get('sort')==='newest')params.delete('sort');
 params.set('view',view);
@@ -83,8 +86,7 @@ const regions = [
   ["IN", "India"],
   ["KR", "South Korea"],
 ];
-const region = params.get("region") || "US";
-if (!regions.some(([id]) => id === region)) regions.push([region, region]);
+if (!regions.some(([id]) => id === region)) regions.push([region, new Intl.DisplayNames(['en'], {type:'region'}).of(region) || region]);
 const signedIn = !!Astro.locals.user;
 const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 1900, Number(params.get("end")?.slice(0, 4)) || 1900);
 const lastYear = Math.max(new Date().getFullYear() + 3, Number(params.get("start")?.slice(0, 4)) || 0, Number(params.get("end")?.slice(0, 4)) || 0);
@@ -240,7 +242,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
             ))}
           </BrowseSelect>
         </label>
-        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minScore !== 0 || region !== "US")}>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minScore !== 0)}>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
             <Icon name="sliders" />
           </summary>

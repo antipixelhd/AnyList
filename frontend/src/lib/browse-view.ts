@@ -39,6 +39,6 @@ export function sectionHref(
 ) {
   const values = new URLSearchParams(filters);
   if (type === "series") values.set("type", type);
-  if (region !== "US") values.set("region", region);
+  values.set("region", region);
   return `/browse?${values}`;
 }
