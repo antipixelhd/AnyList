@@ -29,13 +29,14 @@ test('non-TMDB posters remain at their provider URL without fabricated resize va
   assert.equal(detailSceneArtwork(null,null),null);
 });
 
-test('detail heroes and scenes retain original resolution and direct MetaHub URLs',()=>{
+test('heroes keep full resolution while previews use thumbnails and expanded sources stay canonical',()=>{
   const movie='https://images.metahub.space/background/high/tt0133093/img';
   const tvdb='https://artworks.thetvdb.com/banners/v4/movie/1/backgrounds/scene.jpg';
   for(const route of ['direct','proxy']){
     assert.deepEqual(detailHeroArtwork(movie,route),{src:movie});
     assert.equal(detailHeroArtwork('/series.jpg',route).src,route==='direct'?'https://image.tmdb.org/t/p/original/series.jpg':'/api/proxy/media/image/original/series.jpg');
-    assert.equal(detailSceneArtwork('/scene.jpg',null,route).src.includes('/original/scene.jpg'),true);
+    assert.equal(detailSceneArtwork('/scene.jpg',null,route).src.includes('/w780/scene.jpg'),true);
+    assert.equal(detailSceneArtwork(tvdb,null,route,'https://artworks.thetvdb.com/small.jpg').src.endsWith('/small.jpg'),true);
     assert.equal(detailSceneArtwork(tvdb,null,route).src.endsWith('/banners/v4/movie/1/backgrounds/scene.jpg'),true);
   }
 });

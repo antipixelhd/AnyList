@@ -8,7 +8,7 @@ import { personTitleLabel } from '../lib/stats-staff-data';
 import { responsiveArtwork } from '../lib/responsive-artwork';
 interface Props { person: ActorGroup | StaffGroup; rank: number; mode: ActorArtwork; prefix: 'actor' | 'staff'; }
 const { person: actor, rank, mode, prefix } = Astro.props;
-const portrait = responsiveArtwork(actor.image, { size: 'w185', sizes: '(max-width:650px) 80px, 110px', route:Astro.locals.imageCacheEnabled?'proxy':'direct' });
+const portrait = responsiveArtwork(actor.image, { size: 'w185', sizes: '(max-width:650px) 80px, 110px', route:'direct' });
 ---
 <article class="stats-genre-card stats-actor-card" {...{[`data-${prefix}-key`]: actor.key, [`data-${prefix}-signature`]: JSON.stringify(actor)}} aria-label={actor.label}>
   <div class="stats-genre-summary">
@@ -21,7 +21,7 @@ const portrait = responsiveArtwork(actor.image, { size: 'w185', sizes: '(max-wid
   <div class="stats-genre-posters">
     <div class="stats-genre-track" data-genre-track tabindex="0" role="group" aria-label={`Highest-rated ${actor.label} titles`}>
       {actor.top_titles.map(title => {
-        const artwork = responsiveArtwork('roles' in title ? title.poster : actorTitleImage(title, mode), { size: 'w185', sizes: '(max-width:650px) 15vw, 70px', route:Astro.locals.imageCacheEnabled?'proxy':'direct' });
+        const artwork = responsiveArtwork('roles' in title ? title.poster : actorTitleImage(title, mode), { size: 'w185', sizes: '(max-width:650px) 15vw, 70px', route:'direct' });
         return <a class="stats-genre-poster" href={title.href} aria-label={personTitleLabel(title)} draggable="false" {...{[`data-${prefix}-title-key`]: title.key}}>
           {artwork ? <img {...artwork} data-artwork-fallback="true" alt="" loading="lazy" draggable="false" /> : <span class="stats-genre-placeholder" aria-hidden="true">{title.title.slice(0, 1)}</span>}
           <span class="stats-genre-tooltip" aria-hidden="true">{personTitleLabel(title)}</span>

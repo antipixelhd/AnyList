@@ -50,3 +50,12 @@ server metadata keys are private environment defaults, not database seed data.
 
 Use existing neighbouring tests as the primary guide: backend tests use Python
 `unittest`, including `IsolatedAsyncioTestCase`; frontend tests use `node:test`.
+
+## Images
+
+- Send public images straight to the provider CDN. Use our server only when it is needed.
+- Keep browser caching enabled for public images. Keep private data private.
+- Reuse the same image URL and decoded image. Do not download a second size just to warm an editor.
+- Show one small artwork preview quickly. Load extra gallery images only when needed.
+- Reveal the right image when it is ready. Never flash the previous entry's background.
+- Check real requests and repeat entry switches before calling image work done.

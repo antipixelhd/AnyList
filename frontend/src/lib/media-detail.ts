@@ -10,6 +10,7 @@ import { showToast } from './toasts';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
 import {detailWorkArtwork} from './detail-artwork';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
+import {observeDeferredArtwork} from './visible-artwork';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -26,6 +27,7 @@ export function mountMediaDetail() {
   document.addEventListener('astro:before-swap', () => {pageListeners?.abort();mountedRoot=null;}, {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
+  observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
   if(info.backgroundAvailable){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');

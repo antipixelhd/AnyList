@@ -11,6 +11,16 @@ from core import tmdb
 
 
 class ImageProjectionTests(unittest.TestCase):
+    def test_movie_has_a_provider_fallback_when_metahub_is_unavailable(self):
+        from core.media_images import screen_backdrop
+        media=SimpleNamespace(media_type=SimpleNamespace(value='movie'),imdb_id='tt0133093',
+            tmdb_data={'_anylist_images':{'artwork':['https://artworks.thetvdb.com/old-background.jpg']}},
+            backdrop_path='/stored.jpg')
+        self.assertEqual(screen_backdrop(media)['backdrop_fallback'],'https://artworks.thetvdb.com/old-background.jpg')
+        self.assertEqual(screen_backdrop(media)['backdrop_fallbacks'],['https://artworks.thetvdb.com/old-background.jpg','https://image.tmdb.org/t/p/original/stored.jpg'])
+        media.tmdb_data={}
+        self.assertEqual(screen_backdrop(media)['backdrop_fallback'],'https://image.tmdb.org/t/p/original/stored.jpg')
+
     def test_series_hero_uses_highest_rated_explicitly_textless_landscape(self):
         from core.media_images import best_tmdb_backdrop
         raw={'backdrops':[{'file_path':'/branded.jpg','iso_639_1':'en','vote_average':10},

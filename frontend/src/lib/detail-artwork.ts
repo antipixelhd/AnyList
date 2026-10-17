@@ -15,7 +15,8 @@ export function detailWorkArtwork(path: string | null | undefined, similar = fal
 }
 
 /** When the preview shows the hero, reuse its exact responsive sources. */
-export function detailSceneArtwork(path: string | null | undefined, hero: ResponsiveArtworkAttributes | null, route: ArtworkRoute = 'auto') {
+export function detailSceneArtwork(path: string | null | undefined, hero: ResponsiveArtworkAttributes | null, route: ArtworkRoute = 'auto', thumbnail?:string|null) {
+  if(thumbnail)return responsiveArtwork(thumbnail,{size:'w780',route});
   if (path && hero && artworkIdentity(path) === artworkIdentity(hero.src)) return hero;
-  return responsiveArtwork(path, {size: 'original', route});
+  return responsiveArtwork(path, {size: 'w780', route});
 }

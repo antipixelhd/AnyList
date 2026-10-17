@@ -106,7 +106,7 @@
             applyArtwork(itemPosterEl, itemInfo.posterUrl, {
               size: itemInfo.landscape ? 'w780' : 'w500',
               sizes: itemInfo.landscape ? '76px' : '40px',
-              route: itemInfo.posterUrl.startsWith('/api/proxy/') ? 'proxy' : 'direct',
+              route: 'direct',
             });
           } else {
             itemPosterEl.src = itemInfo.posterUrl;

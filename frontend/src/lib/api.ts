@@ -778,10 +778,7 @@ export const api = {
   },
 };
 
-// Route TMDB and TheTVDB images through the backend image proxy (which serves
-// a locally cached copy when the admin has enabled the image cache, or 302s to
-// the origin otherwise). TheTVDB artwork has no size variants, so it uses the
-// synthetic "tvdb" size bucket.
+// Public provider artwork uses native CDN and browser caching.
 export function tmdbImageUrl(path: string | null | undefined, size: string = "w500"): string | null {
-  return responsiveArtwork(path, { size, route: "proxy" })?.src ?? null;
+  return responsiveArtwork(path, { size, route: "direct" })?.src ?? null;
 }

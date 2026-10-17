@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {responsiveArtwork,artworkIdentity,ARTWORK_WIDTHS} from '../src/lib/responsive-artwork.ts';
 
-test('automatic routing follows the optional disk cache for TMDB and TVDB',()=>{
+test('automatic routing keeps public images on their CDN even when disk caching is enabled',()=>{
   const previous=globalThis.document;
   try {
     globalThis.document={body:{dataset:{imageCache:'false'}}};
     assert.equal(responsiveArtwork('/poster.jpg',{size:'w342',route:'auto'}).src,'https://image.tmdb.org/t/p/w342/poster.jpg');
     globalThis.document.body.dataset.imageCache='true';
-    assert.equal(responsiveArtwork('https://image.tmdb.org/t/p/original/poster.jpg',{size:'w342',route:'auto'}).src,'/api/proxy/media/image/w342/poster.jpg');
-    assert.equal(responsiveArtwork('https://artworks.thetvdb.com/banners/person.jpg',{route:'auto'}).src,'/api/proxy/media/image/tvdb/banners/person.jpg');
+    assert.equal(responsiveArtwork('https://image.tmdb.org/t/p/original/poster.jpg',{size:'w342',route:'auto'}).src,'https://image.tmdb.org/t/p/w342/poster.jpg');
+    assert.equal(responsiveArtwork('https://artworks.thetvdb.com/banners/person.jpg',{route:'auto'}).src,'https://artworks.thetvdb.com/banners/person.jpg');
+    assert.equal(responsiveArtwork('/poster.jpg').src,'https://image.tmdb.org/t/p/w500/poster.jpg');
     globalThis.document.body.dataset.imageCache='false';
     assert.equal(responsiveArtwork('/api/proxy/media/image/tvdb/banners/person.jpg',{route:'auto'}).src,'https://artworks.thetvdb.com/banners/person.jpg');
   }finally{if(previous===undefined)delete globalThis.document;else globalThis.document=previous;}

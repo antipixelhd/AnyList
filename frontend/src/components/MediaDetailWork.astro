@@ -3,7 +3,7 @@ import Icon from './Icon.astro';
 import {detailWorkCaption, relationLabel} from '../lib/media-detail-data';
 import {detailWorkArtwork} from '../lib/detail-artwork';
 const {work, similar = false} = Astro.props;
-const artwork = detailWorkArtwork(work.poster, similar, Astro.locals.imageCacheEnabled ? 'proxy' : 'direct');
+const artwork = detailWorkArtwork(work.poster, similar, 'direct');
 ---
 <a href={work.url} class={similar ? undefined : 'lab-related-card'}>
   {artwork ? <img {...artwork} alt="" loading="lazy" fetchpriority="low"/> : <span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span>}

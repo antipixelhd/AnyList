@@ -37,7 +37,7 @@ const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
           <h2>{section.heading}</h2>
           <div class="library-grid">
             {section.items.map(entry => {
-              const image = responsiveArtwork(entry.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:Astro.locals.imageCacheEnabled?'proxy':'direct'});
+              const image = responsiveArtwork(entry.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
               return <article class="library-card" data-library-entry>
                 <a class="library-poster" href={`/title/${entry.id}`} aria-label={entry.title} title={entry.title}>
                   {image?.src && <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>}

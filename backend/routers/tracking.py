@@ -1551,6 +1551,23 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
     return data
 
 
+@router.get('/title/{media_id}/artwork-preview')
+async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+                                viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+    await catalog_access(db,viewer)
+    media=await db.get(Media,media_id)
+    if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):raise HTTPException(404,'Title not found')
+    from core.media_images import fill_artwork_preview,screen_artwork_preview
+    viewer_id=viewer.id if viewer else -1
+    key=await settings_store.get_user_tmdb_key(db,viewer_id)
+    tvdb_key=await settings_store.get_user_tvdb_key(db,viewer_id)
+    await fill_artwork_preview(db,media,key,tvdb_key)
+    data=screen_artwork_preview(media)
+    if not tvdb_key:data['preview_status']={'state':'unavailable'}
+    return data
+
+
 @router.get('/title/{media_id}/images')
 async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:

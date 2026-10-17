@@ -2123,9 +2123,15 @@ async def serve_rating_poster(
     streams it back, exactly like the TMDB proxy above. Any failure (no key,
     RPDB down, non-image response) falls back to the already-proxied TMDB
     poster the caller passed in `fallback`."""
-    # `fallback` is always an internal proxied-poster path built by the
-    # frontend's tmdbImageUrl(); never an arbitrary URL.
-    if not fallback.startswith("/api/proxy/media/image/") or "\n" in fallback:
+    # Public provider fallbacks no longer need a second hop through this server.
+    try:
+        target=urllib.parse.urlsplit(fallback)
+    except ValueError:
+        raise HTTPException(status_code=400,detail='Invalid fallback') from None
+    provider_fallback=(target.scheme=='https' and target.netloc in ('image.tmdb.org','artworks.thetvdb.com')
+                       and not target.username and not target.password)
+    legacy_fallback=fallback.startswith('/api/proxy/media/image/') and not target.netloc
+    if not (provider_fallback or legacy_fallback) or any(ord(char)<32 for char in fallback) or '\\' in fallback:
         raise HTTPException(status_code=400, detail="Invalid fallback")
 
     def _to_fallback() -> RedirectResponse:

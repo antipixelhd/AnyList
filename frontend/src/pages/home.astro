@@ -9,7 +9,7 @@ import {responsiveArtwork} from '../lib/responsive-artwork';
 let activities:any[]=[],error='',seriesInProgress:any[]=[],upcomingSeasons:any[]=[],watchingCount:number|null=null;
 if(!Astro.locals.user)return Astro.redirect('/browse');
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
-const imageRoute=Astro.locals.imageCacheEnabled?'proxy':'direct';
+const imageRoute='direct';
 const [activityResult,listResult,upcomingResult]=await Promise.allSettled([
   tracker('activity',Astro.locals.token),
   tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token),
