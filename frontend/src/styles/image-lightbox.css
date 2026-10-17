@@ -1,6 +1,6 @@
 .image-lightbox { width:min(1200px,calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 40px); padding:24px; background:var(--panel); color:var(--bright); border:1px solid var(--border); border-radius:8px; grid-template-columns:40px minmax(0,1fr) 40px; align-items:center; gap:18px; }
 .image-lightbox[open] { display:grid; }
-.image-lightbox::backdrop { background:#000c; animation:image-backdrop-in .18s ease-out both; }
+.image-lightbox::backdrop { background:#07111dcc; backdrop-filter:blur(5px); animation:image-backdrop-in .18s ease-out both; }
 .image-lightbox[data-motion-closing]::backdrop { animation:image-backdrop-out .12s ease-in both; }
 @keyframes image-backdrop-in { from { opacity:0; } to { opacity:1; } }
 @keyframes image-backdrop-out { from { opacity:1; } to { opacity:0; } }
@@ -57,8 +57,8 @@
   .image-lightbox[data-gallery=posters] .image-viewer-loading { height:min(600px,calc(100dvh - 160px),calc((100vw - 146px) * 1.5)); }
   .image-viewer-slots { justify-content:start; }
   .image-lightbox:not([data-gallery])>img { height:auto; max-height:calc(100dvh - 160px); }
-  .image-lightbox[data-image-gallery] { --preview-bottom:max(40px,calc(env(safe-area-inset-bottom) + 24px)); width:100vw; height:100dvh; margin:0; padding:0; border-radius:0; grid-template-rows:minmax(0,1fr); }
-  .image-lightbox[data-image-gallery]::backdrop { background:rgb(0 0 0 / var(--viewer-backdrop,.8)); }
+  .image-lightbox[data-image-gallery] { --preview-bottom:12px; width:var(--viewer-image-width,calc(100vw - 48px)); height:var(--viewer-image-height,calc((100vw - 48px) * .5625)); max-width:calc(100vw - 48px); max-height:calc(100dvh - 48px); margin:auto; padding:0; border-radius:8px; grid-template-rows:minmax(0,1fr); }
+  .image-lightbox[data-image-gallery]::backdrop { background:rgb(7 17 29 / var(--viewer-backdrop,.8)); }
   .image-lightbox[data-image-gallery] .image-viewer-track { touch-action:pan-x pinch-zoom; overscroll-behavior:none; }
   .image-lightbox[data-image-gallery] .image-viewer-slots { touch-action:pan-x pinch-zoom; overscroll-behavior:none; }
   .image-lightbox[data-viewer-dragging] { will-change:translate; }

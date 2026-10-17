@@ -55,4 +55,12 @@ test('poster framing is ready before opening, with resize work limited to visibl
   assert.deepEqual(properties,stage);
   fit({naturalWidth:600,naturalHeight:900},'posters');
   assert.deepEqual(properties,stage);
+  window.innerWidth=390;
+  window.innerHeight=844;
+  fit({naturalWidth:1920,naturalHeight:1080},'artwork');
+  assert.equal(properties.get('--viewer-image-width'),'342px');
+  assert.equal(properties.get('--viewer-image-height'),'192.375px');
+  fit(undefined,'posters');
+  assert.equal(properties.get('--viewer-image-width'),'342px');
+  assert.equal(properties.get('--viewer-image-height'),'513px');
 });

@@ -11,10 +11,8 @@ export function detailPosterViewerFrame(viewportWidth:number,viewportHeight:numb
 }
 
 export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSignal) {
-  const desktop=matchMedia('(min-width:651px)');
   let selected:HTMLImageElement|undefined,group:'posters'|'artwork'='artwork';
   const fit=()=>{
-    if(!desktop.matches)return;
     const ready=selected?.naturalWidth&&selected?.naturalHeight;
     const dimensions=group==='posters'?detailPosterViewerFrame(window.innerWidth,window.innerHeight)
       :detailViewerFrame(ready?selected!.naturalWidth:1280,ready?selected!.naturalHeight:720,window.innerWidth,window.innerHeight);
@@ -23,7 +21,6 @@ export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSigna
   };
   const fitVisible=()=>{if(dialog.open)fit();};
   window.addEventListener('resize',fitVisible,{signal,passive:true});
-  desktop.addEventListener('change',fitVisible,{signal});
   dialog.addEventListener('close',()=>{selected=undefined;},{signal});
   // Prepare the correct aspect ratio before showModal measures the first frame.
   return (image:HTMLImageElement|undefined,kind:'posters'|'artwork')=>{selected=image;group=kind;fit();};
