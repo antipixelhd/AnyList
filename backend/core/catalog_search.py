@@ -246,9 +246,11 @@ def search_rank(term: str, item: dict, *, streaming_available: bool = False,
     vote_weight = logarithmic_signal(votes, 5)
     popularity_weight = logarithmic_signal(item.get('popularity'), 2)
     poster_weight = .5 if item.get('poster_path') or item.get('poster') else 0
+    # These are alternative release signals. Stacking them gives movies a
+    # second bonus that series can never earn in combined search results.
+    available = (streaming_available and prefer_streaming) or (theatrical and prefer_theatrical)
     return round(relevance + vote_weight + popularity_weight +
-                 (15 if streaming_available and prefer_streaming else 0) +
-                 (15 if theatrical and prefer_theatrical else 0) + poster_weight, 3)
+                 (15 if available else 0) + poster_weight, 3)
 
 
 def media_search_rank(term: str, item: dict, media_type: str, region: str,

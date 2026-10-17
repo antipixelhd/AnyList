@@ -17,6 +17,23 @@ from pydantic import ValidationError
 
 
 class ResultPolicyTests(unittest.TestCase):
+    def test_combined_search_does_not_give_movies_two_availability_bonuses(self):
+        # Representative metadata, deliberately giving the movie both signals.
+        offers = {'DE': {'flatrate': [{'provider_id': 1}]}}
+        movie = {'title': 'Silo', 'vote_count': 150, 'popularity': 3,
+                 'poster_path': '/movie.jpg', 'watch_providers': offers,
+                 'theatrical_release_dates_by_country': {'DE': ['2021-01-01']}}
+        series = {'name': 'Silo', 'vote_count': 1500, 'popularity': 30,
+                  'poster_path': '/series.jpg', 'watch_providers': offers}
+        movie_score = media_search_rank('silo', movie, 'movie', 'DE', {})
+        series_score = media_search_rank('silo', series, 'series', 'DE', {})
+        self.assertGreater(series_score, movie_score)
+        self.assertEqual(movie_score, media_search_rank('silo',
+            {**movie, 'theatrical_release_dates_by_country': {}}, 'movie', 'DE', {}))
+        # Equal popularity and votes should yield equal scores across types.
+        self.assertEqual(movie_score, media_search_rank('silo',
+            {**series, 'vote_count': 150, 'popularity': 3}, 'series', 'DE', {}))
+
     def test_shared_rank_balances_exact_match_with_popularity_and_availability(self):
         exact_low = {'title':'War', 'vote_count':10, 'popularity':8, 'poster_path':'/war.jpg'}
         exact_high = {'name':'War', 'vote_count':1000, 'popularity':80, 'poster_path':'/war.jpg'}
