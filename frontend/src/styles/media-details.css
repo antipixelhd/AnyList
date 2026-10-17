@@ -22,6 +22,9 @@
   top:-20px; height:calc(100% + 116px);
   object-fit:cover; object-position:center calc(42% + 20px); clip-path:inset(20px 0 20px);
 }
+.media-detail.concept-marquee[data-media-kind=movie] .lab-hero-image {
+  object-position:center calc(42% + 35px);
+}
 .media-detail .lab-hero-art-button { border:0; background:transparent; color:#d4e0ea99; transition:background-color .18s ease,color .18s ease; }
 .media-detail .lab-hero-art-button .ui-icon { width:15px; height:15px; filter:drop-shadow(0 1px 2px #0008); }
 .media-detail .lab-hero-art-button:is(:hover,:focus-visible) { outline:none; background:#15233380; color:var(--bright); }
