@@ -11,6 +11,7 @@ import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
+import {commitDetailHero} from './detail-hero';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
@@ -222,9 +223,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const candidate=sameImage?hero:new Image();
     const commit=()=>{
       if(signal.aborted||revision!==heroRevision)return;
-      if(candidate!==hero){candidate.className=hero.className;candidate.alt='';hero.replaceWith(candidate);}
-      candidate.hidden=false;galleries.hero=[url];
-      if(button){button.dataset.detailImage=url;button.hidden=false;}
+      commitDetailHero(hero,candidate,url,button,backdrop=>{
+        galleries.hero=[backdrop];
+        editorStore.updateArtwork(info.id,{backdrop});
+      });
     };
     const failed=()=>{
       if(signal.aborted||revision!==heroRevision)return;
@@ -260,10 +262,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         const coverImage=cover.querySelector('img');
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
-      const heroButton=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
       fallback=data.backdrop_fallback||fallback;
       paintHero(data.backdrop);
-      editorStore.updateArtwork(info.id,{poster:primary,backdrop:heroButton?.dataset.detailImage});
+      editorStore.updateArtwork(info.id,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
@@ -338,7 +339,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const background=detailBackground<{backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(
       `/api/proxy/tracking/title/${info.id}/background`,signal,data=>{
         fallback=data.backdrop_fallback||fallback;
-        if(data.backdrop){paintHero(data.backdrop);editorStore.updateArtwork(info.id,{backdrop:data.backdrop});}
+        if(data.backdrop)paintHero(data.backdrop);
         return data.background_status;
       },()=>{});
     if(!initialHero||info.backgroundStatus?.state!=='ready')void background.load();
