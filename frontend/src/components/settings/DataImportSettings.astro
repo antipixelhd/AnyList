@@ -124,7 +124,6 @@ const { hasTmdbKey } = Astro.props;
       <label for="netflix-import-language" class="mt-3 flex flex-col gap-1 text-xs text-zinc-500 sm:flex-row sm:items-center sm:gap-3">CSV language <select id="netflix-import-language" class="w-fit rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-300"><option value="auto">Detect automatically</option><option value="en">English</option><option value="de">Deutsch</option></select><span>English and German exports are supported.</span></label>
       <label class="mt-3 flex items-start gap-2 text-xs text-zinc-300"><input id="netflix-skip-anime" type="checkbox" checked disabled class="mt-0.5 h-4 w-4 accent-blue-500" /><span>Skip anime automatically <span class="block text-zinc-500">Required until AniList import or connection is supported.</span></span></label>
       </div>
-      <p id="netflix-import-error" class="mt-3 hidden rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200" role="alert"></p>
       <section id="netflix-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
       <dialog id="netflix-remap-dialog" aria-labelledby="netflix-remap-title" class="quick-search-dialog netflix-remap-dialog">
         <h2 id="netflix-remap-title" class="sr-only">Select a movie or series</h2>

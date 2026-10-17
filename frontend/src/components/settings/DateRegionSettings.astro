@@ -6,16 +6,20 @@ const selected = dateRegion(Astro.cookies.get(DATE_REGION_COOKIE)?.value) || '';
 <section aria-labelledby="date-region-heading">
   <div class="mb-4 border-b border-zinc-800 pb-2"><h2 id="date-region-heading" class="section-headline">Date and time</h2></div>
   <label for="date-region" class="block text-sm font-medium text-zinc-400 mb-2">Region</label>
-  <select id="date-region" class="bg-zinc-900 rounded-lg px-4 py-3 text-zinc-100 transition-colors focus:outline-none focus:bg-zinc-800" data-date-region>
-    <option value="" selected={!selected}>Browser default</option>
-    {DATE_REGIONS.map(([locale, label]) => <option value={locale} selected={selected === locale}>{label}</option>)}
-  </select>
+  <div class="max-w-xs">
+    <select id="date-region" class="w-full border border-zinc-800 bg-zinc-900 rounded-lg px-4 py-3 text-zinc-100 transition-colors" data-date-region>
+      <option value="" selected={!selected}>Browser default</option>
+      {DATE_REGIONS.map(([locale, label]) => <option value={locale} selected={selected === locale}>{label}</option>)}
+    </select>
+  </div>
   <p class="text-sm text-zinc-400 mt-3"><LocalDateTime value="2026-10-13T18:30:00Z" style="datetime" /></p>
-  <p class="text-xs text-zinc-500 mt-2">Saved for this browser.</p>
-  <span class="setting-save-state" data-date-region-status role="status"></span>
 </section>
+<style>
+  #date-region:focus-visible { outline:none; border-color:var(--blue); background:var(--panel); }
+</style>
 <script>
   import { DATE_REGION_COOKIE, dateRegion } from '../../lib/date-region';
+  import { showMessage } from '../../lib/settings-feedback';
   let listeners: AbortController | undefined;
   function mount() {
     listeners?.abort(); listeners = new AbortController();
@@ -25,8 +29,7 @@ const selected = dateRegion(Astro.cookies.get(DATE_REGION_COOKIE)?.value) || '';
       const value = dateRegion(select.value) || '';
       document.cookie = `${DATE_REGION_COOKIE}=${value}; Path=/; Max-Age=${value ? 31536000 : 0}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
       document.dispatchEvent(new Event('anylist:date-region-change'));
-      const status = document.querySelector<HTMLElement>('[data-date-region-status]');
-      if (status) status.textContent = 'Saved';
+      showMessage('Date and time setting saved.');
     }, { signal });
     document.addEventListener('astro:before-swap', () => listeners?.abort(), {signal, once:true});
   }

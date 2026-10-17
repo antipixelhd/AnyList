@@ -1,5 +1,6 @@
 ---
 import AccountNameSettings from "../components/settings/AccountNameSettings.astro";
+import DateRegionSettings from "../components/settings/DateRegionSettings.astro";
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import Icon from "../components/Icon.astro";
 import { api } from "../lib/api";
@@ -30,6 +31,7 @@ if (me.totp_enabled) {
 
     <div class="settings-stack">
       <AccountNameSettings username={me.username} />
+      <DateRegionSettings />
 
       <!-- Security -->
       <section id="2fa-section">
@@ -95,7 +97,6 @@ if (me.totp_enabled) {
                       Cancel
                     </button>
                   </div>
-                  <p id="2fa-setup-error" class="hidden text-sm text-red-400"></p>
                 </div>
               </div>
             </div>
@@ -165,7 +166,6 @@ if (me.totp_enabled) {
                   Cancel
                 </button>
               </div>
-              <p id="2fa-disable-error" class="hidden text-sm text-red-400"></p>
             </div>
 
             <!-- Backup codes -->
@@ -655,21 +655,11 @@ if (me.totp_enabled) {
   let pendingTotpSecret = '';
 
   function show2faSetupError(msg: string) {
-    const el = document.getElementById('2fa-setup-error');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.remove('hidden');
-  }
-
-  function hide2faSetupError() {
-    document.getElementById('2fa-setup-error')?.classList.add('hidden');
+    showMessage(msg, 'error');
   }
 
   function show2faDisableError(msg: string) {
-    const el = document.getElementById('2fa-disable-error');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.remove('hidden');
+    showMessage(msg, 'error');
   }
 
   function setup2fa() {
@@ -692,7 +682,6 @@ if (me.totp_enabled) {
     enableBtn?.addEventListener('click', async () => {
       enableBtn.textContent = 'Loading...';
       (enableBtn as HTMLButtonElement).disabled = true;
-      hide2faSetupError();
 
       try {
         const res = await fetch(`/api/proxy/auth/2fa/setup`, {
@@ -728,7 +717,6 @@ if (me.totp_enabled) {
     cancelSetupBtn?.addEventListener('click', () => {
       setupPanel?.classList.add('hidden');
       pendingTotpSecret = '';
-      hide2faSetupError();
       if (verifyInput) verifyInput.value = '';
     });
 
@@ -739,7 +727,6 @@ if (me.totp_enabled) {
       confirmEnableBtn.disabled = true;
       const orig = confirmEnableBtn.textContent;
       confirmEnableBtn.textContent = 'Verifying...';
-      hide2faSetupError();
 
       try {
         const res = await fetch(`/api/proxy/auth/2fa/enable`, {
@@ -789,7 +776,6 @@ if (me.totp_enabled) {
       disablePanel?.classList.add('hidden');
       disableBtn?.classList.remove('hidden');
       if (disableCodeInput) disableCodeInput.value = '';
-      document.getElementById('2fa-disable-error')?.classList.add('hidden');
     });
 
     confirmDisableBtn?.addEventListener('click', async () => {
@@ -799,7 +785,6 @@ if (me.totp_enabled) {
       confirmDisableBtn.disabled = true;
       const orig = confirmDisableBtn.textContent;
       confirmDisableBtn.textContent = 'Disabling...';
-      document.getElementById('2fa-disable-error')?.classList.add('hidden');
 
       try {
         const res = await fetch(`/api/proxy/auth/2fa/disable`, {
