@@ -445,6 +445,14 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(250, query.compile().params.values())
         self.assertNotIn("votes", response.text)
 
+    async def test_quick_search_matches_original_titles_and_escapes_literal_wildcards(self):
+        with patch('core.tmdb.search_movies', AsyncMock(return_value={'results': []})):
+            response = await self.client.get('/tracking/catalog', params={'q': 'War_'})
+        self.assertEqual(response.status_code, 200, response.text)
+        query = self.db.execute.await_args_list[0].args[0]
+        self.assertIn('original_title', str(query.whereclause))
+        self.assertIn('%War\\_%', query.compile().params.values())
+
 
 @unittest.skipUnless(
     os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database"

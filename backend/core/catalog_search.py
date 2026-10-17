@@ -251,32 +251,54 @@ def search_rank(term: str, item: dict, *, streaming_available: bool = False,
                  (15 if theatrical and prefer_theatrical else 0) + poster_weight, 3)
 
 
+def media_search_rank(term: str, item: dict, media_type: str, region: str,
+                      preferences: dict) -> float:
+    from core.cinema_releases import theatrical_dates
+    return search_rank(term, item,
+        streaming_available=has_streaming_offer(item, region),
+        theatrical=bool(theatrical_dates(item, region)) if media_type == 'movie' else False,
+        prefer_streaming=preferences.get('prefer_streaming_series', True) if media_type == 'series' else True,
+        prefer_theatrical=preferences.get('prefer_theatrical_movies', True))
+
+
 async def enrich_search_evidence(items: list[dict], term: str, media_type: str,
                                  api_key: str | None, region: str, *, theatrical=False,
-                                 limit=8, timeout=.9) -> None:
+                                 streaming=True, limit=8, timeout=.9) -> None:
     """Check only the leading search candidates; reuse TMDB's shared TTL cache."""
-    if not api_key or len(term) < 3:
+    if not api_key or len(term) < 3 or not (streaming or theatrical):
         return
     from core import tmdb
-    candidates = sorted((item for item in items if isinstance(item.get('id'), int)),
-                        key=lambda item: search_rank(term, item), reverse=True)[:limit]
+    def needs_evidence(item):
+        return ((streaming and 'watch/providers' not in item and 'watch_providers' not in item)
+                or (theatrical and media_type == 'movie' and 'release_dates' not in item
+                    and 'theatrical_release_dates_by_country' not in item))
+
+    unique = {item['id']: item for item in items if isinstance(item.get('id'), int) and needs_evidence(item)}
+    ranked = sorted(unique.values(),
+                    key=lambda item: search_rank(term, item), reverse=True)
+    # A low-vote exact title can fall below popular partial matches before its
+    # release evidence arrives. Reserve two slots without increasing the budget.
+    exact = [item for item in ranked if exact_title_match(term, item)][:2]
+    exact_ids = {item['id'] for item in exact}
+    candidates = (exact + [item for item in ranked if item['id'] not in exact_ids])[:limit]
     semaphore = asyncio.Semaphore(4)
 
-    async def load(item):
+    async def fetch(provider, identifier):
         async with semaphore:
-            identifier = item['id']
-            calls = []
-            if 'watch/providers' not in item and 'watch_providers' not in item:
-                provider = tmdb.get_movie_watch_providers if media_type == 'movie' else tmdb.get_show_watch_providers
-                calls.append(('watch/providers', provider(identifier, api_key=api_key)))
-            if theatrical and media_type == 'movie' and 'release_dates' not in item and 'theatrical_release_dates_by_country' not in item:
-                calls.append(('release_dates', tmdb.get_movie_release_dates(identifier, api_key=api_key)))
-            if not calls:
-                return
-            responses = await asyncio.gather(*(call for _, call in calls), return_exceptions=True)
-            for (name, _), response in zip(calls, responses):
-                if isinstance(response, dict):
-                    item[name] = response
+            return await provider(identifier, api_key=api_key)
+
+    async def load(item):
+        identifier = item['id']
+        calls = []
+        if streaming and 'watch/providers' not in item and 'watch_providers' not in item:
+            provider = tmdb.get_movie_watch_providers if media_type == 'movie' else tmdb.get_show_watch_providers
+            calls.append(('watch/providers', provider))
+        if theatrical and media_type == 'movie' and 'release_dates' not in item and 'theatrical_release_dates_by_country' not in item:
+            calls.append(('release_dates', tmdb.get_movie_release_dates))
+        responses = await asyncio.gather(*(fetch(provider, identifier) for _, provider in calls), return_exceptions=True)
+        for (name, _), response in zip(calls, responses):
+            if isinstance(response, dict):
+                item[name] = response
 
     try:
         await asyncio.wait_for(asyncio.gather(*(load(item) for item in candidates)), timeout)

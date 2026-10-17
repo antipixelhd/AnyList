@@ -698,7 +698,8 @@ async def browse_page(
             if term:
                 from core.catalog_search import enrich_search_evidence
                 await enrich_search_evidence(items, term, media_type, key, filters.get('region', 'US'),
-                    theatrical=media_type == 'movie' and ranking.get('prefer_theatrical_movies', False))
+                    theatrical=media_type == 'movie' and ranking.get('prefer_theatrical_movies', True),
+                    streaming=media_type == 'movie' or ranking.get('prefer_streaming_series', True))
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
             if source == "remote" or page > 1:
@@ -802,21 +803,16 @@ async def browse_page(
     from core.tracking_editor import attach_editor_context
     await attach_editor_context(db, viewer, results, media_rows=known if remote is not None else rows)
     if term:
-        from core.catalog_search import search_rank, has_streaming_offer
-        from core.cinema_releases import theatrical_dates
+        from core.catalog_search import media_search_rank
         media_by_id = {media.id: media for media in (known if remote is not None else rows)}
         remote_by_id = {item['id']: item for item in items} if remote is not None else {}
         for row in results:
             media = media_by_id.get(row.get('id'))
             metadata = {**(media.tmdb_data or {})} if media else {}
             metadata.update(remote_by_id.get(row.get('tmdb_id'), {}))
-            metadata.update(title=row.get('title'), original_title=media.original_title if media else metadata.get('original_title'),
+            metadata.update(title=row.get('title'), original_title=(media.original_title or metadata.get('original_title')) if media else metadata.get('original_title'),
                             poster_path=row.get('poster'))
-            row['search_rank'] = search_rank(term, metadata,
-                streaming_available=has_streaming_offer(metadata, filters.get('region', 'US')),
-                theatrical=bool(theatrical_dates(metadata, filters.get('region', 'US'))) if media_type == 'movie' else False,
-                prefer_streaming=ranking.get('prefer_streaming_series', True) if media_type == 'series' else True,
-                prefer_theatrical=ranking.get('prefer_theatrical_movies', False))
+            row['search_rank'] = media_search_rank(term, metadata, media_type, filters.get('region', 'US'), ranking)
         results.sort(key=lambda row: row['search_rank'], reverse=True)
     return {
         "results": results,

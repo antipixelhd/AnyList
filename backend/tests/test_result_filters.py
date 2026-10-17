@@ -1,12 +1,14 @@
 """Result policy, provider forwarding, and partial preference validation."""
 import os
+import asyncio
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault('SECRET_KEY', 'results-filter-tests')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
-from core.catalog_search import matches_result_filters, search_rank, has_streaming_offer, enrich_search_evidence
+from core.catalog_search import matches_result_filters, search_rank, has_streaming_offer, enrich_search_evidence, media_search_rank
 from core.cinema_releases import theatrical_dates
 from core.browse import remote_params, remote_page
 from core import tmdb
@@ -35,6 +37,8 @@ class ResultPolicyTests(unittest.TestCase):
         self.assertEqual(theatrical_dates(future, 'DE'), ['2099-10-01'])
         self.assertGreater(search_rank('war', future, theatrical=True, prefer_theatrical=True),
                            search_rank('war', future, theatrical=False, prefer_theatrical=True))
+        self.assertGreater(media_search_rank('war', future, 'movie', 'DE', {'prefer_theatrical_movies': True}),
+                           media_search_rank('war', future, 'movie', 'DE', {'prefer_theatrical_movies': False}))
 
     def test_runtime_boundary_unknown_and_series(self):
         for runtime, expected in ((2, False), (29, False), (30, True), (31, True), (None, True), (0, True)):
@@ -68,6 +72,51 @@ class ResultPolicyTests(unittest.TestCase):
 
 
 class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_slow_search_evidence_does_not_hold_the_response(self):
+        async def stalled(identifier, api_key=None):
+            await asyncio.Event().wait()
+
+        started = time.monotonic()
+        with patch('core.tmdb.get_show_watch_providers', side_effect=stalled):
+            await enrich_search_evidence([{'id': 1, 'name': 'War'}], 'war', 'series', 'fixture', 'DE', timeout=.03)
+        self.assertLess(time.monotonic() - started, .2)
+
+    async def test_search_evidence_caps_request_count_and_concurrency(self):
+        active = peak = calls = 0
+
+        async def provider(identifier, api_key=None):
+            nonlocal active, peak, calls
+            active += 1
+            peak = max(peak, active)
+            calls += 1
+            try:
+                await asyncio.sleep(.01)
+                return {'results': {}}
+            finally:
+                active -= 1
+
+        items = [{'id': index, 'name': f'War {index}', 'vote_count': index} for index in range(1, 17)]
+        with patch('core.tmdb.get_show_watch_providers', side_effect=provider):
+            await enrich_search_evidence(items, 'war', 'series', 'fixture', 'DE')
+        self.assertEqual(calls, 8)
+        self.assertLessEqual(peak, 4)
+
+    async def test_search_enrichment_skips_disabled_or_cached_evidence(self):
+        items = [{'id': 1, 'name': 'War', 'watch/providers': {'results': {}}},
+                 {'id': 2, 'name': 'War Stories'}]
+        with patch('core.tmdb.get_show_watch_providers', AsyncMock(return_value={'results': {}})) as offers:
+            await enrich_search_evidence(items, 'war', 'series', 'fixture', 'DE', streaming=False)
+            offers.assert_not_awaited()
+            await enrich_search_evidence(items, 'war', 'series', 'fixture', 'DE', limit=1)
+            offers.assert_awaited_once_with(2, api_key='fixture')
+
+    async def test_exact_title_keeps_enrichment_slot_against_popular_partial_matches(self):
+        items = [{'id': 1, 'name': 'War Stories', 'vote_count': 100000},
+                 {'id': 2, 'name': 'War', 'vote_count': 1}]
+        with patch('core.tmdb.get_show_watch_providers', AsyncMock(return_value={'results': {}})) as offers:
+            await enrich_search_evidence(items, 'war', 'series', 'fixture', 'DE', limit=1)
+        offers.assert_awaited_once_with(2, api_key='fixture')
+
     async def test_search_enrichment_uses_offer_and_future_release_metadata(self):
         items = [{'id': 42, 'title': 'War', 'vote_count': 10}]
         providers = {'results': {'DE': {'flatrate': [{'provider_id': 1}]}}}
