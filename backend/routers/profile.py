@@ -1,9 +1,10 @@
 from core import settings_store
 import asyncio
 from collections import defaultdict
+from html import escape
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, case, or_
@@ -466,16 +467,16 @@ async def get_avatar(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user_or_api_key),
 ):
-    await _check_profile_access(user_id, current_user, db)
+    user, _ = await _check_profile_access(user_id, current_user, db)
 
     result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == user_id))
     profile = result.scalar_one_or_none()
-    if not profile or not profile.avatar_path:
-        raise HTTPException(status_code=404, detail="No avatar")
-
-    path = settings.data_dir / "avatars" / profile.avatar_path
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Avatar file not found")
+    name = profile.avatar_path if profile else None
+    path = settings.data_dir / "avatars" / name if name in (f"{user_id}.jpg", f"{user_id}.png", f"{user_id}.webp") else None
+    if not path or not path.is_file() or path.is_symlink():
+        initial = escape((user.username.strip()[:1] or "?").upper())
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140"><rect width="140" height="140" fill="#2b435a"/><text x="70" y="92" text-anchor="middle" fill="#badcf5" font-family="sans-serif" font-size="70" font-weight="700">{initial}</text></svg>'
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "private, no-store"})
 
     ext = path.suffix.lstrip(".")
     media_type = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/jpeg")

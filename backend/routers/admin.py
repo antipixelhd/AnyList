@@ -29,7 +29,8 @@ from models.media_request import MediaRequest, RequestStatus
 from models.users import UserSettings
 from dependencies import require_admin
 from core.url_validator import validate_service_url
-from core.backup import asyncpg_conn, restore_backup
+from core.backup import asyncpg_conn, restore_backup, avatar_backup_files, backup_avatar_manifest, write_backup_entry
+from core.config import settings as app_settings
 import schemas
 
 router = APIRouter()
@@ -236,21 +237,21 @@ async def backup_database(_: User = Depends(require_admin)):
             "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename != 'alembic_version'"
         )
         tables = [r["tablename"] for r in rows]
+        avatar_rows = await conn.fetch("SELECT user_id, avatar_path FROM user_profiles WHERE avatar_path IS NOT NULL")
+        avatars = avatar_backup_files(app_settings.data_dir / "avatars", avatar_rows)
 
         buf = io.BytesIO()
         with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-            header = json.dumps({"version": 1, "tables": tables}).encode()
+            header = json.dumps({"version": 2, "tables": tables, "avatars": backup_avatar_manifest(avatars)}).encode()
             gz.write(struct.pack(">I", len(header)))
             gz.write(header)
             for table in tables:
                 data_buf = io.BytesIO()
                 await conn.copy_from_table(table, output=data_buf, format="binary")
                 data = data_buf.getvalue()
-                name_bytes = table.encode()
-                gz.write(struct.pack(">H", len(name_bytes)))
-                gz.write(name_bytes)
-                gz.write(struct.pack(">Q", len(data)))
-                gz.write(data)
+                write_backup_entry(gz, table, data)
+            for name, data in avatars.items():
+                write_backup_entry(gz, name, data)
 
         payload = buf.getvalue()
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")

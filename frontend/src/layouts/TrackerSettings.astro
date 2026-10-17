@@ -15,6 +15,7 @@ import NavigationRuntime from '../components/NavigationRuntime.astro';
 import MotionRuntime from '../components/MotionRuntime.astro';
 import StyledSelectRuntime from '../components/StyledSelectRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
+import ProfileImageFallback from '../components/ProfileImageFallback.astro';
 import ToastRuntime from '../components/ToastRuntime.astro';
 import DateTimeRuntime from '../components/DateTimeRuntime.astro';
 import '../styles/settings-mobile-header.css';
@@ -36,6 +37,7 @@ const pathname = Astro.url.pathname;
     <PrimaryFontPreloads />
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <ProfileImageFallback />
     <meta name="theme-color" content="#0b1622" />
     <title>{title} · AnyList</title>
     <link rel="icon" href="/favicon.svg" />
