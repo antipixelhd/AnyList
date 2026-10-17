@@ -8,7 +8,7 @@ const selected = dateRegion(Astro.cookies.get(DATE_REGION_COOKIE)?.value) || '';
   <label for="date-region" class="block text-sm font-medium text-zinc-400 mb-2">Region</label>
   <div class="max-w-xs">
     <select id="date-region" class="w-full border border-zinc-800 bg-zinc-900 rounded-lg px-4 py-3 text-zinc-100 transition-colors" data-date-region>
-      <option value="" selected={!selected}>Browser default</option>
+      <option value="" selected={!selected}>Automatic</option>
       {DATE_REGIONS.map(([locale, label]) => <option value={locale} selected={selected === locale}>{label}</option>)}
     </select>
   </div>

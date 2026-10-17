@@ -1,4 +1,4 @@
-import { browserDateRegion, dateRegion } from './date-region.ts';
+import { browserDateRegion, dateRegion, deviceDateRegion } from './date-region.ts';
 
 /** Display only: API values and native date/datetime inputs remain ISO. */
 export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'month' | 'month-short' | 'month-name' | 'month-name-short' | 'month-day';
@@ -47,7 +47,8 @@ export function formatDateTime(value: string | number | Date | null | undefined,
   if (!date) return '';
   // UTC here preserves a calendar day; real instants use the viewer's zone.
   const options = { ...styles[style], ...(calendar ? { timeZone: 'UTC' } : context.timeZone ? { timeZone: context.timeZone } : {}) };
-  const locale = context.locale ?? browserDateRegion();
+  const textual = style.startsWith('month');
+  const locale = context.locale ?? browserDateRegion() ?? (typeof document !== 'undefined' && !textual ? deviceDateRegion() : undefined);
   const key = JSON.stringify([locale ?? null, options]);
   let formatter = formatters.get(key);
   if (!formatter) {
