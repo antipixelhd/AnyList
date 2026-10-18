@@ -680,8 +680,17 @@ async def remote_page(
                 break
         return data, items
     from core.title_search import candidates
+    # Curated search evaluates a bounded candidate selection, rather than
+    # advertising hundreds of unverified pages that mostly fail the floor.
+    # Broad Show all searches have zero floors and retain provider pagination.
+    candidate_limit = 6 if filters.get('min_popularity') or filters.get('min_votes') else 500
+    if page > candidate_limit:
+        return {'page': candidate_limit, 'provider_more': False, 'has_more': False,
+                'feed_next': -1, 'partial': True}, []
     data, items = await candidates(term, media_type, key, page)
-    data = {**data, 'page': page, 'provider_more': page < min(data.get('total_pages', 1), 500), 'feed_next': -1}
+    data = {**data, 'page': page,
+            'provider_more': page < min(data.get('total_pages', 1), candidate_limit),
+            'partial': data.get('total_pages', 1) > candidate_limit, 'feed_next': -1}
     data['has_more'] = data['provider_more']
     needs_details = filters['status'] in ('airing', 'returning', 'finished', 'cancelled') or filters['provider'] or (media_type == 'movie' and filters.get('cinema'))
     if needs_details:

@@ -241,6 +241,23 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
                     movie.assert_not_awaited()
                     show.assert_not_awaited()
 
+    async def test_curated_search_finishes_candidate_pool_without_false_load_more(self):
+        data = {'total_pages': 181, 'results': [{'id': 1, 'title': 'Ten', 'popularity': 2}]}
+        with patch('core.tmdb.search_movies', AsyncMock(return_value=data)) as read:
+            final, rows = await remote_page('ten', 'movie', 'key', {**FILTERS, 'min_popularity': 25}, 6)
+            self.assertEqual(rows, [])
+            self.assertFalse(final['has_more'])
+            self.assertTrue(final['partial'])
+            self.assertFalse(final['provider_more'])
+            read.reset_mock()
+            beyond, rows = await remote_page('ten', 'movie', 'key', {**FILTERS, 'min_popularity': 25}, 7)
+            read.assert_not_awaited()
+            self.assertFalse(beyond['has_more'])
+            broad, rows = await remote_page('ten', 'movie', 'key', {**FILTERS, 'min_popularity': 0}, 7)
+            self.assertTrue(broad['has_more'])
+            self.assertFalse(broad['partial'])
+            self.assertEqual(len(rows), 1)
+
     async def test_single_letter_search_does_not_scan_large_ranked_catalogue(self):
         feed=[{'id':i,'title':f'A movie {i}','imdb_votes':500} for i in range(1,10001)]
         with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':500,'results':[]})) as search, \
