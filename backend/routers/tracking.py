@@ -13,7 +13,7 @@ from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
-from dependencies import get_current_user, get_optional_user, get_tracking_write_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
@@ -612,7 +612,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
 
 
 @router.get("/people/{username}")
-async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
     if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]
@@ -855,7 +855,7 @@ async def contributor_details(
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: MediaScope = 'all',
     list_scope: ListScope = 'all',
     status: Literal['', 'watching', 'completed', 'planning', 'paused', 'dropped'] = '',
@@ -888,7 +888,7 @@ async def contributor_details(
 async def studio_metadata(
     studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> StudioDetail:
     from core.statistics_studios import studio_detail
     await catalog_access(db, viewer)
@@ -904,7 +904,7 @@ async def studio_metadata(
 async def staff_metadata(
     person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> PersonDetail:
     from core.statistics_staff import person_detail
     await catalog_access(db, viewer)
@@ -940,7 +940,7 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 
 
 @router.get("/profile/{username}/{media_type}")
-async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     query=select(TrackedEntry,Media,MediaFavorite.media_id).join(Media,Media.id==TrackedEntry.media_id).outerjoin(
         MediaFavorite,(MediaFavorite.user_id==TrackedEntry.user_id)&(MediaFavorite.media_id==TrackedEntry.media_id)
@@ -1097,7 +1097,7 @@ async def profile_stats_overview(
     username: str,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: Annotated[MediaScope, Query()] = "all",
 ) -> OverviewResponse:
     from core.statistics_snapshots import read_overview
@@ -1124,7 +1124,7 @@ async def profile_stats_overview(
 @router.get("/profile/{username}/stats/summary")
 async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
                         year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db),
-                        viewer: User | None = Depends(get_optional_user)):
+                        viewer: User = Depends(get_current_user_or_api_key)):
     """Current list totals plus documented viewing statistics for a profile."""
     user, owner = await profile_access(db, username, viewer)
     following = False
@@ -1189,7 +1189,7 @@ async def account_cinema_country(db, viewer):
 
 
 @router.get('/browse/facets')
-async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
     await catalog_access(db, viewer)
@@ -1238,7 +1238,7 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
-async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
@@ -1263,7 +1263,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  min_score: Annotated[float, Query(ge=0, le=10)] = 0,
                  cinema: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
-                 db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+                 db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     from core.browse_cursor import decode_search_cursor
@@ -1297,7 +1297,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
 @router.get("/catalog")
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                   region: str | None = Query(None, pattern='^[A-Z]{2}$'),
-                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     await catalog_access(db, viewer)
     show_anime=await anime_is_visible(db)
     filters = await result_filters(db, viewer)
@@ -1405,7 +1405,7 @@ async def catalog_preview(
     tmdb_id: Annotated[int, Path(gt=0, le=2147483647)],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ):
     from core import tmdb
     from core.browse import GENRES
@@ -1431,7 +1431,7 @@ async def catalog_preview(
 
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
-async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.enrichment import create_media_safely, enrich_media
     await catalog_access(db, viewer)
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
@@ -1470,7 +1470,7 @@ async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_
 
 
 @router.get("/title/{media_id}")
-async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1551,7 +1551,7 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 @router.get('/title/{media_id}/episode-images')
 async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
                                db: Annotated[AsyncSession, Depends(get_db)],
-                               viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+                               viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
@@ -1685,7 +1685,7 @@ async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 @router.get('/title/{media_id}/background')
 async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                           viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+                           viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
@@ -1701,7 +1701,7 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
 
 @router.get('/title/{media_id}/artwork-preview')
 async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                                viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+                                viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')

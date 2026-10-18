@@ -10,7 +10,7 @@ from models.comments import Comment
 from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
 from models.global_settings import GlobalSettings
-from dependencies import get_current_user, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ async def list_comments(
     season_number: Optional[int] = None,
     episode_number: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         settings = await db.get(GlobalSettings, 1)

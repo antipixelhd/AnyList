@@ -1,4 +1,4 @@
-"""Public link-preview data; authentication never grants preview access."""
+"""Authenticated link-preview data for publicly shareable content."""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.share_preview import card_data, description, image_bytes
 from db import get_db
+from dependencies import get_current_user_or_api_key
+from models.users import User
 
 router = APIRouter(prefix='/sharing', tags=['sharing'])
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -14,7 +16,12 @@ SharePath = Annotated[str, Query(min_length=1, max_length=250)]
 
 
 @router.get('/metadata')
-async def metadata(db: DB, path: SharePath, response: Response) -> dict:
+async def metadata(
+    db: DB,
+    path: SharePath,
+    response: Response,
+    _: Annotated[User, Depends(get_current_user_or_api_key)],
+) -> dict:
     response.headers['Cache-Control'] = 'no-store'
     try:
         card, _ = await card_data(db, path)
@@ -24,7 +31,11 @@ async def metadata(db: DB, path: SharePath, response: Response) -> dict:
 
 
 @router.get('/image')
-async def image(db: DB, path: SharePath) -> Response:
+async def image(
+    db: DB,
+    path: SharePath,
+    _: Annotated[User, Depends(get_current_user_or_api_key)],
+) -> Response:
     try:
         card, avatar = await card_data(db, path)
         content = await image_bytes(card, avatar)

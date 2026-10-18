@@ -19,7 +19,7 @@ from core import tmdb as tmdb_client
 from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key
 from models.users import User, UserSettings
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
@@ -39,8 +39,11 @@ router = APIRouter()
 
 
 @router.get("/public-access-status")
-async def get_public_access_status(db: AsyncSession = Depends(get_db)):
-    """Unauthenticated: global feature flags every page render needs to know
+async def get_public_access_status(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user_or_api_key),
+):
+    """Global feature flags for authenticated page renders
     about, regardless of login state. Originally just anon-nav access status
     (read by the frontend's auth middleware to decide whether an anonymous
     request to a gated page should be let through) - now also carries other
@@ -483,7 +486,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
 async def get_avatar(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     user, _ = await _check_profile_access(user_id, current_user, db)
 
@@ -645,7 +648,7 @@ async def unfollow_user(
 async def get_public_profile(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     user, profile = await _check_profile_access(user_id, current_user, db)
     is_owner = current_user and current_user.id == user_id
@@ -1009,7 +1012,7 @@ async def get_top_rated_movies(
     user_id: int,
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
 
@@ -1054,7 +1057,7 @@ async def get_top_rated_shows(
     user_id: int,
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
 
@@ -1103,7 +1106,7 @@ async def get_recently_watched_movies(
     user_id: int,
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
 
@@ -1148,7 +1151,7 @@ async def get_recently_watched_shows(
     user_id: int,
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
 
@@ -1196,7 +1199,7 @@ async def get_user_stats(
     since: Optional[DateType] = None,
     until: Optional[DateType] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
 
