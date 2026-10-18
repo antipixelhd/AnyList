@@ -60,6 +60,7 @@ Use existing neighbouring tests as the primary guide: backend tests use Python
 
 ## Images
 
+- When adding or launching detail pages for new media or entities (including games and books), extend the custom share-link metadata and preview images, with anonymous crawler coverage and the appropriate privacy checks.
 - Send public images straight to the provider CDN. Use our server only when it is needed.
 - Keep browser caching enabled for public images. Keep private data private.
 - Reuse the same image URL and decoded image. Do not download a second size just to warm an editor.

@@ -20,6 +20,7 @@ class ShareDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_profile_snapshot_and_privacy_are_rechecked_after_image_is_cached(self):
         await self.build()
         self.app.include_router(router)
+        self.viewer = None  # Messaging crawlers never have a session or API key.
         with patch.object(preview, 'fetch_image', AsyncMock(return_value=None)):
             response = await self.client.get('/sharing/image', params={'path':'/user/statistics-fixture'})
         self.assertEqual(response.status_code, 200, response.text[:100] if response.status_code != 200 else '')
@@ -48,11 +49,17 @@ class ShareDatabaseTests(unittest.IsolatedAsyncioTestCase):
             card, _ = await card_data(db, f'/title/{self.media_id}')
             self.assertEqual(card['title'], 'Fixture movie')
             self.assertEqual(card['stats'], [{'value':'8.3','label':'IMDb'}])
+        for endpoint in ['metadata', 'image']:
+            with patch.object(preview, 'fetch_image', AsyncMock(return_value=None)):
+                response = await self.client.get(f'/sharing/{endpoint}', params={'path':f'/title/{self.media_id}'})
+            self.assertEqual(response.status_code, 200, response.text[:100] if response.status_code != 200 else '')
+        async with self.Session() as db:
             settings = await db.get(GlobalSettings, 1)
             settings.enable_logged_out_navigation = False
             await db.commit()
-        response = await self.client.get('/sharing/image', params={'path':f'/title/{self.media_id}'})
-        self.assertEqual(response.status_code, 401)
+        for endpoint in ['metadata', 'image']:
+            response = await self.client.get(f'/sharing/{endpoint}', params={'path':f'/title/{self.media_id}'})
+            self.assertEqual(response.status_code, 401)
 
     async def test_contributor_counts_exceed_page_size_and_latest_excludes_future(self):
         async with self.Session() as db:
@@ -75,3 +82,11 @@ class ShareDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 card, _ = await card_data(db, f'/actors/catalogue:{actor.id}')
             self.assertEqual(card['stats'][1:], [{'value':'16','label':'Movies'}, {'value':'15','label':'Series'}])
             self.assertTrue(card['background'].endswith('/backdrop-29.jpg'))
+        self.app.include_router(router)
+        self.viewer = None
+        for path in [f'/actors/catalogue:{actor.id}', f'/person/catalogue:{actor.id}', f'/studio/catalogue:{self.studio_id}']:
+            for endpoint in ['metadata', 'image']:
+                with patch.object(preview, 'fetch_image', AsyncMock(return_value=None)), \
+                     patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value=None)):
+                    response = await self.client.get(f'/sharing/{endpoint}', params={'path': path})
+                self.assertEqual(response.status_code, 200, f'{path}: {response.text[:100] if response.status_code != 200 else ""}')

@@ -26,8 +26,48 @@ export function generalSharePage(pathname: string, search = ''): {path: string; 
 }
 
 export function shareLoginPath(pathname: string, search = ''): string {
+  if (sharePath(pathname)) return `/login?${new URLSearchParams({next: sharePagePath(pathname, search)})}`;
   const page = generalSharePage(pathname, search);
   return page ? `/login?${new URLSearchParams({next: page.path})}` : '/login';
+}
+
+/** Only known public card identities may supply metadata on a login page. */
+export function loginShareIdentity(next: string | null): string | null {
+  if (!next || !next.startsWith('/') || next.startsWith('//') || /[\\\u0000-\u0020\u007f#]/.test(next)) return null;
+  return sharePath(next.split('?')[0]);
+}
+
+export async function shareMetadata(path: string, fetcher = fetch): Promise<{title: string; description: string} | null> {
+  const identity = sharePath(path);
+  if (!identity) return null;
+  try {
+    const port = process.env.BACKEND_PORT ?? '7331';
+    const response = await fetcher(`http://127.0.0.1:${port}/sharing/metadata?${new URLSearchParams({path: identity})}`,
+      {signal: AbortSignal.timeout(7000)});
+    if (!response.ok) return null;
+    const metadata = await response.json();
+    return typeof metadata.title === 'string' && typeof metadata.description === 'string' ? metadata : null;
+  } catch { return null; }
+}
+
+/** Crawlers get only the anonymous card projection, never a signed-in page. */
+export async function crawlerShareResponse(url: URL, userAgent: string, origin: string, fetcher = fetch): Promise<Response | null> {
+  if (!/(?:Discordbot|WhatsApp|TelegramBot|Twitterbot|facebookexternalhit|Facebot|Slackbot|LinkedInBot|SkypeUriPreview|Applebot)/i.test(userAgent)) return null;
+  const path = sharePath(url.pathname);
+  if (!path) return null;
+  // The backend rechecks logged-out navigation, profile privacy and visibility.
+  const metadata = await shareMetadata(path, fetcher);
+  if (!metadata) return null;
+  const escape = (value: string) => value.replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]!));
+  const canonical = new URL(sharePagePath(url.pathname, url.search), origin).href;
+  const image = new URL(`/api/proxy/sharing/image?${new URLSearchParams({path})}`, origin).href;
+  const tags: Record<string, string> = {'og:site_name':'AnyList', 'og:type':'website',
+    'og:title':metadata.title, 'og:description':metadata.description, 'og:url':canonical,
+    'og:image':image, 'og:image:type':'image/jpeg', 'og:image:width':'1200', 'og:image:height':'630',
+    'og:image:alt':`${metadata.title} · AnyList`};
+  const head = Object.entries(tags).map(([property, content]) => `<meta property="${property}" content="${escape(content)}">`).join('');
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escape(metadata.title)} · AnyList</title><link rel="canonical" href="${escape(canonical)}">${head}<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${escape(metadata.title)}"><meta name="twitter:description" content="${escape(metadata.description)}"><meta name="twitter:image" content="${escape(image)}"></head><body><a href="${escape(canonical)}">${escape(metadata.title)}</a></body></html>`,
+    {headers: {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-store', 'Vary':'User-Agent'}});
 }
 
 export function loginSharePage(next: string | null): {path: string; title: string} | null {

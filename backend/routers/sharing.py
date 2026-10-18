@@ -1,4 +1,4 @@
-"""Authenticated link-preview data for publicly shareable content."""
+"""Anonymous link-preview projections with access checks in card_data."""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,8 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.share_preview import card_data, description, image_bytes
 from db import get_db
-from dependencies import get_current_user_or_api_key
-from models.users import User
 
 router = APIRouter(prefix='/sharing', tags=['sharing'])
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -20,7 +18,6 @@ async def metadata(
     db: DB,
     path: SharePath,
     response: Response,
-    _: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> dict:
     response.headers['Cache-Control'] = 'no-store'
     try:
@@ -34,7 +31,6 @@ async def metadata(
 async def image(
     db: DB,
     path: SharePath,
-    _: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> Response:
     try:
         card, avatar = await card_data(db, path)

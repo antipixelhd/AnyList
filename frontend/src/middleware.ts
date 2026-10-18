@@ -3,7 +3,7 @@ import { displayPreferenceCookies } from "./lib/display-preferences";
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
-import { shareLoginPath } from "./lib/share-preview";
+import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -70,6 +70,14 @@ const SECURITY_HEADERS: Record<string, string> = {
 export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
+
+  if (context.request.method === 'GET' || context.request.method === 'HEAD') {
+    const preview = await crawlerShareResponse(context.url, context.request.headers.get('User-Agent') || '', process.env.SERVER_URL || context.url.origin);
+    if (preview) {
+      for (const [header, value] of Object.entries(SECURITY_HEADERS)) preview.headers.set(header, value);
+      return preview;
+    }
+  }
 
   // Fixture-only design previews are available on every host and stay isolated
   // from sessions and backend data.
