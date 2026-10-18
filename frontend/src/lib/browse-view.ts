@@ -21,7 +21,6 @@ export function isCategoryView(values: URLSearchParams) {
 export function browseRequestParams(values: URLSearchParams, today = new Date().toISOString().slice(0,10)) {
   const request = new URLSearchParams(values);
   request.delete('view');
-  request.delete('min_votes');
   if(browseLayout(values)==='timeline'){
     request.set('sort','newest');
     if(!request.has('end')&&request.get('status')!=='upcoming'&&!(request.get('start')!>today))request.set('end',today);
@@ -39,6 +38,6 @@ export function sectionHref(
 ) {
   const values = new URLSearchParams(filters);
   if (type === "series") values.set("type", type);
-  if (region !== "US") values.set("region", region);
+  values.set("region", region);
   return `/browse?${values}`;
 }

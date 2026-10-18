@@ -161,6 +161,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     return response.json();
   };
   const prediction=createPrediction<ContributorPage>(requestPage,signal);
+  let filterRequest:AbortController|undefined,revision=0;
+  signal.addEventListener('abort',()=>filterRequest?.abort(),{once:true});
   document.addEventListener('anylist:cache-invalidated',prediction.cancel,{signal});
   const nextPath=()=>{
     const query=new URLSearchParams(params);
@@ -169,21 +171,50 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     return `/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
   };
   const loadMore=async()=>{
-    if(more.disabled||!data.has_more||signal.aborted)return;
+    if(more.disabled||filterRequest||!data.has_more||signal.aborted)return;
+    const current=revision;
     more.disabled=true;more.textContent='Loading…';error.hidden=true;
     try{
       const path=nextPath();
       const next=await prediction.consume(path,signal)??await requestPage(path,signal);
-      if(signal.aborted)return;
+      if(signal.aborted||current!==revision)return;
       append(next.works);
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       more.hidden=!data.has_more;
-    }catch(cause){if(!signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load more works.');}
-    finally{if(!signal.aborted){more.disabled=false;more.textContent='Load more';}}
+    }catch(cause){if(!signal.aborted&&current===revision)showError(cause instanceof Error?cause.message:'Unable to load more works.');}
+    finally{if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';}}
   };
   more.addEventListener('click',()=>void loadMore(),{signal});
-  form.addEventListener('submit',prediction.cancel,{signal});
-  bindPredictivePagination(region,signal,()=>data.has_more&&!more.disabled&&error.hidden,
+  form.addEventListener('submit',event=>{
+    event.preventDefault();prediction.cancel();filterRequest?.abort();
+    const request=new AbortController(),current=++revision;
+    filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
+    const submitted=new URLSearchParams();
+    new FormData(form).forEach((value,key)=>submitted.set(key,String(value)));
+    const query=contributorParams(submitted,data.list_count!==null);
+    void requestPage(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`,request.signal).then(next=>{
+      if(signal.aborted||current!==revision)return;
+      // Replace only the works; keep biography, controls, focus and viewport intact.
+      region.replaceChildren();items.clear();
+      Object.assign(data,next);
+      for(const key of [...params.keys()])params.delete(key);
+      query.forEach((value,key)=>params.set(key,value));
+      root.dataset.mediaType=params.get('media_type')||'all';
+      append(next.works);more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
+      const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
+      notice.textContent=next.notice||'';notice.hidden=!next.notice;
+      const url=new URL(location.href);url.search=query.toString();
+      url.searchParams.set('view',requestedView||'timeline');history.replaceState(history.state,'',url);
+    }).catch(cause=>{
+      if(!signal.aborted&&!request.signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load works.');
+    }).finally(()=>{
+      if(!signal.aborted&&current===revision){
+        filterRequest=undefined;region.removeAttribute('aria-busy');
+        more.disabled=false;more.textContent='Load more';
+      }
+    });
+  },{signal});
+  bindPredictivePagination(region,signal,()=>!filterRequest&&data.has_more&&!more.disabled&&error.hidden,
     ()=>prediction.prefetch(nextPath()),()=>void loadMore());
 
 }

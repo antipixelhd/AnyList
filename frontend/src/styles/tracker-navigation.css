@@ -161,6 +161,7 @@
   border:0
 }
 .quick-search-dialog {
+  --bright:var(--white);
   font-family:var(--font-body);
   font-size:var(--type-body-size);
   font-weight:var(--type-body-weight);
@@ -364,6 +365,7 @@
   background:#1b3043;
   color:var(--bright)
 }
+.quick-search-result:has(.quick-search-add:focus) { background:transparent; }
 .quick-search-result-link {
   display:grid;
   grid-template-columns:48px minmax(0,1fr);
@@ -380,29 +382,36 @@
   min-width:0
 }
 .quick-search-add {
-  display:grid;
-  place-items:center;
-  width:32px;
-  height:32px;
-  padding:0;
-  border:0;
-  border-radius:50%;
-  background:#c6eafb;
-  color:#40799e;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-width:62px;
+  min-height:32px;
+  padding:0 9px;
+  border:1px solid var(--border);
+  border-radius:5px;
+  background:var(--panel);
+  color:var(--text);
+  font-size:var(--type-meta-size);
+  font-weight:var(--type-action-weight);
   opacity:0;
   pointer-events:none;
-  transition:opacity .12s,background-color .12s,color .12s
+  cursor:pointer;
+  transition:opacity .12s,background-color .12s,color .12s,border-color .12s
 }
 .quick-search-result:hover .quick-search-add,.quick-search-result:focus-within .quick-search-add {
   opacity:1;
   pointer-events:auto
 }
 .quick-search-add:hover,.quick-search-add:focus-visible {
-  background:#e0f5ff;
-  color:#25658f
+  outline:none;
+  border-color:var(--blue);
+  background:color-mix(in srgb,var(--blue) 14%,var(--panel));
+  color:var(--bright)
 }
 .quick-search-add .ui-icon {
-  font-size:var(--type-row-size)
+  font-size:12px
 }
 .quick-search-add:disabled {
   opacity:.6;
@@ -415,8 +424,7 @@
 }
 @media(hover:none),(pointer:coarse) {
   .quick-search-add {
-    width:40px;
-    height:40px;
+    min-height:40px;
     opacity:1;
     pointer-events:auto
   }

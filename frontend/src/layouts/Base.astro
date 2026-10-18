@@ -15,6 +15,7 @@ import "../styles/global.css";
 import "../styles/checkbox.css";
 import "../styles/action-controls.css";
 import BrandMark from "../components/BrandMark.astro";
+import SharePreview from "../components/SharePreview.astro";
 import MobileNavigation from "../components/MobileNavigation.astro";
 import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
 import { api } from "../lib/api";
@@ -111,8 +112,8 @@ const mobileGroups: MobileNavigationGroup[] = [
   <ReloadScrollRestoration />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>{title} · AnyList</title>
+  <SharePreview {title} />
   <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
   <!-- theme-color: dark default, overridden when light class is applied via JS -->

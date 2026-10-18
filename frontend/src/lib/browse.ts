@@ -1,5 +1,6 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
+import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
 import {
   isCategoryView,
   hasBrowseFilters,
@@ -132,7 +133,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     const values = params();
     values.delete("media_type");
     if (field("type").value === "series") values.set("type", "series");
-    if (values.get("region") === "US") values.delete("region");
     if (values.get("sort") === "all") values.delete("sort");
     if (values.get("min_score") === "0") values.delete("min_score");
     history.replaceState(
@@ -364,7 +364,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     empty.hidden =
       displayedCategories ||
       loading ||
-      (!!field('q').value.trim() && payload.has_more) ||
+      payload.has_more ||
       !!grid.childElementCount ||
       !error.hidden;
   };
@@ -615,7 +615,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         !["status", "provider", "region", "start", "end", "min_score", "cinema"].includes(target.name)
       )
         return;
-      if (target.name === "region") void loadFacets();
+      if (target.name === "region") {
+        document.cookie = `${STREAMING_REGION_COOKIE}=manual.${target.value}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+        void loadFacets();
+      }
       changed(event);
     },
     { signal },
@@ -780,12 +783,29 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   bindBrowseCardActions(region, items, signal, syncItem, message => { notice.textContent = message; notice.hidden = false; });
   paintChips();
   updateFooter();
+  const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length + 1));
+  if (!new URLSearchParams(location.search).has('region') && !savedRegion?.manual) {
+    const detected = deviceStreamingCountry();
+    if (detected) {
+      document.cookie = `${STREAMING_REGION_COOKIE}=auto.${detected}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+      if (field('region').value !== detected) {
+        const select = field('region') as HTMLSelectElement;
+        if (![...select.options].some(option => option.value === detected)) {
+          const name = new Intl.DisplayNames(['en'], {type:'region'}).of(detected) || detected;
+          select.add(new Option(name, detected));
+        }
+        select.value = detected;
+        refreshSelect(select);
+        void loadFacets();
+        changed();
+      }
+    }
+  }
   if (field('q').value.trim() && payload.has_more && seen.size < 24 && error.hidden) void load(true);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||
-    field("end").value ||
-    field("region").value !== "US"
+    field("end").value
   )
     find<HTMLDetailsElement>(".browse-more").open = true;
   signal.addEventListener(

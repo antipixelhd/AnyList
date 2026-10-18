@@ -1,4 +1,5 @@
 import { showDialog, closeDialog } from '../lib/ui-motion';
+import { showMessage } from '../lib/settings-feedback';
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -69,7 +70,6 @@ function mountNetflixImport() {
   const languageInput = document.getElementById("netflix-import-language") as HTMLSelectElement;
   const skipAnimeInput = document.getElementById("netflix-skip-anime") as HTMLInputElement;
   const workflow = document.getElementById("netflix-import-workflow") as HTMLElement;
-  const errorBox = document.getElementById("netflix-import-error") as HTMLElement;
   const remapDialog = document.getElementById("netflix-remap-dialog") as HTMLDialogElement;
   const remapInput = document.getElementById("netflix-remap-input") as HTMLInputElement;
   const remapState = document.getElementById("netflix-remap-state") as HTMLElement;
@@ -127,15 +127,15 @@ function mountNetflixImport() {
   }
 
   function showError(message: string) {
-    const target = remapDialog.open ? remapState : errorBox;
-    target.textContent = message;
-    if (target === remapState) remapState.hidden = false;
-    else target.classList.remove("hidden");
+    if (remapDialog.open) {
+      remapState.textContent = message;
+      remapState.hidden = false;
+      return;
+    }
+    showMessage(message, 'error');
   }
 
   function clearError() {
-    errorBox.textContent = "";
-    errorBox.classList.add("hidden");
     remapState.textContent = "";
     remapState.hidden = true;
   }

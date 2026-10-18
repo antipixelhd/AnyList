@@ -24,7 +24,7 @@ from db import AsyncSessionLocal
 from models.catalogue import CatalogueCredit, CatalogueEntity, ContributorEvidence
 
 MAX_PENDING = 256
-VERSION = 1
+VERSION = 2
 log = logging.getLogger(__name__)
 _wake = asyncio.Event()
 
@@ -161,7 +161,7 @@ async def load_evidence(job, api_key):
             return kind, [], None
         filters = config['filters']
         response = await (tmdb.discover_movies if kind == 'movie' else tmdb.discover_shows)(
-            page=page, with_companies=config['companies'], vote_count_min=filters['min_votes'],
+            page=page, with_companies=config['companies'], vote_count_min=0,
             minimum_runtime=filters['min_runtime'] if kind == 'movie' else 0,
             excluded_genre_ids=filters['excluded_genres'], released_before=date.today().isoformat(),
             sort_by='primary_release_date.desc' if kind == 'movie' else 'first_air_date.desc', api_key=api_key)

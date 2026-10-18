@@ -13,9 +13,11 @@ export function visibleArtwork(signal:AbortSignal) {
 
 export function observeDeferredArtwork(root:HTMLElement,signal:AbortSignal) {
   const visible=visibleArtwork(signal);
-  root.querySelectorAll<HTMLImageElement>('img[data-deferred-src]').forEach(image=>visible(image,()=>{
+  const defer=(image:HTMLImageElement)=>visible(image,()=>{
     if(image.dataset.deferredSrcset)image.srcset=image.dataset.deferredSrcset;
     if(image.dataset.deferredSizes)image.sizes=image.dataset.deferredSizes;
     image.src=image.dataset.deferredSrc!;delete image.dataset.deferredSrc;
-  }));
+  });
+  root.querySelectorAll<HTMLImageElement>('img[data-deferred-src]').forEach(defer);
+  return defer;
 }

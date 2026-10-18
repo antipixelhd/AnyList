@@ -11,6 +11,7 @@ import {detailWorkCaption,relationLabel} from './media-detail-data';
 import {detailWorkArtwork} from './detail-artwork';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
 import {observeDeferredArtwork} from './visible-artwork';
+import {responsiveArtwork} from './responsive-artwork';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -27,7 +28,7 @@ export function mountMediaDetail() {
   document.addEventListener('astro:before-swap', () => {pageListeners?.abort();mountedRoot=null;}, {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
-  observeDeferredArtwork(root,signal);
+  const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
   if(info.backgroundAvailable){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
@@ -118,6 +119,45 @@ export function mountMediaDetail() {
   }));
 
   let loadDetailImages=()=>Promise.resolve();
+  let episodeImagesPending:Promise<void>|undefined;
+  let episodeImagesLoaded=false;
+  const loadEpisodeImages=()=>{
+    if(info.type!=='series'||episodeImagesLoaded||episodeImagesPending)return;
+    episodeImagesPending=(async()=>{
+      const response=await fetch(`/api/proxy/tracking/title/${info.id}/episode-images`,{signal});
+      if(!response.ok)throw new Error('Episode artwork is temporarily unavailable.');
+      const data=await response.json();
+      if(signal.aborted)return;
+      for(const [id,url] of Object.entries(data.images||{})){
+        const row=root.querySelector<HTMLElement>(`[data-episode-row="${id}"]`);
+        const holder=row?.querySelector<HTMLElement>('.lab-episode-placeholder');
+        const art=responsiveArtwork(String(url),{size:'w300',sizes:'(max-width:650px) 55px, 125px',route:'direct'});
+        if(!holder||!art)continue;
+        const image=document.createElement('img');image.alt='';image.loading='lazy';image.fetchPriority='low';
+        image.dataset.deferredSrc=art.src;
+        if(art.srcset)image.dataset.deferredSrcset=art.srcset;
+        if(art.sizes)image.dataset.deferredSizes=art.sizes;
+        holder.classList.remove('lab-episode-placeholder');holder.removeAttribute('aria-hidden');holder.replaceChildren(image);
+        deferArtwork(image);
+      }
+      episodeImagesLoaded=true;
+    })().catch(error=>{if(!signal.aborted)console.debug('Episode artwork deferred.',error);}).finally(()=>{episodeImagesPending=undefined;});
+  };
+  let socialPending:Promise<void>|undefined;
+  let socialLoaded=false;
+  const loadSocial=()=>{
+    const host=root.querySelector<HTMLElement>('[data-detail-social]');
+    if(!host||socialLoaded||socialPending)return;
+    socialPending=(async()=>{
+      const response=await fetch(`/title/${info.id}/social`,{signal});
+      if(!response.ok)throw new Error('Unable to load social activity.');
+      const html=new DOMParser().parseFromString(await response.text(),'text/html');
+      const content=html.querySelector('.media-social-grid');
+      if(!content)throw new Error('Unable to load social activity.');
+      if(signal.aborted)return;
+      host.replaceChildren(document.importNode(content,true));socialLoaded=true;
+    })().catch(error=>{if(!signal.aborted)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
+  };
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!,signal);
@@ -132,6 +172,8 @@ export function mountMediaDetail() {
     if (id === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab',id);
     history.replaceState(history.state,'',url);
     if(id==='artwork')void loadDetailImages();
+    if(id==='seasons')loadEpisodeImages();
+    if(id==='social')loadSocial();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
   tabs.forEach((tab,index) => {

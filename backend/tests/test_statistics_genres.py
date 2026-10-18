@@ -10,7 +10,7 @@ from core.browse import browse_page, local_query
 from routers.tracking import browse_genres
 from fastapi import HTTPException
 
-FILTERS = dict(start=None, end=None, status="", provider=None, region="US", sort="popular", min_votes=0)
+FILTERS = dict(start=None, end=None, status="", provider=None, region="US", sort="popular", )
 
 
 class GenreTests(unittest.TestCase):

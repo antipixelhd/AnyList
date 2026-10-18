@@ -78,6 +78,9 @@
 }
 /* Quick editor: compact fields beneath a cover header, with the primary actions in the header. */
 .editor {
+  position:fixed;
+  inset:0;
+  margin:auto;
   width:min(960px,calc(100vw - 32px));
   max-height:min(92vh,700px)
 }
@@ -430,14 +433,18 @@
     padding-top:43px
   }
   .editor-fields {
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:15px 12px
+    grid-template-columns:minmax(0,1fr);
+    gap:15px
   }
   .editor-fields>* {
     grid-column:auto!important
   }
   .editor .wide {
     grid-column:1/-1!important
+  }
+  .editor .editor-notes textarea {
+    min-height:88px;
+    height:88px
   }
   .editor-actions {
     flex-direction:row

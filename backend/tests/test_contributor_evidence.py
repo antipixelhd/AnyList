@@ -8,7 +8,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/
 from core import contributor_evidence as evidence
 
 
-FILTERS = {'min_votes':250, 'min_runtime':30, 'excluded_genres':[]}
+FILTERS = {'min_runtime':30, 'excluded_genres':[]}
 
 
 def film(**values):
@@ -17,7 +17,7 @@ def film(**values):
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
     def test_person_evidence_is_shared_across_filters_but_studio_variants_preserve_them(self):
-        other = {**FILTERS, 'min_votes':1000}
+        other = {**FILTERS, 'min_runtime':1000}
         self.assertEqual(evidence.evidence_key('person',1,FILTERS,True), evidence.evidence_key('person',1,other,False))
         self.assertNotEqual(evidence.evidence_key('studio',1,FILTERS,True), evidence.evidence_key('studio',1,other,True))
         self.assertEqual(evidence.evidence_key('studio',429,FILTERS,True),evidence.evidence_key('studio',9993,FILTERS,True))
@@ -26,7 +26,7 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(evidence.work_summary(None,'actor',FILTERS,True))
         self.assertIsNone(evidence.work_summary({'complete':False},'studio',FILTERS,True))
         self.assertEqual(evidence.work_summary({'complete':True},'studio',FILTERS,True)['works'],0)
-        rows = [film(),film(),film(id=2,adult=True),film(id=3,character='Self (archive footage)'),film(id=4,vote_count=1)]
+        rows = [film(),film(),film(id=2,adult=True),film(id=3,character='Self (archive footage)'),film(id=4,runtime=2)]
         self.assertEqual(evidence.work_summary({'cast':rows},'actor',FILTERS,True)['works'],1)
         anime = film(genre_ids=[16],original_language='ja')
         self.assertEqual(evidence.work_summary({'cast':[anime]},'actor',FILTERS,False)['works'],0)
@@ -65,7 +65,7 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         def person(native, name, known):
             return {'key':f'tmdb:{native}','name':name,'_native':native,'_known_for':known}
         groups={'actor':[person(1,'Empty',[film()]),person(2,'Beyond shortlist',[film(vote_count=1)]),
-            person(3,'Unknown',[film(vote_count=1)]),person(4,'Known',[film()])], 'staff':[]}
+            person(3,'Unknown',[film(runtime=2)]),person(4,'Known',[film()])], 'staff':[]}
         key=lambda native:evidence.evidence_key('person',native,FILTERS,True)[0]
         payloads={key(1):{'cast':[], 'complete':True},key(2):{'cast':[film()], 'complete':True}}
         with patch.object(search,'result_filters',AsyncMock(return_value=FILTERS)),patch.object(

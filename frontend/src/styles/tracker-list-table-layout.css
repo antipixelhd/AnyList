@@ -239,6 +239,10 @@
     grid-template-rows:minmax(22px,auto) minmax(22px,auto);
     align-items:start
   }
+  #entry-groups:not(.grid-view) .entry-row:has(.unwatched-indicator) {
+    grid-template-areas:"cover title score" "cover progress score" "cover tag score";
+    grid-template-rows:minmax(22px,auto) minmax(22px,auto) minmax(18px,auto)
+  }
   #entry-groups:not(.grid-view) .entry-head.combined-row,
   #entry-groups:not(.grid-view) .entry-row.combined-row {
     grid-template-columns:44px minmax(0,3fr) minmax(44px,1fr) minmax(48px,1fr);
@@ -246,6 +250,9 @@
   }
   #entry-groups:not(.grid-view) .entry-row.combined-row {
     grid-template-areas:"cover title score type" "cover progress score type"
+  }
+  #entry-groups:not(.grid-view) .entry-row.combined-row:has(.unwatched-indicator) {
+    grid-template-areas:"cover title score type" "cover progress score type" "cover tag score type"
   }
   #entry-groups:not(.grid-view) .entry-type {
     grid-area:type;
@@ -265,6 +272,15 @@
   #entry-groups:not(.grid-view) .entry-thumbnail {
     grid-area:cover;
     height:44px
+  }
+  #entry-groups:not(.grid-view) .entry-row:has(.unwatched-indicator) .entry-thumbnail {
+    align-self:center
+  }
+  #entry-groups:not(.grid-view) .entry-thumbnail .entry-availability {
+    left:-9px;
+    width:6px;
+    height:6px;
+    box-shadow:0 0 5px rgba(114,216,79,.72)
   }
   #entry-groups:not(.grid-view) .entry-thumbnail .entry-cover,#entry-groups:not(.grid-view) .entry-thumbnail .row-menu {
     width:44px;
@@ -289,10 +305,22 @@
     gap:8px
   }
   #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) .entry-annotations {
-    align-self:start
+    grid-area:tag;
+    align-self:center;
+    justify-self:start;
+    margin-left:0
+  }
+  #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) {
+    display:contents
+  }
+  #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) > .entry-title-link {
+    grid-area:title
   }
   #entry-groups:not(.grid-view) .entry-row:has(.entry-annotations) .entry-progress {
     padding-right:44px
+  }
+  #entry-groups:not(.grid-view) .entry-row:has(.unwatched-indicator) .entry-progress {
+    padding-right:0
   }
   #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column) {
     padding:0;

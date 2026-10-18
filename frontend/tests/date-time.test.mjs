@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calendarDate, formatDate, formatDateTime, formatTime, localToday, requestDateLocale, timestamp } from '../src/lib/date-time.ts';
-import { browserDateRegion, dateRegion } from '../src/lib/date-region.ts';
+import { browserDateRegion, dateRegion, deviceDateRegion } from '../src/lib/date-region.ts';
 
 test('calendar dates follow German, US and British ordering with a complete year', () => {
   assert.equal(formatDate('2026-03-04', {locale:'de-DE'}), '04.03.2026');
@@ -95,10 +95,33 @@ test('browser region applies across dates, times and months and resetting restor
     for (const cookie of ['', 'anylist_date_region=invalid', 'prefix_anylist_date_region=de-DE']) {
       browser.cookie = cookie;
       assert.equal(browserDateRegion(), undefined);
-      assert.equal(formatDate('2014-07-30'), new Intl.DateTimeFormat(undefined,{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}).format(new Date('2014-07-30T00:00:00Z')));
+      assert.equal(formatDate('2014-07-30'), new Intl.DateTimeFormat(deviceDateRegion(),{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}).format(new Date('2014-07-30T00:00:00Z')));
     }
   } finally {
     if (original) Object.defineProperty(globalThis, 'document', original);
+    else delete globalThis.document;
+  }
+});
+
+test('automatic numeric dates follow the device zone without changing month language or an explicit choice', () => {
+  assert.equal(deviceDateRegion('Europe/Berlin'), 'de-DE');
+  assert.equal(deviceDateRegion('America/Unknown'), undefined);
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const NativeDateTimeFormat = Intl.DateTimeFormat;
+  const browser = {cookie: ''};
+  Object.defineProperty(globalThis, 'document', {value:browser, configurable:true});
+  Intl.DateTimeFormat = class extends NativeDateTimeFormat {
+    resolvedOptions() { return {...super.resolvedOptions(), timeZone:'Europe/Berlin'}; }
+  };
+  try {
+    assert.equal(formatDate('2026-10-17'), '17.10.2026');
+    assert.equal(formatDateTime('2026-10-17T18:30:00Z', 'datetime', {timeZone:'UTC'}), '17.10.2026, 18:30');
+    assert.equal(formatDateTime('2026-10', 'month'), new NativeDateTimeFormat(undefined,{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date('2026-10-01T00:00:00Z')));
+    browser.cookie = 'anylist_date_region=en-GB';
+    assert.equal(formatDate('2026-10-17'), '17/10/2026');
+  } finally {
+    Intl.DateTimeFormat = NativeDateTimeFormat;
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
     else delete globalThis.document;
   }
 });

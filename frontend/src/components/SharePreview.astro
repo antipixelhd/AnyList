@@ -1,13 +1,14 @@
 ---
-import { sharePath } from '../lib/share-preview';
+import { sharePagePath, sharePath } from '../lib/share-preview';
 const {title, description: suppliedDescription} = Astro.props;
 const path = sharePath(Astro.url.pathname);
-const description = suppliedDescription || (path?.startsWith('/user/') ? `${title}'s AnyList profile` : title);
+const description = suppliedDescription || (path?.startsWith('/user/') ? `${title} on AnyList` : 'Track movies and series with AnyList.');
 const origin = process.env.SERVER_URL || Astro.url.origin;
-const canonical = path ? new URL(path, origin).href : '';
-const image = path ? new URL(`/api/proxy/sharing/image?${new URLSearchParams({path})}`, origin).href : '';
+const canonical = new URL(sharePagePath(Astro.url.pathname,Astro.url.search), origin).href;
+const image = new URL(path ? `/api/proxy/sharing/image?${new URLSearchParams({path})}` : '/share-preview.png', origin).href;
+const imageType = path ? 'image/jpeg' : 'image/png';
 ---
-{path && title && Astro.response.status === 200 && <>
+{title && Astro.response.status === 200 && <>
   <link rel="canonical" href={canonical}/>
   <meta property="og:site_name" content="AnyList"/>
   <meta property="og:type" content="website"/>
@@ -15,9 +16,9 @@ const image = path ? new URL(`/api/proxy/sharing/image?${new URLSearchParams({pa
   <meta property="og:description" content={description}/>
   <meta property="og:url" content={canonical}/>
   <meta property="og:image" content={image}/>
-  <meta property="og:image:type" content="image/jpeg"/>
-  <meta property="og:image:width" content="1200"/>
-  <meta property="og:image:height" content="630"/>
+  <meta property="og:image:type" content={imageType}/>
+  <meta property="og:image:width" content={path ? '1200' : '1280'}/>
+  <meta property="og:image:height" content={path ? '630' : '640'}/>
   <meta property="og:image:alt" content={`${title} · AnyList`}/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta name="twitter:title" content={title}/>

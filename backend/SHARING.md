@@ -1,8 +1,11 @@
 # Sharing previews
 
-Canonical title, username profile, actor, staff and studio pages render Open Graph
-and large-image Twitter Card metadata in their initial HTML. Share the normal
-page URL. `SERVER_URL` should be the public HTTPS origin in deployed instances.
+Pages render Open Graph and large-image Twitter Card metadata in their initial
+HTML. Share the normal page URL. `SERVER_URL` should be the public HTTPS origin
+in deployed instances. Profile sections (including statistics views) keep their
+own link destination while using the same profile image. Other pages use the
+static AnyList brand image at `/share-preview.png`; authentication token URLs
+are never advertised as canonical links.
 
 The card image is `/api/proxy/sharing/image?path=<page path>`. It always reads as
 an anonymous visitor, including when requested with a session or API key.

@@ -162,7 +162,7 @@ async def known_works(db, entity, native, kind, viewer):
     return merge_works(rows)
 
 
-async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope, min_votes=0, min_runtime=0, excluded_genres=()):
+async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope, min_runtime=0, excluded_genres=()):
     positions = [0, 1, 0, 1, 0]
     if cursor:
         parsed = json.loads(cursor)
@@ -198,14 +198,14 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
                         break
                     requests += 1
                     response = await (tmdb.discover_movies if media == "movie" else tmdb.discover_shows)(
-                        page=provider_page, with_companies=studio_companies(native), vote_count_min=min_votes,
+                        page=provider_page, with_companies=studio_companies(native), vote_count_min=0,
                         excluded_genre_ids=excluded_genres, minimum_runtime=min_runtime if media == "movie" else 0,
                         sort_by="primary_release_date.desc" if media == "movie" else "first_air_date.desc", api_key=provider_key)
                     raw_rows = response.get("results") or []
                     candidates = [remote_work(r, media) for r in raw_rows]
                     await attach_editor_context(db, viewer, [r for r in candidates if r])
                     candidates = [r if r and (r["type"], r["tmdb_id"]) not in known_external
-                                  and matches_result_filters(r["_metadata"], r["type"], min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres)
+                                  and matches_result_filters(r["_metadata"], r["type"], min_runtime=min_runtime, excluded_genres=excluded_genres)
                                   and anime_visible(r["_metadata"], show_anime)
                                   and (list_scope != "out" or not r.get("list_status")) else None for r in candidates]
                     buffers[buffer_key] = (candidates, provider_page < min(response.get("total_pages") or 1, 500))

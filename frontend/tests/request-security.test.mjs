@@ -39,3 +39,18 @@ test('browser writes require an origin check and independently authenticated API
     assert.equal(requiresSameOrigin(method, '/settings', true, false), false);
   }
 });
+
+test('anonymous catalog imports require same-origin validation', () => {
+  for (const type of ['movie','series']) {
+    const path=`/api/proxy/tracking/catalog/${type}/123`;
+    assert.equal(requiresSameOrigin('POST',path,false,false),true);
+    assert.equal(requiresSameOrigin('POST',`${path}/`,false,false),true);
+    assert.equal(requiresSameOrigin('POST',path,false,true),false);
+    assert.equal(requiresSameOrigin('GET',path,false,false),false);
+    const url=new URL(`https://app.test${path}`);
+    for (const origin of [null,'https://other.test','https://app.test']) {
+      const headers=origin?{Origin:origin}:{};
+      assert.equal(isSameOrigin(new Request(url,{method:'POST',headers}),url),origin==='https://app.test');
+    }
+  }
+});

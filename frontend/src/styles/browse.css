@@ -23,7 +23,7 @@
 .browse-view-switch { display:flex; gap:2px; padding:4px; background:var(--panel); border-radius:6px; }
 .browse-view-switch a { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:4px; color:var(--muted); font-weight:600; transition:background .2s,color .2s; }
 .browse-view-switch a[aria-current=page] { background:var(--field); color:var(--blue); }
-.browse-view-switch a:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.browse-view-switch a:focus-visible { outline:none; background:var(--field); color:var(--text); }
 .browse-timeline { display:grid; gap:64px; }
 .browse-timeline-year { display:grid; grid-template-columns:100px minmax(0,1fr); gap:28px; }
 .browse-timeline-year-label { margin:0; font:650 44px/1.1 var(--font-navigation); letter-spacing:-.045em; color:var(--text); }
@@ -128,7 +128,7 @@
 }
 .browse-search-clear[hidden] { display: none; }
 .tracker .browse-search-clear:hover { color: var(--text); }
-.browse-search-clear:focus-visible { outline: 2px solid var(--blue); outline-offset: -4px; }
+.browse-search-clear:focus-visible { outline:none; background:var(--dropdown-hover); color:var(--text); }
 .browse-search > div > .ui-icon { font-size: 13px; }
 /* Share the list dropdown surface across native and enhanced browse controls. */
 .tracker .browse-filters :is(
@@ -212,7 +212,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.browse-more summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.tracker .browse-filters .browse-more:not([open]) > summary:focus-visible { outline:none; background:var(--dropdown-hover); color:var(--text); }
 .browse-filter-menu summary .ui-icon { font-size: 10px; color: var(--muted); }
 .browse-options {
   position: absolute;
@@ -256,15 +256,15 @@
   width: 42px;
   height: 42px;
   list-style: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
   background: var(--panel);
   color: var(--muted);
   cursor: pointer;
-  transition: background .16s, color .16s;
+  outline: none;
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease;
 }
-.browse-more > summary:hover { background: var(--panel); color: var(--text); }
-.browse-more[open] > summary { color: var(--blue); background: var(--panel); }
+.tracker .browse-filters .browse-more[open]:not([data-motion-closing]) > summary { color:#fff; border-color:var(--blue); background:var(--blue); }
 .browse-secondary-filters {
   /* The mobile wrapper is static; keep the overlay above poster actions. */
   z-index: 40;
@@ -557,6 +557,7 @@
 }
 .browse-actions button:hover,
 .browse-actions button:focus-visible {
+  outline: none;
   background: var(--blue);
   color: #ffffff;
   scale: 1.1;
@@ -569,10 +570,6 @@
 .browse-actions button[data-browse-action="rate"]:is(:hover, :focus-visible) {
   background: #ffd166;
   color: #ffffff;
-}
-.browse-actions button[data-browse-action="rate"]:focus-visible {
-  outline: 2px solid #ffd166;
-  outline-offset: 2px;
 }
 .browse-actions button[data-tooltip]::after {
   content: attr(data-tooltip);
@@ -941,7 +938,7 @@
 .browse-category > header > a,
 .browse-skeleton-view-all { padding: 5px 8px; margin-right: -8px; border-radius: 4px; }
 .browse-category > header > a:hover { background: var(--panel); }
-.browse-category > header a:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+.browse-category > header a:focus-visible { outline:none; background:var(--panel); color:var(--bright); }
 
 .browse-category-empty {
   color: var(--muted);
@@ -973,11 +970,11 @@
 .tracker .browse-page .browse-filters .browse-secondary-filters :is(select, .tracker-select-trigger, .browse-filter-menu > summary) { background: var(--bg); }
 .browse-secondary-filters .browse-filter-menu summary .ui-icon { font-size: 12px; }
 .browse-filters:has(.browse-cinema-toggle:not([hidden])) { padding-right:108px; }
-.browse-cinema-toggle { position:absolute; top:calc(2.25rem + 9px); right:54px; display:grid; place-items:center; width:42px; height:42px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--muted); cursor:pointer; transition:background .2s,color .2s,border-color .2s; }
-.browse-cinema-toggle:hover { color:var(--text); }
-.browse-cinema-toggle:has(input:checked) { color:var(--blue); background:color-mix(in srgb,var(--blue) 10%,var(--bg)); }
-.browse-cinema-toggle:focus-within { outline:none; color:var(--blue); background:color-mix(in srgb,var(--blue) 18%,var(--bg)); }
+.browse-cinema-toggle { position:absolute; top:calc(2.25rem + 9px); right:54px; display:grid; place-items:center; width:42px; height:42px; border:1px solid transparent; border-radius:5px; background:var(--panel); color:var(--muted); cursor:pointer; transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
+.browse-cinema-toggle:has(input:checked) { color:#fff; border-color:var(--blue); background:var(--blue); }
+.browse-cinema-toggle:focus-within { outline:none; }
 .browse-cinema-toggle input:focus { outline:none; }
+.browse-cinema-toggle input:focus-visible { outline:none; }
 .browse-cinema-toggle input { position:absolute; inset:0; width:100%; height:100%; opacity:0; margin:0; cursor:pointer; }
 .browse-cinema-toggle .ui-icon { pointer-events:none; }
 .browse-cinema-toggle[hidden] { display:none; }

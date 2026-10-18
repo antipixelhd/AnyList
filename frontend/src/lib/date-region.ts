@@ -20,3 +20,29 @@ export function browserDateRegion(): string | undefined {
   const entry = document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith(`${DATE_REGION_COOKIE}=`));
   return dateRegion(entry?.slice(DATE_REGION_COOKIE.length + 1));
 }
+
+// The browser exposes its time zone, but not the operating system's short-date
+// pattern. Use unambiguous, supported zones as a local hint when no region was
+// chosen explicitly; unknown zones fall back to the browser locale.
+const DEVICE_REGIONS: Record<string, string> = {
+  'Europe/Berlin': 'de-DE', 'Europe/Busingen': 'de-DE',
+  'Europe/Vienna': 'de-DE', 'Europe/Zurich': 'de-DE',
+  'Europe/London': 'en-GB', 'Europe/Paris': 'fr-FR',
+  'Europe/Madrid': 'es-ES', 'Europe/Rome': 'it-IT',
+  'Europe/Amsterdam': 'nl-NL', 'Europe/Warsaw': 'pl-PL',
+  'Europe/Lisbon': 'pt-PT', 'America/Sao_Paulo': 'pt-BR',
+  'Europe/Stockholm': 'sv-SE', 'Europe/Copenhagen': 'da-DK',
+  'Europe/Oslo': 'nb-NO', 'Europe/Helsinki': 'fi-FI',
+  'Europe/Prague': 'cs-CZ', 'Asia/Tokyo': 'ja-JP',
+  'Asia/Seoul': 'ko-KR', 'Asia/Shanghai': 'zh-CN',
+  'Asia/Taipei': 'zh-TW', 'Asia/Kolkata': 'hi-IN',
+  'Asia/Riyadh': 'ar-SA',
+};
+
+export function deviceDateRegion(timeZone?: string): string | undefined {
+  try {
+    return DEVICE_REGIONS[timeZone || new Intl.DateTimeFormat().resolvedOptions().timeZone];
+  } catch {
+    return undefined;
+  }
+}

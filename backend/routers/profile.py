@@ -1,12 +1,14 @@
 from core import settings_store
 import asyncio
 from collections import defaultdict
+from html import escape
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, case, or_
+from sqlalchemy import func, case, or_, text, cast
+from sqlalchemy.dialects.postgresql import insert, JSONB
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from datetime import date as DateType, timedelta as TimeDelta
@@ -18,7 +20,7 @@ from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
-from models.users import User
+from models.users import User, UserSettings
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
 from models.collection import Collection
@@ -30,6 +32,7 @@ from models.lists import List as ListModel, ListItem
 from models.follows import Follow
 from models.global_settings import GlobalSettings
 from core.config import settings
+from core.backup import AVATAR_WRITE_LOCK_SQL
 import schemas
 
 router = APIRouter()
@@ -119,10 +122,11 @@ async def get_profile(
         select(UserProfileData).where(UserProfileData.user_id == current_user.id)
     )
     profile = result.scalar_one_or_none()
-    if profile is None:
-        return schemas.UserProfileResponse()
-    resp = schemas.UserProfileResponse.model_validate(profile)
-    if profile.avatar_path:
+    resp = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
+    from core.catalog_search import browse_preferences
+    for name, value in (await browse_preferences(db, current_user)).items():
+        setattr(resp, name, value)
+    if profile and profile.avatar_path:
         resp.avatar_url = f"/profile/avatar/{current_user.id}"
     return resp
 
@@ -148,12 +152,25 @@ async def update_profile(
         profile = UserProfileData(user_id=current_user.id)
         db.add(profile)
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    values = body.model_dump(exclude_unset=True)
+    ranking = {name: values.pop(name) for name in ('require_release', 'require_poster') if name in values}
+    for field, value in values.items():
         setattr(profile, field, value)
+
+    if ranking:
+        statement = insert(UserSettings).values(user_id=current_user.id, preferences=ranking)
+        await db.execute(statement.on_conflict_do_update(
+            index_elements=[UserSettings.user_id],
+            set_={"preferences": func.coalesce(UserSettings.preferences, cast({}, JSONB)).op('||')(statement.excluded.preferences)},
+        ))
 
     await db.commit()
     await db.refresh(profile)
-    return profile
+    resp = schemas.UserProfileResponse.model_validate(profile)
+    from core.catalog_search import browse_preferences
+    for name, value in (await browse_preferences(db, current_user)).items():
+        setattr(resp, name, value)
+    return resp
 
 
 CurrentAccount = Annotated[User, Depends(get_current_user)]
@@ -197,6 +214,7 @@ async def upload_avatar(
         raise HTTPException(status_code=400, detail="File too large. Maximum size is 5 MB.")
 
     ext = _AVATAR_EXT[file.content_type]
+    await db.execute(text(AVATAR_WRITE_LOCK_SQL))
     avatars_dir = settings.data_dir / "avatars"
     avatars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,6 +241,7 @@ async def delete_avatar(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await db.execute(text(AVATAR_WRITE_LOCK_SQL))
     result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if profile and profile.avatar_path:
@@ -466,16 +485,16 @@ async def get_avatar(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user_or_api_key),
 ):
-    await _check_profile_access(user_id, current_user, db)
+    user, _ = await _check_profile_access(user_id, current_user, db)
 
     result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == user_id))
     profile = result.scalar_one_or_none()
-    if not profile or not profile.avatar_path:
-        raise HTTPException(status_code=404, detail="No avatar")
-
-    path = settings.data_dir / "avatars" / profile.avatar_path
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Avatar file not found")
+    name = profile.avatar_path if profile else None
+    path = settings.data_dir / "avatars" / name if name in (f"{user_id}.jpg", f"{user_id}.png", f"{user_id}.webp") else None
+    if not path or not path.is_file() or path.is_symlink():
+        initial = escape((user.username.strip()[:1] or "?").upper())
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140"><rect width="140" height="140" fill="#2b435a"/><text x="70" y="92" text-anchor="middle" fill="#badcf5" font-family="sans-serif" font-size="70" font-weight="700">{initial}</text></svg>'
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "private, no-store"})
 
     ext = path.suffix.lstrip(".")
     media_type = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "image/jpeg")

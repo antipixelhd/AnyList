@@ -113,6 +113,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_optional_user]=lambda:self.viewer
         app.dependency_overrides[get_optional_user_or_api_key]=lambda:self.viewer
         self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test')
+
         from core.streaming_library import dispatch_library_deliveries
         async def deliver_in_fixture(user_id, media_id):
             await dispatch_library_deliveries(self.db, user_id, media_id)
@@ -128,6 +129,21 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'core.local_outbound.dispatch_queued_tracking_actions', self.queued_tracking_dispatch,
         )
         self.queued_tracking_dispatch_patch.start()
+
+    async def test_catalog_title_import_follows_anonymous_browsing_setting(self):
+        self.movie.tmdb_id = 12345
+        await self.db.commit()
+        self.viewer = None
+        with patch.object(settings_store, 'get_user_tmdb_key', AsyncMock(return_value='test-key')):
+            blocked = await self.client.post('/tracking/catalog/movie/12345')
+            self.assertEqual(blocked.status_code, 401, blocked.text)
+
+            settings = await self.db.get(GlobalSettings, 1)
+            settings.enable_logged_out_navigation = True
+            await self.db.commit()
+            allowed = await self.client.post('/tracking/catalog/movie/12345')
+            self.assertEqual(allowed.status_code, 200, allowed.text)
+            self.assertEqual(allowed.json(), {'id': self.movie.id})
 
     async def asyncTearDown(self):
         self.delivery_patch.stop()
@@ -844,7 +860,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         results=payload['results']
         self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
         self.assertEqual(results[0]['user_id'],self.friend.id)
-        self.assertEqual(results[0]['display_name'],self.friend.username)
+        self.assertEqual(results[0]['display_name'],'Friendly Viewer')
         self.assertTrue(results[0]['has_avatar'])
         self.assertEqual(results[0]['key'],f'{self.friend.id}:{self.movie.id}:{now.date().isoformat()}')
         self.assertEqual(results[0]['payload']['episodes_watched'],1)

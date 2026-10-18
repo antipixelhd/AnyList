@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import result_filters, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match
+from core.catalog_search import result_filters, browse_preferences, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, exact_title_match, media_search_rank, enrich_search_evidence
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1248,7 +1248,8 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
     )
     try:
         return await sections(db, viewer, media_type=media_type, region=region,
-                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **(await result_filters(db, viewer)), min_score=min_score)
+                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **(await result_filters(db, viewer)),
+                              **(await browse_preferences(db, viewer)), min_score=min_score)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
@@ -1285,28 +1286,45 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)), min_score=min_score, cinema=cinema and media_type=='movie',
+            status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)),
+            **((await browse_preferences(db, viewer)) if not q.strip() else {'require_release': False, 'require_poster': False}),
+            min_score=min_score, cinema=cinema and media_type=='movie',
             cinema_country=await account_cinema_country(db,viewer) if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
 
 
 @router.get("/catalog")
-async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie", db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
+                  region: str | None = Query(None, pattern='^[A-Z]{2}$'),
+                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     await catalog_access(db, viewer)
     show_anime=await anime_is_visible(db)
     filters = await result_filters(db, viewer)
     term = q.strip()[:200]
+    region = region or await account_cinema_country(db, viewer) or 'US'
     query = apply_result_filters(select(Media).where(Media.media_type == MediaType(media_type)),
                                  Media.tmdb_data, media_type, runtime=Media.runtime, **filters)
     if term:
-        similarity = func.similarity(Media.title, term)
-        query = query.where(or_(Media.title.ilike(f"%{term}%"), similarity >= 0.2)).order_by(similarity.desc(), Media.title)
+        escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        similarity = func.greatest(func.similarity(Media.title, term),
+                                   func.similarity(func.coalesce(Media.original_title, ''), term))
+        query = query.where(or_(Media.title.ilike(f'%{escaped}%', escape='\\'),
+                                Media.original_title.ilike(f'%{escaped}%', escape='\\'),
+                                similarity >= 0.2)).order_by(similarity.desc(), Media.title)
     else:
         query = query.order_by(Media.title)
     rows = (await db.execute(query.limit(80))).scalars().all()
     if not show_anime:rows=[m for m in rows if not tracking_projection.is_anime(m)]
-    results = [tracking_projection.media_data(m) for m in rows]
+    results = []
+    for media in rows:
+        result = tracking_projection.media_data(media)
+        if term:
+            metadata = {**(media.tmdb_data or {}), 'title': media.title,
+                        'original_title': media.original_title or (media.tmdb_data or {}).get('original_title'),
+                        'poster_path': result.get('poster')}
+            result['search_rank'] = media_search_rank(term, metadata, media_type)
+        results.append(result)
     notice = None
     if term:
         from core import tmdb
@@ -1316,6 +1334,20 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 search = tmdb.search_movies if media_type == 'movie' else tmdb.search_shows
                 remote = await search(term, api_key=key)
                 remote_results = remote.get('results', [])
+                # Short titles can rank behind more popular partial matches.
+                # Browse already scans this bounded provider window; quick
+                # search should find the same exact title.
+                if 3 <= len(term) <= 4 and not any(exact_title_match(term, item) for item in remote_results):
+                    last = min(remote.get('total_pages', 1), 5)
+                    if last > 1:
+                        extra = await asyncio.gather(
+                            *(search(term, page=page, api_key=key) for page in range(2, last + 1)),
+                            return_exceptions=True,
+                        )
+                        remote_results = [*remote_results, *(
+                            item for response in extra if isinstance(response, dict)
+                            for item in response.get('results', [])
+                        )]
                 # Search an unimported title with a few safe corrections only
                 # when the literal request came back empty. This preserves
                 # normal TMDB ranking and keeps the fallback within its API
@@ -1335,20 +1367,34 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                 remote_ids = [item['id'] for item in remote_results if isinstance(item.get('id'), int)]
                 cached = {m.tmdb_id: m for m in await db.scalars(select(Media).where(
                     Media.media_type == MediaType(media_type), Media.tmdb_id.in_(remote_ids)))} if remote_ids else {}
+                remote_results = [known_result_metadata(item, cached[item['id']]) if item.get('id') in cached else item
+                                  for item in remote_results]
+                await enrich_search_evidence([item for item in remote_results if not item.get('adult')],
+                    term, media_type, key, region,
+                    theatrical=media_type == 'movie')
+                remote_by_id = {item['id']: item for item in remote_results}
+                for result in results:
+                    item = remote_by_id.get(result.get('tmdb_id'))
+                    if item:
+                        result['search_rank'] = media_search_rank(term,
+                            {**item, 'title': result['title'], 'poster_path': result.get('poster') or item.get('poster_path')},
+                            media_type)
                 for item in remote_results:
-                    if item.get('id') in cached:
-                        item = known_result_metadata(item, cached[item['id']])
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
                     if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
+                    known.add(item['id'])
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
-                        'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4]})
+                        'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4],
+                        'search_rank':media_search_rank(term, item, media_type)})
             except Exception:
                 notice = 'Metadata search is temporarily unavailable. Showing local matches.'
         else:
             notice = 'Add a TMDB key in Settings, or ask your administrator, to search beyond the local catalogue.'
     from core.tracking_editor import attach_editor_context
+    if term:
+        results.sort(key=lambda item: item.get('search_rank', 0), reverse=True)
     await attach_editor_context(db, viewer, results)
     return {"results": results, "notice": notice}
 
@@ -1385,9 +1431,10 @@ async def catalog_preview(
 
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
-async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
     from core.enrichment import create_media_safely, enrich_media
-    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    await catalog_access(db, viewer)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
     if not key:
         raise HTTPException(409, 'A TMDB key is required to load this title')
     media = (await db.execute(select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType(media_type)))).scalar_one_or_none()
@@ -1445,6 +1492,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
             if score is not None:
                 friends.append({"id": user.id, "username": user.username, "display_name": profile.display_name,
                     "has_avatar": bool(profile.avatar_path), "score": score, "status": e.status})
+        friends.sort(key=lambda person: (-person['score'], (person['display_name'] or person['username']).casefold()))
     seasons = [dict(s) for s in (media.tmdb_data or {}).get("seasons", [])]
     episodes = await released_episodes(db, media)
     from core.tracking_metadata import released_episodes as catalogue_episodes
@@ -1498,6 +1546,106 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
     if not key:
         data['related_status'] = {'state':'unavailable','retry_after':0,'error':'missing_key'}
     return data
+
+
+@router.get('/title/{media_id}/episode-images')
+async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
+                               db: Annotated[AsyncSession, Depends(get_db)],
+                               viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+    await catalog_access(db, viewer)
+    media = await db.get(Media, media_id)
+    if not media or media.media_type != MediaType.series:
+        raise HTTPException(404, 'Series not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Series not found')
+    from core.tracking_metadata import released_episodes as catalogue_episodes
+    episodes = await catalogue_episodes(db, media, include_unreleased=True)
+    missing = [episode for episode in episodes if not episode.poster_path and not (episode.tmdb_data or {}).get('still_path')]
+    if not missing:
+        return {'images': {}}
+    catalogue_provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
+    tvdb_id = media.tvdb_id
+    if not tvdb_id and media.tmdb_id:
+        tvdb_id = (await db.execute(select(Show.tvdb_id).where(Show.tmdb_id == media.tmdb_id))).scalars().first()
+    key = await settings_store.get_user_tvdb_key(db, viewer.id if viewer else -1) if tvdb_id else None
+    images = {}
+    if tvdb_id and key and (catalogue_provider == 'tvdb' or any(episode.tvdb_id for episode in missing)):
+        from core import tvdb
+        try:
+            rows = await tvdb.get_series_episodes(tvdb_id, None, key)
+        except Exception:
+            rows = []
+        by_id = {row.get('id'): row for row in rows if row.get('id')}
+        by_position = {(row.get('seasonNumber'), row.get('number')): row for row in rows}
+        for episode in missing:
+            row = by_id.get(episode.tvdb_id) if episode.tvdb_id else None
+            if not row and catalogue_provider == 'tvdb':
+                row = by_position.get((episode.season_number, episode.episode_number))
+            image = tvdb.format_episode(row).get('image_url') if row else None
+            if image:
+                images[str(episode.id)] = image
+                episode.poster_path = image
+    # TMDB catalogues may have no TVDB identity. Fetch each season as a batch,
+    # never an individual request for every episode.
+    if media.tmdb_id and catalogue_provider == 'tmdb':
+        remaining = [episode for episode in missing if str(episode.id) not in images]
+        if remaining:
+            from core import tmdb
+            tmdb_key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+            if tmdb_key:
+                semaphore = asyncio.Semaphore(3)
+                async def season_artwork(number: int) -> tuple[int, dict]:
+                    async with semaphore:
+                        try:
+                            data = await tmdb.get_season(media.tmdb_id, number, api_key=tmdb_key)
+                            return number, {row.get('episode_number'): row.get('still_path')
+                                for row in data.get('episodes', []) if row.get('still_path')}
+                        except Exception:
+                            return number, {}
+                season_images = dict(await asyncio.gather(*(
+                    season_artwork(number) for number in {episode.season_number for episode in remaining}
+                )))
+                for episode in remaining:
+                    image = season_images.get(episode.season_number, {}).get(episode.episode_number)
+                    if image:
+                        images[str(episode.id)] = image
+                        episode.poster_path = image
+    if images:
+        await db.commit()
+    return {'images': images}
+
+
+@router.get('/title/{media_id}/social')
+async def title_social(media_id: Annotated[int, Path(gt=0)],
+                       db: Annotated[AsyncSession, Depends(get_db)],
+                       viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    media = await db.get(Media, media_id)
+    if not media or media.media_type not in (MediaType.movie, MediaType.series):
+        raise HTTPException(404, 'Title not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Title not found')
+    followed = select(Follow.following_id).where(Follow.follower_id == viewer.id)
+    visible = or_(User.id == viewer.id, (User.id.in_(followed)) & (UserProfileData.privacy_level == PrivacyLevel.public))
+    entries = (await db.execute(select(TrackedEntry, User, UserProfileData)
+        .join(User, User.id == TrackedEntry.user_id)
+        .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
+        .where(TrackedEntry.media_id == media_id, visible))).all()
+    people = [{'id': user.id, 'username': user.username,
+               'display_name': profile.display_name if profile else user.username,
+               'has_avatar': bool(profile and profile.avatar_path), 'status': entry.status,
+               'score': effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+               'self': user.id == viewer.id}
+              for entry, user, profile in entries]
+    status_rank = {status: rank for rank, status in enumerate(('completed', 'watching', 'paused', 'dropped', 'planning'))}
+    people.sort(key=lambda person: (status_rank.get(person['status'], len(status_rank)), person['score'] is None, -(person['score'] or 0), not person['self'], (person['display_name'] or person['username']).casefold()))
+    activity_rows = (await db.execute(select(TrackingActivity, Media, User, UserProfileData)
+        .join(Media, Media.id == TrackingActivity.media_id)
+        .join(User, User.id == TrackingActivity.user_id)
+        .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
+        .where(TrackingActivity.media_id == media_id, visible)
+        .order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(60))).all()
+    return {'type': media.media_type.value, 'people': people,
+            'activities': tracking_projection.activity_data(activity_rows, include_user=True, limit=30)}
 
 
 @router.get('/title/{media_id}/people')

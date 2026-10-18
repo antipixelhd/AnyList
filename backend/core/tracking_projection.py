@@ -136,8 +136,8 @@ def activity_data(rows, *, include_user=False, limit=12):
                     {
                         "user_id": user.id,
                         "username": user.username,
-                        "display_name": user.username,
-                        "has_avatar": bool(profile.avatar_path),
+                        "display_name": (profile.display_name if profile else None) or user.username,
+                        "has_avatar": bool(profile and profile.avatar_path),
                     }
                     if user
                     else {}

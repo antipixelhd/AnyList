@@ -1,0 +1,11 @@
+<script is:inline>
+  if (!window.__anylistProfileImageFallback) {
+    window.__anylistProfileImageFallback = true;
+    document.addEventListener('error', event => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement)) return;
+      if (image.matches('.profile-background')) image.remove();
+      if (image.matches('#background-preview')) image.hidden = true;
+    }, true);
+  }
+</script>

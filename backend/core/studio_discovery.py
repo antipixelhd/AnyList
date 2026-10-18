@@ -1,5 +1,5 @@
 """Group reviewed studios and read work evidence without provider fan-out."""
-from core.catalog_search import DEFAULT_MIN_VOTES, result_filters
+from core.catalog_search import result_filters
 from core.studio_groups import studio_root, studio_companies, studio_display_name
 from core.contributor_evidence import cached_evidence, evidence_key, local_evidence, work_summary
 from models import GlobalSettings
@@ -11,7 +11,6 @@ async def verified_studios(db, viewer, rows, api_key):
     if not rows:
         return [], False
     filters = await result_filters(db, viewer)
-    filters = {**filters, 'min_votes': max(DEFAULT_MIN_VOTES, filters['min_votes'])}
     settings = await db.get(GlobalSettings, 1)
     show_anime = settings is None or settings.show_anime
     local = await local_evidence(db, rows, 'studio', filters, show_anime)

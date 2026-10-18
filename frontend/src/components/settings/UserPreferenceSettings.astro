@@ -1,7 +1,6 @@
 ---
 import RatingPosterSettings from "./RatingPosterSettings.astro";
 import StatisticsRefresh from "./StatisticsRefresh.astro";
-import DateRegionSettings from './DateRegionSettings.astro';
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
@@ -21,8 +20,9 @@ const prefs: UserPreferences = {
   avatar_url: null,
   bio: null,
   country: null,
-  minimum_votes: 250,
   minimum_movie_runtime: 30,
+  require_release: false,
+  require_poster: false,
   excluded_categories: [],
   streaming_services: [],
   metadata_language: null,
@@ -100,13 +100,10 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     <div id="js-message" class="hidden" role="status" aria-live="polite"></div>
     {category === "profile" && (
     <div class="settings-stack">
-      <DateRegionSettings />
-
       <!-- Profile color -->
       <section class="profile-color-settings" aria-labelledby="profile-color-heading">
         <div class="mb-4 border-b border-zinc-800 pb-2">
           <h2 id="profile-color-heading" class="section-headline">Profile Color</h2>
-          <span class="setting-save-state" data-save-state="profile-appearance" role="status"></span>
         </div>
         <div class="profile-color-swatches" role="group" aria-label="Profile color">
           {PROFILE_COLORS.map(([color, name]) => (
@@ -143,7 +140,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             )}
           </div>
           <div class="space-y-2">
-            <p class="text-sm font-medium text-zinc-300">Profile Picture <span id="avatar-status" class="setting-save-state" role="status"></span></p>
+            <p class="text-sm font-medium text-zinc-300">Profile Picture</p>
             <p class="text-xs text-zinc-500">JPEG, PNG or WebP · Max 5 MB</p>
             <div class="flex items-center gap-2 flex-wrap">
               <label class="cursor-pointer px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 text-zinc-200 text-sm font-medium rounded-lg transition-all">
@@ -161,7 +158,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
 
         <div class="grid grid-cols-1 gap-5">
           <div class="space-y-2">
-            <div class="setting-label-line"><label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label><span class="setting-save-state" data-save-state="bio" role="status"></span></div>
+            <div class="setting-label-line"><label for="bio" class="block text-sm font-medium text-zinc-400">Bio</label></div>
             <textarea id="bio" name="bio" rows="5" maxlength="5000" aria-describedby="bio-count" placeholder="Write a short bio…" class="w-full resize-y border border-zinc-800 bg-zinc-900 px-4 py-3 text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500">{prefs.bio ?? ''}</textarea>
             <div class="flex items-center justify-between gap-3"><span id="bio-count" class="text-xs text-zinc-500" aria-live="polite">{(prefs.bio ?? '').length.toLocaleString()} / 5,000</span><button id="save-bio" type="button" class="button-primary px-4 py-2 text-sm" disabled>Save bio</button></div>
           </div>
@@ -179,7 +176,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             <div class="absolute inset-0" style="background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6))"></div>
           </div>
           <button type="submit" id="save-background" class="button-primary px-4 py-2 text-sm">Save background</button>
-          <span class="setting-save-state" data-save-state="background" role="status" aria-live="polite"></span>
         </form>
       </section>
 
@@ -250,7 +246,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       {category === "media" && <div class="settings-stack">
       <StatisticsRefresh />
       <section>
-        <div class="setting-label-line mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Seasons</h2><span class="setting-save-state" data-save-state="remove-specials-seasons" role="status"></span></div>
+        <div class="setting-label-line mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Seasons</h2></div>
         <label class="setting-switch-row" for="remove-specials-seasons">
           <span><strong>Remove Specials Seasons</strong></span>
           <input id="remove-specials-seasons" type="checkbox" checked={trackingPrefs.remove_specials_seasons !== false} />
@@ -258,20 +254,27 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       </section>
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
-        <div class="space-y-2 max-w-xs">
-          <div class="setting-label-line"><label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label><span class="setting-save-state" data-save-state="minimum_votes" role="status"></span></div>
-          <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="1000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
-        </div>
         <div class="space-y-2 max-w-xs mt-5">
-          <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label><span class="setting-save-state" data-save-state="minimum_movie_runtime" role="status"></span></div>
+          <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
           <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
         <fieldset id="excluded_categories" class="mt-5 space-y-3">
-          <legend class="setting-label-line"><span class="text-sm font-medium text-zinc-400">Exclude categories</span><span class="setting-save-state" data-save-state="excluded_categories" role="status"></span></legend>
+          <legend class="setting-label-line"><span class="text-sm font-medium text-zinc-400">Exclude categories</span></legend>
           <div class="flex flex-wrap gap-2">
             {RESULT_CATEGORIES.map(([id, label]) => <button type="button" class="chip border text-base font-medium transition-colors cursor-pointer focus:outline-none" data-excluded-category={id} aria-pressed={prefs.excluded_categories?.includes(id) ?? false}>{label}</button>)}
           </div>
         </fieldset>
+        <div class="mt-6 space-y-3">
+          <p class="text-sm text-zinc-400">Browse only, outside relevance search. Release availability is worldwide.</p>
+          <label class="setting-switch-row" for="require_release">
+            <span><strong>Require streaming or theatrical release</strong></span>
+            <input id="require_release" type="checkbox" checked={prefs.require_release === true} />
+          </label>
+          <label class="setting-switch-row" for="require_poster">
+            <span><strong>Require poster</strong></span>
+            <input id="require_poster" type="checkbox" checked={prefs.require_poster === true} />
+          </label>
+        </div>
       </section>
       <!-- Localization -->
       <section>
@@ -280,7 +283,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         </div>
         <div class="localization-grid">
         <div class="space-y-2 max-w-xs">
-          <div class="setting-label-line"><label for="country" class="block text-sm font-medium text-zinc-400">Country</label><span class="setting-save-state" data-save-state="country" role="status"></span></div>
+          <div class="setting-label-line"><label for="country" class="block text-sm font-medium text-zinc-400">Country</label></div>
           <select
             id="country"
             name="country"
@@ -292,11 +295,11 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             ))}
           </select>
           <p class="text-xs text-zinc-500">
-            Streaming and theatrical availability use this country.
+            Streaming provider and cinema filters use this country.
           </p>
         </div>
         <div class="space-y-2 max-w-xs">
-          <div class="setting-label-line"><label for="metadata_language" class="block text-sm font-medium text-zinc-400">Metadata language</label><span class="setting-save-state" data-save-state="metadata_language" role="status"></span></div>
+          <div class="setting-label-line"><label for="metadata_language" class="block text-sm font-medium text-zinc-400">Metadata language</label></div>
           <select
             id="metadata_language"
             name="metadata_language"
@@ -395,24 +398,16 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
 
 
     function setStatus(group: string, message: string, state: 'saving' | 'saved' | 'error' = 'saved') {
-      let targets = [...document.querySelectorAll<HTMLElement>(`[data-save-state="${group}"]`)];
-      if (!targets.length) {
-        const chip = group === 'streaming_services' ? 'streaming' : group;
-        const control = document.querySelector<HTMLElement>(`[data-chip="${chip}"], [name="${group}"]`) || document.getElementById(group);
-        const section = control?.closest('section');
-        const heading = section?.querySelector('.section-headline');
-        if (!heading) return;
-        const target = document.createElement('span');
-        target.className = 'setting-save-state';
-        target.dataset.saveState = group;
-        heading.after(target);
-        targets = [target];
-      }
-      for (const target of targets) {
-        target.textContent = message;
-        target.dataset.state = state;
-        target.setAttribute('role', 'status');
-      }
+      if (state === 'saving' || !message) return;
+      const names: Record<string, string> = {
+        'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
+        'remove-specials-seasons': 'Seasons',
+        minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
+        require_release: 'Release requirement', require_poster: 'Poster requirement',
+        country: 'Country', metadata_language: 'Metadata language',
+        'combine-lists': 'List preferences', streaming_services: 'Streaming services',
+      };
+      showMessage(state === 'error' ? message : `${names[group] || 'Setting'} saved.`, state === 'error' ? 'error' : 'success');
     }
 
     // Avatar upload
@@ -619,7 +614,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       saveAppearance();
     });
     siteWideToggle?.addEventListener('change', saveAppearance);
-    for (const [field, fallback] of [['minimum_votes', 250], ['minimum_movie_runtime', 30]] as const) {
+    for (const [field, fallback] of [['minimum_movie_runtime', 30]] as const) {
       const input = document.getElementById(field) as HTMLInputElement | null;
       if (!input) continue;
       committed.set(field, { [field]: Number(input.value) });
@@ -629,6 +624,14 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           input.value = String(previous[field] ?? fallback);
         });
       });
+    }
+    for (const field of ['require_release', 'require_poster'] as const) {
+      const input = document.getElementById(field) as HTMLInputElement | null;
+      if (!input) continue;
+      committed.set(field, { [field]: input.checked });
+      input.addEventListener('change', () => queueSave(field, { [field]: input.checked }, previous => {
+        input.checked = previous[field] === true;
+      }));
     }
     const excludedButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-excluded-category]')];
     const excludedValues = () => excludedButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => Number(button.dataset.excludedCategory));
