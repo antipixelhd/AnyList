@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, U
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, case, or_
+from sqlalchemy import func, case, or_, text
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from datetime import date as DateType, timedelta as TimeDelta
@@ -31,6 +31,7 @@ from models.lists import List as ListModel, ListItem
 from models.follows import Follow
 from models.global_settings import GlobalSettings
 from core.config import settings
+from core.backup import AVATAR_WRITE_LOCK_SQL
 import schemas
 
 router = APIRouter()
@@ -212,6 +213,7 @@ async def upload_avatar(
         raise HTTPException(status_code=400, detail="File too large. Maximum size is 5 MB.")
 
     ext = _AVATAR_EXT[file.content_type]
+    await db.execute(text(AVATAR_WRITE_LOCK_SQL))
     avatars_dir = settings.data_dir / "avatars"
     avatars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -238,6 +240,7 @@ async def delete_avatar(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await db.execute(text(AVATAR_WRITE_LOCK_SQL))
     result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if profile and profile.avatar_path:

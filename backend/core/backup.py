@@ -15,6 +15,9 @@ _AVATAR_NAME = re.compile(r"^[1-9][0-9]*\.(?:jpg|png|webp)$")
 _MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
 
+AVATAR_WRITE_LOCK_SQL = "SELECT pg_advisory_xact_lock(1935897199, 1)"
+
+
 def avatar_backup_files(avatar_dir: Path, rows: list) -> dict[str, bytes]:
     """Only include files referenced by a profile in the database snapshot."""
     files = {}

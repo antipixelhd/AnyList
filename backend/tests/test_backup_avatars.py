@@ -38,21 +38,25 @@ class FakeConnection:
     def __init__(self):
         self.copied = []
         self.closed = False
+        self.avatar_locked = False
 
     async def fetch(self, query):
         if "pg_tables" in query:
             return [{"tablename": "user_profiles"}]
         if "avatar_path IS NOT NULL" in query:
+            assert self.avatar_locked
             return [{"user_id": 7, "avatar_path": "7.webp"}]
         return []
 
     async def execute(self, query, *args):
-        pass
+        if query == backup.AVATAR_WRITE_LOCK_SQL:
+            self.avatar_locked = True
 
     async def copy_to_table(self, table, source, format):
         self.copied.append((table, source.read(), format))
 
     async def copy_from_table(self, table, output, format):
+        assert self.avatar_locked
         output.write(b"profile data")
 
     async def close(self):
@@ -128,6 +132,56 @@ class BackupAvatarTests(unittest.IsolatedAsyncioTestCase):
                 response = await admin.backup_database(None)
             self.assertEqual(backup.parse_backup(response.body), (["user_profiles"], {"user_profiles": b"profile data"}, {"7.webp": b"approved image"}))
             self.assertTrue(connection.closed)
+
+    async def test_avatar_delete_locks_before_removing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            avatars = root / 'avatars'
+            avatars.mkdir()
+            avatar = avatars / '7.webp'
+            avatar.write_bytes(b'current image')
+            row = SimpleNamespace(avatar_path='7.webp')
+            calls = []
+
+            async def execute(query):
+                calls.append(str(query))
+                if len(calls) == 1:
+                    self.assertEqual(str(query), backup.AVATAR_WRITE_LOCK_SQL)
+                    self.assertTrue(avatar.exists())
+                return SimpleNamespace(scalar_one_or_none=lambda: row)
+
+            db = SimpleNamespace(execute=execute, commit=AsyncMock())
+            with patch.object(profile.settings, 'data_dir', root):
+                await profile.delete_avatar(current_user=SimpleNamespace(id=7), db=db)
+            self.assertFalse(avatar.exists())
+            self.assertIsNone(row.avatar_path)
+            db.commit.assert_awaited_once()
+
+    async def test_avatar_upload_locks_before_replacing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            avatars = root / 'avatars'
+            avatars.mkdir()
+            avatar = avatars / '7.webp'
+            avatar.write_bytes(b'current image')
+            row = SimpleNamespace(avatar_path='7.webp')
+            calls = []
+
+            async def execute(query):
+                calls.append(str(query))
+                if len(calls) == 1:
+                    self.assertEqual(str(query), backup.AVATAR_WRITE_LOCK_SQL)
+                    self.assertEqual(avatar.read_bytes(), b'current image')
+                return SimpleNamespace(scalar_one_or_none=lambda: row)
+
+            db = SimpleNamespace(execute=execute, commit=AsyncMock())
+            file = SimpleNamespace(content_type='image/png', read=AsyncMock(return_value=b'new image'))
+            with patch.object(profile.settings, 'data_dir', root):
+                await profile.upload_avatar(file=file, current_user=SimpleNamespace(id=7), db=db)
+            self.assertFalse(avatar.exists())
+            self.assertEqual((avatars / '7.png').read_bytes(), b'new image')
+            self.assertEqual(row.avatar_path, '7.png')
+            db.commit.assert_awaited_once()
 
     async def test_missing_approved_avatar_returns_default_image(self):
         result = SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(avatar_path="7.png"))
