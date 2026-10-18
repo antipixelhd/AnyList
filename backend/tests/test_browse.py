@@ -222,6 +222,27 @@ class FilterTests(unittest.TestCase):
 
 
 class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ranked_feeds_get_missing_tmdb_popularity_before_filtering(self):
+        feed = [{'id': i, 'title': f'Ranked {i}', 'imdb_votes': 1000,
+                 'imdb_id': f'tt{i}', 'imdb_score': 8, 'runtime': 100} for i in range(1, 31)]
+        async def detail(identifier, **kwargs):
+            return {'id': identifier, 'popularity': 5 if identifier == 1 else 80}
+        for sort in ('trending', 'popular', 'score'):
+            with patch('core.mdblist_discovery.ranked_rows', AsyncMock(return_value=(feed, False))), \
+                 patch('core.tmdb.get_movie_light', AsyncMock(side_effect=detail)):
+                first, rows = await imdb_page('movie', 'key', {**FILTERS, 'sort': sort, 'min_popularity': 25}, 1, mdblist_key='mdb')
+                self.assertEqual([row['id'] for row in rows], list(range(2, 26)))
+                self.assertTrue(first['has_more'])
+                following, remaining = await imdb_page('movie', 'key', {**FILTERS, 'sort': sort, 'min_popularity': 25}, 2,
+                    mdblist_key='mdb', feed_offset=first['scan_next'])
+                self.assertEqual([row['id'] for row in remaining], list(range(26, 31)))
+                self.assertFalse(following['has_more'])
+        with patch('core.mdblist_discovery.ranked_rows', AsyncMock(return_value=(feed, False))), \
+             patch('core.tmdb.get_movie_light', AsyncMock()) as read:
+            _, rows = await imdb_page('movie', 'key', {**FILTERS, 'min_popularity': 0}, 1, mdblist_key='mdb')
+            self.assertEqual(rows[0]['id'], 1)
+            read.assert_not_awaited()
+
     async def test_single_letter_search_does_not_scan_large_ranked_catalogue(self):
         feed=[{'id':i,'title':f'A movie {i}','imdb_votes':500} for i in range(1,10001)]
         with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':500,'results':[]})) as search, \
