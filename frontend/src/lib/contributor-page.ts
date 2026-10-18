@@ -208,7 +208,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     }).catch(cause=>{
       if(!signal.aborted&&!request.signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load works.');
     }).finally(()=>{
-      if(current===revision){filterRequest=undefined;region.removeAttribute('aria-busy');}
+      if(!signal.aborted&&current===revision){
+        filterRequest=undefined;region.removeAttribute('aria-busy');
+        more.disabled=false;more.textContent='Load more';
+      }
     });
   },{signal});
   bindPredictivePagination(region,signal,()=>!filterRequest&&data.has_more&&!more.disabled&&error.hidden,
