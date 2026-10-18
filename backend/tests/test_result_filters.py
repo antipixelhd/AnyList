@@ -191,3 +191,31 @@ class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
             await tmdb.discover_shows(with_companies=1,minimum_runtime=30,excluded_genre_ids=[99,10764])
             self.assertNotIn('with_runtime.gte',fetch.await_args.kwargs['params'])
             self.assertEqual(fetch.await_args.kwargs['params']['without_genres'],'99,10764')
+
+
+class SearchRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reuses_known_runtime_and_only_fetches_missing_evidence(self):
+        from core.catalog_search import enrich_search_runtimes
+        items = [{'id': 1}, {'id': 2, 'runtime': 90}, {'id': 3}]
+        known = {1: SimpleNamespace(runtime=12, tmdb_data={})}
+        with patch('core.tmdb.get_movie_light', AsyncMock(return_value={'runtime': 20})) as read:
+            await enrich_search_runtimes(items, known, 'key', min_runtime=30)
+        read.assert_awaited_once_with(3, api_key='key')
+        self.assertEqual([item['runtime'] for item in items], [12, 90, 20])
+        self.assertEqual([item['id'] for item in items if matches_result_filters(item, 'movie', min_runtime=30)], [2])
+
+    async def test_show_all_skips_runtime_reads_and_restores_excluded_categories(self):
+        from core.catalog_search import enrich_search_runtimes
+        item = {'id': 1, 'runtime': 12, 'genre_ids': [99]}
+        self.assertFalse(matches_result_filters(item, 'movie', min_runtime=30, excluded_genres=[99]))
+        self.assertTrue(matches_result_filters(item, 'movie', min_runtime=0, excluded_genres=[]))
+        with patch('core.tmdb.get_movie_light', AsyncMock()) as read:
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=0)
+        read.assert_not_awaited()
+
+    async def test_provider_failure_keeps_runtime_unknown(self):
+        from core.catalog_search import enrich_search_runtimes
+        items = [{'id': 1}]
+        with patch('core.tmdb.get_movie_light', AsyncMock(side_effect=OSError('offline'))):
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30)
+        self.assertNotIn('runtime', items[0])

@@ -650,6 +650,8 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             "core.settings_store.get_user_tmdb_key", AsyncMock(return_value=None)
         )
         self.key_patch.start()
+        self.runtime_patch = patch('core.tmdb.get_movie_light', AsyncMock(return_value={}))
+        self.runtime_patch.start()
         self.chart_patch = patch("core.mdblist_discovery.cached_rows", return_value=[])
         self.chart_patch.start()
         self.mdblist_patch = patch("core.external_scores.effective_mdblist_key", AsyncMock(return_value=None))
@@ -663,6 +665,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.key_patch.stop()
+        self.runtime_patch.stop()
         self.chart_patch.stop()
         self.mdblist_patch.stop()
         self.access_patch.stop()
@@ -1029,6 +1032,43 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.json()['results'],[])
             broad=await self.client.get('/tracking/browse',params={'q':'Public search match','unfiltered':'true'})
             self.assertEqual([row['id'] for row in broad.json()['results']],[self.movies[2].id])
+
+    async def test_popularity_preference_defaults_persists_and_show_all_bypasses(self):
+        from core.discovery_policy import viewer_policy
+        response = await self.client.get('/tracking/preferences')
+        self.assertEqual(response.json()['minimum_popularity'], 25)
+        for value in (30, 0):
+            saved = await self.client.patch('/tracking/preferences', json={'minimum_popularity': value})
+            self.assertEqual(saved.status_code, 200, saved.text)
+            self.assertEqual((await self.client.get('/tracking/preferences')).json()['minimum_popularity'], value)
+            self.assertEqual((await viewer_policy(self.db, self.owner, 'movie', 'search')).min_popularity, value)
+            self.assertEqual((await viewer_policy(self.db, self.owner, 'series', 'newest')).min_popularity, value)
+            self.assertEqual((await viewer_policy(self.db, self.owner, 'movie', 'search', unfiltered=True)).min_popularity, 0)
+        invalid = await self.client.patch('/tracking/preferences', json={'minimum_popularity': -1})
+        self.assertEqual(invalid.status_code, 422)
+
+    async def test_search_runtime_and_categories_are_bypassed_only_by_show_all(self):
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        await update_profile(UserProfileUpdate(minimum_movie_runtime=45, excluded_categories=[99]),
+                             current_user=self.owner, db=self.db)
+        raw = [{'id': 987001, 'title': 'Policy match short', 'genre_ids': [18]},
+               {'id': 987002, 'title': 'Policy match documentary', 'genre_ids': [99]},
+               {'id': 987003, 'title': 'Policy match feature', 'genre_ids': [18]}]
+        async def runtime(identifier, **kwargs):
+            return {'runtime': 12 if identifier == 987001 else 100}
+        with patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')), \
+             patch('core.tmdb.search_movies', AsyncMock(return_value={'results': raw, 'total_pages': 1})), \
+             patch('core.tmdb.get_movie_light', AsyncMock(side_effect=runtime)) as read:
+            for endpoint in ('catalog', 'browse'):
+                response = await self.client.get('/tracking/' + endpoint, params={'q': 'Policy match'})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([row['tmdb_id'] for row in response.json()['results']], [987003])
+            self.assertNotIn(987002, [call.args[0] for call in read.await_args_list])
+            read.reset_mock()
+            broad = await self.client.get('/tracking/browse', params={'q': 'Policy match', 'unfiltered': 'true'})
+            self.assertEqual({row['tmdb_id'] for row in broad.json()['results']}, {987001, 987002, 987003})
+            read.assert_not_awaited()
 
     async def test_text_query_in_upcoming_finds_a_dated_return_instead_of_testing_the_original_premiere(self):
         from core.chronological_discovery import _cache

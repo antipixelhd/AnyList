@@ -21,7 +21,7 @@ import {
 const params = new URLSearchParams(Astro.url.search);
 params.delete("streaming");
 params.delete("unfiltered");
-if(!["1","true"].includes(params.get("include_rereleases") || ""))params.delete("include_rereleases");
+params.delete("include_rereleases");
 if (params.get('sort') === 'upcoming') params.set('status', 'upcoming');
 const account = Astro.locals.token ? await api.profile.get(Astro.locals.token).catch(() => null) : null;
 const preference = streamingRegionPreference(Astro.cookies.get(STREAMING_REGION_COOKIE)?.value);
@@ -133,7 +133,7 @@ if (providerLabel) initialChips.push(providerLabel);
 if (minScore !== 0) initialChips.push(`${minScore.toLocaleString()}+ TMDB score`);
 if (params.get("q")?.trim()) initialChips.push(`“${params.get("q")!.trim()}”`);
 if(params.has('cinema'))initialChips.push(cinemaLabel);
-if(params.has('include_rereleases'))initialChips.push('Country-specific re-releases');
+
 ---
 
 <Tracker title="Browse">
@@ -248,15 +248,11 @@ if(params.has('include_rereleases'))initialChips.push('Country-specific re-relea
             ))}
           </BrowseSelect>
         </label>
-        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minScore !== 0 || params.has("include_rereleases"))}>
+        <details class="browse-more" data-motion-details open={!!(params.get("start") || params.get("end") || params.get("provider") || minScore !== 0)}>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters">
             <Icon name="sliders" />
           </summary>
           <div class="browse-secondary-filters" id="browse-secondary-filters" data-motion-fade>
-            <label class="browse-rereleases-toggle">
-              <input type="checkbox" name="include_rereleases" value="true" checked={params.has("include_rereleases")} />
-              <span>Show country-specific re-releases for movies</span>
-            </label>
             <label class="browse-filter browse-streaming">
               <span>Streaming on</span>
               <select name="provider">

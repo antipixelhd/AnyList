@@ -101,12 +101,18 @@ class PreferencePatch(BaseModel):
     new_season_release_dates: bool | None = None
     new_season_releases: bool | None = None
     remove_specials_seasons: bool | None = None
+    include_rereleases: bool | None = None
+    minimum_popularity: float | None = Field(None, ge=0, le=1000000, allow_inf_nan=False)
 
 
 @router.get('/preferences')
 async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     row=await db.get(TrackingPreferences,viewer.id)
+    from models.users import UserSettings
+    settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
     return {
+        'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
+        'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
         'auto_confirm': bool(row and row.auto_confirm),
         'combine_lists': True if row is None else row.combine_lists,
         'default_sort': 'title' if row is None else row.default_sort,
@@ -126,7 +132,15 @@ async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_
     for name in body.model_fields_set:
         value=getattr(body,name)
         if value is None:raise HTTPException(422,f'{name} cannot be null')
-        setattr(row,name,value)
+        if name in ('include_rereleases', 'minimum_popularity'):
+            from models.users import UserSettings
+            settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
+            if settings is None:
+                settings=UserSettings(user_id=viewer.id)
+                db.add(settings)
+            settings.preferences={**(settings.preferences or {}), name: value}
+        else:
+            setattr(row,name,value)
     await db.commit()
     return await preferences(db,viewer)
 
@@ -1268,7 +1282,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  cinema: Annotated[bool, Query()] = False,
                  unfiltered: Annotated[bool, Query()] = False,
                  include_returning: Annotated[bool, Query(include_in_schema=False)] = True,
-                 include_rereleases: Annotated[bool, Query()] = False,
+                 include_rereleases: Annotated[bool | None, Query()] = None,
                  timeline: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
@@ -1280,6 +1294,10 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     except ValueError:
         raise HTTPException(422,'Invalid search cursor') from None
     await catalog_access(db, viewer)
+    if include_rereleases is None:
+        from models.users import UserSettings
+        settings = await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id)) if viewer else None
+        include_rereleases = bool(settings and (settings.preferences or {}).get('include_rereleases', False))
     country = region or await account_cinema_country(db, viewer)
     region = country or 'US'
     genre_ids = browse_genres(genres)

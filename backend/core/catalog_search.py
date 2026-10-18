@@ -59,6 +59,40 @@ def known_result_visible(item, media, media_type, *, show_anime, min_runtime=0, 
         min_runtime=min_runtime, excluded_genres=excluded_genres) for metadata in (saved, merged))
 
 
+async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0):
+    """Fill missing movie runtimes only when needed by saved search policy.
+
+    Reuse known catalogue metadata first and TMDB's shared request/cache layer.
+    Unknown provider runtimes stay unknown; failures do not erase usable data.
+    """
+    if not min_runtime or not api_key:
+        return
+    from core import tmdb
+    semaphore = asyncio.Semaphore(4)
+
+    async def load(item):
+        if title_runtime(item) is not None:
+            return
+        media = known.get(item['id'])
+        if media:
+            runtime = title_runtime({'runtime': media.runtime}) or title_runtime(media.tmdb_data or {})
+            if runtime is not None:
+                item['runtime'] = runtime
+                return
+        async with semaphore:
+            try:
+                data = await tmdb.get_movie_light(item['id'], api_key=api_key)
+                if title_runtime(data) is not None:
+                    item['runtime'] = data['runtime']
+            except Exception:
+                pass
+
+    try:
+        await asyncio.wait_for(asyncio.gather(*(load(item) for item in {item['id']: item for item in items}.values())), timeout=.9)
+    except TimeoutError:
+        pass
+
+
 def exact_title_match(term, item):
     """Identify exact titles when reserving search enrichment slots."""
     query = (term or '').strip().casefold()

@@ -843,6 +843,12 @@ async def browse_page(
         remote_metadata = {item['id']: item for item in items}
         from core.catalog_search import known_result_visible
         known_titles = {m.tmdb_id: m for m in known}
+        if term and media_type == 'movie' and filters.get('min_runtime'):
+            from core.catalog_search import enrich_search_runtimes
+            await enrich_search_runtimes(items, known_titles, key, min_runtime=filters['min_runtime'])
+            rejected = {item['id'] for item in items if not matches_result_filters(item, media_type,
+                min_runtime=filters['min_runtime'], excluded_genres=filters.get('excluded_genres', ()))}
+            results = [row for row in results if row.get('tmdb_id') not in rejected]
         results = [row for row in results if row['tmdb_id'] not in known_titles or known_result_visible(
             remote_metadata.get(row['tmdb_id'], {}), known_titles[row['tmdb_id']], media_type,
             show_anime=show_anime, min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]

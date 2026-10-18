@@ -15,10 +15,17 @@ from core import chronological_discovery as discovery
 class PolicyTests(unittest.TestCase):
     def test_surface_and_kind_tuning_are_independent_and_zero_disables(self):
         preferences = {'discovery_tuning': {'newest': {'movie': {'min_votes': 10, 'min_popularity': 30}}}}
-        self.assertEqual(tuning(preferences, 'movie', 'newest'), DiscoveryPolicy(10, 30))
+        self.assertEqual(tuning(preferences, 'movie', 'newest'), DiscoveryPolicy(10, 25))
         self.assertEqual(tuning(preferences, 'series', 'newest'), DiscoveryPolicy(0, 25))
-        self.assertEqual(tuning(preferences, 'movie', 'search', 250), DiscoveryPolicy())
-        self.assertEqual(tuning({'discovery_tuning': {'upcoming': {'movie': {'min_popularity': 0}}}}, 'movie', 'upcoming'), DiscoveryPolicy())
+        self.assertEqual(tuning(preferences, 'movie', 'search', 250), DiscoveryPolicy(0, 25))
+        self.assertEqual(tuning({'minimum_popularity': 0}, 'movie', 'upcoming'), DiscoveryPolicy())
+
+    def test_account_popularity_applies_to_search_and_browse_and_zero_disables(self):
+        for kind in ('movie', 'series'):
+            for surface in ('search', 'newest', 'upcoming', 'popular', 'score'):
+                self.assertEqual(tuning({}, kind, surface).min_popularity, 25)
+                self.assertEqual(tuning({'minimum_popularity': 30}, kind, surface).min_popularity, 30)
+                self.assertEqual(tuning({'minimum_popularity': 0}, kind, surface).min_popularity, 0)
 
     def test_provider_counts_missing_values_and_popularity_thresholds(self):
         self.assertFalse(DiscoveryPolicy(250).accepts({'imdb_votes': 100_000, 'vote_count': 249}))

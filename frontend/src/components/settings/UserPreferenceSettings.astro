@@ -261,6 +261,14 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes for browsing</label>
           <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="10000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
+        <div class="space-y-2 max-w-xs mt-5">
+          <label for="minimum-popularity" class="block text-sm font-medium text-zinc-400">Minimum popularity</label>
+          <input id="minimum-popularity" type="number" min="0" max="1000000" step="0.1" value={trackingPrefs.minimum_popularity ?? 25} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>
+        <label class="setting-switch-row" for="include-rereleases">
+          <span><strong>Show country-specific re-releases for movies</strong></span>
+          <input id="include-rereleases" type="checkbox" checked={trackingPrefs.include_rereleases === true} />
+        </label>
         <fieldset id="excluded_categories" class="mt-5 space-y-3">
           <legend class="setting-label-line"><span class="text-sm font-medium text-zinc-400">Exclude categories</span></legend>
           <div class="flex flex-wrap gap-2">
@@ -678,6 +686,14 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
     if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
     if (removeSpecials) removeSpecials.dataset.savedValue = String(removeSpecials.checked);
+    const rereleases = document.getElementById('include-rereleases') as HTMLInputElement | null;
+    if (rereleases) rereleases.dataset.savedValue = String(rereleases.checked);
+    rereleases?.addEventListener('change', () => saveTrackingPreferences({ include_rereleases: rereleases.checked }, rereleases, 'include_rereleases'));
+    const popularity = document.getElementById('minimum-popularity') as HTMLInputElement | null;
+    if (popularity) popularity.dataset.savedValue = popularity.value;
+    popularity?.addEventListener('change', () => {
+      if (popularity.reportValidity()) saveTrackingPreferences({ minimum_popularity: Number(popularity.value) }, popularity, 'minimum_popularity');
+    });
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
     function publishCombinePreference(value: boolean) {
@@ -686,8 +702,8 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     function saveTrackingPreferences(change: Record<string, unknown>, control: HTMLInputElement | HTMLSelectElement, field: string) {
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
-      const requestedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
-      const statusKey = field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
+      const statusKey = field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
       setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
@@ -706,7 +722,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         } catch (error) {
           if (trackingRevisions.get(field) === revision) {
             const savedValue = control.dataset.savedValue ?? '';
-            if (control instanceof HTMLInputElement) control.checked = savedValue === 'true';
+            if (control instanceof HTMLInputElement && control.type === 'checkbox') control.checked = savedValue === 'true';
             else control.value = savedValue;
             if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
             setStatus(statusKey, error instanceof Error ? error.message : 'Could not update your preferences.', 'error');

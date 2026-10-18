@@ -123,7 +123,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     values.set("media_type", field("type").value);
     if(field('type').value==='movie'&&(field('cinema') as HTMLInputElement).checked)values.set('cinema','1');
-    if((field('include_rereleases') as HTMLInputElement).checked)values.set('include_rereleases','true');
     values.set("sort", sort.value);
     if(field('view').value==='timeline')values.set('view','timeline');
     if(resultOverride.forQuery(field('q').value))values.set('unfiltered','true');
@@ -353,8 +352,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       });
     if((field('cinema') as HTMLInputElement).checked&&field('type').value==='movie')
       add(find<HTMLElement>('[data-browse-cinema]').dataset.cinemaLabel || 'Cinema release',()=>{(field('cinema') as HTMLInputElement).checked=false;});
-    if((field('include_rereleases') as HTMLInputElement).checked)
-      add('Country-specific re-releases',()=>{(field('include_rereleases') as HTMLInputElement).checked=false;});
     if (chips.childElementCount) {
       const reset = document.createElement("button");
       reset.type = "button";
@@ -549,7 +546,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     void load(false, debounce);
   }
   function clear() {
-    (field('include_rereleases') as HTMLInputElement).checked=false;
     (field('cinema') as HTMLInputElement).checked=false;
     for (const name of [
       "q",
@@ -661,7 +657,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         syncGenres();
       } else if (
-        !["status", "provider", "region", "start", "end", "min_score", "cinema", "include_rereleases"].includes(target.name)
+        !["status", "provider", "region", "start", "end", "min_score", "cinema"].includes(target.name)
       )
         return;
       if (target.name === "region") {

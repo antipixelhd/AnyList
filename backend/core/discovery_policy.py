@@ -23,7 +23,7 @@ class DiscoveryPolicy:
 
 
 def tuning(preferences, media_type, surface, minimum_votes=0):
-    """JSON knobs vary by surface and media kind; initial experiment is timeline only.
+    """Account popularity floor applies to every surface; internal knobs tune votes.
 
     discovery_tuning: {newest: {series: {min_popularity: 25, min_votes: 0}}}
     Set a value to zero to disable it. Missing popularity fails an enabled floor.
@@ -34,7 +34,9 @@ def tuning(preferences, media_type, surface, minimum_votes=0):
     if not isinstance(config, dict):
         config = {}
     votes = numeric(config.get('min_votes', 0 if surface == 'search' else minimum_votes)) or 0
-    popularity = numeric(config.get('min_popularity', 25 if surface in ('newest', 'upcoming') else 0)) or 0
+    popularity = numeric(preferences.get('minimum_popularity', 25) if isinstance(preferences, dict) else 25)
+    if popularity is None:
+        popularity = 25
     return DiscoveryPolicy(int(min(votes, 10_000_000)), min(popularity, 1_000_000))
 
 

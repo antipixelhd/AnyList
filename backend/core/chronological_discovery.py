@@ -181,4 +181,4 @@ async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, 
     return {'has_more': has_more, 'scan_next': next_offset, 'partial': selected['partial'],
             'window_has_more': more_rows, 'more_windows': more_windows,
             'window_lower': lower, 'window_upper': upper,
-            'notice': 'Showing a curated selection.' if selected['partial'] else None}, rows
+            'notice': None}, rows
