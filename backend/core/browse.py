@@ -529,16 +529,17 @@ async def imdb_page(
         media_type, filters["sort"], mdblist_key
     )
     semaphore = asyncio.Semaphore(6)
-    needs_popularity = bool(filters.get('min_popularity'))
     needs_details = filters["provider"] or filters.get('status') in ('airing', 'returning') or (media_type=='movie' and filters.get('cinema'))
     get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
-    predicate = {k: v for k, v in filters.items() if k != "sort"}
-    if (needs_details or needs_popularity or filters.get('require_release')) and not key:
+    # MDBList already supplies curated ranked feeds. TMDB score/count floors
+    # cannot be applied to a different provider's population or missing fields.
+    predicate = {**{k: v for k, v in filters.items() if k != "sort"},
+                 'min_popularity': 0, 'min_votes': 0}
+    if (needs_details or filters.get('require_release')) and not key:
         raise ValueError("A TMDB key is needed for streaming filters")
 
     # Apply cached date/genre/status/adult/anime filters across the full feed first.
-    basic = {**predicate, "provider": None, 'cinema':False, 'require_release':False,
-             **({'min_popularity': 0} if needs_popularity else {})}
+    basic = {**predicate, "provider": None, 'cinema':False, 'require_release':False}
     if filters.get('status') in ('airing', 'returning'):
         basic['status'] = ''  # The ranked feed lacks season/episode evidence.
     candidates = [
@@ -551,10 +552,7 @@ async def imdb_page(
 
     async def detail(row):
         async with semaphore:
-            if needs_details:
-                raw = await get(row["id"], api_key=key)
-            else:
-                raw = await (tmdb.get_movie_light if media_type == 'movie' else tmdb.get_show_light)(row['id'], api_key=key)
+            raw = await get(row["id"], api_key=key)
             item = {**row, **raw}
             item = {**item, "imdb_votes": row["imdb_votes"]}
             if not matches(
@@ -568,14 +566,14 @@ async def imdb_page(
                 "imdb_votes": row["imdb_votes"],
             }
 
-    if filters.get('require_release') or needs_popularity:
+    if filters.get('require_release'):
         # Keep provider work bounded even when most ranked titles have no release.
         # A cursor resumes after the last consumed candidate without rescanning.
         offset = max(0, feed_offset if feed_offset is not None and feed_offset >= 0 else (page - 1) * PAGE_SIZE)
         items, next_offset = [], offset
         for start in range(offset, min(len(candidates), offset + PAGE_SIZE * 4), PAGE_SIZE):
             batch = candidates[start:start + PAGE_SIZE]
-            if needs_details or needs_popularity:
+            if needs_details:
                 batch = [item for item in await asyncio.gather(*(detail(row) for row in batch)) if item is not None]
             if filters.get('require_release'):
                 await enrich_release_evidence(batch, media_type, key)
