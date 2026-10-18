@@ -502,8 +502,21 @@
   box-shadow: 0 2px 8px #0003;
   pointer-events: none;
 }
+.browse-list-state [data-state-icon]:not([hidden]) {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  line-height: 0;
+}
 .browse-list-state .ui-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
   font-size: 12px;
+  line-height: 0;
 }
 .browse-card[data-state="completed"] .browse-list-state {
   color: #6cdda1;
