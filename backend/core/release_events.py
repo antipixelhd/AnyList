@@ -31,9 +31,11 @@ def events(item, media_type, *, upcoming_only=False, include_returning=True, cou
         original = str(original)
     candidates = []
     local = []
+    primary_movie_date = original
     if cinema and media_type == 'movie':
         from core.cinema_releases import theatrical_dates
         dates = theatrical_dates(item, country)
+        primary_movie_date = dates[0] if dates else None
         if not include_rereleases:
             dates = dates[:1]
         dates = [value for value in dates if future(value)] if upcoming_only else dates
@@ -49,6 +51,7 @@ def events(item, media_type, *, upcoming_only=False, include_returning=True, cou
                 local = theatrical_dates(item, country)
         if local:
             original = local[0]
+        primary_movie_date = original
         if media_type == 'movie' and country and include_rereleases:
             from core.cinema_releases import theatrical_dates
             candidates.extend((value, None, False) for value in theatrical_dates(item, country) if value != original)
@@ -78,8 +81,12 @@ def events(item, media_type, *, upcoming_only=False, include_returning=True, cou
                 continue  # Known aired episodes contradict an upcoming premiere.
         identity = f'{media_type}:{item.get("id")}:season:{season}' if season else f'{media_type}:{item.get("id")}:premiere'
         if media_type == 'movie':
-            scope = country if cinema or local else 'world'
-            identity = f'movie:{item.get("id")}:{"theatrical" if cinema else "premiere"}:{scope or "world"}:{value}'
+            # A premiere remains the same event when its date is corrected or
+            # worldwide fallback gains country evidence. Only optional later
+            # theatrical releases need separate date-based identities.
+            identity = f'movie:{item.get("id")}:{"theatrical" if cinema else "premiere"}:{country or "world"}'
+            if value != primary_movie_date:
+                identity += f':rerelease:{value}'
         if identity in seen:
             continue
         seen.add(identity)

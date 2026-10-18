@@ -179,6 +179,7 @@ async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, 
     has_more = more_rows or more_windows
     next_offset = window_index * CURSOR_STRIDE + next_position if more_rows else (window_index + 1) * CURSOR_STRIDE
     return {'has_more': has_more, 'scan_next': next_offset, 'partial': selected['partial'],
+            'event_keys': [row['release_event'] for row in selected['rows']],
             'window_has_more': more_rows, 'more_windows': more_windows,
             'window_lower': lower, 'window_upper': upper,
             'notice': None}, rows

@@ -46,6 +46,8 @@ Evaluate latency, VPS load, transferred data, provider usage and result quality 
 
 ## Result stability and extension
 
+- Give a primary premiere/season a logical identity that survives corrected dates and richer country metadata. Optional rereleases remain distinct events. When merging local and provider pages, retain fresh-event precedence across the finalized window, not only the current slice; otherwise a cached copy can reappear later. Do not deduplicate by title text or collapse legitimate season/rerelease events.
+
 - Keep title ranking/results stable during progressive people/studio verification. Contributor rows may evolve independently. Do not make background eligibility polls reload or reshuffle titles.
 - Tab/view/sort changes must invalidate obsolete requests and show the new view or skeleton promptly. Preserve query ownership, pagination cursors, viewport refill and observer cleanup; stale responses must not overwrite the current selection. Inspect the real page when changing these paths.
 - Reuse or improve media/provider and policy/composition boundaries when extending results; do not impose a particular adapter or retrieval topology. Combined movie/series ranking must remain comparable where that behavior is required. Measure added work from new books/games results, and use batching, caching or bounded concurrency where they improve the outcome.

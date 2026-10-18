@@ -64,7 +64,10 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
                 row['id'] = cached.id
             visible.append(row)
     local_rows = [release_catalogue.project(media, event) for media, event, _ in local]
-    provider_keys = {row['release_event'] for row in visible if row}
+    # The full finalized window owns fresh events even after their provider
+    # page was consumed. A stale local date must not reintroduce one later.
+    provider_keys = set(remote.get('event_keys', ())) if remote else set()
+    provider_keys.update(row['release_event'] for row in visible if row)
     li = ri = 0
     rows, identities = [], set()
     while len(rows) < size and (li < len(local_rows) or ri < len(visible)):

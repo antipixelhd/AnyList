@@ -1215,3 +1215,58 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         order=[window(row['release_date'])[0] for row in found]
         self.assertEqual(order,sorted(order))
         self.assertTrue(any(row['release_date']=='2090' for row in found))
+
+    async def test_movie_timeline_prefers_fresh_country_date_over_cached_worldwide_premiere(self):
+        from core.release_browse import page
+        from core.release_events import events
+        fresh_date = (date.today() - timedelta(days=2)).isoformat()
+        cached_date = (date.today() - timedelta(days=1)).isoformat()
+        raw = {'id': 1561726, 'title': 'Masterplan', 'popularity': 80, 'release_date': cached_date}
+        movie = Media(title='Masterplan', media_type=MediaType.movie, tmdb_id=raw['id'],
+            release_date=cached_date, tmdb_data=raw)
+        self.db.add(movie)
+        await self.db.flush()
+        fresh = {**raw, 'release_date': fresh_date, 'release_dates': {'results': [
+            {'iso_3166_1': 'DE', 'release_dates': [{'type': 4, 'release_date': fresh_date}]}]}}
+        provider = events(fresh, 'movie', country='DE')
+        remote = {'window_lower': (date.today() - timedelta(days=10)).isoformat(),
+            'window_upper': date.today().isoformat(), 'window_has_more': False,
+            'more_windows': False, 'partial': False, 'notice': None,
+            'event_keys': [row['release_event'] for row in provider]}
+        data = await page(self.db, self.viewer, media_type='movie',
+            filters={**FILTERS, 'sort': 'newest', 'region': 'DE'}, key='fixture',
+            show_anime=True, page_number=1, prefetched=(remote, provider))
+        matches = [row for row in data['results'] if row['tmdb_id'] == raw['id']]
+        self.assertEqual([(row['id'], row['release_date']) for row in matches], [(movie.id, fresh_date)])
+
+    async def test_movie_timeline_does_not_repeat_consumed_provider_premiere_on_later_local_page(self):
+        from core.browse_cursor import decode_search_cursor
+        from core.release_browse import page
+        from core.release_events import events
+        day = lambda days: (date.today() - timedelta(days=days)).isoformat()
+        cached = Media(title='Masterplan', media_type=MediaType.movie, tmdb_id=1561726,
+            release_date=day(4), tmdb_data={'popularity': 80})
+        local = Media(title='Local only', media_type=MediaType.movie, tmdb_id=990100,
+            release_date=day(2), tmdb_data={'popularity': 80})
+        self.db.add_all([cached, local])
+        await self.db.flush()
+        provider = [events({'id': native, 'title': title, 'release_date': day(days), 'popularity': 80},
+            'movie', country='DE')[0] for native, title, days in ((1561726, 'Masterplan', 1), (990101, 'Remote only', 3))]
+        async def remote(kind, key, filters, *, offset=0, **kwargs):
+            batch = provider[offset:offset + 1]
+            return {'window_lower': day(10), 'window_upper': day(0),
+                'window_has_more': offset + len(batch) < len(provider), 'more_windows': False,
+                'partial': False, 'notice': None, 'event_keys': [row['release_event'] for row in provider]}, batch
+        found, cursor = [], None
+        with patch('core.chronological_discovery.page', AsyncMock(side_effect=remote)):
+            for number in range(1, 8):
+                data = await page(self.db, self.viewer, media_type='movie',
+                    filters={**FILTERS, 'sort': 'newest', 'region': 'DE'}, key='fixture',
+                    show_anime=True, page_number=number, size=1, cursor=decode_search_cursor(cursor))
+                found.extend(data['results'])
+                if not data['has_more']:
+                    break
+                cursor = data['cursor']
+        self.assertEqual([(row['tmdb_id'], row['release_date']) for row in found],
+            [(1561726, day(1)), (990100, day(2)), (990101, day(3))])
+        self.assertEqual(len({row['release_event'] for row in found}), len(found))

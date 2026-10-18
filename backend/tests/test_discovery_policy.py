@@ -37,6 +37,16 @@ class PolicyTests(unittest.TestCase):
 
 
 class ReleaseEventTests(unittest.TestCase):
+    def test_movie_premiere_identity_survives_country_and_date_enrichment(self):
+        cached = {'id': 1561726, 'title': 'Masterplan', 'release_date': '2026-10-17'}
+        fresh = {**cached, 'release_date': '2026-10-16', 'release_dates': {'results': [
+            {'iso_3166_1': 'DE', 'release_dates': [{'type': 4, 'release_date': '2026-10-16T00:00:00Z'}]}]}}
+        before = events(cached, 'movie', country='DE')[0]
+        after = events(fresh, 'movie', country='DE')[0]
+        self.assertNotEqual(before['release_date'], after['release_date'])
+        self.assertNotEqual(before['release_country'], after['release_country'])
+        self.assertEqual(before['release_event'], after['release_event'])
+
     def test_date_precision_and_overlapping_windows(self):
         self.assertEqual(window('2028-02'), (date(2028, 2, 1), date(2028, 2, 29)))
         for invalid in ('2027-02-29', '2026-00', '2026-01-00', '2026-13', '2026-01-01T00:00:00Z', ''):
@@ -83,6 +93,11 @@ class ReleaseEventTests(unittest.TestCase):
         releases=events(movie,'movie',cinema=True,country='DE',include_rereleases=True)
         self.assertEqual(len(releases),4)
         self.assertEqual(len({row['release_event'] for row in releases}),4)
+        general=events(movie,'movie',country='DE',include_rereleases=True)
+        self.assertEqual([row['release_date'] for row in general],[row['release_date'] for row in releases])
+        self.assertEqual(len({row['release_event'] for row in general}),4)
+        revised={**movie,'theatrical_release_dates_by_country':{'DE':['1999-01-01','2020-01-01','2099-01-01']}}
+        self.assertEqual(events(revised,'movie',cinema=True,country='DE')[0]['release_event'],releases[0]['release_event'])
         future=events(movie,'movie',cinema=True,country='DE',upcoming_only=True,include_rereleases=True)
         self.assertEqual([row['release_date'] for row in future],['2099-01-01'])
 
@@ -114,6 +129,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(first['has_more'])
         self.assertFalse(second['has_more'])
         self.assertEqual(fetch.await_count, 4)
+        self.assertEqual(set(first['event_keys']), {rows[0]['release_event'], later[0]['release_event']})
 
     async def test_scan_budget_is_independent_of_floor_and_partial_is_explicit(self):
         with patch('core.tmdb._get', AsyncMock(return_value={'total_pages': 500, 'results': [{'id': 1, 'popularity': 1}]})) as fetch:
