@@ -4,7 +4,7 @@ from core.studio_groups import studio_root, studio_companies, studio_display_nam
 from core.contributor_evidence import cached_evidence, evidence_key, local_evidence, work_summary
 from models import GlobalSettings
 
-MAX_CANDIDATES = 12
+MAX_CANDIDATES = 8
 
 
 async def verified_studios(db, viewer, rows, api_key):
@@ -13,6 +13,7 @@ async def verified_studios(db, viewer, rows, api_key):
     filters = await result_filters(db, viewer)
     settings = await db.get(GlobalSettings, 1)
     show_anime = settings is None or settings.show_anime
+    rows = rows[:MAX_CANDIDATES]
     local = await local_evidence(db, rows, 'studio', filters, show_anime)
     rows = [{**row, '_local':local.get(row['key'])} for row in rows]
     # Prefer known contributors, then provider-branded matches; retain provider

@@ -23,16 +23,10 @@ async def result_filters(db, viewer):
     return dict(min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
 
 
-async def browse_preferences(db, viewer):
-    """Browse-only requirements stored in user settings JSON."""
-    from sqlalchemy import select
-    from models.users import UserSettings
-    defaults = {'require_release': False, 'require_poster': False}
-    if viewer is None:
-        return defaults
-    saved = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == viewer.id))
-    return {name: saved.get(name, default) if isinstance(saved, dict) else default
-            for name, default in defaults.items()}
+async def browse_preferences(db, viewer, media_type='movie', surface='popular', *, unfiltered=False):
+    from core.discovery_policy import viewer_policy
+    policy = await viewer_policy(db, viewer, media_type, surface, unfiltered=unfiltered)
+    return {'min_votes': policy.min_votes, 'min_popularity': policy.min_popularity}
 
 
 def title_runtime(item):
@@ -193,40 +187,37 @@ def title_match_rank(term, title):
 def search_rank(term: str, item: dict, *, streaming_available: bool = False,
                 theatrical: bool = False) -> float:
     """One comparable search score for movies and series, using list metadata only."""
-    query = term.strip().casefold()
-    names = [str(item.get(field) or '').casefold() for field in
-             ('title', 'name', 'original_title', 'original_name')]
+    from core.discovery_policy import numeric
+    normalize = lambda value: ' '.join(re.findall(r'\w+', str(value or '').casefold()))
+    query = normalize(term)
+    names = [normalize(item.get(field)) for field in ('title', 'name', 'original_title', 'original_name')]
     names = [name for name in names if name]
-    if not names or not query:
+    if not query or not names:
         return 0.0
-    if query in names:
-        relevance = 40
-    elif any(name.startswith(query) for name in names):
-        relevance = 30
-    elif any(re.search(r'(?<!\w)' + re.escape(query), name) for name in names):
-        relevance = 20
-    elif any(query in name for name in names):
-        relevance = 12
-    else:
-        similarity = max(SequenceMatcher(None, query, name).ratio() for name in names)
-        relevance = 15 * similarity if similarity >= .5 else -30
-    votes = item.get('vote_count')
-    if votes is None:
-        votes = item.get('imdb_votes') or (item.get('imdb') or {}).get('votes')
-    def logarithmic_signal(value, weight):
-        try:
-            number = float(value or 0)
-            return weight * math.log10(max(0, number) + 1) if math.isfinite(number) else 0
-        except (TypeError, ValueError):
-            return 0
-    vote_weight = logarithmic_signal(votes, 5)
-    popularity_weight = logarithmic_signal(item.get('popularity'), 2)
-    poster_weight = .5 if item.get('poster_path') or item.get('poster') else 0
-    # These are alternative release signals. Stacking them gives movies a
-    # second bonus that series can never earn in combined search results.
-    available = streaming_available or theatrical
-    return round(relevance + vote_weight + popularity_weight +
-                 (15 if available else 0) + poster_weight, 3)
+    def match(name):
+        if name == query: return 1.0
+        if name.startswith(query): return .97
+        if re.search(r'(?<!\w)' + re.escape(query), name): return .92
+        if query in name: return .85
+        # A shared franchise token is insufficient evidence for a specific
+        # sequel query. Require fuzzy support for each token before prominence
+        # can amplify a result whose complete phrase did not match.
+        words = name.split()
+        coverage = sum(any(word.startswith(token) or
+                           SequenceMatcher(None, token, word).ratio() >= .72
+                           for word in words) for token in query.split()) / len(query.split())
+        return SequenceMatcher(None, query, name).ratio() * .9 * coverage
+    relevance = max(map(match, names))
+    if normalize(item.get('_provider_query')) == query and not any(
+            token in name.split() for token in query.split() for name in names):
+        relevance = max(relevance, .92)
+    # Popularity can outweigh an obscure exact name, but cannot rescue an
+    # unrelated title. No provider/streaming lookups are required to rank.
+    popularity = numeric(item.get('popularity')) or 0
+    votes = numeric(item.get('vote_count')) or numeric(item.get('imdb_votes')) or 0
+    recognition = 12 * math.log10(1 + popularity) + min(3, math.log10(1 + votes))
+    return round(25 * relevance + recognition * relevance ** 3 +
+                 (.1 if streaming_available or theatrical else 0), 3)
 
 
 def media_search_rank(term: str, item: dict, media_type: str) -> float:

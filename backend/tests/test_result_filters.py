@@ -3,6 +3,7 @@ import os
 import asyncio
 import time
 import unittest
+from datetime import date
 from unittest.mock import AsyncMock, patch, MagicMock
 from types import SimpleNamespace
 
@@ -50,12 +51,12 @@ class ResultPolicyTests(unittest.TestCase):
     def test_shared_rank_balances_exact_match_with_popularity_and_availability(self):
         exact_low = {'title':'War', 'vote_count':10, 'popularity':8, 'poster_path':'/war.jpg'}
         exact_high = {'name':'War', 'vote_count':1000, 'popularity':80, 'poster_path':'/war.jpg'}
-        prefix = {'title':'War Stories', 'vote_count':100000}
+        prefix = {'title':'War Stories', 'vote_count':100000, 'popularity':30}
         self.assertGreater(search_rank('war', exact_high), search_rank('war', exact_low))
         self.assertGreater(search_rank('war', prefix, streaming_available=True), search_rank('war', exact_low))
         self.assertGreater(search_rank('war', exact_high, streaming_available=True), search_rank('war', prefix, streaming_available=True))
         self.assertGreater(search_rank('war', exact_low, streaming_available=True), search_rank('war', exact_low))
-        self.assertGreater(search_rank('war', exact_low), search_rank('war', {**exact_low, 'poster_path':None}))
+        self.assertEqual(search_rank('war', exact_low), search_rank('war', {**exact_low, 'poster_path':None}))
         self.assertTrue(has_streaming_offer({'watch_providers':{'DE':{'flatrate':[{'provider_id':1}]}}}, 'DE'))
         self.assertFalse(has_streaming_offer({'watch_providers':{'DE':{'rent':[{'provider_id':1}]}}}, 'DE'))
 
@@ -171,13 +172,16 @@ class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(theatrical_dates(items[0], 'DE'), ['2099-10-01'])
 
     async def test_discover_response_obeys_runtime_and_category_policy(self):
+        today = date.today().isoformat()
         filters=dict(genres=[],start=None,end=None,status='',provider=None,region='US',sort='newest',
                      min_runtime=30,excluded_genres=[99])
         with patch('core.tmdb._get', AsyncMock(return_value={'results':[
-            {'id':1,'runtime':2},{'id':2,'runtime':30,'genre_ids':[99]},
-            {'id':3,'runtime':30,'genre_ids':[18]},{'id':4,'genre_ids':[18]}]})):
+            {'id':1,'runtime':2,'popularity':80,'release_date':today},
+            {'id':2,'runtime':30,'genre_ids':[99],'popularity':80,'release_date':today},
+            {'id':3,'runtime':30,'genre_ids':[18],'popularity':80,'release_date':today},
+            {'id':4,'genre_ids':[18],'popularity':80,'release_date':today}]})):
             _, rows=await remote_page('', 'movie', 'fixture', filters, 1)
-        self.assertEqual([row['id'] for row in rows],[3,4])
+        self.assertEqual({row['id'] for row in rows},{3,4})
 
     async def test_studio_discovery_filters_at_provider_without_extra_detail_calls(self):
         with patch('core.tmdb._get', AsyncMock(return_value={'results':[]})) as fetch:

@@ -30,7 +30,7 @@ const href = item.id
 <article
   class="browse-card"
   data-browse-card
-  data-key={`${item.type}:${item.tmdb_id || item.id}`}
+  data-key={item.release_event || `${item.type}:${item.tmdb_id || item.id}`}
   data-state={state || undefined}
   data-work-key={item.key || undefined}
 >
@@ -121,7 +121,7 @@ const href = item.id
     <h2>{item.title}</h2>
   </a>
   <div class="browse-card-meta">
-    <span data-year>{item.year}</span>
+    <span data-year title={item.release_event ? item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date' : undefined}>{item.year}</span>
     <span
       data-user-score
       hidden={!(item.score > 0)}

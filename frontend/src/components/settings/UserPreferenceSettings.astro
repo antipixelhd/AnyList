@@ -25,8 +25,7 @@ const prefs: UserPreferences = {
   bio: null,
   country: null,
   minimum_movie_runtime: 30,
-  require_release: false,
-  require_poster: false,
+  minimum_votes: 0,
   excluded_categories: RESULT_CATEGORIES.map(([id]) => id),
   streaming_services: [],
   metadata_language: null,
@@ -258,23 +257,17 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
           <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
+        <div class="space-y-2 max-w-xs mt-5">
+          <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes for browsing</label>
+          <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="10000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>
         <fieldset id="excluded_categories" class="mt-5 space-y-3">
           <legend class="setting-label-line"><span class="text-sm font-medium text-zinc-400">Exclude categories</span></legend>
           <div class="flex flex-wrap gap-2">
             {RESULT_CATEGORIES.map(([id, label]) => <button type="button" class="chip border text-base font-medium transition-colors cursor-pointer focus:outline-none" data-excluded-category={id} aria-pressed={prefs.excluded_categories?.includes(id) ?? false}>{label}</button>)}
           </div>
         </fieldset>
-        <div class="mt-6 space-y-3">
-          <p class="text-sm text-zinc-400">Browse only, outside relevance search. Release availability is worldwide.</p>
-          <label class="setting-switch-row" for="require_release">
-            <span><strong>Require streaming or theatrical release</strong></span>
-            <input id="require_release" type="checkbox" checked={prefs.require_release === true} />
-          </label>
-          <label class="setting-switch-row" for="require_poster">
-            <span><strong>Require poster</strong></span>
-            <input id="require_poster" type="checkbox" checked={prefs.require_poster === true} />
-          </label>
-        </div>
+
       </section>
       <!-- Localization -->
       <section>
@@ -294,9 +287,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
               <option value={code} selected={prefs.country === code}>{name}</option>
             ))}
           </select>
-          <p class="text-xs text-zinc-500">
-            Streaming provider and cinema filters use this country.
-          </p>
         </div>
         <div class="space-y-2 max-w-xs">
           <div class="setting-label-line"><label for="metadata_language" class="block text-sm font-medium text-zinc-400">Metadata language</label></div>
@@ -403,7 +393,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
         'remove-specials-seasons': 'Seasons',
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
-        require_release: 'Release requirement', require_poster: 'Poster requirement',
+        minimum_votes: 'Minimum votes',
         country: 'Country', metadata_language: 'Metadata language',
         'combine-lists': 'List preferences', streaming_services: 'Streaming services',
       };
@@ -614,7 +604,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       saveAppearance();
     });
     siteWideToggle?.addEventListener('change', saveAppearance);
-    for (const [field, fallback] of [['minimum_movie_runtime', 30]] as const) {
+    for (const [field, fallback] of [['minimum_movie_runtime', 30], ['minimum_votes', 0]] as const) {
       const input = document.getElementById(field) as HTMLInputElement | null;
       if (!input) continue;
       committed.set(field, { [field]: Number(input.value) });
@@ -624,14 +614,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           input.value = String(previous[field] ?? fallback);
         });
       });
-    }
-    for (const field of ['require_release', 'require_poster'] as const) {
-      const input = document.getElementById(field) as HTMLInputElement | null;
-      if (!input) continue;
-      committed.set(field, { [field]: input.checked });
-      input.addEventListener('change', () => queueSave(field, { [field]: input.checked }, previous => {
-        input.checked = previous[field] === true;
-      }));
     }
     const excludedButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-excluded-category]')];
     const excludedValues = () => excludedButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => Number(button.dataset.excludedCategory));

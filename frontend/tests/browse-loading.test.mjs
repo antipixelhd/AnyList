@@ -42,10 +42,10 @@ test("category and grid refreshes keep existing cards visible without skeletons"
   }
 });
 
-test("a displayed skeleton stays for 350ms, while ready content has no minimum wait", () => {
+test("an explicitly configured minimum does not restart when shown again", () => {
   let now = 100;
   const v = view([]);
-  const loading = createBrowseLoading(v.region, v.skeleton, () => now);
+  const loading = createBrowseLoading(v.region, v.skeleton, () => now, 350);
   assert.equal(loading.remaining(), 0);
   loading.show();
   now = 200;
@@ -55,6 +55,14 @@ test("a displayed skeleton stays for 350ms, while ready content has no minimum w
   assert.equal(loading.remaining(), 0);
   loading.finish();
   assert.equal(loading.remaining(), 0);
+});
+
+test('normal browse results never wait for an artificial skeleton minimum', async () => {
+  const v=view([]);
+  v.loading.show();
+  assert.equal(v.loading.remaining(),0);
+  await v.loading.settle(new AbortController().signal);
+  assert.equal(v.loading.remaining(),0);
 });
 
 test("aborting the active search cancels its minimum wait", async () => {
@@ -135,7 +143,7 @@ test("artwork readiness is cached per poster without making other cards wait", t
   assert.deepEqual([...repeated.cover.attributes], ['data-poster-ready']);
 });
 
-test("slow posters have a minimum skeleton duration and stalled posters recover", t => {
+test("loaded posters reveal immediately and stalled posters recover", t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let now = 0;
   t.mock.method(performance, 'now', () => now);
@@ -147,11 +155,6 @@ test("slow posters have a minimum skeleton duration and stalled posters recover"
   assert.equal(p.cover.attributes.has('data-poster-loading'), true);
   now = 150;
   p.image.dispatchEvent(new Event('load'));
-  now = 349;
-  t.mock.timers.tick(199);
-  assert.equal(p.cover.attributes.has('data-poster-loading'), true);
-  now = 350;
-  t.mock.timers.tick(1);
   assert.deepEqual([...p.cover.attributes], ['data-poster-ready']);
   const stalled = poster();
   prepareBrowsePoster(stalled.image, new AbortController().signal);

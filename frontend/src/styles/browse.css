@@ -360,8 +360,9 @@
   padding-top: var(--browse-sort-gap);
 }
 .browse-results-area :is(.browse-results-toolbar, .browse-notice, .browse-error) { margin: 0; }
-.browse-page:not([data-browse-sorted]):not([data-browse-chips]) .browse-results-toolbar { display: none; }
-.browse-page[data-browse-view="timeline"]:not([data-browse-chips]) .browse-results-toolbar { display: none; }
+.browse-page:not([data-browse-override]):not([data-browse-sorted]):not([data-browse-chips]) .browse-results-toolbar { display: none; }
+.browse-page[data-browse-view="timeline"]:not([data-browse-override]):not([data-browse-chips]) .browse-results-toolbar { display: none; }
+.browse-page[data-browse-override] .browse-results-toolbar { flex-wrap: wrap; }
 .browse-results-toolbar {
   display: flex;
   align-items: center;

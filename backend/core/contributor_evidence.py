@@ -107,40 +107,54 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True):
 
 
 async def local_evidence(db, rows, section, filters, show_anime):
-    """Filter indexed existing credits in one query, without per-person reads."""
-    ids = [int(r['key'].split(':')[1]) for r in rows if r['key'].startswith('catalogue:')]
+    """Check indexed qualifying-work existence; never transfer whole filmographies.
+
+    Counts/latest dates belong to the precomputed summary and cached provider
+    evidence. One eligible credit is sufficient for quick-search eligibility.
+    """
+    from sqlalchemy import Integer, and_, column, union_all, values
+    from sqlalchemy.dialects.postgresql import JSONPATH
+    from sqlalchemy import cast
+
+    ids = list(dict.fromkeys(int(r['key'].split(':')[1]) for r in rows
+                            if r['key'].startswith('catalogue:')))[:8]
     if not ids:
         return {}
-    person = aliased(CatalogueEntity)
-    work = aliased(CatalogueEntity)
-    root = func.coalesce(person.canonical_person_id, person.canonical_company_id, person.id)
-    credit = CatalogueCredit
-    statement = select(root, work.id, work.kind, work.attributes).join_from(person, credit,
+    candidates = values(column('id', Integer), name='candidates').data([(i,) for i in ids])
+    person, work = aliased(CatalogueEntity), aliased(CatalogueEntity)
+    credit, data = CatalogueCredit, work.attributes
+    statement = select(work.id).join_from(person, credit,
         credit.contributor_id == person.id).join(work, work.id == credit.work_id).where(
-        or_(person.id.in_(ids), person.canonical_person_id.in_(ids), person.canonical_company_id.in_(ids)),
-        work.kind.in_(('movie', 'series')),
-        credit.role == 'producer' if section == 'studio' else credit.role == 'actor' if section == 'actor' else credit.role != 'actor')
-    # Apply the cheap filters in SQL before transferring metadata. Role exclusions
-    # are the same as the contributor page, not unfiltered summary counts.
-    statement = statement.where(~func.coalesce(credit.character_label, '').op('~*')(r'\y(uncredited|archive footage|archive sound)\y'))
+        or_(person.id == candidates.c.id, person.canonical_person_id == candidates.c.id,
+            person.canonical_company_id == candidates.c.id),
+        credit.role == 'producer' if section == 'studio' else credit.role == 'actor' if section == 'actor' else credit.role != 'actor',
+        ~func.coalesce(data['adult'].astext == 'true', False),
+        ~func.coalesce(credit.character_label, '').op('~*')(r'\y(uncredited|archive footage|archive sound)\y'))
     if section == 'staff':
         from core.principal_credits import PRINCIPAL_JOBS
         statement = statement.where(func.lower(func.coalesce(credit.role_label, credit.role)).in_(PRINCIPAL_JOBS))
-    from sqlalchemy import union_all
-    queries = [apply_result_filters(statement.where(work.kind == kind), work.attributes, kind, **filters) for kind in ('movie', 'series')]
-    output, seen = {}, set()
-    stream = await db.stream(union_all(*queries).execution_options(yield_per=200))
-    async for identity, work_id, kind, data in stream:
-        if (identity, work_id) in seen:
-            continue
-        seen.add((identity, work_id))
-        raw = {**(data or {}), 'id':work_id}
-        if eligible_work(raw, kind, filters, show_anime, released=section == 'studio'):
-            entry = output.setdefault(f'catalogue:{identity}', {'works':0, 'latest':''})
-            entry['works'] += 1
-            entry['latest'] = max(entry['latest'], raw.get('release_date') or raw.get('first_air_date') or '')
-    await stream.close()
-    return output
+    if not show_anime:
+        def contains(path):
+            return func.coalesce(func.jsonb_path_exists(data, cast(path, JSONPATH)), False)
+        # Match anime_visible's numeric-genre precedence and case-insensitive
+        # names/countries, including provider production-country representations.
+        animated = or_(data['genre_ids'].contains([16]), and_(
+            or_(data['genre_ids'].astext.is_(None), data['genre_ids'] == []),
+            contains('$.genres[*] ? (@ like_regex "^animation$" flag "i" || @.name like_regex "^animation$" flag "i")')))
+        japanese = or_(data['original_language'].astext == 'ja',
+            contains('$.origin_country[*] ? (@ like_regex "^jp$" flag "i")'),
+            contains('$.production_countries[*] ? (@.iso_3166_1 like_regex "^jp$" flag "i")'))
+        statement = statement.where(~func.coalesce(and_(animated, japanese), False))
+    queries = []
+    for kind in ('movie', 'series'):
+        query = apply_result_filters(statement.where(work.kind == kind), data, kind, **filters)
+        if section == 'studio':
+            released = func.coalesce(func.nullif(data['release_date'].astext, ''), data['first_air_date'].astext, '')
+            query = query.where(released > '0000', released <= date.today().isoformat())
+        queries.append(query.correlate(candidates))
+    eligible = union_all(*queries).exists()
+    matches = await db.scalars(select(candidates.c.id).where(eligible))
+    return {f'catalogue:{identity}': {'works': 1, 'latest': ''} for identity in matches}
 
 
 async def load_evidence(job, api_key):
@@ -171,12 +185,15 @@ async def load_evidence(job, api_key):
         visible = [r for r in rows if eligible_work(r, kind, filters, config['show_anime'], released=True)]
         # Positive evidence is enough. Otherwise continue on a later worker tick,
         # never drain an entire company timeline in one job.
-        next_page = page + 1 if not visible and page < min(response['total_pages'], 500) else None
+        # Search verifies a sample, not the complete studio timeline. A job has
+        # a lifetime budget of two pages per media kind, even if no work fits.
+        next_page = page + 1 if not visible and page < min(response['total_pages'], 2) else None
         return kind, visible, next_page
     results = await asyncio.gather(discover('movie'), discover('series'))
     works = [] if previous.get('complete') else list(previous.get('works', []))
     works.extend(row for _, rows, _ in results for row in rows)
     return {'works':works, 'pages':{kind:page for kind, _, page in results},
+            'scope':'eligibility_sample',
             'complete':all(page is None for _, _, page in results)}
 
 

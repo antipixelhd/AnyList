@@ -447,8 +447,7 @@ class UserProfileUpdate(BaseModel):
 
     bio: Optional[str] = Field(default=None, max_length=5000)
     minimum_movie_runtime: int = Field(default=30, ge=0, le=1440)
-    require_release: bool = False
-    require_poster: bool = False
+    minimum_votes: int = Field(default=0, ge=0, le=10000000)
     excluded_categories: list[int] = Field(default_factory=default_excluded_categories, max_length=7)
 
     @field_validator('excluded_categories')
@@ -482,8 +481,7 @@ class UserProfileUpdate(BaseModel):
 
 class UserProfileResponse(BaseModel):
     minimum_movie_runtime: int = 30
-    require_release: bool = False
-    require_poster: bool = False
+    minimum_votes: int = Field(default=0, ge=0, le=10000000)
     excluded_categories: list[int] = Field(default_factory=default_excluded_categories)
     background_url: Optional[str] = None
     bio: Optional[str] = None

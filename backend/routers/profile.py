@@ -7,8 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, U
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, case, or_, text, cast
-from sqlalchemy.dialects.postgresql import insert, JSONB
+from sqlalchemy import func, case, or_, text
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from datetime import date as DateType, timedelta as TimeDelta
@@ -20,7 +19,7 @@ from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
 from dependencies import get_current_user, get_current_user_or_api_key
-from models.users import User, UserSettings
+from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
 from models.collection import Collection
@@ -126,9 +125,6 @@ async def get_profile(
     )
     profile = result.scalar_one_or_none()
     resp = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
-    from core.catalog_search import browse_preferences
-    for name, value in (await browse_preferences(db, current_user)).items():
-        setattr(resp, name, value)
     if profile and profile.avatar_path:
         resp.avatar_url = f"/profile/avatar/{current_user.id}"
     return resp
@@ -156,23 +152,12 @@ async def update_profile(
         db.add(profile)
 
     values = body.model_dump(exclude_unset=True)
-    ranking = {name: values.pop(name) for name in ('require_release', 'require_poster') if name in values}
     for field, value in values.items():
         setattr(profile, field, value)
-
-    if ranking:
-        statement = insert(UserSettings).values(user_id=current_user.id, preferences=ranking)
-        await db.execute(statement.on_conflict_do_update(
-            index_elements=[UserSettings.user_id],
-            set_={"preferences": func.coalesce(UserSettings.preferences, cast({}, JSONB)).op('||')(statement.excluded.preferences)},
-        ))
 
     await db.commit()
     await db.refresh(profile)
     resp = schemas.UserProfileResponse.model_validate(profile)
-    from core.catalog_search import browse_preferences
-    for name, value in (await browse_preferences(db, current_user)).items():
-        setattr(resp, name, value)
     return resp
 
 

@@ -23,6 +23,7 @@ from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSear
 KINDS = ('actor', 'staff', 'studio')
 PATHS = {'actor': 'actors', 'staff': 'person', 'studio': 'studio'}
 LIMIT = 8
+MAX_CANDIDATES = 8
 # Keep keystroke-triggered sorting from occupying the shared VPS's entire
 # connection pool. Waiting searches stay cancellable and do not spawn threads.
 _local_search_slots = asyncio.Semaphore(2)
@@ -116,7 +117,8 @@ async def verified_people(db, viewer, groups, api_key):
     show_anime = settings is None or settings.show_anime
     jobs = {}
     for section in ('actor', 'staff'):
-        for row in groups[section][:20]:
+        groups[section] = groups[section][:MAX_CANDIDATES]
+        for row in groups[section]:
             if row.get('_native'):
                 key, config = evidence_key('person', row['_native'], filters, show_anime)
                 jobs[key] = config
@@ -158,7 +160,7 @@ async def search_contributors(db, viewer, term, kind='all'):
         remote() if kind != 'studio' else asyncio.sleep(0, result=[]),
         remote(True) if kind in ('all', 'studio') else asyncio.sleep(0, result=[]))
     failed = people is None or companies is None
-    sources = [('person', row) for row in (people or [])[:20]] + [('company', row) for row in (companies or [])[:20]]
+    sources = [('person', row) for row in (people or [])[:MAX_CANDIDATES]] + [('company', row) for row in (companies or [])[:MAX_CANDIDATES]]
     native_ids = {str(row['id']) for _, row in sources if positive_id(row.get('id'))}
     mappings = (await db.execute(select(CatalogueIdentity, CatalogueEntity).join(
         CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id).where(

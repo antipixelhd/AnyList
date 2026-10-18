@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 
 import test_statistics_pg as fixture
 from core import contributor_evidence as evidence
-from models.catalogue import CatalogueEntity, ContributorEvidence
+from models.catalogue import CatalogueEntity, CatalogueCredit, ContributorEvidence
 from test_contributor_evidence import FILTERS, film
 
 
@@ -115,3 +115,54 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             self.assertEqual((await evidence.local_evidence(db,rows,'actor',FILTERS,True))[rows[0]['key']]['works'],1)
             self.assertEqual(await evidence.local_evidence(db,rows,'actor',{**FILTERS, 'min_runtime':1000},True),{})
+
+    async def test_existence_preserves_adult_anime_genre_roles_and_alias_rules(self):
+        async with self.Session() as db:
+            work = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'movie'))
+            person = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'person'))
+            credit = await db.scalar(select(CatalogueCredit).where(CatalogueCredit.contributor_id == person.id))
+            rows = [{'key': f'catalogue:{person.id}'}]
+            base = {'runtime': 100, 'release_date': '2025-01-01'}
+            for data in ({'adult': True}, {'genre_ids': [16], 'original_language': 'ja'},
+                         {'genres': ['animation'], 'origin_country': ['jp']},
+                         {'genre_ids': None, 'genres': ['Animation'], 'original_language': 'ja'},
+                         {'genres': [{'name': 'Animation'}], 'production_countries': [{'iso_3166_1': 'JP'}]}):
+                work.attributes = {**base, **data}
+                await db.flush()
+                self.assertEqual(await evidence.local_evidence(db, rows, 'actor', FILTERS, False), {})
+            work.attributes = {**base, 'genre_ids': [18]}
+            await db.flush()
+            self.assertEqual(await evidence.local_evidence(db, rows, 'actor',
+                {**FILTERS, 'excluded_genres': [18]}, True), {})
+            work.attributes = base
+            credit.character_label = 'Self (archive footage)'
+            await db.flush()
+            self.assertEqual(await evidence.local_evidence(db, rows, 'actor', FILTERS, True), {})
+            credit.character_label = 'A character'
+            credit.role = 'director'
+            credit.role_label = 'Director'
+            await db.flush()
+            self.assertEqual(await evidence.local_evidence(db, rows, 'actor', FILTERS, True), {})
+            self.assertTrue(await evidence.local_evidence(db, rows, 'staff', FILTERS, True))
+            alias = CatalogueEntity(kind='person', name='Alias', canonical_person_id=person.id, attributes={})
+            db.add(alias)
+            await db.flush()
+            credit.role, credit.role_label = 'contributor', 'contributor'
+            db.add(CatalogueCredit(work_id=work.id, contributor_id=alias.id,
+                provider='tmdb', source_key='alias-director', role='director', role_label='Director'))
+            await db.flush()
+            self.assertTrue(await evidence.local_evidence(db, rows, 'staff', FILTERS, True))
+
+    async def test_existence_returns_one_witness_instead_of_whole_credit_counts(self):
+        async with self.Session() as db:
+            person = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind == 'person'))
+            for index in range(30):
+                work = CatalogueEntity(kind='movie', name=f'Work {index}', attributes={'runtime': 100})
+                db.add(work)
+                await db.flush()
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id,
+                    provider='tmdb', source_key=f'witness-{index}', role='actor'))
+            await db.flush()
+            rows = [{'key': f'catalogue:{person.id}'}]
+            found = await evidence.local_evidence(db, rows, 'actor', FILTERS, True)
+            self.assertEqual(found, {rows[0]['key']: {'works': 1, 'latest': ''}})

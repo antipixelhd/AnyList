@@ -2,9 +2,8 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog, reveal } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,rankCombinedMedia,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
-import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference, searchStreamingCountry } from './streaming-region';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -18,6 +17,8 @@ export function mountQuickSearch() {
   const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
   if (!dialog || !openButton) return;
   mountedDialog=dialog;
+  const searchReader=createQuickSearchReader(pageListeners.signal);
+  document.addEventListener('anylist:cache-invalidated',()=>searchReader.clear(),{signal:pageListeners.signal});
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
   const mobile=matchMedia('(max-width:650px)');
   const combined=()=>dialog.dataset.combined==='yes';
@@ -146,9 +147,9 @@ export function mountQuickSearch() {
     state.textContent = message;
     state.hidden = !message;
   }
-  function render(updated?:'movie'|'series'|'contributors', tabChange=false) {
-    if(updated==='movie'||updated==='series'){
-      fill(updated,latest[updated]);fill('all', rankCombinedMedia(latest.movie, latest.series));
+  function render(updated?:'titles'|'contributors', tabChange=false) {
+    if(updated==='titles'){
+      fill('movie',latest.movie);fill('series',latest.series);fill('all', rankCombinedMedia(latest.movie, latest.series));
     }
     if(updated==='contributors')for(const kind of ['actor','staff','studio'] as const)fillContributors(kind);
     const counts=resultCounts();
@@ -203,20 +204,28 @@ export function mountQuickSearch() {
     clearTimeout(progressTimer);
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
-      const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part=>part.trim())
-        .find(part=>part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length+1));
-      const requests=quickSearchRequests(query,searchStreamingCountry(dialog?.dataset.accountCountry,savedRegion,deviceStreamingCountry()));pending=requests.length;
+      const requests=quickSearchRequests(query);pending=requests.length;
+      const settleTitles = createQuickTitleBatch<SearchResult>();
       updateTabs();
       await Promise.all(requests.map(async request=>{
+        let titleRows: SearchResult[] = [];
         try{
-          await readQuickSearch(request,current.signal,data=>{
+          await searchReader.read(request,current.signal,data=>{
             if(controller!==current||current.signal.aborted)return;
             if(request.kind==='contributors'){contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;}
-            else latest[request.kind]=unique(data.results||[]);
-            render(request.kind);
+            else titleRows=unique(data.results||[]);
+            if(request.kind==='contributors')render('contributors');
           });
         }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
-        finally{if(controller===current&&!current.signal.aborted){pending--;if(request.kind==='movie'||request.kind==='series')mediaPending--;render();}}
+        finally{if(controller===current&&!current.signal.aborted){
+          pending--;
+          if(request.kind==='movie'||request.kind==='series'){
+            mediaPending--;
+            const batch=settleTitles(request.kind,titleRows);
+            if(batch){latest=batch;render('titles');}
+          }
+          render();
+        }}
       }));
     } catch (cause) {
       if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
@@ -274,7 +283,7 @@ export function mountQuickSearch() {
     if (announcement) announcement.textContent = '';
     showState('');
     updateTabs();
-    timer = window.setTimeout(search, 180);
+    timer = window.setTimeout(search, 60);
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
     const direction=Number(button.dataset.searchTabStep);

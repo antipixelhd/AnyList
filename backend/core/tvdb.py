@@ -395,7 +395,8 @@ def format_series(raw: dict, language: str | None = None) -> dict:
                 "overview": None,
                 "poster_path": _image_url(s.get("image")),
                 "episode_count": count,
-                "air_date": s.get("premiereDate") or season_premiere_dates.get(sn),
+                "air_date": s.get("premiereDate") or season_premiere_dates.get(sn) or (str(s['year']) if s.get('year') else None),
+                "year": s.get("year"),
                 "id": s.get("id"),
             })
     seasons.sort(key=lambda x: x["season_number"] or 0)

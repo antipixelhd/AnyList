@@ -1,3 +1,4 @@
+import {createBrowseCache} from './browse-cache.ts';
 export type SearchSection = 'all' | 'movie' | 'series' | 'actor' | 'staff' | 'studio';
 export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
@@ -29,6 +30,29 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
     await pause(signal);
   }
 }
+
+/** Construct per mounted dialog/viewer; private editor state never crosses mounts. */
+export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof fetch = fetch, now = () => Date.now()) {
+  const cache = createBrowseCache<any>(now, 60_000, 40);
+  let generation=0;
+  const clear=()=>{generation++;cache.clear();};
+  lifetime.addEventListener('abort', clear, {once:true});
+  return {
+    clear,
+    async read(request: SearchRequest, signal: AbortSignal, onResult: (data:any)=>void) {
+      if (signal.aborted || lifetime.aborted) return;
+      const epoch=generation;
+      const cached = request.kind === 'contributors' ? undefined : cache.get(request.url);
+      if (cached) { onResult(cached); return; }
+      await readQuickSearch(request, signal, data => {
+        if (signal.aborted || lifetime.aborted) return;
+        // Degraded local-only results must not conceal a recovered remote source.
+        if (generation === epoch && request.kind !== 'contributors' && !data.notice && !data.partial) cache.set(request.url, data);
+        onResult(data);
+      }, fetcher);
+    },
+  };
+}
 export function quickSearchRequests(query:string,region?:string): SearchRequest[] {
   const requests:SearchRequest[] = (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,...(region?{region}:{})})}`}));
   for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
@@ -36,6 +60,18 @@ export function quickSearchRequests(query:string,region?:string): SearchRequest[
 }
 export function rankCombinedMedia<T extends {search_rank?:number}>(movies:T[],series:T[]):T[] {
   return [...movies,...series].sort((left,right)=>(right.search_rank??0)-(left.search_rank??0));
+}
+
+/** Publish the title groups once both sources settle, including partial failures. */
+export function createQuickTitleBatch<T>() {
+  const settled = new Set<'movie'|'series'>();
+  const results: Record<'movie'|'series', T[]> = {movie: [], series: []};
+  return (kind: 'movie'|'series', rows: T[] = []) => {
+    if (settled.has(kind)) return;
+    settled.add(kind);
+    results[kind] = rows;
+    return settled.size === 2 ? results : undefined;
+  };
 }
 export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studio',T[]>, incoming:Partial<Record<'actor'|'staff'|'studio',T[]>>, scope?:ContributorScope) {
   return {actor:scope==='studio'||scope==='staff'?current.actor:incoming.actor||[],

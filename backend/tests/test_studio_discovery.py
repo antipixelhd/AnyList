@@ -60,6 +60,7 @@ class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         await discovery.verified_studios(self.db,self.viewer,[candidate(i,f'Studio {i}') for i in range(1,30)],'key')
         jobs=self.cached.call_args.args[1]
         self.assertEqual(len(jobs),discovery.MAX_CANDIDATES)
+        self.assertEqual(len(discovery.local_evidence.await_args.args[1]), discovery.MAX_CANDIDATES)
         self.assertTrue(all('min_votes' not in config['filters'] for config in jobs.values()))
 
     async def test_latest_released_works_rank_above_larger_historical_catalogues(self):

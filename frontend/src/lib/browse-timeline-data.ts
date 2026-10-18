@@ -22,10 +22,10 @@ export function releaseGroup(item: TimelineItem) {
   };
 }
 
-export function timelineGroups<T extends TimelineItem>(items: T[]) {
+export function timelineGroups<T extends TimelineItem>(items: T[], ascending = false) {
   const years = new Map<string, {year: string; months: {key: string; label: string; items: T[]}[]}>();
   const dated = items.map(item => ({item, date: releaseGroup(item)}));
-  dated.sort((a, b) => b.date.order.localeCompare(a.date.order) || a.item.title.localeCompare(b.item.title));
+  dated.sort((a, b) => !a.date.order ? (b.date.order ? 1 : 0) : !b.date.order ? -1 : ascending ? a.date.order.localeCompare(b.date.order) : b.date.order.localeCompare(a.date.order));
   for (const {item, date} of dated) {
     if (!years.has(date.year)) years.set(date.year, {year: date.year, months: []});
     const group = years.get(date.year)!;

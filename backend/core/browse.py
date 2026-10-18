@@ -75,6 +75,7 @@ SORTS = {
     "score": "vote_average.desc",
     "newest": "primary_release_date.desc",
     "oldest": "primary_release_date.asc",
+    "upcoming": "primary_release_date.asc",
     "title": "title.asc",
 }
 IMDB_SORTS = {"trending", "popular", "score"}
@@ -126,7 +127,7 @@ def section_specs(today=None):
 
 async def browse_sections(
     db, viewer, *, media_type, region, show_anime, key, mdblist_key=None,
-    min_score=0, min_runtime=0, excluded_genres=(), require_release=False, require_poster=False,
+    min_score=0, min_runtime=0, excluded_genres=(), min_votes=0, min_popularity=0, require_release=False, require_poster=False, unfiltered=False,
 ):
     specs = section_specs()
     filters = [
@@ -140,12 +141,15 @@ async def browse_sections(
                 region=region,
                 min_score=min_score,
                 min_runtime=min_runtime, excluded_genres=excluded_genres,
-                require_release=require_release, require_poster=require_poster,
+                min_votes=min_votes, min_popularity=min_popularity, require_release=require_release, require_poster=require_poster,
             ),
             **values,
         }
         for _, values in specs
     ]
+    from core.catalog_search import browse_preferences
+    for values in filters:
+        values.update(await browse_preferences(db, viewer, media_type, values['sort'], unfiltered=unfiltered))
     # Fetch remote feeds concurrently, but use the shared database session sequentially.
     semaphore = asyncio.Semaphore(2)
 
@@ -211,10 +215,12 @@ def metadata_fields(data):
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
     min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
-    require_release=False, require_poster=False,
+    min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_average.gte"] = min_score
+    if min_votes:
+        params["vote_count.gte"] = min_votes
     if media_type == "series":
         params["sort_by"] = (
             params["sort_by"]
@@ -247,13 +253,27 @@ def remote_params(
             params[f"{field}.lte"] = min(end or "9999-12-31", date.today().isoformat())
     if provider:
         params.update(
-            with_watch_providers=provider,
             watch_region=region,
             with_watch_monetization_types="flatrate|free|ads",
         )
-    if cinema and media_type=='movie':
-        params.update(with_release_type='2|3', **{'release_date.lte':date.today().isoformat()})
-        if cinema_country:params['region']=cinema_country
+    if provider:
+        params['with_watch_providers'] = provider
+    if sort == 'upcoming' or status == 'upcoming':
+        params[f'{field}.gte'] = max(start or '', (date.today() + timedelta(days=1)).isoformat())
+        if sort in ('popular', 'trending', 'newest', 'upcoming'):
+            params['sort_by'] = 'primary_release_date.asc' if media_type == 'movie' else 'first_air_date.asc'
+    elif sort == 'newest' and not end:
+        params[f'{field}.lte'] = date.today().isoformat()
+    if cinema and media_type == 'movie':
+        params['with_release_type'] = '2|3'
+        if cinema_country:
+            params['region'] = cinema_country
+        for bound in ('gte', 'lte'):
+            value = params.get(f'primary_release_date.{bound}')
+            if value:
+                params[f'release_date.{bound}'] = value
+        if status != 'upcoming' and sort != 'upcoming' and not start:
+            params.setdefault('release_date.lte', date.today().isoformat())
     return params
 
 
@@ -271,21 +291,30 @@ def local_query(
     show_anime,
     mdblist_key=None,
     min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
-    require_release=False, require_poster=False,
+    min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
     )
     data = Media.tmdb_data
-    if require_poster:
-        query = query.where(Media.poster_path.is_not(None), Media.poster_path != '')
     if require_release:
         query = query.where(release_clause(data, media_type))
+    if min_votes and not term:
+        votes = func.coalesce(data['vote_count'].astext.cast(Float), 0)
+        query = query.where(votes >= min_votes)
+    if min_popularity:
+        query = query.where(func.coalesce(data['popularity'].astext.cast(Float), 0) >= min_popularity)
+    if sort == 'upcoming':
+        query = query.where(Media.release_date > date.today().isoformat())
+    elif sort == 'newest' and not end:
+        query = query.where(Media.release_date <= date.today().isoformat())
     if cinema and media_type=='movie':
         dates=data['theatrical_release_dates_by_country'][cinema_country] if cinema_country else data['theatrical_release_dates']
-        query=query.where(dates[0].astext<=date.today().isoformat())
+        query=query.where(dates[0].astext > date.today().isoformat() if status == 'upcoming' or sort == 'upcoming' else dates[0].astext <= date.today().isoformat())
     if not show_anime:
         animated = or_(
+            data['genre_ids'].contains([16]),
+            data['genres'].contains([{'id': 16}]),
             data["genres"].contains(["Animation"]),
             data["genres"].contains([{"name": "Animation"}]),
         )
@@ -364,6 +393,7 @@ def local_query(
         "score": Media.imdb_rating.desc().nulls_last(),
         "newest": Media.release_date.desc().nulls_last(),
         "oldest": Media.release_date.asc().nulls_last(),
+        "upcoming": Media.release_date.asc().nulls_last(),
         "title": Media.title.asc(),
     }
     imdb_id = func.coalesce(Media.imdb_id, data["external_ids"]["imdb_id"].astext)
@@ -418,17 +448,18 @@ def local_query(
             query = query.where(votes > 0)
         elif sort == "trending":
             query = query.where(rank > 0)
-    return query.order_by(ordering[sort], Media.id)
+    return query.order_by(ordering['upcoming' if status == 'upcoming' and sort in ('popular', 'trending', 'newest') else sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None, require_release=False, require_poster=False):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None, min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True):
     if item.get("adult"):
         return False
-    if require_poster and not (item.get('poster_path') or item.get('poster')):
+    from core.discovery_policy import DiscoveryPolicy
+    if not DiscoveryPolicy(min_votes, min_popularity).accepts(item):
         return False
     if require_release and not has_release(item, media_type):
         return False
-    if cinema and media_type=='movie' and not has_cinema_release(item,cinema_country):
+    if cinema and media_type=='movie' and not (any(value > date.today().isoformat() for value in theatrical_dates(item, cinema_country)) if status == 'upcoming' else has_cinema_release(item,cinema_country)):
         return False
     if float(item.get("vote_average") or 0) < min_score:
         return False
@@ -444,12 +475,14 @@ def matches(item, *, media_type, genres, start, end, status, provider, region, m
         return False
     if status:
         if media_type == "movie":
-            if not released or (released > date.today().isoformat()) != (
+            from core.release_events import future
+            if not released or future(released, upcoming=item.get('release_upcoming', False) or item.get('status') in STATUSES['upcoming']) != (
                 status == "upcoming"
             ):
                 return False
         elif status == 'upcoming':
-            if not (released > date.today().isoformat() or item.get('status') in STATUSES[status]):
+            from core.release_events import future
+            if not future(released, upcoming=item.get('release_upcoming', False) or item.get('status') in STATUSES[status]):
                 return False
         elif status in ('airing', 'returning'):
             from core.season_releases import current_airing_details
@@ -576,11 +609,15 @@ async def imdb_page(
 async def remote_page(
     term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None
 ):
-    # Imports reuse the same detail cache; at most six concurrent filtered-search lookups.
-    from core.catalog_search import fuzzy_remote_terms, is_close_title_match
-
+    if term:
+        filters = {**filters, 'min_votes': 0}
+    elif filters['sort'] in ('newest', 'upcoming') or filters.get('status') == 'upcoming':
+        from core.chronological_discovery import page as release_page
+        return await release_page(media_type, key, filters,
+            offset=feed_offset if feed_offset is not None and feed_offset >= 0 else (page - 1) * PAGE_SIZE,
+            show_anime=show_anime, size=PAGE_SIZE)
     kind = "movie" if media_type == "movie" else "tv"
-    if not term and filters["sort"] in IMDB_SORTS and filters.get('status') != 'upcoming':
+    if not term and filters["sort"] in IMDB_SORTS and filters.get('status') != 'upcoming' and not (filters.get('cinema') or filters.get('provider')):
         return await imdb_page(
             media_type,
             key,
@@ -592,90 +629,64 @@ async def remote_page(
     if not key:
         raise ValueError("A TMDB key is needed for title search and discovery")
     if not term:
-        data = await tmdb._get(
-            f"{tmdb.TMDB_BASE}/discover/{kind}",
-            headers=tmdb.get_headers(key),
-            params=remote_params(media_type, page=page, **filters),
-        )
-        # Discover already applies the explicitly selected regional provider.
-        predicate = {**{k: v for k, v in filters.items() if k != 'sort'}, 'provider': None}
-        needs_details = (media_type == 'movie' and filters.get('cinema')) or (media_type == 'series' and filters.get('status') in ('airing', 'returning'))
+        async def discover(number):
+            return await tmdb._get(
+                f"{tmdb.TMDB_BASE}/discover/{kind}", headers=tmdb.get_headers(key),
+                params=remote_params(media_type, page=number, **filters))
+
+        # Discover applies regional availability without per-title requests.
+        predicate = {**{k: v for k, v in filters.items() if k != 'sort'},
+                     'provider': None, 'cinema': False}
+        needs_details = media_type == 'series' and filters.get('status') in ('airing', 'returning', 'finished', 'cancelled')
         cheap = {**predicate, 'require_release': False}
         if needs_details:
-            cheap.update(cinema=False)
-            if media_type == 'series': cheap['status'] = ''
-        items = [dict(item) for item in data.get('results', []) if matches(item, media_type=media_type, **cheap)]
-        if needs_details:
-            semaphore = asyncio.Semaphore(6)
-            async def detail(item):
-                async with semaphore:
-                    get = tmdb.get_movie if media_type == 'movie' else tmdb.get_show
-                    return await get(item['id'], api_key=key)
-            items = await asyncio.gather(*(detail(item) for item in items))
-        if filters.get('require_release'):
-            await enrich_release_evidence(items, media_type, key)
-        return data, [item for item in items if matches(item, media_type=media_type, **predicate)]
-    search = tmdb.search_movies if media_type == "movie" else tmdb.search_shows
-    data = await search(term, page=page, api_key=key) if page <= 500 else {'results': [], 'total_pages': 500}
-    items = list(data.get("results", []))
-    # Provider pages are small and filters/deduplication can leave only one
-    # viable title. Fetch a bounded batch, including every page of short searches.
-    last = min(page + (4 if len(term.strip()) >= 3 else 0), min(data.get('total_pages', 1), 500))
-    if last > page:
-        batches = await asyncio.gather(*(search(term, page=next_page, api_key=key) for next_page in range(page + 1, last + 1)))
-        items.extend(item for batch in batches for item in batch.get('results', []))
-    data = {**data, 'page': max(page, last), 'has_more': last < min(data.get('total_pages', 1), 500)}
-    data['provider_more'] = data['has_more']
-    if len(term.strip()) >= 3 and not items and page == 1:
-        alternatives = await asyncio.gather(
-            *(search(candidate, api_key=key) for candidate in fuzzy_remote_terms(term)),
-            return_exceptions=True,
-        )
-        items = [
-            item
-            for response in alternatives
-            if isinstance(response, dict)
-            for item in response.get("results", [])
-            if is_close_title_match(term, item.get("title") or item.get("name") or "")
-        ]
-        # Corrections form one finite result set, never repeat page one during scrolling.
-        data = {"total_pages": 1, 'page': 1, 'has_more': False}
-    items = list({item['id']: item for item in items}.values())
-    from core.catalog_search import predictive_titles
-    feed_offset = (0 if page == 1 else -1) if feed_offset is None else feed_offset
-    data['feed_next'] = -1
-    if mdblist_key and feed_offset >= 0:
-        # Reuse the full public catalogue already used by browse rankings.
-        # Keep normalization/fuzzy work in a worker and avoid per-title
-        # remote searches or imports.
-        try:
-            feed, _ = await mdblist_discovery.ranked_rows(media_type, 'popular', mdblist_key)
-            suggestions = await asyncio.to_thread(predictive_titles, feed, term)
-            from core.catalog_search import title_match_rank
-            suggestions.sort(key=lambda row: title_match_rank(term,row.get('title')))
-            if len(suggestions) > feed_offset + PAGE_SIZE:
-                data['feed_next'] = feed_offset + PAGE_SIZE
-                data['has_more'] = True
-            items = list({item['id']: item for item in [*suggestions[feed_offset:feed_offset+PAGE_SIZE], *items]}.values())
-        except mdblist_discovery.DiscoveryUnavailable:
-            pass  # TMDB and the indexed local catalogue remain usable.
-    # TMDB also matches hidden translations. Keep predictive matches in the
-    # displayed/original titles instead of flooding short searches with them.
-    items = await asyncio.to_thread(predictive_titles, items, term)
-    needs_details = filters["status"] or filters["provider"] or (media_type=='movie' and filters.get('cinema'))
-    if needs_details:
+            cheap['status'] = ''
         semaphore = asyncio.Semaphore(6)
-        get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
-
         async def detail(item):
             async with semaphore:
-                return await get(item["id"], api_key=key)
+                return await tmdb.get_show(item['id'], api_key=key)
 
-        items = await asyncio.gather(*(detail(item) for item in items))
-    predicate = {k: v for k, v in filters.items() if k != "sort"}
-    return data, [
-        item for item in items if matches(item, media_type=media_type, **predicate)
-    ]
+        offset = feed_offset if feed_offset is not None and feed_offset >= 0 else (page - 1) * 2
+        items, seen = [], set()
+        data = {'has_more': False}
+        # Fetch pairs concurrently and fill sparse pages before returning them.
+        # The cursor consumes provider pages once, even after local exclusions.
+        for _ in range(3):
+            numbers = range(offset + 1, min(offset + 3, 501))
+            if not numbers:
+                break
+            batches = await asyncio.gather(*(discover(number) for number in numbers))
+            offset += len(batches)
+            data = {**batches[0], 'has_more': offset < min(batches[0].get('total_pages', 1), 500), 'scan_next': offset}
+            batch = []
+            for response in batches:
+                for item in response.get('results', []):
+                    if item['id'] in seen:
+                        continue
+                    seen.add(item['id'])
+                    if matches(item, media_type=media_type, **cheap) and anime_visible(item, show_anime):
+                        batch.append(dict(item))
+            if needs_details:
+                batch = await asyncio.gather(*(detail(item) for item in batch))
+            if filters.get('require_release'):
+                await enrich_release_evidence(batch, media_type, key)
+            items.extend(item for item in batch if matches(item, media_type=media_type, **predicate))
+            if len(items) >= PAGE_SIZE or not data['has_more']:
+                break
+        return data, items
+    from core.title_search import candidates
+    data, items = await candidates(term, media_type, key, page)
+    data = {**data, 'page': page, 'provider_more': page < min(data.get('total_pages', 1), 500), 'feed_next': -1}
+    data['has_more'] = data['provider_more']
+    needs_details = filters['status'] in ('airing', 'returning', 'finished', 'cancelled') or filters['provider'] or (media_type == 'movie' and filters.get('cinema'))
+    if needs_details:
+        semaphore = asyncio.Semaphore(4)
+        async def detail(item):
+            async with semaphore:
+                return await (tmdb.get_movie if media_type == 'movie' else tmdb.get_show)(item['id'], api_key=key)
+        items = await asyncio.gather(*(detail(item) for item in items[:20]))
+    predicate = {k: v for k, v in filters.items() if k != 'sort'}
+    return data, [item for item in items if matches(item, media_type=media_type, **predicate)]
 
 
 async def browse_page(
@@ -695,8 +706,16 @@ async def browse_page(
 ):
     from core.browse_cursor import encode_search_cursor
 
+    if filters['sort'] == 'upcoming':
+        filters = {**filters, 'status': 'upcoming'}
     if term:
-        filters = {**filters, 'require_release': False, 'require_poster': False}
+        filters = {**filters, 'min_votes': 0, 'require_release': False, 'require_poster': False}
+    if not term and (filters['sort'] in ('newest', 'upcoming') or filters.get('status') == 'upcoming'):
+        from core.release_browse import page as release_page
+        if any(isinstance(value, str) for value in filters.get('genres', [])):
+            source = 'local'
+        return await release_page(db, viewer, media_type=media_type, filters=filters, key=key,
+            show_anime=show_anime, page_number=page, cursor=cursor, source=source, prefetched=prefetched)
     remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
@@ -706,7 +725,7 @@ async def browse_page(
     named_genre = any(isinstance(value, str) for value in filters.get("genres", []))
     if named_genre:
         source = "local"  # Provider-specific names cannot become TMDB genre IDs.
-    imdb_sort = not term and filters["sort"] in IMDB_SORTS and filters.get('status') != 'upcoming'
+    imdb_sort = not term and filters["sort"] in IMDB_SORTS and filters.get('status') != 'upcoming' and not (filters.get('cinema') or filters.get('provider'))
     available = bool(mdblist_key) if imdb_sort else bool(key)
     if source == "remote" and not available:
         raise ValueError("The metadata key is no longer available")
@@ -724,10 +743,6 @@ async def browse_page(
                 show_anime=show_anime,
                 feed_offset=feed_position,
             )
-            if term:
-                from core.catalog_search import enrich_search_evidence
-                await enrich_search_evidence(items, term, media_type, key, filters.get('region', 'US'),
-                    theatrical=media_type == 'movie')
         except Exception:
             # Once a remote stream starts, don't silently change its pagination source.
             if source == "remote" or page > 1:
@@ -780,14 +795,17 @@ async def browse_page(
         for item in items:
             if (
                 item.get("adult")
-                or item["id"] in seen
+                or (item.get('release_event') or item['id']) in seen
                 or not anime_visible(item, show_anime)
             ):
                 continue
-            seen.add(item["id"])
+            seen.add(item.get('release_event') or item['id'])
             results.append(
                 {
                     "id": None,
+                    "release_event": item.get("release_event"),
+                    "release_season": item.get("release_season"),
+                    "release_country": item.get("release_country"),
                     "tmdb_id": item["id"],
                     "type": media_type,
                     "title": item.get("title") or item.get("name"),
@@ -829,7 +847,8 @@ async def browse_page(
     for row in results:
         row.update(list_status=None, score=None, rating_mode="manual")
     from core.tracking_editor import attach_editor_context
-    await attach_editor_context(db, viewer, results, media_rows=known if remote is not None else rows)
+    context_rows = known if remote is not None else [media for media in rows if any(row.get('id') == media.id for row in results)]
+    await attach_editor_context(db, viewer, results, media_rows=context_rows)
     if term:
         from core.catalog_search import media_search_rank
         media_by_id = {media.id: media for media in (known if remote is not None else rows)}
@@ -854,6 +873,7 @@ async def browse_page(
         "has_more": has_more,
         "source": source,
         "notice": notice,
+        "partial": remote.get('partial', False) if remote else False,
     }
 
 

@@ -1,4 +1,5 @@
 ---
+import { api } from "../lib/api";
 import Tracker from "../layouts/Tracker.astro";
 import { formatDate, requestDateLocale } from '../lib/date-time';
 import { STREAMING_REGION_COOKIE, streamingCountry, streamingRegionPreference } from '../lib/streaming-region';
@@ -18,10 +19,13 @@ import {
   browseLayout,
 } from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
-const region = streamingCountry(params.get('region')) || streamingRegionPreference(Astro.cookies.get(STREAMING_REGION_COOKIE)?.value)?.country || 'US';
+params.delete("streaming");
+params.delete("unfiltered");
+const account = Astro.locals.token ? await api.profile.get(Astro.locals.token).catch(() => null) : null;
+const preference = streamingRegionPreference(Astro.cookies.get(STREAMING_REGION_COOKIE)?.value);
+const region = streamingCountry(params.get('region')) || (preference?.manual ? preference.country : undefined) || preference?.country || streamingCountry(account?.country) || 'US';
 params.set('region', region);
 const view = browseLayout(params);
-if(params.get('sort')==='newest')params.delete('sort');
 params.set('view',view);
 const type = params.get("type") === "series" ? "series" : "movie";
 if(type==='series'||!['1','true'].includes(params.get('cinema')||''))params.delete('cinema');
@@ -53,9 +57,9 @@ if (responses[0].status === "fulfilled") {
   } else payload = responses[0].value;
 } else error = "Unable to load titles. Check your filters and try again.";
 if (responses[1].status === "fulfilled") facets = responses[1].value;
-const cinemaCountry = facets.cinema_country;
+const cinemaCountry = region;
 const cinemaScope = cinemaCountry ? new Intl.DisplayNames(['en'],{type:'region'}).of(cinemaCountry) || cinemaCountry : 'Worldwide';
-const cinemaLabel = `Cinema release · ${cinemaScope}`;
+const cinemaLabel = `Theatrical · ${cinemaScope}`;
 const selectedGenres = (params.get("genres") || "").split(",");
 const statusOptions =
   type === "movie"
@@ -95,12 +99,11 @@ const minScore = Math.max(0, Math.min(10, Number(params.get("min_score") ?? 0) |
 const hasSort = !categories;
 const resultsSort = hasSort ? browseRequestParams(params).get('sort') : 'all';
 const sortOptions = [
-  ['all', 'All categories'], ['trending', 'IMDb trending'], ['popular', 'IMDb votes'],
-  ['score', 'IMDb rating'], ['oldest', 'Oldest'], ['title', 'Title'],
+  ['all', 'All categories'], ['trending', 'Trending'], ['popular', 'Popular'],
+  ['score', 'Highest rated'], ['newest', 'Newest'], ['upcoming', 'Upcoming'], ['oldest', 'Oldest'], ['title', 'Title'],
 ];
 const viewHref = (view: string) => {
   const values = new URLSearchParams(Astro.url.search);
-  if (values.get('sort') === 'newest') values.delete('sort');
   if (view === 'timeline') values.set('view', view);
   else values.delete('view');
   return `/browse${values.size ? '?' + values : ''}`;
@@ -262,7 +265,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
               </select>
             </label>
             <label class="browse-filter">
-              <span>Streaming region</span>
+              <span>Region</span>
               <select name="region">
                 {regions.map(([id, label]) => (
                   <option value={id} selected={region === id}>
@@ -300,6 +303,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         ))}
         {!!initialChips.length && <button type="button" data-reset>Clear all</button>}
       </div>
+      <button type="button" class="button-quiet" data-browse-curated hidden>Return to curated results</button>
       <label class="browse-results-sort" hidden={!hasSort||view==='timeline'}>
         <Icon name="sort" />
         <BrowseSelect aria-label="Sort results" data-browse-results-sort valueLabel={params.get('q')?.trim() ? 'Relevance' : sortOptions.find(([id]) => id === resultsSort)?.[1]}>
@@ -346,7 +350,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         ))}
       </div>
       <div class={view==='timeline'?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
-        {view === 'timeline' ? timelineGroups<any>(payload.results).map(year => (
+        {view === 'timeline' ? timelineGroups<any>(payload.results, params.get('sort')==='upcoming'||params.get('status')==='upcoming').map(year => (
           <section class="browse-timeline-year" data-timeline-year={year.year}>
             <h2 class="browse-timeline-year-label">{year.year || 'Undated'}</h2>
             <div class="browse-timeline-months">
@@ -420,8 +424,9 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
           data-browse-end
           hidden={payload.has_more || !payload.results.length}
         >
-          You're all caught up
+          {payload.partial ? 'End of curated results' : "You're all caught up"}
         </span>
+        <button type="button" class="button-secondary" data-browse-show-all hidden={categories || payload.has_more || !!error}>Show all</button>
       </div>
     </section>
     </div>

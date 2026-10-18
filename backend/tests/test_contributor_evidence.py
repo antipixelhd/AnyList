@@ -60,6 +60,17 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await evidence.load_evidence({'kind':'person','native_id':7},'key')
 
+    async def test_studio_eligibility_has_a_lifetime_budget_when_every_work_is_excluded(self):
+        job={'kind':'studio','native_id':7,'config':{'companies':[7], 'filters':FILTERS,'show_anime':True}}
+        provider=AsyncMock(return_value={'results':[], 'total_pages':500})
+        with patch.object(evidence.tmdb,'discover_movies',provider),patch.object(evidence.tmdb,'discover_shows',provider):
+            first=await evidence.load_evidence(job,'key')
+            last=await evidence.load_evidence({**job,'payload':first},'key')
+        self.assertTrue(last['complete'])
+        self.assertEqual(last['scope'],'eligibility_sample')
+        self.assertEqual(last['pages'],{'movie':None,'series':None})
+        self.assertEqual(provider.await_count,4)
+
     async def test_actor_full_credits_override_shortlist_and_empty_results_stay_out(self):
         from core import contributor_search as search
         def person(native, name, known):
@@ -75,3 +86,16 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
             pending=await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),SimpleNamespace(id=1),groups,'key')
         self.assertTrue(pending)
         self.assertEqual([r['name'] for r in groups['actor']],['Beyond shortlist','Known'])
+
+    async def test_quick_people_verification_bounds_jobs_and_local_candidates(self):
+        from core import contributor_search as search
+        groups = {section: [{'key': f'tmdb:{i}', '_native': i, '_known_for': [film(job='Director')]}
+                           for i in range(1, 31)] for section in ('actor', 'staff')}
+        with patch.object(search, 'result_filters', AsyncMock(return_value=FILTERS)), \
+             patch.object(search, 'local_evidence', AsyncMock(return_value={})) as local, \
+             patch.object(search, 'cached_evidence', AsyncMock(return_value=({}, True))) as cached:
+            await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),
+                SimpleNamespace(id=1), groups, 'key')
+        self.assertEqual(len(cached.await_args.args[1]), 8)
+        self.assertEqual([len(call.args[1]) for call in local.await_args_list], [8, 8])
+        self.assertEqual([len(group) for group in groups.values()], [8, 8])
