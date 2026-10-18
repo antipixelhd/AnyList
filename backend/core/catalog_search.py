@@ -6,15 +6,14 @@ import asyncio
 from difflib import SequenceMatcher
 
 from sqlalchemy import Float, func
-
-EXCLUDABLE_CATEGORIES = {99, 10402, 10770, 10763, 10764, 10766, 10767}
+from core.result_categories import default_excluded_categories
 
 
 async def result_filters(db, viewer):
     """Read all account result filters together; never partition provider caches."""
     from sqlalchemy import select
     from models.profile import UserProfileData
-    defaults = dict(min_runtime=30, excluded_genres=[])
+    defaults = dict(min_runtime=30, excluded_genres=default_excluded_categories())
     if viewer is None:
         return defaults
     row = (await db.execute(select(UserProfileData.minimum_movie_runtime,

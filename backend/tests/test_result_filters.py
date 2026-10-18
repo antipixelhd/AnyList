@@ -3,7 +3,8 @@ import os
 import asyncio
 import time
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
+from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'results-filter-tests')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
@@ -12,11 +13,23 @@ from core.catalog_search import matches_result_filters, search_rank, has_streami
 from core.cinema_releases import theatrical_dates
 from core.browse import remote_params, remote_page
 from core import tmdb
-from schemas import UserProfileUpdate
+from schemas import UserProfileUpdate, UserProfileResponse
+from core.catalog_search import result_filters
+from core.result_categories import default_excluded_categories
 from pydantic import ValidationError
 
 
 class ResultPolicyTests(unittest.TestCase):
+    def test_category_defaults_enable_all_without_overriding_explicit_empty_selection(self):
+        expected = [99, 10402, 10763, 10764, 10766, 10767, 10770]
+        self.assertEqual(UserProfileResponse().excluded_categories, expected)
+        self.assertEqual(UserProfileUpdate().excluded_categories, expected)
+        self.assertEqual(UserProfileUpdate().model_dump(exclude_unset=True), {})
+        self.assertEqual(UserProfileUpdate(excluded_categories=[]).model_dump(exclude_unset=True), {'excluded_categories': []})
+        first = default_excluded_categories()
+        first.clear()
+        self.assertEqual(default_excluded_categories(), expected)
+
     def test_combined_search_does_not_give_movies_two_availability_bonuses(self):
         # Representative metadata, deliberately giving the movie both signals.
         offers = {'DE': {'flatrate': [{'provider_id': 1}]}}
@@ -88,6 +101,17 @@ class ResultPolicyTests(unittest.TestCase):
 
 
 class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_profile_excludes_all_but_saved_empty_selection_is_respected(self):
+        result = MagicMock()
+        result.first.return_value = None
+        db = SimpleNamespace(execute=AsyncMock(return_value=result))
+        viewer = SimpleNamespace(id=1)
+        self.assertEqual((await result_filters(db, None))['excluded_genres'], default_excluded_categories())
+        self.assertEqual((await result_filters(db, viewer))['excluded_genres'], default_excluded_categories())
+        result.first.return_value = SimpleNamespace(minimum_movie_runtime=30, excluded_categories=[])
+        self.assertEqual((await result_filters(db, viewer))['excluded_genres'], [])
+
+
     async def test_slow_search_evidence_does_not_hold_the_response(self):
         async def stalled(identifier, api_key=None):
             await asyncio.Event().wait()

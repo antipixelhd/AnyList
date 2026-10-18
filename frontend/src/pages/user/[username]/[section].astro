@@ -112,6 +112,12 @@ document.addEventListener('astro:page-load', () => {
   }
   function hidePreview() { if (preview) preview.hidden = true; }
   function showPreview(row: HTMLElement) {
+    if (row.hasAttribute('data-editor-deselected') ||
+        row.querySelector('[data-edit-entry]:is(:hover,:focus)') ||
+        document.querySelector<HTMLDialogElement>('#tracking-editor')?.open) {
+      hidePreview();
+      return;
+    }
     const thumbnail = row.querySelector<HTMLElement>('.entry-thumbnail');
     const source = thumbnail?.dataset.previewSrc;
     if (!preview || !previewImage || !source || previewDismissed || !matchMedia('(hover:hover) and (min-width:901px)').matches) return;

@@ -3,6 +3,7 @@ from typing import Optional
 from datetime import datetime
 import re
 from models.base import UserRole, MediaType, PrivacyLevel
+from core.result_categories import default_excluded_categories
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -448,12 +449,12 @@ class UserProfileUpdate(BaseModel):
     minimum_movie_runtime: int = Field(default=30, ge=0, le=1440)
     require_release: bool = False
     require_poster: bool = False
-    excluded_categories: list[int] = Field(default_factory=list, max_length=7)
+    excluded_categories: list[int] = Field(default_factory=default_excluded_categories, max_length=7)
 
     @field_validator('excluded_categories')
     @classmethod
     def validate_excluded_categories(cls, value):
-        from core.catalog_search import EXCLUDABLE_CATEGORIES
+        from core.result_categories import EXCLUDABLE_CATEGORIES
         if not set(value).issubset(EXCLUDABLE_CATEGORIES):
             raise ValueError('Choose valid result categories')
         return sorted(set(value))
@@ -483,7 +484,7 @@ class UserProfileResponse(BaseModel):
     minimum_movie_runtime: int = 30
     require_release: bool = False
     require_poster: bool = False
-    excluded_categories: list[int] = Field(default_factory=list)
+    excluded_categories: list[int] = Field(default_factory=default_excluded_categories)
     background_url: Optional[str] = None
     bio: Optional[str] = None
     country: Optional[str] = None

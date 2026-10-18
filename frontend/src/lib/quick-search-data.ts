@@ -1,5 +1,5 @@
-export type SearchSection = 'all' | 'actor' | 'staff' | 'studio';
-export type ResultSection = SearchSection | 'movie' | 'series';
+export type SearchSection = 'all' | 'movie' | 'series' | 'actor' | 'staff' | 'studio';
+export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
 export type SearchRequest = {kind:'movie'|'series'|'contributors';url:string;scope?:ContributorScope};
 
@@ -43,13 +43,16 @@ export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studi
     studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
 }
 export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:Record<ResultSection,number>): ResultSection[] {
-  const sections:ResultSection[] = mobile ? [selected] : [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
+  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,quickSearchTabOrder(combined))] : quickSearchTabOrder(combined);
   return sections.filter(section=>counts[section]>0);
 }
 
-const mobileTabOrder:SearchSection[]=['all','actor','staff','studio'];
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false):SearchSection[] {
-  return searching?mobileTabOrder.filter(kind=>counts[kind]>0||(kind==='all'&&mediaPending)):[...mobileTabOrder];
+function quickSearchTabOrder(combined:boolean):SearchSection[] {
+  return [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
+}
+export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true):SearchSection[] {
+  const order=quickSearchTabOrder(combined);
+  return searching?order.filter(kind=>counts[kind]>0||(['all','movie','series'].includes(kind)&&mediaPending)):order;
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

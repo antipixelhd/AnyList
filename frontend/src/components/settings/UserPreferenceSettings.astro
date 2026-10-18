@@ -8,6 +8,10 @@ import '../../styles/profile-color-settings.css';
 
 interface Props { category: 'profile' | 'media' | 'lists' | 'notifications' }
 const { category } = Astro.props;
+const RESULT_CATEGORIES = [
+  [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
+  [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
+] as const;
 const { token } = Astro.locals;
 const settings = Astro.locals.settings;
 const [profileData, me, trackingPrefs] = await Promise.all([
@@ -23,7 +27,7 @@ const prefs: UserPreferences = {
   minimum_movie_runtime: 30,
   require_release: false,
   require_poster: false,
-  excluded_categories: [],
+  excluded_categories: RESULT_CATEGORIES.map(([id]) => id),
   streaming_services: [],
   metadata_language: null,
   privacy_level: "private",
@@ -87,10 +91,6 @@ const STREAMING_SERVICES = [
   { id: "15",   name: "Hulu" },
 ];
 
-const RESULT_CATEGORIES = [
-  [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
-  [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
-] as const;
 const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).map(row => [row.code, row.name]) : [];
 ---
 

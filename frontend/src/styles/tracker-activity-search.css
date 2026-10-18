@@ -82,7 +82,7 @@
 .quick-search-dialog {
   position:fixed;
   inset:52px 0 auto;
-  width:min(860px,calc(100vw - 64px));
+  width:min(640px,calc(100vw - 64px));
   max-height:calc(100vh - 76px);
   margin:0 auto;
   overflow:auto;
@@ -90,11 +90,8 @@
   border:0;
   box-shadow:none
 }
-.quick-search-dialog[data-combined=yes] {
-  width:min(640px,calc(100vw - 64px))
-}
 .quick-search-dialog[data-search-expanded] { width:min(calc(var(--search-columns,2) * 320px),calc(100vw - 64px)); }
-.quick-search-dialog[data-search-expanded] .quick-search-bar { max-width:640px; margin:auto; }
+.quick-search-dialog .quick-search-bar { max-width:640px; margin:auto; }
 .quick-search-dialog .quick-search-results,.quick-search-dialog .quick-search-results.combined {
   grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));
   justify-content:stretch;

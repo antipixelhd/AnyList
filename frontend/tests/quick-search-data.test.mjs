@@ -51,9 +51,23 @@ test('desktop shows only matching sections and respects combined media; mobile d
   const counts={all:3,movie:1,series:2,actor:2,staff:0,studio:1};
   assert.deepEqual(visibleQuickSearchSections(false,'all',true,counts),['all','actor','studio']);
   assert.deepEqual(visibleQuickSearchSections(false,'all',false,counts),['movie','series','actor','studio']);
-  assert.deepEqual(visibleQuickSearchSections(true,'all',false,counts),['all']);
+  assert.deepEqual(visibleQuickSearchSections(true,'all',false,counts),['movie']);
+  assert.deepEqual(visibleQuickSearchSections(true,'series',false,counts),['series']);
   assert.deepEqual(visibleQuickSearchSections(true,'studio',true,counts),['studio']);
   assert.deepEqual(visibleQuickSearchSections(true,'staff',true,counts),[]);
+});
+
+test('separate mobile lists navigate movies and series independently through loading and empty results',()=>{
+  const empty={all:0,movie:0,series:0,actor:0,staff:0,studio:0};
+  assert.deepEqual(availableQuickSearchTabs(empty,false,false,false),['movie','series','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(empty,true,true,false),['movie','series']);
+  const counts={...empty,all:2,series:2,actor:1};
+  const available=availableQuickSearchTabs(counts,true,false,false);
+  assert.deepEqual(available,['series','actor']);
+  assert.equal(resolvedQuickSearchTab('movie',available),'series');
+  assert.equal(steppedQuickSearchTab('series',available,1),'actor');
+  assert.equal(steppedQuickSearchTab('actor',available,1),'series');
+  assert.equal(resolvedQuickSearchTab('series',availableQuickSearchTabs(counts,true,false,true)),'all');
 });
 
 test('mobile navigation removes empty tabs, recovers selection, and wraps through available results',()=>{

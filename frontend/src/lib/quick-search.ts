@@ -20,11 +20,12 @@ export function mountQuickSearch() {
   mountedDialog=dialog;
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
   const mobile=matchMedia('(max-width:650px)');
+  const combined=()=>dialog.dataset.combined==='yes';
   const tabs: ReadonlyArray<{kind:SearchSection;label:string}> = [
-    {kind:'all',label:'Movies & Series'}, {kind:'actor',label:'Actors'},
+    {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'actor',label:'Actors'},
     {kind:'staff',label:'Crew'}, {kind:'studio',label:'Studios'},
   ];
-  let activeTab:SearchSection='all';
+  let activeTab:SearchSection=combined()?'all':'movie';
   const tabTitle=dialog.querySelector<HTMLElement>('[data-search-tab-title]')!;
   const tabButtons=[...dialog.querySelectorAll<HTMLButtonElement>('[data-search-tab-step]')];
   const tabMarkers=[...dialog.querySelectorAll<HTMLElement>('[data-search-tab-marker]')];
@@ -49,7 +50,7 @@ export function mountQuickSearch() {
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
   const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
-  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0);
+  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined());
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
   function updateTabs(available=availableTabs()) {
     activeTab=resolvedQuickSearchTab(activeTab,available);
@@ -225,7 +226,7 @@ export function mountQuickSearch() {
     clearTimeout(timer);
     clearTimeout(progressTimer);progress?.classList.remove('visible');
     controller?.abort();
-    activeTab='all';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
+    activeTab=combined()?'all':'movie';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (input) input.value = '';
     latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=0;
@@ -298,6 +299,11 @@ export function mountQuickSearch() {
   },{passive:false,signal:pageListeners.signal});
   dialog.addEventListener('touchcancel',()=>{touchStart=null;},{signal:pageListeners.signal});
   mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open&&(input?.value.trim().length||0)>=2)render();},{signal:pageListeners.signal});
+  document.addEventListener('anylist:combine-lists-changed',event=>{
+    dialog.dataset.combined=(event as CustomEvent<{combineLists:boolean}>).detail.combineLists?'yes':'no';
+    if((input?.value.trim().length||0)>=2)render();
+    else updateTabs();
+  },{signal:pageListeners.signal});
   pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
