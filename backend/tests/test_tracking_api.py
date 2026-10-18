@@ -367,9 +367,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_search_tolerates_small_title_errors(self):
         self.movie.tmdb_data = {'vote_count': 250, 'popularity': 80, 'runtime': 100}
         await self.db.commit()
-        response=await self.client.get('/tracking/catalog',params={'media_type':'movie','q':'Fxtur Flm'})
-        self.assertEqual(response.status_code,200,response.text)
-        self.assertEqual(response.json()['results'][0]['id'],self.movie.id)
+        # Exercise small spelling errors supported by indexed trigram matching;
+        # the older fixture removed three letters and relied on a looser scan.
+        for query in ('Fixture Flm', 'Fxture Film'):
+            response=await self.client.get('/tracking/catalog',params={'media_type':'movie','q':query})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['results'][0]['id'],self.movie.id)
 
     async def test_catalog_search_recovers_remote_common_title_typos(self):
         from core import tmdb

@@ -63,8 +63,18 @@ class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         await discovery.verified_studios(self.db,self.viewer,[candidate(i,f'Studio {i}') for i in range(1,30)],'key')
         jobs=self.cached.call_args.args[1]
         self.assertEqual(len(jobs),discovery.MAX_CANDIDATES)
-        self.assertEqual(len(discovery.local_evidence.await_args.args[1]), discovery.MAX_CANDIDATES)
+        discovery.local_evidence.assert_not_awaited()  # No catalogue identities to inspect.
         self.assertTrue(all('filters' not in config for config in jobs.values()))
+
+    async def test_group_display_identity_does_not_replace_catalogue_work_lookup_keys(self):
+        with patch.object(discovery, 'local_evidence', AsyncMock(return_value={
+                'catalogue:2': {'works': 1, 'latest': ''}})) as local:
+            rows, _ = await discovery.verified_studios(self.db, self.viewer, [
+                {**candidate(429, 'DC'), 'key': 'catalogue:1'},
+                {**candidate(9993, 'DC Entertainment'), 'key': 'catalogue:2'}], None)
+        self.assertEqual([row['key'] for row in rows], ['tmdb:429'])
+        self.assertEqual({row['key'] for row in local.await_args.args[1]}, {'catalogue:1', 'catalogue:2'})
+        self.assertLessEqual(local.await_args.kwargs['limit'], discovery.MAX_CANDIDATES * 3)
 
     async def test_popular_qualifying_works_rank_above_recent_obscure_releases(self):
         groups={k:[] for k in search.KINDS}

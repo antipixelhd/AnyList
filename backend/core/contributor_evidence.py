@@ -161,7 +161,7 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
             for key, payload in payloads.items() if payload is not None}, pending
 
 
-async def local_evidence(db, rows, section, filters, show_anime):
+async def local_evidence(db, rows, section, filters, show_anime, *, limit=8):
     """Check indexed qualifying-work existence; never transfer whole filmographies.
 
     Counts/latest dates belong to the precomputed summary and cached provider
@@ -172,7 +172,7 @@ async def local_evidence(db, rows, section, filters, show_anime):
     from sqlalchemy import cast
 
     ids = list(dict.fromkeys(int(r['key'].split(':')[1]) for r in rows
-                            if r['key'].startswith('catalogue:')))[:8]
+                            if r['key'].startswith('catalogue:')))[:limit]
     if not ids:
         return {}
     candidates = values(column('id', Integer), name='candidates').data([(i,) for i in ids])

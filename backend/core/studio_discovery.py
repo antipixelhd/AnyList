@@ -1,6 +1,6 @@
 """Group reviewed studios and read work evidence without provider fan-out."""
 from core.catalog_search import result_filters, browse_preferences
-from core.studio_groups import studio_root, studio_companies, studio_display_name
+from core.studio_groups import studio_root, studio_companies, studio_display_name, studio_members
 from core.contributor_evidence import cached_evidence, evidence_key, local_evidence, work_summary
 from models import GlobalSettings
 
@@ -23,7 +23,11 @@ async def verified_studios(db, viewer, rows, api_key):
         native = row.get('_native')
         root = studio_root(native) if native else row['key']
         if root not in groups:
-            groups[root] = {**row}
+            groups[root] = {**row, '_local_keys': []}
+        # Presentation may use the reviewed group's TMDB URL. Keep its actual
+        # catalogue members separate for the filtered local-work existence read.
+        if row['key'].startswith('catalogue:') and row['key'] not in groups[root]['_local_keys']:
+            groups[root]['_local_keys'].append(row['key'])
         if row.get('_local'):
             old = groups[root].get('_local') or {}
             groups[root]['_local'] = {'works': max(old.get('works', 0), row['_local']['works']),
@@ -51,10 +55,16 @@ async def verified_studios(db, viewer, rows, api_key):
     unresolved = [row for row in candidates if not (row.get('_native') and
         (evidence.get(evidence_key('studio', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
         (evidence.get(evidence_key('studio', row['_native'], filters, show_anime)[0]) or {}).get('complete'))]
-    local = await local_evidence(db, unresolved, 'studio', filters, show_anime) if unresolved else {}
+    local_rows = [{'key': key} for row in unresolved for key in row['_local_keys']]
+    # At most eight groups, including their reviewed concurrent brands. This
+    # remains one bounded indexed read, never a query per company or credit.
+    member_limit = MAX_CANDIDATES * max((len(studio_members(row['_native']))
+        if row.get('_native') else 1 for row in unresolved), default=1)
+    local = await local_evidence(db, local_rows, 'studio', filters, show_anime,
+        limit=member_limit) if local_rows else {}
     output = []
     for row in candidates:
-        row['_local'] = local.get(row['key'])
+        row['_local'] = next((local[key] for key in row['_local_keys'] if key in local), None)
         key = evidence_key('studio', row['_native'], filters, show_anime)[0] if row.get('_native') else None
         value = work_summary(evidence.get(key), 'studio', filters, show_anime)
         # Actual eligible local works remain useful even before remote verification.

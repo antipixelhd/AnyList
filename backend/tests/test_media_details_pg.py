@@ -437,7 +437,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(details['organizations'][1]['url'])
         response = await self.client.get(f'/tracking/title/{self.media_id}')
         self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.json()['entry'])
+        self.assertEqual(response.json()['entry']['status'], 'completed')
         self.assertEqual(len(response.json()['people']), 1)
 
     async def test_game_details_use_stored_releases_relations_prices_and_safe_artwork(self):
