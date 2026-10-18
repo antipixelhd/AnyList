@@ -705,12 +705,16 @@ async def remote_page(
         # Reject only known violations before paying for details. Missing fields
         # remain eligible for enrichment; explicit filters still run afterwards.
         from core.discovery_policy import DiscoveryPolicy, numeric
-        selected = [item for item in items[:20] if not item.get('adult')
+        from core.catalog_search import media_search_rank
+        selected = [item for item in items if not item.get('adult')
             and matches_result_filters(item, media_type, min_runtime=filters.get('min_runtime', 0),
                 excluded_genres=filters.get('excluded_genres', ()))
             and anime_visible(item, show_anime)
             and (numeric(item.get('popularity')) is None or
                  DiscoveryPolicy(min_popularity=filters.get('min_popularity', 0)).accepts(item))]
+        # Corrections can append stronger matches beyond the original provider
+        # page. Spend the detail budget on ranked, cheaply eligible candidates.
+        selected = sorted(selected, key=lambda item: media_search_rank(term, item, media_type), reverse=True)[:20]
         semaphore = asyncio.Semaphore(4)
         async def detail(item):
             async with semaphore:

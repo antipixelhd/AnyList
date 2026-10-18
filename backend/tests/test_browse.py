@@ -273,6 +273,28 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({call.args[0] for call in read.await_args_list},{1,4})
         self.assertEqual({row['id'] for row in rows},{1,4})
 
+    async def test_detail_budget_filters_then_ranks_appended_correction_candidates(self):
+        # Twenty direct-query candidates precede the typo correction matches.
+        # Cheap exclusions must not spend the budget, and relevance must decide
+        # which eligible candidates receive the remaining bounded detail reads.
+        for excluded in (False, True):
+            with self.subTest(excluded=excluded):
+                raw = [{'id': i, 'title': 'Unrelated', 'popularity': 30,
+                        'genre_ids': [99] if excluded else [18]} for i in range(1, 21)]
+                raw += [{'id': 21, 'title': 'Silo', 'popularity': 100, 'genre_ids': [18]},
+                        {'id': 22, 'title': 'Silo returns', 'popularity': 80, 'genre_ids': [18]}]
+
+                async def detail(identifier, **kwargs):
+                    return {**next(row for row in raw if row['id'] == identifier),
+                            'watch/providers': {'results': {'US': {'flatrate': [{'provider_id': 8}]}}}}
+
+                with patch('core.title_search.candidates', AsyncMock(return_value=({'total_pages': 1}, raw))), \
+                     patch('core.tmdb.get_movie', AsyncMock(side_effect=detail)) as read:
+                    _, rows = await remote_page('Silo', 'movie', 'key',
+                        {**FILTERS, 'provider': 8, 'min_popularity': 25, 'excluded_genres': [99]}, 1)
+                self.assertEqual([row['id'] for row in rows[:2]], [21, 22])
+                self.assertEqual(read.await_count, 2 if excluded else 20)
+
     async def test_single_letter_search_does_not_scan_large_ranked_catalogue(self):
         feed=[{'id':i,'title':f'A movie {i}','imdb_votes':500} for i in range(1,10001)]
         with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':500,'results':[]})) as search, \

@@ -42,7 +42,8 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.admin = create_async_engine(URL)
         async with self.admin.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA "{self.schema}"'))
-        self.engine = create_async_engine(URL, connect_args={"server_settings": {"search_path": self.schema}})
+        # Tables stay in the disposable schema; pg_trgm operators may live in public.
+        self.engine = create_async_engine(URL, connect_args={"server_settings": {"search_path": f'{self.schema},public'}})
 
         def setup(conn):
             wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search")]
