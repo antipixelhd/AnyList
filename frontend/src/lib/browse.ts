@@ -447,7 +447,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     region.setAttribute("aria-busy", "true");
     updateFooter();
     updateUrl();
-    paintChips();
     if (!append) {
       cancelUiMotion(region);
       grid.hidden = true;
@@ -462,6 +461,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     } else if (!field('q').value.trim()) {
       loadingView.show(true, false, field('view').value==='timeline');
     }
+    paintChips();
     try {
       let response = cached;
       if (!response) {
