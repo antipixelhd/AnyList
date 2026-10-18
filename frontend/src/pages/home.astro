@@ -6,8 +6,9 @@ import Icon from '../components/Icon.astro';
 import LocalDateTime from '../components/LocalDateTime.astro';
 import {tracker} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
+import {shareLoginPath} from '../lib/share-preview';
 let activities:any[]=[],error='',seriesInProgress:any[]=[],upcomingSeasons:any[]=[],watchingCount:number|null=null;
-if(!Astro.locals.user)return Astro.redirect('/browse');
+if(!Astro.locals.user)return Astro.redirect(shareLoginPath('/home'));
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 const imageRoute='direct';
 const [activityResult,listResult,upcomingResult]=await Promise.allSettled([
