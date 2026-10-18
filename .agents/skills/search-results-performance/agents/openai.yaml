@@ -1,7 +1,7 @@
 interface:
   display_name: "Search and Results Performance"
-  short_description: "Protect search relevance, latency, and query budgets"
-  default_prompt: "Use $search-results-performance to change AnyList search or results while preserving relevance, stable loading, and measured query budgets."
+  short_description: "Improve search speed and resource use with quality checks"
+  default_prompt: "Use $search-results-performance to change AnyList search or results while improving latency and resource use and verifying intended result behavior."
 
 policy:
   allow_implicit_invocation: true

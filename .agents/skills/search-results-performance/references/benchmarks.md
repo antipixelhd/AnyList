@@ -27,7 +27,7 @@ Repeat `--case` for several cases. Group selectors are alternatives: `--filters-
 .venv/Scripts/python.exe scripts/benchmark_search.py --case movie_exact --case movie_cinema --baseline-ref BASELINE_SHA --output .local-design/search-browse/before.json
 .venv/Scripts/python.exe scripts/benchmark_search.py --case movie_exact --case movie_cinema --output .local-design/search-browse/after.json
 
-# Shared-system changes: omit selectors for the full matrix.
+# Broad cross-category risk: omit selectors for the full matrix.
 .venv/Scripts/python.exe scripts/benchmark_search.py --output .local-design/search-browse/full-after.json
 
 # Large credits and catalogue; include mixed actor/crew to catch role-cache misses.
@@ -60,7 +60,7 @@ Each case resets relevant in-process caches; contributor cases also reset durabl
 - Compare matching case/profile/stage. Compare result fingerprints and flags for optimizations; document deliberate relevance/behavior changes separately. A fingerprint covers returned content/order, not whether a synthetic fixture represents user intent well.
 - Compare SQL counts **and payload cost**. Large-credit stress exposed roughly 400 ms of repeated DB transfer with just four reads. Query-count parity alone does not establish performance parity.
 - Healthy warm cases should reuse provider evidence. The forced-outage fixture can still record one immediate failing provider invocation per poll; failures are not cached as successful empty results. Negative studios should stay omitted without repeating provider discovery until expiry.
-- Worker counters include harness queue probes and forced-clock writes. When reporting production worker SQL costs, subtract signatures for the harness `WHERE ...next_attempt_at IS NOT NULL` probes and `UPDATE ... SET next_attempt_at=...` clock advancement; retain real lease/settings/evidence operations. State whether final-poll work is included.
+- Worker counters include harness queue probes and forced-clock writes. When reporting production worker SQL costs, identify and exclude only verified harness-control operations. Current examples are `WHERE ...next_attempt_at IS NOT NULL` probes and clock-advancement updates. Check the current callers before subtracting counts: matching a SQL pattern alone is not proof that an operation is artificial. Retain real lease/settings/evidence operations; explicit instrumentation labels are preferable if this evolves. State whether final-poll work is included.
 - Default provider misses simulate 50 ms; auth is stubbed and MDBList feed retrieval is mocked. HTTP counts cover TMDB misses. Cold does not flush PostgreSQL's buffer cache or necessarily reconnect HTTP. `db_ms` includes driver transfer; it is not PostgreSQL CPU time.
 - `details_then_timeline` includes priming 20 detail requests. `sparse_viewport` aggregates up to six refill requests. Do not present either as a single ordinary API call.
 - One cold sample and three warm samples are diagnostic, not production percentiles. Use repeated comparable arms for small latency claims. Browser debounce/network/rendering and concurrent VPS load are excluded. Initial real connectivity retries may exceed the immediate-failure fixture's timing.
@@ -70,3 +70,7 @@ Each case resets relevant in-process caches; contributor cases also reset durabl
 Select neighboring `unittest` modules rather than adding tests that mirror implementation. Relevant suites include `test_browse`, `test_discovery_policy`, `test_tmdb`, `test_result_filters`, `test_contributor_evidence`, `test_contributor_evidence_pg`, `test_contributor_search`, and `test_studio_discovery` under `backend/tests/`. Database suites require their explicit disposable DB variables; do not count skipped DB tests as successful database verification. UI changes also use neighboring `node:test` coverage and real-page checks as appropriate.
 
 When modifying the harness, preserve profile distinctions, cache reset/expiry behavior, SQL/provider instrumentation, realistic data volume and result-quality checks. Extend case coverage for new result features when existing cases do not exercise them. Run the changed cases and relevant regression paths, then update this reference and the skill's architecture guidance if their claims changed. Do not store machine-specific timing thresholds as universal pass/fail requirements.
+
+## Improving the implementation or benchmark
+
+The case names, fixture sizes, profiles and current mechanisms above describe the harness, not limits on future improvements. Existing checks are a starting point: add or replace instrumentation, fixtures and comparisons when they better represent the changed path, while retaining meaningful quality, scale and failure coverage. If the workload changes, run comparable arms or document the break in comparability. Do not force a better design to reproduce obsolete query counts, payload shapes, cache layers or provider budgets. More work in one counter can be justified by lower overall latency/resource cost; explain the tradeoff.
