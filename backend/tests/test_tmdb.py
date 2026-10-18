@@ -24,6 +24,36 @@ class SharedTransportTests(TransportTestCase):
         tmdb._cache._store.clear()
         tmdb._breaker_record_success()
 
+    async def test_detail_payload_seeds_lightweight_and_release_reads(self):
+        payload = {'id': 42, 'title': 'Example', 'runtime': 110,
+                   'release_dates': {'results': [{'iso_3166_1': 'DE'}]},
+                   'watch/providers': {'results': {'DE': {}}}}
+        with patch.object(tmdb, '_request', AsyncMock(return_value=payload)) as request:
+            full = await tmdb._get(tmdb.TMDB_BASE + '/movie/42', headers=tmdb.get_headers('key'),
+                params={'append_to_response': 'release_dates,watch/providers'})
+            light = await tmdb.get_movie_light(42, api_key='key')
+            releases = await tmdb.get_movie_release_dates(42, api_key='key')
+            providers = await tmdb.get_movie_watch_providers(42, api_key='key')
+            self.assertEqual(request.await_count, 1)
+            self.assertEqual(light['runtime'], 110)
+            self.assertNotIn('release_dates', light)
+            self.assertEqual(releases, payload['release_dates'])
+            self.assertEqual(providers, payload['watch/providers'])
+            light['runtime'] = 1
+            self.assertEqual(full['runtime'], 110)
+            self.assertEqual((await tmdb.get_movie_light(42, api_key='key'))['runtime'], 110)
+
+    async def test_projected_cache_keeps_languages_separate_and_bypass_does_not_seed(self):
+        with patch.object(tmdb, '_request', AsyncMock(return_value={'id': 42, 'title': 'Deutsch', 'runtime': 110})) as request:
+            await tmdb._get(tmdb.TMDB_BASE + '/movie/42', params={'language': 'de', 'append_to_response': 'credits'})
+            await tmdb.get_movie_light(42, language='de')
+            self.assertEqual(request.await_count, 1)
+            await tmdb.get_movie_light(42, language='en')
+            self.assertEqual(request.await_count, 2)
+            tmdb._cache._store.clear()
+            await tmdb._get(tmdb.TMDB_BASE + '/movie/42', params={'append_to_response': 'credits'}, cache_ttl=None)
+            self.assertFalse(tmdb._cache._store)
+
     async def test_identical_reads_share_request_but_not_mutable_results(self):
         started, release = asyncio.Event(), asyncio.Event()
         requests = []

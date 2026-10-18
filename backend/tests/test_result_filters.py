@@ -213,6 +213,15 @@ class SearchRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=0)
         read.assert_not_awaited()
 
+    async def test_durable_snapshot_runtime_avoids_provider_read(self):
+        from core.catalog_search import enrich_search_runtimes
+        db = SimpleNamespace(scalars=AsyncMock(return_value=[SimpleNamespace(external_id='1', payload={'runtime': 12})]))
+        items = [{'id': 1}]
+        with patch('core.tmdb.get_movie_light', AsyncMock()) as read:
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30, db=db)
+        read.assert_not_awaited()
+        self.assertEqual(items[0]['runtime'], 12)
+
     async def test_provider_failure_keeps_runtime_unknown(self):
         from core.catalog_search import enrich_search_runtimes
         items = [{'id': 1}]

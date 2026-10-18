@@ -59,7 +59,7 @@ def known_result_visible(item, media, media_type, *, show_anime, min_runtime=0, 
         min_runtime=min_runtime, excluded_genres=excluded_genres) for metadata in (saved, merged))
 
 
-async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0):
+async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=None):
     """Fill missing movie runtimes only when needed by saved search policy.
 
     Reuse known catalogue metadata first and TMDB's shared request/cache layer.
@@ -69,6 +69,21 @@ async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0):
         return
     from core import tmdb
     semaphore = asyncio.Semaphore(4)
+    if db is not None:
+        from datetime import datetime, timezone
+        from sqlalchemy import select
+        from models.catalogue import MetadataSnapshot
+        missing = [str(item['id']) for item in items if title_runtime(item) is None
+                   and not (item['id'] in known and (known[item['id']].runtime or title_runtime(known[item['id']].tmdb_data or {})))]
+        if missing:
+            snapshots = await db.scalars(select(MetadataSnapshot).where(
+                MetadataSnapshot.provider == 'tmdb', MetadataSnapshot.kind == 'movie',
+                MetadataSnapshot.external_id.in_(missing),
+                MetadataSnapshot.expires_at > datetime.now(timezone.utc).replace(tzinfo=None)))
+            runtimes = {row.external_id: title_runtime(row.payload or {}) for row in snapshots}
+            for item in items:
+                if title_runtime(item) is None and runtimes.get(str(item['id'])):
+                    item['runtime'] = runtimes[str(item['id'])]
 
     async def load(item):
         if title_runtime(item) is not None:

@@ -845,7 +845,7 @@ async def browse_page(
         known_titles = {m.tmdb_id: m for m in known}
         if term and media_type == 'movie' and filters.get('min_runtime'):
             from core.catalog_search import enrich_search_runtimes
-            await enrich_search_runtimes(items, known_titles, key, min_runtime=filters['min_runtime'])
+            await enrich_search_runtimes(items, known_titles, key, min_runtime=filters['min_runtime'], db=db)
             rejected = {item['id'] for item in items if not matches_result_filters(item, media_type,
                 min_runtime=filters['min_runtime'], excluded_genres=filters.get('excluded_genres', ()))}
             results = [row for row in results if row.get('tmdb_id') not in rejected]

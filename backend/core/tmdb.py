@@ -85,6 +85,26 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
+def _cache_response(url, params, data, ttl):
+    """Share base title and appended evidence without mixing language variants."""
+    _cache.set((url, tuple(sorted((params or {}).items()))), data, ttl)
+    relative = url.removeprefix(TMDB_BASE + '/')
+    parts = relative.split('/')
+    if len(parts) != 2 or parts[0] not in ('movie', 'tv') or not parts[1].isdigit():
+        return
+    appended = (params or {}).get('append_to_response')
+    if not appended:
+        return
+    base_params = {key: value for key, value in params.items() if key != 'append_to_response'}
+    names = appended.split(',')
+    base = {key: value for key, value in data.items() if key not in names}
+    _cache.set((url, tuple(sorted(base_params.items()))), base, ttl)
+    for name in names:
+        payload = data.get(name)
+        if isinstance(payload, dict):
+            _cache.set((url + '/' + name, tuple(sorted(base_params.items()))), payload, ttl)
+
+
 # Each event loop owns its connections and cancellation state. Public payloads
 # are shared, but callers always receive independent mutable dictionaries.
 _transports = weakref.WeakKeyDictionary()
@@ -174,13 +194,13 @@ async def _get(
             if cached is not None:
                 return cached
             data = await _request(state.client, url, headers, params, max_retries)
-            _cache.set(cache_key, data, cache_ttl)
+            _cache_response(url, params, data, cache_ttl)
             return data
     if entry is None:
         async def load():
             async with state.slots:
                 data = await _request(state.client, url, headers, params, max_retries)
-                _cache.set(cache_key, data, cache_ttl)
+                _cache_response(url, params, data, cache_ttl)
                 return data
         entry = [asyncio.create_task(load()), 0]
         state.inflight[flight_key] = entry

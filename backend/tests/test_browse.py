@@ -1052,9 +1052,9 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         from schemas import UserProfileUpdate
         await update_profile(UserProfileUpdate(minimum_movie_runtime=45, excluded_categories=[99]),
                              current_user=self.owner, db=self.db)
-        raw = [{'id': 987001, 'title': 'Policy match short', 'genre_ids': [18]},
-               {'id': 987002, 'title': 'Policy match documentary', 'genre_ids': [99]},
-               {'id': 987003, 'title': 'Policy match feature', 'genre_ids': [18]}]
+        raw = [{'id': 987001, 'title': 'Policy match short', 'popularity': 80, 'genre_ids': [18]},
+               {'id': 987002, 'title': 'Policy match documentary', 'popularity': 80, 'genre_ids': [99]},
+               {'id': 987003, 'title': 'Policy match feature', 'popularity': 80, 'genre_ids': [18]}]
         async def runtime(identifier, **kwargs):
             return {'runtime': 12 if identifier == 987001 else 100}
         with patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')), \
