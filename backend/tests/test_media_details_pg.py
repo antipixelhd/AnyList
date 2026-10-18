@@ -568,9 +568,10 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             data = response.json()
             self.assertEqual([row['title'] for row in data['relations']], ['Earlier'])
             self.assertEqual(data['relations'][0]['label'], 'Previous entry')
-            self.assertEqual([row['title'] for row in data['similar']], ['Future movie','Another movie'])
-            self.assertEqual(data['similar'][1]['poster'], 'https://image.tmdb.org/t/p/w500/cover.jpg')
-            self.assertEqual(data['similar'][1]['genres'], ['Science Fiction','Action'])
+            self.assertEqual([row['title'] for row in data['similar']], ['Low vote movie','Future movie','Another movie'])
+            another = next(row for row in data['similar'] if row['title'] == 'Another movie')
+            self.assertEqual(another['poster'], 'https://image.tmdb.org/t/p/w500/cover.jpg')
+            self.assertEqual(another['genres'], ['Science Fiction','Action'])
             self.assertFalse(data['related_pending'])
             async with self.Session() as db:
                 profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
