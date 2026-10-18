@@ -41,7 +41,7 @@ test('invalidated in-flight responses cannot refill the title cache',async()=>{
   assert.equal(calls,2);
 });
 
-test('title cache stays bounded and never retains degraded or contributor responses',async()=>{
+test('search cache stays bounded, skips degraded results and retains completed contributors',async()=>{
   let calls=0;
   const reader=createQuickSearchReader(new AbortController().signal,async url=>({ok:true,json:async()=>{
     calls++;
@@ -55,7 +55,7 @@ test('title cache stays bounded and never retains degraded or contributor respon
     await reader.read(request,signal,()=>{});
     await reader.read(request,signal,()=>{});
   }
-  assert.equal(calls,46);
+  assert.equal(calls,45);
 });
 
 test('combined title ordering publishes once after both categories settle in either order', () => {
@@ -155,4 +155,30 @@ test('mobile navigation removes empty tabs, recovers selection, and wraps throug
   assert.equal(steppedQuickSearchTab('studio',available,1),'actor');
   assert.equal(steppedQuickSearchTab('actor',['actor'],1),null);
   assert.equal(resolvedQuickSearchTab('staff',[]),'all');
+});
+
+
+test('completed empty contributor results are cached and invalidation immediately restores discovery', async () => {
+  let calls=0, now=0;
+  const reader=createQuickSearchReader(new AbortController().signal,async()=>{
+    calls++;return {ok:true,json:async()=>({results:{studio:[]},verification_pending:false})};
+  },()=>now);
+  const request={kind:'contributors',url:'/studio?q=obscure'}, signal=new AbortController().signal;
+  await reader.read(request,signal,()=>{});
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,1);
+  now=60001;
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,2);
+  reader.clear();
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,3);
+});
+
+test('unchanged contributor rows publish completion so pending responses never become a false terminal cache', async () => {
+  let calls=0;
+  const updates=[];
+  await readQuickSearch({kind:'contributors',url:'/studio'},new AbortController().signal,
+    data=>updates.push(data.verification_pending),async()=>({ok:true,json:async()=>({results:{studio:[]},verification_pending:++calls===1})}),async()=>{});
+  assert.deepEqual(updates,[true,false]);
 });

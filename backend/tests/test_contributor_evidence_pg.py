@@ -61,6 +61,25 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(evidence.work_summary(cached[key],'studio',FILTERS,True)['works'],1)
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity).where(CatalogueEntity.kind=='movie')),1)
 
+    async def test_negative_evidence_is_shared_until_expiry_then_admitted_once(self):
+        key,_=await self.queue(777)
+        async with self.Session() as db,db.begin():
+            await db.execute(update(ContributorEvidence).where(ContributorEvidence.native_id==777).values(
+                payload={'works':[],'complete':True,'scope':'eligibility_sample'},
+                expires_at=evidence.now()+timedelta(days=1),next_attempt_at=None))
+        _,(cached,pending)=await self.queue(777,{**FILTERS,'excluded_genres':[99], 'min_popularity':1000})
+        self.assertFalse(pending)
+        self.assertEqual(evidence.work_summary(cached[key],'studio',FILTERS,True)['works'],0)
+        async with self.Session() as db,db.begin():
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),1)
+            await db.execute(update(ContributorEvidence).where(ContributorEvidence.native_id==777).values(
+                expires_at=evidence.now()-timedelta(seconds=1)))
+        _,(cached,pending)=await self.queue(777)
+        self.assertTrue(pending)
+        self.assertFalse(cached[key]['_fresh'])
+        async with self.Session() as db:
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),1)
+
     async def test_failure_is_unknown_and_does_not_erase_previous_evidence_or_retry_on_each_search(self):
         key,_=await self.queue()
         with patch.object(evidence,'load_evidence',AsyncMock(side_effect=RuntimeError('private failure'))),patch.object(
@@ -84,14 +103,14 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual((await db.get(ContributorEvidence,key)).payload['works'][0]['id'],1)
 
-    async def test_queue_limit_and_filter_variants(self):
+    async def test_queue_limit_and_shared_raw_filter_evidence(self):
         with patch.object(evidence,'MAX_PENDING',2):
             await self.queue(1);await self.queue(2);await self.queue(3)
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),2)
-        await self.queue(1,{**FILTERS, 'min_runtime':1000})
+        await self.queue(1,{**FILTERS, 'excluded_genres':[99]})
         async with self.Session() as db:
-            self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),3)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),2)
 
     async def test_admission_contention_keeps_refresh_pending_until_job_can_be_queued(self):
         async with self.Session() as owner,owner.begin():

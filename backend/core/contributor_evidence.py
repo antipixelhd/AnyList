@@ -1,8 +1,8 @@
 """Search reads evidence; a leased, bounded worker verifies public works.
 
 Never store provider credentials, personal lists, or import discovered titles.
-Person credits are shared across roles/viewers; studio variants include the
-provider-side filters and reviewed company membership, not the requesting user.
+Person credits and bounded popularity-sorted studio samples are shared across
+viewers and policies. Personal eligibility is evaluated from that public evidence.
 """
 import asyncio
 import hashlib
@@ -24,9 +24,10 @@ from db import AsyncSessionLocal
 from models.catalogue import CatalogueCredit, CatalogueEntity, ContributorEvidence
 
 MAX_PENDING = 256
-VERSION = 2
+VERSION = 3
 log = logging.getLogger(__name__)
 _wake = asyncio.Event()
+_summary_cache = tmdb._TTLCache(maxsize=512)
 
 
 def now():
@@ -34,11 +35,12 @@ def now():
 
 
 def evidence_key(kind, native, filters, show_anime):
-    config = {'version': VERSION}
+    # Person credits are unchanged: retain their existing durable cache keys.
+    config = {'version': 2 if kind == 'person' else VERSION}
     if kind == 'studio':
         native = studio_root(native)
-        config.update(filters={**filters, 'excluded_genres':sorted(filters['excluded_genres'])},
-            show_anime=show_anime, companies=studio_companies(native))
+        config.update(companies=studio_companies(native), scope='popular_work_sample',
+                      minimum_runtime=filters.get('min_runtime', 0))
     variant = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     return (kind, native, variant), config
 
@@ -48,10 +50,26 @@ def eligible_work(raw, kind, filters, show_anime, *, released=False):
         return False
     if released and not '0000' < (raw.get('release_date') or raw.get('first_air_date') or '') <= date.today().isoformat():
         return False
-    return matches_result_filters(raw, kind, **filters) and anime_visible(raw, show_anime)
+    from core.discovery_policy import DiscoveryPolicy
+    policy = DiscoveryPolicy(min_popularity=filters.get('min_popularity', 0))
+    personal = {key: value for key, value in filters.items() if key in ('min_runtime', 'excluded_genres')}
+    return policy.accepts(raw) and matches_result_filters(raw, kind, **personal) and anime_visible(raw, show_anime)
 
 
 def work_summary(payload, section, filters, show_anime):
+    identity = payload.get('_cache_identity') if payload and payload.get('_fresh') and payload.get('complete') else None
+    key = (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime) if identity else None
+    if key:
+        cached = _summary_cache.get(key)
+        if cached is not None:
+            return cached
+    value = _work_summary(payload, section, filters, show_anime)
+    if key and value is not None:
+        _summary_cache.set(key, value, 60)
+    return value
+
+
+def _work_summary(payload, section, filters, show_anime):
     if payload is None:
         return None
     rows = payload.get('works', []) if section == 'studio' else (payload.get('cast', []) if section == 'actor' else payload.get('crew', []))
@@ -66,7 +84,7 @@ def work_summary(payload, section, filters, show_anime):
             visible[(kind, row['id'])] = row
     if not visible and not payload.get('complete', True):
         return None
-    return {'works': len(visible), 'latest': max((r.get('release_date') or r.get('first_air_date') or '' for r in visible.values()), default='')}
+    return {'works': len(visible), 'popularity': max((float(r.get('popularity') or 0) for r in visible.values()), default=0), 'latest': max((r.get('release_date') or r.get('first_air_date') or '' for r in visible.values()), default='')}
 
 
 async def cached_evidence(db, jobs, viewer_id, *, enqueue=True):
@@ -103,7 +121,9 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True):
                 pending = True
             await db.commit()
             _wake.set()
-    return {key: row.payload for key, row in existing.items()}, pending
+    return {key: {**row.payload, '_fresh': bool(row.expires_at and row.expires_at > current),
+                           '_cache_identity': [*key, row.expires_at.isoformat() if row.expires_at else None]}
+            for key, row in existing.items() if row.payload is not None}, pending
 
 
 async def local_evidence(db, rows, section, filters, show_anime):
@@ -147,7 +167,11 @@ async def local_evidence(db, rows, section, filters, show_anime):
         statement = statement.where(~func.coalesce(and_(animated, japanese), False))
     queries = []
     for kind in ('movie', 'series'):
-        query = apply_result_filters(statement.where(work.kind == kind), data, kind, **filters)
+        query = apply_result_filters(statement.where(work.kind == kind), data, kind,
+            **{key: value for key, value in filters.items() if key in ('min_runtime', 'excluded_genres')})
+        if filters.get('min_popularity'):
+            from sqlalchemy import Float
+            query = query.where(func.coalesce(data['popularity'].astext.cast(Float), 0) >= filters['min_popularity'])
         if section == 'studio':
             released = func.coalesce(func.nullif(data['release_date'].astext, ''), data['first_air_date'].astext, '')
             query = query.where(released > '0000', released <= date.today().isoformat())
@@ -173,21 +197,21 @@ async def load_evidence(job, api_key):
         page = pages.get(kind)
         if page is None:
             return kind, [], None
-        filters = config['filters']
+        filters = {'min_runtime': config.get('minimum_runtime', 0), 'excluded_genres': []}
         response = await (tmdb.discover_movies if kind == 'movie' else tmdb.discover_shows)(
             page=page, with_companies=config['companies'], vote_count_min=0,
             minimum_runtime=filters['min_runtime'] if kind == 'movie' else 0,
             excluded_genre_ids=filters['excluded_genres'], released_before=date.today().isoformat(),
-            sort_by='primary_release_date.desc' if kind == 'movie' else 'first_air_date.desc', api_key=api_key)
+            sort_by='popularity.desc', api_key=api_key)
         if not isinstance(response.get('results'), list) or 'total_pages' not in response:
             raise ValueError('Incomplete company works')
         rows = [{**r, 'media_type':'movie' if kind == 'movie' else 'tv'} for r in response['results']]
-        visible = [r for r in rows if eligible_work(r, kind, filters, config['show_anime'], released=True)]
-        # Positive evidence is enough. Otherwise continue on a later worker tick,
-        # never drain an entire company timeline in one job.
+        visible = [r for r in rows if eligible_work(r, kind, filters, True, released=True)]
+        # Finish a small shared sample on a later worker tick; personal filters
+        # must never make another viewer fetch the same company pages again.
         # Search verifies a sample, not the complete studio timeline. A job has
         # a lifetime budget of two pages per media kind, even if no work fits.
-        next_page = page + 1 if not visible and page < min(response['total_pages'], 2) else None
+        next_page = page + 1 if page < min(response['total_pages'], 2) else None
         return kind, visible, next_page
     results = await asyncio.gather(discover('movie'), discover('series'))
     works = [] if previous.get('complete') else list(previous.get('works', []))

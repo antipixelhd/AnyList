@@ -20,6 +20,7 @@ def empty():
 
 class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        search._candidate_cache._store.clear()
         self.db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock(), commit=AsyncMock())
         self.db.execute.return_value = SimpleNamespace(all=lambda: [])
         self.viewer = SimpleNamespace(id=7)
@@ -41,6 +42,14 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(verified.stop)
         people_verified=patch.object(search,'verified_people',AsyncMock(return_value=False))
         people_verified.start();self.addCleanup(people_verified.stop)
+
+    async def test_polling_reuses_candidates_but_rechecks_eligibility(self):
+        self.company_mock.return_value={'results':[{'id':14,'name':'Studio'}]}
+        await search.search_contributors(self.db,self.viewer,'Studio','studio')
+        await search.search_contributors(self.db,self.viewer,'studio','studio')
+        self.company_mock.assert_awaited_once()
+        self.local_mock.assert_awaited_once()
+        self.assertEqual(search.verified_studios.await_count,2)
 
     async def test_remote_people_and_studios_link_to_details_and_respect_sections(self):
         self.people_mock.return_value = {'results': [

@@ -17,6 +17,9 @@ def candidate(native, name, **kwargs):
 
 class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        search._candidate_cache._store.clear()
+        policy = patch.object(discovery, 'browse_preferences', AsyncMock(return_value={'min_popularity': 0}))
+        policy.start(); self.addCleanup(policy.stop)
         self.filters = {'min_runtime':30, 'excluded_genres':[]}
         self.db = SimpleNamespace(get=AsyncMock(return_value=None))
         self.viewer = SimpleNamespace(id=1)
@@ -61,12 +64,37 @@ class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         jobs=self.cached.call_args.args[1]
         self.assertEqual(len(jobs),discovery.MAX_CANDIDATES)
         self.assertEqual(len(discovery.local_evidence.await_args.args[1]), discovery.MAX_CANDIDATES)
-        self.assertTrue(all('min_votes' not in config['filters'] for config in jobs.values()))
+        self.assertTrue(all('filters' not in config for config in jobs.values()))
 
-    async def test_latest_released_works_rank_above_larger_historical_catalogues(self):
+    async def test_popular_qualifying_works_rank_above_recent_obscure_releases(self):
         groups={k:[] for k in search.KINDS}
-        groups['studio']=[candidate(1,'DC Films',_works=100,_latest='2023-12-20'),
-            candidate(2,'DC Studios',_works=7,_latest='2025-07-09')]
+        groups['studio']=[candidate(1,'DC Films',_works=100,_latest='2023-12-20',_popularity=1),
+            candidate(2,'DC Studios',_works=7,_latest='2025-07-09',_popularity=80)]
         result=search.ranked_results(groups,'dc')['studio']
         self.assertEqual([r['key'] for r in result],['tmdb:2','tmdb:1'])
         self.assertFalse(any(key.startswith('_') for row in result for key in row))
+
+    async def test_fresh_negative_sample_skips_local_checks_and_policy_changes_reuse_evidence(self):
+        from core.contributor_evidence import evidence_key
+        row=candidate(12,'Unknown')
+        key=evidence_key('studio',12,self.filters,True)[0]
+        payload={'works':[{'id':1,'media_type':'movie','release_date':'2025-01-01',
+                           'runtime':100,'genre_ids':[99],'popularity':80}], 'complete':True,'_fresh':True}
+        self.cached.return_value=({key:payload},False)
+        with patch.object(discovery,'result_filters',AsyncMock(return_value={**self.filters,'excluded_genres':[99]})), \
+             patch.object(discovery,'local_evidence',AsyncMock()) as local:
+            rows,pending=await discovery.verified_studios(self.db,self.viewer,[row],'key')
+            self.assertEqual(rows,[]);self.assertFalse(pending);local.assert_not_awaited()
+        rows,_=await discovery.verified_studios(self.db,self.viewer,[row],'key')
+        self.assertEqual([r['name'] for r in rows],['Unknown'])
+
+    async def test_minimum_popularity_uses_work_scores_and_zero_disables(self):
+        from core.contributor_evidence import evidence_key
+        key=evidence_key('studio',12,self.filters,True)[0]
+        self.cached.return_value=({key:{'works':[{'id':1,'media_type':'movie','release_date':'2025-01-01',
+                    'runtime':100,'popularity':5}], 'complete':True,'_fresh':True}},False)
+        with patch.object(discovery,'browse_preferences',AsyncMock(return_value={'min_popularity':25})):
+            rows,_=await discovery.verified_studios(self.db,self.viewer,[candidate(12,'Obscure')],'key')
+            self.assertEqual(rows,[])
+        rows,_=await discovery.verified_studios(self.db,self.viewer,[candidate(12,'Obscure')],'key')
+        self.assertEqual(len(rows),1)

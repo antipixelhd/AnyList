@@ -560,6 +560,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const pending = (chains.get(group) || Promise.resolve()).catch(() => {}).then(async () => {
         try {
           await patchProfile(value);
+          document.dispatchEvent(new Event('anylist:cache-invalidated'));
           committed.set(group, value);
           if (revisions.get(group) === revision) { afterSave?.(); setStatus(group, 'Saved'); }
         } catch (error) {
@@ -718,6 +719,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           // Keep the last confirmed server value available for rollback, even when
           // a newer change is already queued behind this request.
           control.dataset.savedValue = String(saved[field] ?? requestedValue);
+          document.dispatchEvent(new Event('anylist:cache-invalidated'));
           if (trackingRevisions.get(field) === revision) setStatus(statusKey, 'Saved');
         } catch (error) {
           if (trackingRevisions.get(field) === revision) {

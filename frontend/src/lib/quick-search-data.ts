@@ -23,7 +23,7 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
     if(!response.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
-    const signature=JSON.stringify([data.results,data.partial]);
+    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
     if(signature!==previous){onResult(data);previous=signature;}
     if(signal.aborted)return;
     if(request.kind!=='contributors'||!data.verification_pending||attempt===4)return;
@@ -42,12 +42,12 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
     async read(request: SearchRequest, signal: AbortSignal, onResult: (data:any)=>void) {
       if (signal.aborted || lifetime.aborted) return;
       const epoch=generation;
-      const cached = request.kind === 'contributors' ? undefined : cache.get(request.url);
+      const cached = cache.get(request.url);
       if (cached) { onResult(cached); return; }
       await readQuickSearch(request, signal, data => {
         if (signal.aborted || lifetime.aborted) return;
         // Degraded local-only results must not conceal a recovered remote source.
-        if (generation === epoch && request.kind !== 'contributors' && !data.notice && !data.partial) cache.set(request.url, data);
+        if (generation === epoch && !data.verification_pending && !data.notice && !data.partial) cache.set(request.url, data);
         onResult(data);
       }, fetcher);
     },
