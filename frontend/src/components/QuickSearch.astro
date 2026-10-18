@@ -1,9 +1,9 @@
 ---
 import Icon from './Icon.astro';
-const { combineLists = true, hideTrigger = false, accountCountry } = Astro.props;
+const { combineLists = true, hideTrigger = false } = Astro.props;
 ---
 {!hideTrigger && <button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>}
-<dialog class="quick-search-dialog" data-quick-search data-account-country={accountCountry} data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
+<dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
   <h1 class="sr-only" id="quick-search-heading">Fast search</h1>
   <div class="quick-search-bar">
     <Icon name="search" />
@@ -15,8 +15,8 @@ const { combineLists = true, hideTrigger = false, accountCountry } = Astro.props
   <nav class="quick-search-mobile-tabs" data-search-tabs aria-label="Search result sections">
     <button type="button" data-search-tab-step="-1" aria-label="Previous search section" disabled><Icon name="chevron-left" /></button>
     <div class="quick-search-tab-current">
-      <h2 data-search-tab-title aria-live="polite">Movies & Series</h2>
-      <div class="quick-search-tab-markers" aria-hidden="true"><span data-search-tab-marker="all"></span><span data-search-tab-marker="actor"></span><span data-search-tab-marker="staff"></span><span data-search-tab-marker="studio"></span></div>
+      <h2 data-search-tab-title aria-live="polite">{combineLists ? 'Movies & Series' : 'Movies'}</h2>
+      <div class="quick-search-tab-markers" aria-hidden="true"><span data-search-tab-marker="all" hidden={!combineLists}></span><span data-search-tab-marker="movie" hidden={combineLists}></span><span data-search-tab-marker="series" hidden={combineLists}></span><span data-search-tab-marker="actor"></span><span data-search-tab-marker="staff"></span><span data-search-tab-marker="studio"></span></div>
     </div>
     <button type="button" data-search-tab-step="1" aria-label="Next search section"><Icon name="chevron-right" /></button>
   </nav>

@@ -41,14 +41,14 @@ class BrowseRequirementTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(matches(poster, media_type='movie', require_release=True, **predicate))
         self.assertTrue(matches({}, media_type='movie', **predicate))
 
-    async def test_poster_filter_discards_before_release_provider_calls(self):
-        with patch('core.tmdb._get', AsyncMock(return_value={'results': [
-                {'id': 1}, {'id': 2, 'poster_path': '/2.jpg'}]})), \
+    async def test_search_ignores_obsolete_poster_setting_without_release_requests(self):
+        with patch('core.tmdb.search_shows', AsyncMock(return_value={'results': [
+                {'id': 1, 'name': 'Title', 'popularity':50}, {'id': 2, 'name': 'Title Two', 'popularity':50, 'poster_path': '/2.jpg'}]})), \
              patch('core.tmdb.get_show_watch_providers', AsyncMock(return_value={'results': {'BR': {'ads': [8]}}})) as offers:
-            _, rows = await remote_page('', 'series', 'fixture',
-                {**FILTERS, 'sort': 'newest', 'require_release': True, 'require_poster': True}, 1)
-        self.assertEqual([row['id'] for row in rows], [2])
-        offers.assert_awaited_once_with(2, api_key='fixture')
+            _, rows = await remote_page('title', 'series', 'fixture',
+                {**FILTERS, 'require_poster': True}, 1)
+        self.assertEqual([row['id'] for row in rows], [1,2])
+        offers.assert_not_awaited()
 
     async def test_release_reads_skip_known_evidence_and_reuse_streaming_before_cinema(self):
         items = [{'id': 1, 'theatrical_release_dates': ['2020-01-01']},
@@ -142,3 +142,58 @@ class BrowseRequirementsMigrationTests(unittest.IsolatedAsyncioTestCase):
                 await transaction.rollback()
         finally:
             await engine.dispose()
+
+
+class DiscoveryRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def test_title_prefix_beats_released_blockbusters(self):
+        intended = {'title': 'Avengers: Doomsday', 'vote_count': 0}
+        rivals = [{'title': title, 'vote_count': 1000000, 'popularity': 1000000,
+                   'watch_providers': {'DE': {'flatrate': [8]}}}
+                  for title in ('Avengers: Endgame', 'Avengers: Infinity War', 'Avengers: Age of Ultron')]
+        for term in ('avengers: doom', 'avengers: dooms', 'Avengers Doom'):
+            self.assertGreater(media_search_rank(term, intended, 'movie'),
+                               max(media_search_rank(term, row, 'movie') for row in rivals))
+
+    def test_upcoming_is_nearest_first_and_newest_stops_at_today(self):
+        from datetime import date, timedelta
+        from core.browse import remote_params
+        for kind, field in [('movie', 'primary_release_date'), ('series', 'first_air_date')]:
+            upcoming = remote_params(kind, page=1, **{**FILTERS, 'sort': 'upcoming'})
+            self.assertEqual(upcoming['sort_by'], field + '.asc')
+            self.assertEqual(upcoming[field + '.gte'], (date.today() + timedelta(days=1)).isoformat())
+            newest = remote_params(kind, page=1, **{**FILTERS, 'sort': 'newest'})
+            self.assertEqual(newest[field + '.lte'], date.today().isoformat())
+
+    async def test_availability_uses_bulk_discovery_without_title_lookups(self):
+        async def discover(url, headers, params):
+            start = (params['page'] - 1) * 20
+            return {'results': [{'id': i, 'name': 'New release'} for i in range(start, start + 20)], 'total_pages': 3}
+        for kind, options in [('movie', {'cinema': True, 'cinema_country': 'DE'}), ('series', {'provider': 8})]:
+            with patch('core.tmdb._get', AsyncMock(side_effect=discover)) as bulk, \
+                 patch('core.tmdb.get_movie', AsyncMock()) as movie, \
+                 patch('core.tmdb.get_show', AsyncMock()) as series, \
+                 patch('core.mdblist_discovery.ranked_rows', AsyncMock()) as feed:
+                first, rows = await remote_page('', kind, 'fixture', {**FILTERS, **options}, 1, mdblist_key='mdb')
+                self.assertEqual([row['id'] for row in rows], list(range(40)))
+                self.assertTrue(first['has_more'])
+                second, rows = await remote_page('', kind, 'fixture', {**FILTERS, **options}, 2, mdblist_key='mdb')
+                self.assertEqual([row['id'] for row in rows], list(range(40, 80)))
+                self.assertFalse(second['has_more'])
+                params = bulk.await_args_list[0].kwargs['params']
+                if kind == 'movie': self.assertEqual(params['region'], 'DE')
+                else:
+                    self.assertEqual(params['watch_region'], 'DE')
+                    self.assertEqual(params['with_watch_monetization_types'], 'flatrate|free|ads')
+                movie.assert_not_awaited(); series.assert_not_awaited(); feed.assert_not_awaited()
+
+    async def test_vote_floor_applies_to_discovery_but_not_search(self):
+        from core.browse import remote_params
+        predicate = {k:v for k,v in FILTERS.items() if k != 'sort'}
+        self.assertFalse(matches({'vote_count': 249}, media_type='movie', min_votes=250, **predicate))
+        self.assertFalse(matches({}, media_type='series', min_votes=250, **predicate))
+        self.assertFalse(matches({'imdb_votes': 250, 'vote_count': 1}, media_type='movie', min_votes=250, **predicate))
+        self.assertTrue(matches({'imdb_votes': 1, 'vote_count': 250}, media_type='movie', min_votes=250, **predicate))
+        self.assertEqual(remote_params('series', page=1, min_votes=250, **FILTERS)['vote_count.gte'], 250)
+        with patch('core.tmdb.search_movies', AsyncMock(return_value={'results': [{'id': 1, 'title': 'Avengers: Doomsday', 'vote_count': 0}], 'total_pages': 1})):
+            _, rows = await remote_page('avengers: doom', 'movie', 'fixture', {**FILTERS, 'min_votes': 250}, 1)
+        self.assertEqual([row['id'] for row in rows], [1])

@@ -21,7 +21,6 @@ from db import get_db
 from dependencies import (
     ANON_USER_ID,
     get_current_user_or_api_key,
-    get_optional_user_or_api_key,
 )
 from models.base import MediaType
 from models.calendar_cache import UserCalendarCache
@@ -86,7 +85,7 @@ async def _sync_trending(
 async def trending_movies(
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -140,7 +139,7 @@ async def trending_movies(
 async def trending_shows(
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -243,12 +242,14 @@ _FALLBACK_POSTERS: list[dict] = [
 
 @router.get("/public/poster-wall")
 @limiter.limit("20/minute")
-async def public_poster_wall(request: Request, db: AsyncSession = Depends(get_db)):
-    """Decorative trending posters for the logged-out landing page.
+async def public_poster_wall(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user_or_api_key),
+):
+    """Decorative trending posters for the landing page.
 
-    Unauthenticated by design - only ever returns bare TMDB poster paths and
-    titles, never library or user data, so it's safe regardless of the
-    instance's public-profile setting.
+    Only returns bare TMDB poster paths and titles, never library or user data.
     """
     now = _time.monotonic()
     if _poster_wall_cache["data"] is not None and now - _poster_wall_cache["ts"] < _POSTER_WALL_TTL:
@@ -288,7 +289,7 @@ async def public_poster_wall(request: Request, db: AsyncSession = Depends(get_db
 async def on_air_today(
     page: int = Query(default=1, ge=1),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -325,7 +326,7 @@ async def on_air_today(
 @router.get("/airing-today/collected")
 async def airing_today_collected(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return today's episodes for the user's collected/watched shows.
 
@@ -475,7 +476,7 @@ async def get_person_details(
     year: list[int] = Query(default=[]),  # OR'd together — any selected year matches
     min_rating: str | None = Query(None),  # "9".."5" (N+ stars) or "lt5" (under 5 stars)
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -721,7 +722,7 @@ def _format_studio(data: dict) -> dict:
 async def get_network_details(
     network_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Header data for the /network/{id} browse page (its titles come from
     /media/tmdb/list?network=)."""
@@ -743,7 +744,7 @@ async def get_network_details(
 async def get_company_details(
     company_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Header data for the /studio/{id} browse page (its titles come from
     /media/tmdb/list?company=)."""
@@ -855,7 +856,7 @@ async def get_tmdb_list(
     # in_list = in|out: membership of any of the user's lists (#255).
     in_list: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         # Anonymous browsing is only allowed when the admin has opted in and a
@@ -1107,7 +1108,7 @@ async def _show_library_ids(db: AsyncSession, user_id: int, tmdb_ids: list[int])
 @router.get("/now-playing")
 async def now_playing(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1130,7 +1131,7 @@ async def now_playing(
 @router.get("/trending/trailers")
 async def trending_trailers(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1174,7 +1175,7 @@ async def trending_trailers(
 @router.get("/upcoming")
 async def upcoming_movies(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1197,7 +1198,7 @@ async def upcoming_movies(
 @router.get("/on-air-this-week")
 async def on_air_this_week(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1221,7 +1222,7 @@ async def on_air_this_week(
 async def hidden_gems(
     type: MediaType = Query(MediaType.movie),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1263,7 +1264,7 @@ async def hidden_gems(
 @router.get("/top-rated-movies")
 async def top_rated_movies(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1286,7 +1287,7 @@ async def top_rated_movies(
 @router.get("/top-rated-shows")
 async def top_rated_shows(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1312,7 +1313,7 @@ async def streaming(
     type: MediaType = Query(MediaType.movie),
     watch_region: str = Query("US"),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)

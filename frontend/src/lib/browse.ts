@@ -16,12 +16,13 @@ import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
+import { createBrowseOverride } from './browse-override';
 import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
 
-type Item = BrowseItem;
+type Item = BrowseItem & {search_rank?: number};
 type Payload = {
   results: Item[];
   has_more: boolean;
@@ -29,6 +30,7 @@ type Payload = {
   source: string;
   cursor?: string | null;
   notice?: string;
+  partial?: boolean;
 };
 type Section = {
   title: string;
@@ -68,6 +70,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const notice = find<HTMLElement>("[data-browse-notice]");
   const error = find<HTMLElement>("[data-browse-error]");
   const more = find<HTMLButtonElement>("[data-browse-more]");
+  const showAll = find<HTMLButtonElement>('[data-browse-show-all]');
+  const curated = find<HTMLButtonElement>('[data-browse-curated]');
+  const resultOverride = createBrowseOverride(field('q').value);
   const end = find<HTMLElement>("[data-browse-end]");
   const sort = find<HTMLSelectElement>("[data-browse-sort]");
   const syncSort = initializeBrowseSort(root, signal, changed);
@@ -99,7 +104,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     suspended = false;
   let generation = 0;
   const paginationDemand = createBrowsePaginationDemand(scrollY);
-  const key = (item: Item) => `${item.type}:${item.tmdb_id || item.id}`;
+  const titleKey = (item: Item) => `${item.type}:${item.tmdb_id || item.id}`;
+  const key = (item: Item) => item.release_event || titleKey(item);
   const params = () => {
     const values = new URLSearchParams();
     for (const name of [
@@ -119,9 +125,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if(field('type').value==='movie'&&(field('cinema') as HTMLInputElement).checked)values.set('cinema','1');
     values.set("sort", sort.value);
     if(field('view').value==='timeline')values.set('view','timeline');
+    if(resultOverride.forQuery(field('q').value))values.set('unfiltered','true');
     return values;
   };
-  const requestPath = (values: URLSearchParams) => isCategoryView(values)
+  const categoryMode = (values: URLSearchParams) => !values.has('unfiltered') && isCategoryView(values);
+  const requestPath = (values: URLSearchParams) => categoryMode(values)
     ? `browse/sections?${new URLSearchParams({media_type: values.get('media_type')!, region: values.get('region')!, min_score: values.get('min_score')!})}`
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
@@ -131,6 +139,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   facetCache.set(`${field('type').value}:${field('region').value}`, facets);
   const updateUrl = () => {
     const values = params();
+    values.delete('unfiltered');
     values.delete("media_type");
     if (field("type").value === "series") values.set("type", "series");
     if (values.get("sort") === "all") values.delete("sort");
@@ -187,11 +196,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       score: updated.score, rating_mode: updated.rating_mode};
     for (const cached of responseCache.values()) {
       const cachedItems = 'sections' in cached ? cached.sections.flatMap(section => section.results) : cached.results;
-      for (const item of cachedItems) if (key(item) === key(updated)) Object.assign(item, entryState);
+      for (const item of cachedItems) if (titleKey(item) === titleKey(updated)) Object.assign(item, entryState);
     }
     for (const [card, item] of items) {
-      if (key(item) !== key(updated)) continue;
-      Object.assign(item, updated);
+      if (titleKey(item) !== titleKey(updated)) continue;
+      Object.assign(item, entryState);
       card.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
         if (item.id) link.href = `/title/${item.id}`;
       });
@@ -233,6 +242,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       placeholder.hidden = !!item.poster;
       placeholder.textContent = item.title.slice(0, 1);
       card.querySelector("[data-year]")!.textContent = item.year || "";
+      if (item.release_event) card.querySelector<HTMLElement>('[data-year]')!.title = item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date';
       card
         .querySelectorAll<HTMLButtonElement>("[data-browse-action]")
         .forEach((button) => {
@@ -250,7 +260,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if ('entry' in item) editorStore.seed(item as EditorTitle);
       fragment.append(card);
     }
-    if(destination===grid&&field('view').value==='timeline')appendBrowseTimeline(destination,cards,items);
+    if(destination===grid&&field('view').value==='timeline')appendBrowseTimeline(destination,cards,items,sort.value==='upcoming'||field('status').value==='upcoming');
     else destination.append(fragment);
     return cards;
   };
@@ -291,6 +301,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const paintChips = () => {
     paintRanges();
     chips.replaceChildren();
+    const country = new Intl.DisplayNames(['en'], {type:'region'}).of(field('region').value) || field('region').value;
+    find<HTMLElement>('[data-browse-cinema]').dataset.cinemaLabel = `Theatrical · ${country}`;
+    find<HTMLElement>('[data-browse-cinema]').title = `Theatrical · ${country}`;
+    (field('cinema') as HTMLInputElement).setAttribute('aria-label', `Theatrical · ${country}`);
     const add = (label: string, onRemove: () => void) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -327,6 +341,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
               : (field(name) as HTMLSelectElement).selectedOptions[0]
                   ?.textContent || field(name).value;
         add(label, () => {
+          if (name === 'status' && sort.value === 'upcoming') sort.value = 'newest';
           field(name).value = name === "min_score" ? "0" : "";
           field(name).dispatchEvent(new Event("input", { bubbles: true }));
         });
@@ -357,10 +372,16 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
   };
   const updateFooter = () => {
+    const overridden = resultOverride.forQuery(field('q').value);
+    root.toggleAttribute('data-browse-override', overridden);
+    showAll.hidden = overridden || displayedCategories || loading || suspended || payload.has_more || !error.hidden;
+    curated.hidden = !overridden;
+    curated.disabled = loading;
     find("[data-browse-sentinel]").hidden = displayedCategories;
-    more.hidden = !payload.has_more || (!!field('q').value.trim() && (seen.size < 24 || loading));
+    more.hidden = !payload.has_more;
     more.disabled = loading;
     end.hidden = payload.has_more || !grid.childElementCount;
+    end.textContent = payload.partial ? 'End of curated results' : "You're all caught up";
     empty.hidden =
       displayedCategories ||
       loading ||
@@ -404,7 +425,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     if(!append)prediction.cancel();
     const values = params();
-    const categoryView = isCategoryView(values);
+    const categoryView = categoryMode(values);
     values.set("page", String(append ? payload.page + 1 : 1));
     if (append) {
       values.set("source", payload.source);
@@ -417,7 +438,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     request = current;
     currentPath = path;
     const epoch = ++generation;
-    let addedCards = 0;
     loading = true;
     paginationDemand.reset(scrollY);
     suspended = false;
@@ -427,26 +447,47 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     region.setAttribute("aria-busy", "true");
     updateFooter();
     updateUrl();
-    paintChips();
-    if (cached) loadingView.finish();
-    else if (!append) {
+    if (!append) {
       cancelUiMotion(region);
       grid.hidden = true;
       sections.hidden = true;
+      // Hide the old DOM before changing its layout. A cached first page may
+      // still need asynchronous viewport filling, so it also needs this handoff.
+      const view = field('view').value;
+      root.dataset.browseView = view;
+      grid.className = view === 'timeline' ? 'browse-timeline' : 'browse-grid';
       notice.textContent = "";
       loadingView.show(false, categoryView, field('view').value==='timeline');
     } else if (!field('q').value.trim()) {
       loadingView.show(true, false, field('view').value==='timeline');
     }
+    paintChips();
     try {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
         response = await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload | SectionsPayload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
-        responseCache.set(path, response);
-        await loadingView.settle(current.signal);
       }
+      if (!append && response && 'results' in response) {
+        const merged = new Map(response.results.map(item => [key(item), item]));
+        const columns = Math.max(3, Math.floor(region.clientWidth / 160));
+        const target = Math.max(24, columns * (Math.ceil(innerHeight / 260) + 1));
+        for (let pages = 0; response.has_more && merged.size < target && pages < 5; pages++) {
+          const next = new URLSearchParams(values);
+          next.set('page', String(response.page + 1)); next.set('source', response.source);
+          if (response.cursor) next.set('cursor', response.cursor);
+          const nextPath = requestPath(next);
+          const batch = responseCache.get(nextPath) as Payload | undefined ?? await json(nextPath, {signal: current.signal}) as Payload;
+          if (current.signal.aborted || signal.aborted || request !== current) return;
+          responseCache.set(nextPath, batch);
+          batch.results.forEach(item => merged.set(key(item), item));
+          response = {...batch, results: [...merged.values()]};
+        }
+        if (field('q').value.trim()) response.results.sort((a,b) => (b.search_rank || 0) - (a.search_rank || 0));
+      }
+      responseCache.set(path, response!);
+      if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (!append) {
         cancelUiMotion(region);
@@ -462,7 +503,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
         const cards=render(response.results);
-        addedCards = cards.length;
         loadingView.handoff(cards.map(card=>card.querySelector<HTMLElement>('.browse-card-body')!));
         payload = response;
       }
@@ -493,19 +533,20 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         sections.hidden = !displayedCategories;
         region.setAttribute("aria-busy", "false");
         updateFooter();
-        if (field('q').value.trim() && payload.has_more && !suspended &&
-            (seen.size < 24 || (append && !addedCards))) {
-          // Provider pages with only duplicates/filtered titles are part of
-          // this search. Drain them without requiring clicks or fake slots.
-          queueMicrotask(() => { if (generation === epoch && !signal.aborted) void load(true); });
-        }
       }
     }
   }
   function changed(event?: Event) {
+    if (sort.value === 'upcoming' && field('status').value !== 'upcoming') {
+      if (event?.target === field('status')) sort.value = 'newest';
+      else {
+        field('status').value = 'upcoming';
+        refreshSelect(field('status') as HTMLSelectElement);
+      }
+    }
     searchClear.hidden = !field("q").value;
     // Update immediately; only network requests from typing/dragging are debounced.
-    const debounce = event?.type === 'input' ? 220 : 0;
+    const debounce = event?.type === 'input' ? 100 : 0;
     void load(false, debounce);
   }
   function clear() {
@@ -586,6 +627,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { signal },
   );
+  showAll.addEventListener('click', () => {
+    resultOverride.set(true);
+    void load();
+  }, {signal});
+  curated.addEventListener('click', () => {
+    resultOverride.set(false);
+    void load();
+  }, {signal});
   form.addEventListener(
     "input",
     (event) => {
@@ -630,8 +679,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     event.preventDefault();
     const view=link.dataset.browseLayout!;
     if(field('view').value===view)return;
-    field('view').value=view;root.dataset.browseView=view;
-    grid.className=view==='timeline'?'browse-timeline':'browse-grid';
+    field('view').value=view;
     changed();
   },{signal}));
   root
@@ -801,7 +849,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
     }
   }
-  if (field('q').value.trim() && payload.has_more && seen.size < 24 && error.hidden) void load(true);
+  if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||

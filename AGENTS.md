@@ -22,6 +22,13 @@ Dont prefer bandade fixes but prefer concrete systems that fix the problem or im
 - Share browser-locale date/time formatting; keep calendar dates zone-free, timestamps local, and API/input values ISO.
 - Measure real bottlenecks before adding complexity; preserve correctness and distinguish preview lab results from production performance.
 
+## Search and results performance
+
+- Read and apply [search-results-performance](.agents/skills/search-results-performance/SKILL.md) when changing retrieval, ranking, filtering, pagination, caching, enrichment or result loading; adding result features; improving search/results performance; or modifying their benchmarks. This includes browse, timelines, people and studios, and future media types.
+- Reject known exclusions before provider fan-out, share valid metadata components, and reuse policy-specific eligibility summaries. Avoid transferring full credit payloads when warm eligibility is already known; evidence-header reads are the current approach. Keep unknown evidence distinct from a verified negative, and private viewer state separate from shared metadata.
+- Run the existing `scripts/benchmark_search.py` for affected cases before and after covered implementation changes. Compare result correctness, SQL statements/payload cost and provider requests as well as latency; use the skill's benchmark reference for scope and interpretation.
+- Label/style-only edits and toggles that merely reuse existing parameters without changing requests, state lifetime or loading behavior do not require the full performance workflow. New result features still invoke the skill; use focused checks when their risk is small. Expand to the full matrix when cross-category risk warrants it. Current cache designs and budgets are starting points, not constraints on better performance; assess latency, resource use and intended result behavior together.
+
 ## Reload and first-paint stability
 
 - Verify startup changes on the actual authenticated details and profile pages. Record the first reload from a nonzero scroll position, repeated reloads, cold/warm font caches, mobile/desktop, and back/forward. A standalone fixture or a reload at the top does not establish that the page is stable.

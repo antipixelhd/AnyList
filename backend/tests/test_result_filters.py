@@ -3,7 +3,9 @@ import os
 import asyncio
 import time
 import unittest
-from unittest.mock import AsyncMock, patch
+from datetime import date
+from unittest.mock import AsyncMock, patch, MagicMock
+from types import SimpleNamespace
 
 os.environ.setdefault('SECRET_KEY', 'results-filter-tests')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
@@ -12,11 +14,23 @@ from core.catalog_search import matches_result_filters, search_rank, has_streami
 from core.cinema_releases import theatrical_dates
 from core.browse import remote_params, remote_page
 from core import tmdb
-from schemas import UserProfileUpdate
+from schemas import UserProfileUpdate, UserProfileResponse
+from core.catalog_search import result_filters
+from core.result_categories import default_excluded_categories
 from pydantic import ValidationError
 
 
 class ResultPolicyTests(unittest.TestCase):
+    def test_category_defaults_enable_all_without_overriding_explicit_empty_selection(self):
+        expected = [99, 10402, 10763, 10764, 10766, 10767, 10770]
+        self.assertEqual(UserProfileResponse().excluded_categories, expected)
+        self.assertEqual(UserProfileUpdate().excluded_categories, expected)
+        self.assertEqual(UserProfileUpdate().model_dump(exclude_unset=True), {})
+        self.assertEqual(UserProfileUpdate(excluded_categories=[]).model_dump(exclude_unset=True), {'excluded_categories': []})
+        first = default_excluded_categories()
+        first.clear()
+        self.assertEqual(default_excluded_categories(), expected)
+
     def test_combined_search_does_not_give_movies_two_availability_bonuses(self):
         # Representative metadata, deliberately giving the movie both signals.
         offers = {'DE': {'flatrate': [{'provider_id': 1}]}}
@@ -37,12 +51,12 @@ class ResultPolicyTests(unittest.TestCase):
     def test_shared_rank_balances_exact_match_with_popularity_and_availability(self):
         exact_low = {'title':'War', 'vote_count':10, 'popularity':8, 'poster_path':'/war.jpg'}
         exact_high = {'name':'War', 'vote_count':1000, 'popularity':80, 'poster_path':'/war.jpg'}
-        prefix = {'title':'War Stories', 'vote_count':100000}
+        prefix = {'title':'War Stories', 'vote_count':100000, 'popularity':30}
         self.assertGreater(search_rank('war', exact_high), search_rank('war', exact_low))
         self.assertGreater(search_rank('war', prefix, streaming_available=True), search_rank('war', exact_low))
         self.assertGreater(search_rank('war', exact_high, streaming_available=True), search_rank('war', prefix, streaming_available=True))
         self.assertGreater(search_rank('war', exact_low, streaming_available=True), search_rank('war', exact_low))
-        self.assertGreater(search_rank('war', exact_low), search_rank('war', {**exact_low, 'poster_path':None}))
+        self.assertEqual(search_rank('war', exact_low), search_rank('war', {**exact_low, 'poster_path':None}))
         self.assertTrue(has_streaming_offer({'watch_providers':{'DE':{'flatrate':[{'provider_id':1}]}}}, 'DE'))
         self.assertFalse(has_streaming_offer({'watch_providers':{'DE':{'rent':[{'provider_id':1}]}}}, 'DE'))
 
@@ -88,6 +102,17 @@ class ResultPolicyTests(unittest.TestCase):
 
 
 class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_profile_excludes_all_but_saved_empty_selection_is_respected(self):
+        result = MagicMock()
+        result.first.return_value = None
+        db = SimpleNamespace(execute=AsyncMock(return_value=result))
+        viewer = SimpleNamespace(id=1)
+        self.assertEqual((await result_filters(db, None))['excluded_genres'], default_excluded_categories())
+        self.assertEqual((await result_filters(db, viewer))['excluded_genres'], default_excluded_categories())
+        result.first.return_value = SimpleNamespace(minimum_movie_runtime=30, excluded_categories=[])
+        self.assertEqual((await result_filters(db, viewer))['excluded_genres'], [])
+
+
     async def test_slow_search_evidence_does_not_hold_the_response(self):
         async def stalled(identifier, api_key=None):
             await asyncio.Event().wait()
@@ -147,13 +172,16 @@ class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(theatrical_dates(items[0], 'DE'), ['2099-10-01'])
 
     async def test_discover_response_obeys_runtime_and_category_policy(self):
+        today = date.today().isoformat()
         filters=dict(genres=[],start=None,end=None,status='',provider=None,region='US',sort='newest',
                      min_runtime=30,excluded_genres=[99])
         with patch('core.tmdb._get', AsyncMock(return_value={'results':[
-            {'id':1,'runtime':2},{'id':2,'runtime':30,'genre_ids':[99]},
-            {'id':3,'runtime':30,'genre_ids':[18]},{'id':4,'genre_ids':[18]}]})):
+            {'id':1,'runtime':2,'popularity':80,'release_date':today},
+            {'id':2,'runtime':30,'genre_ids':[99],'popularity':80,'release_date':today},
+            {'id':3,'runtime':30,'genre_ids':[18],'popularity':80,'release_date':today},
+            {'id':4,'genre_ids':[18],'popularity':80,'release_date':today}]})):
             _, rows=await remote_page('', 'movie', 'fixture', filters, 1)
-        self.assertEqual([row['id'] for row in rows],[3,4])
+        self.assertEqual({row['id'] for row in rows},{3,4})
 
     async def test_studio_discovery_filters_at_provider_without_extra_detail_calls(self):
         with patch('core.tmdb._get', AsyncMock(return_value={'results':[]})) as fetch:
@@ -163,3 +191,85 @@ class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
             await tmdb.discover_shows(with_companies=1,minimum_runtime=30,excluded_genre_ids=[99,10764])
             self.assertNotIn('with_runtime.gte',fetch.await_args.kwargs['params'])
             self.assertEqual(fetch.await_args.kwargs['params']['without_genres'],'99,10764')
+
+
+class SearchRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from core.catalog_search import _runtime_retry
+        _runtime_retry._store.clear()
+
+    async def test_failed_lookup_retries_after_cooldown_and_isolates_credentials(self):
+        from core.catalog_search import enrich_search_runtimes, _runtime_retry
+        with patch('core.tmdb.get_movie_light', AsyncMock(side_effect=OSError('offline'))) as read:
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30)
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 1)
+            await enrich_search_runtimes([{'id': 1}], {}, 'another-key', min_runtime=30)
+            self.assertEqual(read.await_count, 2)
+            for key, (_, value) in list(_runtime_retry._store.items()):
+                _runtime_retry._store[key] = (0, value)
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 3)
+
+    async def test_timeout_defers_batch_but_known_metadata_remains_usable(self):
+        from core.catalog_search import enrich_search_runtimes
+        async def stalled(*args, **kwargs):
+            await asyncio.Event().wait()
+        with patch('core.tmdb.get_movie_light', side_effect=stalled) as read:
+            items = [{'id': i} for i in range(8)]
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 4)
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 4)
+            self.assertTrue(all('runtime' not in item for item in items))
+            await enrich_search_runtimes(items, {0: SimpleNamespace(runtime=12, tmdb_data={})}, 'key', min_runtime=30)
+            self.assertEqual(items[0]['runtime'], 12)
+
+    async def test_caller_cancellation_does_not_schedule_cooldown(self):
+        from core.catalog_search import enrich_search_runtimes, _runtime_retry
+        started = asyncio.Event()
+        async def stalled(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+        with patch('core.tmdb.get_movie_light', side_effect=stalled):
+            task = asyncio.create_task(enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertFalse(_runtime_retry._store)
+
+    async def test_reuses_known_runtime_and_only_fetches_missing_evidence(self):
+        from core.catalog_search import enrich_search_runtimes
+        items = [{'id': 1}, {'id': 2, 'runtime': 90}, {'id': 3}]
+        known = {1: SimpleNamespace(runtime=12, tmdb_data={})}
+        with patch('core.tmdb.get_movie_light', AsyncMock(return_value={'runtime': 20})) as read:
+            await enrich_search_runtimes(items, known, 'key', min_runtime=30)
+        read.assert_awaited_once_with(3, api_key='key')
+        self.assertEqual([item['runtime'] for item in items], [12, 90, 20])
+        self.assertEqual([item['id'] for item in items if matches_result_filters(item, 'movie', min_runtime=30)], [2])
+
+    async def test_show_all_skips_runtime_reads_and_restores_excluded_categories(self):
+        from core.catalog_search import enrich_search_runtimes
+        item = {'id': 1, 'runtime': 12, 'genre_ids': [99]}
+        self.assertFalse(matches_result_filters(item, 'movie', min_runtime=30, excluded_genres=[99]))
+        self.assertTrue(matches_result_filters(item, 'movie', min_runtime=0, excluded_genres=[]))
+        with patch('core.tmdb.get_movie_light', AsyncMock()) as read:
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=0)
+        read.assert_not_awaited()
+
+    async def test_durable_snapshot_runtime_avoids_provider_read(self):
+        from core.catalog_search import enrich_search_runtimes
+        db = SimpleNamespace(scalars=AsyncMock(return_value=[SimpleNamespace(external_id='1', payload={'runtime': 12})]))
+        items = [{'id': 1}]
+        with patch('core.tmdb.get_movie_light', AsyncMock()) as read:
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30, db=db)
+        read.assert_not_awaited()
+        self.assertEqual(items[0]['runtime'], 12)
+
+    async def test_provider_failure_keeps_runtime_unknown(self):
+        from core.catalog_search import enrich_search_runtimes
+        items = [{'id': 1}]
+        with patch('core.tmdb.get_movie_light', AsyncMock(side_effect=OSError('offline'))):
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30)
+        self.assertNotIn('runtime', items[0])

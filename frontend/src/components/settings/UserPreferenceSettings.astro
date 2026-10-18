@@ -8,6 +8,10 @@ import '../../styles/profile-color-settings.css';
 
 interface Props { category: 'profile' | 'media' | 'lists' | 'notifications' }
 const { category } = Astro.props;
+const RESULT_CATEGORIES = [
+  [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
+  [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
+] as const;
 const { token } = Astro.locals;
 const settings = Astro.locals.settings;
 const [profileData, me, trackingPrefs] = await Promise.all([
@@ -21,9 +25,8 @@ const prefs: UserPreferences = {
   bio: null,
   country: null,
   minimum_movie_runtime: 30,
-  require_release: false,
-  require_poster: false,
-  excluded_categories: [],
+  minimum_votes: 0,
+  excluded_categories: RESULT_CATEGORIES.map(([id]) => id),
   streaming_services: [],
   metadata_language: null,
   privacy_level: "private",
@@ -87,10 +90,6 @@ const STREAMING_SERVICES = [
   { id: "15",   name: "Hulu" },
 ];
 
-const RESULT_CATEGORIES = [
-  [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
-  [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
-] as const;
 const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).map(row => [row.code, row.name]) : [];
 ---
 
@@ -258,23 +257,25 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
           <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
+        <div class="space-y-2 max-w-xs mt-5">
+          <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes for browsing</label>
+          <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="10000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>
+        <div class="space-y-2 max-w-xs mt-5">
+          <label for="minimum-popularity" class="block text-sm font-medium text-zinc-400">Minimum popularity</label>
+          <input id="minimum-popularity" type="number" min="0" max="1000000" step="0.1" value={trackingPrefs.minimum_popularity ?? 25} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>
+        <label class="setting-switch-row" for="include-rereleases">
+          <span><strong>Show country-specific re-releases for movies</strong></span>
+          <input id="include-rereleases" type="checkbox" checked={trackingPrefs.include_rereleases === true} />
+        </label>
         <fieldset id="excluded_categories" class="mt-5 space-y-3">
           <legend class="setting-label-line"><span class="text-sm font-medium text-zinc-400">Exclude categories</span></legend>
           <div class="flex flex-wrap gap-2">
             {RESULT_CATEGORIES.map(([id, label]) => <button type="button" class="chip border text-base font-medium transition-colors cursor-pointer focus:outline-none" data-excluded-category={id} aria-pressed={prefs.excluded_categories?.includes(id) ?? false}>{label}</button>)}
           </div>
         </fieldset>
-        <div class="mt-6 space-y-3">
-          <p class="text-sm text-zinc-400">Browse only, outside relevance search. Release availability is worldwide.</p>
-          <label class="setting-switch-row" for="require_release">
-            <span><strong>Require streaming or theatrical release</strong></span>
-            <input id="require_release" type="checkbox" checked={prefs.require_release === true} />
-          </label>
-          <label class="setting-switch-row" for="require_poster">
-            <span><strong>Require poster</strong></span>
-            <input id="require_poster" type="checkbox" checked={prefs.require_poster === true} />
-          </label>
-        </div>
+
       </section>
       <!-- Localization -->
       <section>
@@ -294,9 +295,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
               <option value={code} selected={prefs.country === code}>{name}</option>
             ))}
           </select>
-          <p class="text-xs text-zinc-500">
-            Streaming provider and cinema filters use this country.
-          </p>
         </div>
         <div class="space-y-2 max-w-xs">
           <div class="setting-label-line"><label for="metadata_language" class="block text-sm font-medium text-zinc-400">Metadata language</label></div>
@@ -403,7 +401,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
         'remove-specials-seasons': 'Seasons',
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
-        require_release: 'Release requirement', require_poster: 'Poster requirement',
+        minimum_votes: 'Minimum votes',
         country: 'Country', metadata_language: 'Metadata language',
         'combine-lists': 'List preferences', streaming_services: 'Streaming services',
       };
@@ -562,6 +560,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const pending = (chains.get(group) || Promise.resolve()).catch(() => {}).then(async () => {
         try {
           await patchProfile(value);
+          document.dispatchEvent(new Event('anylist:cache-invalidated'));
           committed.set(group, value);
           if (revisions.get(group) === revision) { afterSave?.(); setStatus(group, 'Saved'); }
         } catch (error) {
@@ -614,7 +613,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       saveAppearance();
     });
     siteWideToggle?.addEventListener('change', saveAppearance);
-    for (const [field, fallback] of [['minimum_movie_runtime', 30]] as const) {
+    for (const [field, fallback] of [['minimum_movie_runtime', 30], ['minimum_votes', 0]] as const) {
       const input = document.getElementById(field) as HTMLInputElement | null;
       if (!input) continue;
       committed.set(field, { [field]: Number(input.value) });
@@ -624,14 +623,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           input.value = String(previous[field] ?? fallback);
         });
       });
-    }
-    for (const field of ['require_release', 'require_poster'] as const) {
-      const input = document.getElementById(field) as HTMLInputElement | null;
-      if (!input) continue;
-      committed.set(field, { [field]: input.checked });
-      input.addEventListener('change', () => queueSave(field, { [field]: input.checked }, previous => {
-        input.checked = previous[field] === true;
-      }));
     }
     const excludedButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-excluded-category]')];
     const excludedValues = () => excludedButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => Number(button.dataset.excludedCategory));
@@ -696,6 +687,14 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     if (combineLists) combineLists.dataset.savedValue = String(combineLists.checked);
     if (defaultSort) defaultSort.dataset.savedValue = defaultSort.value;
     if (removeSpecials) removeSpecials.dataset.savedValue = String(removeSpecials.checked);
+    const rereleases = document.getElementById('include-rereleases') as HTMLInputElement | null;
+    if (rereleases) rereleases.dataset.savedValue = String(rereleases.checked);
+    rereleases?.addEventListener('change', () => saveTrackingPreferences({ include_rereleases: rereleases.checked }, rereleases, 'include_rereleases'));
+    const popularity = document.getElementById('minimum-popularity') as HTMLInputElement | null;
+    if (popularity) popularity.dataset.savedValue = popularity.value;
+    popularity?.addEventListener('change', () => {
+      if (popularity.reportValidity()) saveTrackingPreferences({ minimum_popularity: Number(popularity.value) }, popularity, 'minimum_popularity');
+    });
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
     function publishCombinePreference(value: boolean) {
@@ -704,8 +703,8 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     function saveTrackingPreferences(change: Record<string, unknown>, control: HTMLInputElement | HTMLSelectElement, field: string) {
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
-      const requestedValue = control instanceof HTMLInputElement ? String(control.checked) : control.value;
-      const statusKey = field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
+      const statusKey = field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
       setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
@@ -720,11 +719,12 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           // Keep the last confirmed server value available for rollback, even when
           // a newer change is already queued behind this request.
           control.dataset.savedValue = String(saved[field] ?? requestedValue);
+          document.dispatchEvent(new Event('anylist:cache-invalidated'));
           if (trackingRevisions.get(field) === revision) setStatus(statusKey, 'Saved');
         } catch (error) {
           if (trackingRevisions.get(field) === revision) {
             const savedValue = control.dataset.savedValue ?? '';
-            if (control instanceof HTMLInputElement) control.checked = savedValue === 'true';
+            if (control instanceof HTMLInputElement && control.type === 'checkbox') control.checked = savedValue === 'true';
             else control.value = savedValue;
             if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
             setStatus(statusKey, error instanceof Error ? error.message : 'Could not update your preferences.', 'error');

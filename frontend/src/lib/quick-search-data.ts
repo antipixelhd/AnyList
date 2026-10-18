@@ -1,5 +1,6 @@
-export type SearchSection = 'all' | 'actor' | 'staff' | 'studio';
-export type ResultSection = SearchSection | 'movie' | 'series';
+import {createBrowseCache} from './browse-cache.ts';
+export type SearchSection = 'all' | 'movie' | 'series' | 'actor' | 'staff' | 'studio';
+export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
 export type SearchRequest = {kind:'movie'|'series'|'contributors';url:string;scope?:ContributorScope};
 
@@ -22,12 +23,35 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
     if(!response.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
-    const signature=JSON.stringify([data.results,data.partial]);
+    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
     if(signature!==previous){onResult(data);previous=signature;}
     if(signal.aborted)return;
     if(request.kind!=='contributors'||!data.verification_pending||attempt===4)return;
     await pause(signal);
   }
+}
+
+/** Construct per mounted dialog/viewer; private editor state never crosses mounts. */
+export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof fetch = fetch, now = () => Date.now()) {
+  const cache = createBrowseCache<any>(now, 60_000, 40);
+  let generation=0;
+  const clear=()=>{generation++;cache.clear();};
+  lifetime.addEventListener('abort', clear, {once:true});
+  return {
+    clear,
+    async read(request: SearchRequest, signal: AbortSignal, onResult: (data:any)=>void) {
+      if (signal.aborted || lifetime.aborted) return;
+      const epoch=generation;
+      const cached = cache.get(request.url);
+      if (cached) { onResult(cached); return; }
+      await readQuickSearch(request, signal, data => {
+        if (signal.aborted || lifetime.aborted) return;
+        // Degraded local-only results must not conceal a recovered remote source.
+        if (generation === epoch && !data.verification_pending && !data.notice && !data.partial) cache.set(request.url, data);
+        onResult(data);
+      }, fetcher);
+    },
+  };
 }
 export function quickSearchRequests(query:string,region?:string): SearchRequest[] {
   const requests:SearchRequest[] = (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,...(region?{region}:{})})}`}));
@@ -37,19 +61,34 @@ export function quickSearchRequests(query:string,region?:string): SearchRequest[
 export function rankCombinedMedia<T extends {search_rank?:number}>(movies:T[],series:T[]):T[] {
   return [...movies,...series].sort((left,right)=>(right.search_rank??0)-(left.search_rank??0));
 }
+
+/** Publish the title groups once both sources settle, including partial failures. */
+export function createQuickTitleBatch<T>() {
+  const settled = new Set<'movie'|'series'>();
+  const results: Record<'movie'|'series', T[]> = {movie: [], series: []};
+  return (kind: 'movie'|'series', rows: T[] = []) => {
+    if (settled.has(kind)) return;
+    settled.add(kind);
+    results[kind] = rows;
+    return settled.size === 2 ? results : undefined;
+  };
+}
 export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studio',T[]>, incoming:Partial<Record<'actor'|'staff'|'studio',T[]>>, scope?:ContributorScope) {
   return {actor:scope==='studio'||scope==='staff'?current.actor:incoming.actor||[],
     staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
     studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
 }
 export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:Record<ResultSection,number>): ResultSection[] {
-  const sections:ResultSection[] = mobile ? [selected] : [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
+  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,quickSearchTabOrder(combined))] : quickSearchTabOrder(combined);
   return sections.filter(section=>counts[section]>0);
 }
 
-const mobileTabOrder:SearchSection[]=['all','actor','staff','studio'];
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false):SearchSection[] {
-  return searching?mobileTabOrder.filter(kind=>counts[kind]>0||(kind==='all'&&mediaPending)):[...mobileTabOrder];
+function quickSearchTabOrder(combined:boolean):SearchSection[] {
+  return [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
+}
+export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true):SearchSection[] {
+  const order=quickSearchTabOrder(combined);
+  return searching?order.filter(kind=>counts[kind]>0||(['all','movie','series'].includes(kind)&&mediaPending)):order;
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

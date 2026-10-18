@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import result_filters, browse_preferences, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, exact_title_match, media_search_rank, enrich_search_evidence
+from core.catalog_search import result_filters, browse_preferences
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -9,11 +9,11 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, delete, or_, func
+from sqlalchemy import select, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
-from dependencies import get_current_user, get_optional_user, get_tracking_write_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
@@ -101,12 +101,18 @@ class PreferencePatch(BaseModel):
     new_season_release_dates: bool | None = None
     new_season_releases: bool | None = None
     remove_specials_seasons: bool | None = None
+    include_rereleases: bool | None = None
+    minimum_popularity: float | None = Field(None, ge=0, le=1000000, allow_inf_nan=False)
 
 
 @router.get('/preferences')
 async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     row=await db.get(TrackingPreferences,viewer.id)
+    from models.users import UserSettings
+    settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
     return {
+        'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
+        'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
         'auto_confirm': bool(row and row.auto_confirm),
         'combine_lists': True if row is None else row.combine_lists,
         'default_sort': 'title' if row is None else row.default_sort,
@@ -126,7 +132,15 @@ async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_
     for name in body.model_fields_set:
         value=getattr(body,name)
         if value is None:raise HTTPException(422,f'{name} cannot be null')
-        setattr(row,name,value)
+        if name in ('include_rereleases', 'minimum_popularity'):
+            from models.users import UserSettings
+            settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
+            if settings is None:
+                settings=UserSettings(user_id=viewer.id)
+                db.add(settings)
+            settings.preferences={**(settings.preferences or {}), name: value}
+        else:
+            setattr(row,name,value)
     await db.commit()
     return await preferences(db,viewer)
 
@@ -612,7 +626,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
 
 
 @router.get("/people/{username}")
-async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
     if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]
@@ -855,7 +869,7 @@ async def contributor_details(
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: MediaScope = 'all',
     list_scope: ListScope = 'all',
     status: Literal['', 'watching', 'completed', 'planning', 'paused', 'dropped'] = '',
@@ -888,7 +902,7 @@ async def contributor_details(
 async def studio_metadata(
     studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> StudioDetail:
     from core.statistics_studios import studio_detail
     await catalog_access(db, viewer)
@@ -904,7 +918,7 @@ async def studio_metadata(
 async def staff_metadata(
     person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> PersonDetail:
     from core.statistics_staff import person_detail
     await catalog_access(db, viewer)
@@ -940,7 +954,7 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 
 
 @router.get("/profile/{username}/{media_type}")
-async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     query=select(TrackedEntry,Media,MediaFavorite.media_id).join(Media,Media.id==TrackedEntry.media_id).outerjoin(
         MediaFavorite,(MediaFavorite.user_id==TrackedEntry.user_id)&(MediaFavorite.media_id==TrackedEntry.media_id)
@@ -1097,7 +1111,7 @@ async def profile_stats_overview(
     username: str,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: Annotated[MediaScope, Query()] = "all",
 ) -> OverviewResponse:
     from core.statistics_snapshots import read_overview
@@ -1124,7 +1138,7 @@ async def profile_stats_overview(
 @router.get("/profile/{username}/stats/summary")
 async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
                         year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db),
-                        viewer: User | None = Depends(get_optional_user)):
+                        viewer: User = Depends(get_current_user_or_api_key)):
     """Current list totals plus documented viewing statistics for a profile."""
     user, owner = await profile_access(db, username, viewer)
     following = False
@@ -1189,10 +1203,12 @@ async def account_cinema_country(db, viewer):
 
 
 @router.get('/browse/facets')
-async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
     await catalog_access(db, viewer)
+    country = region or await account_cinema_country(db, viewer)
+    region = country or 'US'
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
     providers = []
     notice = None
@@ -1238,18 +1254,20 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
-async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str = Query('US', pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
+    country = region or await account_cinema_country(db, viewer)
+    region = country or 'US'
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
     mdblist_key = await effective_mdblist_key(db, None) or (
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
     try:
         return await sections(db, viewer, media_type=media_type, region=region,
-                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **(await result_filters(db, viewer)),
-                              **(await browse_preferences(db, viewer)), min_score=min_score)
+                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
+                              unfiltered=unfiltered, min_score=min_score)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
@@ -1258,12 +1276,16 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
 async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
                  page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200),
                  start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'returning', 'finished', 'cancelled', 'upcoming', 'released'] = '',
-                 provider: int | None = Query(None, ge=1), region: str = Query('US', pattern='^[A-Z]{2}$'),
-                 sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
+                 provider: int | None = Query(None, ge=1), region: str | None = Query(None, pattern='^[A-Z]{2}$'),
+                 sort: Literal['trending', 'popular', 'score', 'newest', 'oldest', 'upcoming', 'title'] = 'popular', source: Literal['', 'local', 'remote'] = '',
                  min_score: Annotated[float, Query(ge=0, le=10)] = 0,
                  cinema: Annotated[bool, Query()] = False,
+                 unfiltered: Annotated[bool, Query()] = False,
+                 include_returning: Annotated[bool, Query(include_in_schema=False)] = True,
+                 include_rereleases: Annotated[bool | None, Query()] = None,
+                 timeline: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
-                 db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+                 db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     from core.browse_cursor import decode_search_cursor
@@ -1272,6 +1294,12 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
     except ValueError:
         raise HTTPException(422,'Invalid search cursor') from None
     await catalog_access(db, viewer)
+    if include_rereleases is None:
+        from models.users import UserSettings
+        settings = await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id)) if viewer else None
+        include_rereleases = bool(settings and (settings.preferences or {}).get('include_rereleases', False))
+    country = region or await account_cinema_country(db, viewer)
+    region = country or 'US'
     genre_ids = browse_genres(genres)
     allowed = MOVIE_GENRES if media_type == 'movie' else TV_GENRES
     if not {value for value in genre_ids if isinstance(value, int)}.issubset(allowed) or (start and end and start > end):
@@ -1283,13 +1311,14 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
     try:
-        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions,
+        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions, event_view=timeline,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)),
-            **((await browse_preferences(db, viewer)) if not q.strip() else {'require_release': False, 'require_poster': False}),
-            min_score=min_score, cinema=cinema and media_type=='movie',
-            cinema_country=await account_cinema_country(db,viewer) if cinema and media_type=='movie' else None)
+            status=status, provider=provider, region=region, sort=sort, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
+            **(await browse_preferences(db, viewer, media_type, 'search' if q.strip() else 'upcoming' if status == 'upcoming' else sort, unfiltered=unfiltered)),
+            min_score=min_score, cinema=cinema and media_type=='movie', audience_curation=not unfiltered,
+            include_returning=include_returning, include_rereleases=include_rereleases,
+            cinema_country=country if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
 
@@ -1297,106 +1326,17 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
 @router.get("/catalog")
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                   region: str | None = Query(None, pattern='^[A-Z]{2}$'),
-                  db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+    from core.browse import browse_page
     await catalog_access(db, viewer)
-    show_anime=await anime_is_visible(db)
-    filters = await result_filters(db, viewer)
     term = q.strip()[:200]
-    region = region or await account_cinema_country(db, viewer) or 'US'
-    query = apply_result_filters(select(Media).where(Media.media_type == MediaType(media_type)),
-                                 Media.tmdb_data, media_type, runtime=Media.runtime, **filters)
-    if term:
-        escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-        similarity = func.greatest(func.similarity(Media.title, term),
-                                   func.similarity(func.coalesce(Media.original_title, ''), term))
-        query = query.where(or_(Media.title.ilike(f'%{escaped}%', escape='\\'),
-                                Media.original_title.ilike(f'%{escaped}%', escape='\\'),
-                                similarity >= 0.2)).order_by(similarity.desc(), Media.title)
-    else:
-        query = query.order_by(Media.title)
-    rows = (await db.execute(query.limit(80))).scalars().all()
-    if not show_anime:rows=[m for m in rows if not tracking_projection.is_anime(m)]
-    results = []
-    for media in rows:
-        result = tracking_projection.media_data(media)
-        if term:
-            metadata = {**(media.tmdb_data or {}), 'title': media.title,
-                        'original_title': media.original_title or (media.tmdb_data or {}).get('original_title'),
-                        'poster_path': result.get('poster')}
-            result['search_rank'] = media_search_rank(term, metadata, media_type)
-        results.append(result)
-    notice = None
-    if term:
-        from core import tmdb
-        key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
-        if key:
-            try:
-                search = tmdb.search_movies if media_type == 'movie' else tmdb.search_shows
-                remote = await search(term, api_key=key)
-                remote_results = remote.get('results', [])
-                # Short titles can rank behind more popular partial matches.
-                # Browse already scans this bounded provider window; quick
-                # search should find the same exact title.
-                if 3 <= len(term) <= 4 and not any(exact_title_match(term, item) for item in remote_results):
-                    last = min(remote.get('total_pages', 1), 5)
-                    if last > 1:
-                        extra = await asyncio.gather(
-                            *(search(term, page=page, api_key=key) for page in range(2, last + 1)),
-                            return_exceptions=True,
-                        )
-                        remote_results = [*remote_results, *(
-                            item for response in extra if isinstance(response, dict)
-                            for item in response.get('results', [])
-                        )]
-                # Search an unimported title with a few safe corrections only
-                # when the literal request came back empty. This preserves
-                # normal TMDB ranking and keeps the fallback within its API
-                # budget.
-                if not remote_results:
-                    corrected = await asyncio.gather(
-                        *(search(candidate, api_key=key) for candidate in fuzzy_remote_terms(term)),
-                        return_exceptions=True,
-                    )
-                    remote_results = [
-                        item
-                        for response in corrected if isinstance(response, dict)
-                        for item in response.get('results', [])
-                        if is_close_title_match(term, item.get('title') or item.get('name') or '')
-                    ]
-                known = {m.tmdb_id for m in rows if m.tmdb_id}
-                remote_ids = [item['id'] for item in remote_results if isinstance(item.get('id'), int)]
-                cached = {m.tmdb_id: m for m in await db.scalars(select(Media).where(
-                    Media.media_type == MediaType(media_type), Media.tmdb_id.in_(remote_ids)))} if remote_ids else {}
-                remote_results = [known_result_metadata(item, cached[item['id']]) if item.get('id') in cached else item
-                                  for item in remote_results]
-                await enrich_search_evidence([item for item in remote_results if not item.get('adult')],
-                    term, media_type, key, region,
-                    theatrical=media_type == 'movie')
-                remote_by_id = {item['id']: item for item in remote_results}
-                for result in results:
-                    item = remote_by_id.get(result.get('tmdb_id'))
-                    if item:
-                        result['search_rank'] = media_search_rank(term,
-                            {**item, 'title': result['title'], 'poster_path': result.get('poster') or item.get('poster_path')},
-                            media_type)
-                for item in remote_results:
-                    candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
-                    candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
-                    if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
-                        continue
-                    known.add(item['id'])
-                    results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
-                        'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4],
-                        'search_rank':media_search_rank(term, item, media_type)})
-            except Exception:
-                notice = 'Metadata search is temporarily unavailable. Showing local matches.'
-        else:
-            notice = 'Add a TMDB key in Settings, or ask your administrator, to search beyond the local catalogue.'
-    from core.tracking_editor import attach_editor_context
-    if term:
-        results.sort(key=lambda item: item.get('search_rank', 0), reverse=True)
-    await attach_editor_context(db, viewer, results)
-    return {"results": results, "notice": notice}
+    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    result = await browse_page(db, viewer, term=term, media_type=media_type, page=1,
+        source='' if term else 'local', show_anime=await anime_is_visible(db), key=key,
+        genres=[], start=None, end=None, status='', provider=None, region=region or 'US',
+        sort='popular' if term else 'title', **(await result_filters(db, viewer)),
+        **(await browse_preferences(db, viewer, media_type, 'search')))
+    return result
 
 
 @router.get('/catalog/{media_type}/{tmdb_id}/preview')
@@ -1405,7 +1345,7 @@ async def catalog_preview(
     tmdb_id: Annotated[int, Path(gt=0, le=2147483647)],
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User | None, Depends(get_optional_user)],
+    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ):
     from core import tmdb
     from core.browse import GENRES
@@ -1431,7 +1371,7 @@ async def catalog_preview(
 
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
-async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.enrichment import create_media_safely, enrich_media
     await catalog_access(db, viewer)
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
@@ -1470,7 +1410,7 @@ async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_
 
 
 @router.get("/title/{media_id}")
-async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user)):
+async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1551,7 +1491,7 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 @router.get('/title/{media_id}/episode-images')
 async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
                                db: Annotated[AsyncSession, Depends(get_db)],
-                               viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+                               viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
@@ -1685,7 +1625,7 @@ async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 @router.get('/title/{media_id}/background')
 async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                           viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+                           viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
@@ -1701,7 +1641,7 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
 
 @router.get('/title/{media_id}/artwork-preview')
 async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                                viewer: Annotated[User | None, Depends(get_optional_user)]) -> dict:
+                                viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')

@@ -10,7 +10,7 @@ const seasons=visibleDetailSeasons(title.seasons,removeSpecials);
 const current=currentDetailSeason(seasons,title.entry?.status==='watching');
 ---
 <section class="seasons-section lab-season-panel" id="seasons" data-season-details>
-  <div class="lab-section-title"><h2>Seasons</h2><div class="media-season-actions"><button class="lab-text-button" type="button" data-episode-spoilers aria-pressed="false"><Icon name="eye-slash"/><span>Titles hidden</span></button>{signedIn&&<button class="lab-text-button" id="refresh-episodes" type="button" aria-label="Refresh episode metadata" title="Refresh episode metadata"><Icon name="arrows-rotate"/></button>}</div></div>
+  <div class="lab-section-title"><h2>Seasons</h2><div class="media-season-actions"><button class="lab-text-button" type="button" data-episode-spoilers aria-pressed="false"><span data-episode-titles-hidden><Icon name="eye-slash"/></span><span data-episode-titles-shown><Icon name="eye"/></span><span data-episode-spoilers-label>Titles hidden</span></button>{signedIn&&<button class="lab-text-button" id="refresh-episodes" type="button" aria-label="Refresh episode metadata" title="Refresh episode metadata"><Icon name="arrows-rotate"/></button>}</div></div>
   {signedIn&&<div class="lab-season-rating-rule"><label><input type="checkbox" data-season-average checked={title.entry?.rating_mode==='average'}/> Use season average</label></div>}
   <div class="lab-season-cards">{seasons.map(season=>{
     const number=season.season_number;

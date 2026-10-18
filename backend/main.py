@@ -48,8 +48,12 @@ async def lifespan(app: FastAPI):
 
     await netflix_sessions.resume_incomplete_netflix_imports()
 
-    async with scheduler.background_jobs():
-        yield
+    try:
+        async with scheduler.background_jobs():
+            yield
+    finally:
+        from core import tmdb
+        await tmdb.close()
 
 from core.config import settings
 

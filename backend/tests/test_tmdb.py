@@ -1,4 +1,5 @@
 import os
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -13,7 +14,210 @@ from core import tmdb
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 
 
-class ResolveMovieIdTests(unittest.IsolatedAsyncioTestCase):
+class TransportTestCase(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self):
+        await tmdb.close()
+
+
+class SharedTransportTests(TransportTestCase):
+    def setUp(self):
+        tmdb._cache._store.clear()
+        tmdb._breaker_record_success()
+
+    async def test_detail_payload_seeds_lightweight_and_release_reads(self):
+        payload = {'id': 42, 'title': 'Example', 'runtime': 110,
+                   'release_dates': {'results': [{'iso_3166_1': 'DE'}]},
+                   'watch/providers': {'results': {'DE': {}}}}
+        with patch.object(tmdb, '_request', AsyncMock(return_value=payload)) as request:
+            full = await tmdb._get(tmdb.TMDB_BASE + '/movie/42', headers=tmdb.get_headers('key'),
+                params={'append_to_response': 'release_dates,watch/providers'})
+            light = await tmdb.get_movie_light(42, api_key='key')
+            releases = await tmdb.get_movie_release_dates(42, api_key='key')
+            providers = await tmdb.get_movie_watch_providers(42, api_key='key')
+            self.assertEqual(request.await_count, 1)
+            self.assertEqual(light['runtime'], 110)
+            self.assertNotIn('release_dates', light)
+            self.assertEqual(releases, payload['release_dates'])
+            self.assertEqual(providers, payload['watch/providers'])
+            light['runtime'] = 1
+            self.assertEqual(full['runtime'], 110)
+            self.assertEqual((await tmdb.get_movie_light(42, api_key='key'))['runtime'], 110)
+
+    async def test_projected_cache_keeps_languages_separate_and_bypass_does_not_seed(self):
+        with patch.object(tmdb, '_request', AsyncMock(return_value={'id': 42, 'title': 'Deutsch', 'runtime': 110})) as request:
+            await tmdb._get(tmdb.TMDB_BASE + '/movie/42', params={'language': 'de', 'append_to_response': 'credits'})
+            await tmdb.get_movie_light(42, language='de')
+            self.assertEqual(request.await_count, 1)
+            await tmdb.get_movie_light(42, language='en')
+            self.assertEqual(request.await_count, 2)
+            tmdb._cache._store.clear()
+            await tmdb._get(tmdb.TMDB_BASE + '/movie/42', params={'append_to_response': 'credits'}, cache_ttl=None)
+            self.assertFalse(tmdb._cache._store)
+
+    async def test_different_detail_shapes_compose_existing_parts_without_new_http(self):
+        payload={'id':42,'runtime':110,'release_dates':{'results':[]},'watch/providers':{'results':{}}}
+        with patch.object(tmdb,'_request',AsyncMock(return_value=payload)) as request:
+            await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'credits,release_dates,watch/providers'})
+            composed=await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'release_dates,watch/providers'})
+            self.assertEqual(request.await_count,1)
+            self.assertEqual(composed['runtime'],110)
+            composed['release_dates']['results'].append('mutation')
+            repeated=await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'release_dates,watch/providers'})
+            self.assertEqual(repeated['release_dates']['results'],[])
+            # A missing/expired part must trigger a real refresh. Composing a
+            # response must never turn it into a longer-lived exact cache entry.
+            tmdb._cache._store.pop((tmdb.TMDB_BASE+'/movie/42/release_dates',()))
+            await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'release_dates,watch/providers'})
+            self.assertEqual(request.await_count,2)
+
+    async def test_identical_reads_share_request_but_not_mutable_results(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        requests = []
+        async def handler(request):
+            requests.append(request)
+            started.set()
+            await release.wait()
+            return httpx.Response(200, json={'results': [{'id': 1}]})
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)) as factory:
+            first = asyncio.create_task(tmdb.search_movies('shared', api_key='key'))
+            await started.wait()
+            second = asyncio.create_task(tmdb.search_movies('shared', api_key='key'))
+            await asyncio.sleep(0)
+            release.set()
+            a, b = await asyncio.gather(first, second)
+            a['results'][0]['id'] = 9
+            self.assertEqual(b['results'][0]['id'], 1)
+            cached = await tmdb.search_movies('shared', api_key='key')
+            self.assertEqual(cached['results'][0]['id'], 1)
+            await tmdb.search_movies('different', api_key='key')
+            self.assertEqual(factory.call_count, 1)
+            self.assertEqual(len(requests), 2)
+
+    async def test_cancelled_waiter_does_not_cancel_other_reader(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        async def handler(request):
+            started.set()
+            await release.wait()
+            return httpx.Response(200, json={'id': 1})
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)):
+            first = asyncio.create_task(tmdb.get_movie(1, api_key='key'))
+            await started.wait()
+            second = asyncio.create_task(tmdb.get_movie(1, api_key='key'))
+            await asyncio.sleep(0)
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            release.set()
+            self.assertEqual((await second)['id'], 1)
+            self.assertFalse(tmdb._transport().inflight)
+
+    async def test_last_cancelled_reader_stops_orphaned_request(self):
+        started, stopped = asyncio.Event(), asyncio.Event()
+        async def handler(request):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)):
+            first = asyncio.create_task(tmdb.get_movie(1, api_key='key'))
+            await started.wait()
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            await asyncio.wait_for(stopped.wait(), 1)
+            self.assertFalse(tmdb._transport().inflight)
+
+    async def test_validation_bypasses_public_cache_and_checks_each_credential(self):
+        seen = []
+        async def handler(request):
+            seen.append(request.headers['Authorization'])
+            return httpx.Response(200 if seen[-1] == 'Bearer good' else 401, json={})
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)):
+            self.assertEqual(await asyncio.gather(tmdb.validate_api_key('good'),
+                tmdb.validate_api_key('bad'), tmdb.validate_api_key('good')), [True, False, True])
+        self.assertEqual(len(seen), 3)
+        self.assertFalse(tmdb._cache._store)
+
+    async def test_failed_shared_request_is_evicted_and_can_retry(self):
+        responses = [503, 200]
+        async def handler(request):
+            return httpx.Response(responses.pop(0), json={'id': 1})
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)):
+            with self.assertRaises(httpx.HTTPStatusError):
+                await tmdb.get_movie(1, api_key='key')
+            self.assertFalse(tmdb._transport().inflight)
+            self.assertEqual((await tmdb.get_movie(1, api_key='key'))['id'], 1)
+
+    async def test_distinct_credentials_do_not_share_pending_auth_failures(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        seen = []
+        async def handler(request):
+            auth = request.headers['Authorization']
+            seen.append(auth)
+            if len(seen) == 2:
+                started.set()
+            await release.wait()
+            return httpx.Response(200 if auth == 'Bearer good' else 401, json={'id': 1})
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)):
+            good = asyncio.create_task(tmdb.get_movie(1, api_key='good'))
+            bad = asyncio.create_task(tmdb.get_movie(1, api_key='bad'))
+            await asyncio.wait_for(started.wait(), 1)
+            release.set()
+            results = await asyncio.gather(good, bad, return_exceptions=True)
+            self.assertEqual(results[0]['id'], 1)
+            self.assertIsInstance(results[1], httpx.HTTPStatusError)
+
+    async def test_shutdown_closes_pool_and_cancels_pending_requests(self):
+        started = asyncio.Event()
+        async def handler(request):
+            started.set()
+            await asyncio.Event().wait()
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)):
+            task = asyncio.create_task(tmdb.get_movie(1, api_key='key'))
+            await started.wait()
+            client = tmdb._transport().client
+            await tmdb.close()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertTrue(client.is_closed)
+
+    async def test_unique_search_burst_bounds_connections_and_retained_flights(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        active, peak = 0, 0
+        async def handler(request):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            if active == 2:
+                started.set()
+            try:
+                await release.wait()
+                return httpx.Response(200, json={'results': []})
+            finally:
+                active -= 1
+        with patch.object(tmdb.httpx, 'AsyncClient', side_effect=lambda **kw:
+                          _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(handler), **kw)), \
+             patch.object(tmdb, '_MAX_INFLIGHT', 2):
+            state = tmdb._transport()
+            state.slots = asyncio.Semaphore(2)
+            tasks = [asyncio.create_task(tmdb.search_movies(str(i), api_key='key')) for i in range(8)]
+            await asyncio.wait_for(started.wait(), 1)
+            self.assertEqual(len(state.inflight), 2)
+            release.set()
+            await asyncio.gather(*tasks)
+            self.assertEqual(peak, 2)
+            self.assertFalse(state.inflight)
+
+
+class ResolveMovieIdTests(TransportTestCase):
     async def test_imdb_match_takes_precedence_over_title_search(self):
         with patch.object(tmdb, "find_by_external_id", AsyncMock(return_value={"movie_results": [{"id": 42}]})) as find, \
              patch.object(tmdb, "search_movies", AsyncMock()) as search:
@@ -51,7 +255,7 @@ class ResolveMovieIdTests(unittest.IsolatedAsyncioTestCase):
         search.assert_not_awaited()
 
 
-class GetShowCacheBypassTests(unittest.IsolatedAsyncioTestCase):
+class GetShowCacheBypassTests(TransportTestCase):
     """Regression tests for: "Refresh Metadata" calling tmdb.get_show/get_season/
     get_movie/get_episode with no cache_ttl override meant a user-initiated
     refresh could silently return whatever response was already sitting in
@@ -109,7 +313,7 @@ class GetShowCacheBypassTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(requests), 6)
 
 
-class CircuitBreakerTests(unittest.IsolatedAsyncioTestCase):
+class CircuitBreakerTests(TransportTestCase):
     """After a run of connection failures, _get should short-circuit instead of
     making every subsequent caller re-discover that TMDB is down (one slow
     failure per page load instead of dozens)."""
@@ -130,6 +334,7 @@ class CircuitBreakerTests(unittest.IsolatedAsyncioTestCase):
         return httpx.MockTransport(handler)
 
     async def _run(self, transport, coro_factory):
+        await tmdb.close()
         with patch.object(tmdb.httpx, "AsyncClient",
                           side_effect=lambda **kw: _REAL_ASYNC_CLIENT(transport=transport, **kw)), \
              patch.object(tmdb.asyncio, "sleep", new_callable=AsyncMock):
@@ -164,7 +369,7 @@ class CircuitBreakerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tmdb._breaker_blocked())
 
 
-class DiscoverGenreIdsTests(unittest.IsolatedAsyncioTestCase):
+class DiscoverGenreIdsTests(TransportTestCase):
     """Regression tests for multi-genre selection on Explore Movies/Shows:
     TMDB's discover endpoints OR multiple genres together via a "|"-joined
     with_genres value in a single request - genre_ids is the new multi-value
@@ -220,7 +425,7 @@ class DiscoverGenreIdsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured[0]["with_genres"], "28")
 
 
-class MetadataLanguageParamTests(unittest.IsolatedAsyncioTestCase):
+class MetadataLanguageParamTests(TransportTestCase):
     """Regression tests for #235: Explore cards showed TMDB's default English
     title/poster because the list/discover wrappers never forwarded the
     user's Metadata Language. language must be omitted (not sent as empty)
@@ -319,7 +524,7 @@ class PreferredPosterTests(unittest.TestCase):
         self.assertEqual(tmdb.preferred_poster_path(data), "/localized.jpg")
 
 
-class PosterImageRequestTests(unittest.IsolatedAsyncioTestCase):
+class PosterImageRequestTests(TransportTestCase):
     def setUp(self) -> None:
         tmdb._cache._store.clear()
 
@@ -365,7 +570,7 @@ class PosterImageRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tmdb.extract_credits_stingers(data), (True, True))
 
 
-class DiscoverStudioParamsTests(unittest.IsolatedAsyncioTestCase):
+class DiscoverStudioParamsTests(TransportTestCase):
     """with_networks / with_companies must reach TMDB's discover endpoints, and
     get_network / get_company must hit the right paths - these power the
     /network/{id} and /studio/{id} browse pages (#358 follow-up)."""
@@ -380,6 +585,7 @@ class DiscoverStudioParamsTests(unittest.IsolatedAsyncioTestCase):
         return httpx.MockTransport(handler)
 
     async def _run(self, coro_factory):
+        await tmdb.close()
         seen: list[httpx.Request] = []
         transport = self._capturing_transport(seen)
         with patch.object(

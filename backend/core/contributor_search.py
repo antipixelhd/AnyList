@@ -1,5 +1,6 @@
 """Bounded quick-search discovery using canonical contributors and existing providers."""
 import asyncio
+import hashlib
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSear
 KINDS = ('actor', 'staff', 'studio')
 PATHS = {'actor': 'actors', 'staff': 'person', 'studio': 'studio'}
 LIMIT = 8
+MAX_CANDIDATES = 8
 # Keep keystroke-triggered sorting from occupying the shared VPS's entire
 # connection pool. Waiting searches stay cancellable and do not spawn threads.
 _local_search_slots = asyncio.Semaphore(2)
@@ -92,7 +94,7 @@ def ranked_results(groups, term):
         works = item.get('_works', 0)
         if section == 'studio':
             recent = int((item.get('_latest') or '0').replace('-', ''))
-            return (0 if match < 2 else 1, -recent, -works, match, not bool(item.get('image')), name, item['key'])
+            return (match, -recognition, -works, -recent, not bool(item.get('image')), name, item['key'])
         return (match, -works if section == 'studio' else -recognition,
                 -recognition if section == 'studio' else -works,
                 not bool(item.get('image')), name, item['key'])
@@ -114,15 +116,21 @@ async def verified_people(db, viewer, groups, api_key):
     filters = await result_filters(db, viewer)
     settings = await db.get(GlobalSettings, 1)
     show_anime = settings is None or settings.show_anime
-    jobs = {}
+    jobs, summaries = {}, {}
     for section in ('actor', 'staff'):
-        for row in groups[section][:20]:
+        groups[section] = groups[section][:MAX_CANDIDATES]
+        for row in groups[section]:
             if row.get('_native'):
                 key, config = evidence_key('person', row['_native'], filters, show_anime)
                 jobs[key] = config
-    evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key))
+                summaries.setdefault(key, []).append((section, filters, show_anime))
+    evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key),
+        summaries=summaries)
     for section in ('actor', 'staff'):
-        local = await local_evidence(db, groups[section], section, filters, show_anime)
+        unresolved = [row for row in groups[section] if not (row.get('_native') and
+            (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
+            (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('complete'))]
+        local = await local_evidence(db, unresolved, section, filters, show_anime) if unresolved else {}
         output = []
         for row in groups[section]:
             key = evidence_key('person', row['_native'], filters, show_anime)[0] if row.get('_native') else None
@@ -138,13 +146,10 @@ async def verified_people(db, viewer, groups, api_key):
     return pending and bool(api_key)
 
 
-async def search_contributors(db, viewer, term, kind='all'):
+async def _discover_candidates(db, viewer, term, kind, key):
     groups = await local_matches(db, term, kind)
-    key = await settings_store.get_user_tmdb_key(db, viewer.id)
     if not key:
-        groups['studio'], _ = await verified_studios(db, viewer, groups['studio'], None)
-        await verified_people(db, viewer, groups, None)
-        return {'results': ranked_results(groups, term)}
+        return groups, False
 
     async def remote(company=False):
         try:
@@ -158,7 +163,7 @@ async def search_contributors(db, viewer, term, kind='all'):
         remote() if kind != 'studio' else asyncio.sleep(0, result=[]),
         remote(True) if kind in ('all', 'studio') else asyncio.sleep(0, result=[]))
     failed = people is None or companies is None
-    sources = [('person', row) for row in (people or [])[:20]] + [('company', row) for row in (companies or [])[:20]]
+    sources = [('person', row) for row in (people or [])[:MAX_CANDIDATES]] + [('company', row) for row in (companies or [])[:MAX_CANDIDATES]]
     native_ids = {str(row['id']) for _, row in sources if positive_id(row.get('id'))}
     mappings = (await db.execute(select(CatalogueIdentity, CatalogueEntity).join(
         CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id).where(
@@ -199,6 +204,28 @@ async def search_contributors(db, viewer, term, kind='all'):
         groups[section].append({**item, '_popularity': number(raw.get('popularity')),
             '_native':native, **({'_known_for':raw.get('known_for') or []} if section != 'studio' else {})})
         seen[section].add(identity)
+    return groups, failed
+
+
+_candidate_cache = tmdb._TTLCache(maxsize=128)
+
+
+async def search_contributors(db, viewer, term, kind='all'):
+    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    identity = (viewer.id, term.strip().casefold(), kind, hashlib.sha256(str(key).encode()).digest())
+    cached = _candidate_cache.get(identity)
+    if cached is None:
+        groups, failed = await _discover_candidates(db, viewer, term, kind, key)
+        if not failed:
+            _candidate_cache.set(identity, {'groups': groups}, 60)
+    else:
+        groups, failed = cached['groups'], False
+    # Re-evaluate current saved filters on every poll. Only name/identity discovery
+    # is cached; shared work evidence is independently versioned and leased.
+    for row in groups['studio']:
+        name = row.get('name', '').casefold()
+        query = term.casefold()
+        row['_match'] = 0 if name == query else 1 if name.startswith(query) else 2
     groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key)
     people_pending = await verified_people(db, viewer, groups, key)
     return {'results': ranked_results(groups, term), 'partial': failed,

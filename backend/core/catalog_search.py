@@ -3,18 +3,24 @@
 import re
 import math
 import asyncio
+import hashlib
 from difflib import SequenceMatcher
 
 from sqlalchemy import Float, func
+from core.result_categories import default_excluded_categories
+from core import tmdb
 
-EXCLUDABLE_CATEGORIES = {99, 10402, 10770, 10763, 10764, 10766, 10767}
+# A budget-exhausted batch must not impose the same wait on every keystroke.
+# This is retry scheduling, never evidence that a title fails the runtime rule.
+_runtime_retry = tmdb._TTLCache(maxsize=512)
+_RUNTIME_RETRY_SECONDS = 30
 
 
 async def result_filters(db, viewer):
     """Read all account result filters together; never partition provider caches."""
     from sqlalchemy import select
     from models.profile import UserProfileData
-    defaults = dict(min_runtime=30, excluded_genres=[])
+    defaults = dict(min_runtime=30, excluded_genres=default_excluded_categories())
     if viewer is None:
         return defaults
     row = (await db.execute(select(UserProfileData.minimum_movie_runtime,
@@ -24,16 +30,10 @@ async def result_filters(db, viewer):
     return dict(min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
 
 
-async def browse_preferences(db, viewer):
-    """Browse-only requirements stored in user settings JSON."""
-    from sqlalchemy import select
-    from models.users import UserSettings
-    defaults = {'require_release': False, 'require_poster': False}
-    if viewer is None:
-        return defaults
-    saved = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == viewer.id))
-    return {name: saved.get(name, default) if isinstance(saved, dict) else default
-            for name, default in defaults.items()}
+async def browse_preferences(db, viewer, media_type='movie', surface='popular', *, unfiltered=False):
+    from core.discovery_policy import viewer_policy
+    policy = await viewer_policy(db, viewer, media_type, surface, unfiltered=unfiltered)
+    return {'min_votes': policy.min_votes, 'min_popularity': policy.min_popularity}
 
 
 def title_runtime(item):
@@ -53,6 +53,73 @@ def known_result_metadata(item, media):
     if item.get('genre_ids') is not None and 'genres' not in item:
         merged.pop('genres', None)
     return merged
+
+
+def known_result_visible(item, media, media_type, *, show_anime, min_runtime=0, excluded_genres=()):
+    """A partial provider row cannot erase restrictions on an existing title."""
+    from core.browse import anime_visible
+    saved = {**(media.tmdb_data or {}), 'runtime': media.runtime or (media.tmdb_data or {}).get('runtime')}
+    merged = known_result_metadata(item, media)
+    if media.adult or saved.get('adult') or merged.get('adult'):
+        return False
+    return all(anime_visible(metadata, show_anime) and matches_result_filters(metadata, media_type,
+        min_runtime=min_runtime, excluded_genres=excluded_genres) for metadata in (saved, merged))
+
+
+async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=None):
+    """Fill missing movie runtimes only when needed by saved search policy.
+
+    Reuse known catalogue metadata first and TMDB's shared request/cache layer.
+    Unknown provider runtimes stay unknown; failures do not erase usable data.
+    """
+    if not min_runtime or not api_key:
+        return
+    semaphore = asyncio.Semaphore(4)
+    credential = hashlib.sha256(api_key.encode()).hexdigest()
+    retry_key = lambda item: (credential, item['id'])
+    if db is not None:
+        from datetime import datetime, timezone
+        from sqlalchemy import select
+        from models.catalogue import MetadataSnapshot
+        missing = [str(item['id']) for item in items if title_runtime(item) is None
+                   and not (item['id'] in known and (known[item['id']].runtime or title_runtime(known[item['id']].tmdb_data or {})))]
+        if missing:
+            snapshots = await db.scalars(select(MetadataSnapshot).where(
+                MetadataSnapshot.provider == 'tmdb', MetadataSnapshot.kind == 'movie',
+                MetadataSnapshot.external_id.in_(missing),
+                MetadataSnapshot.expires_at > datetime.now(timezone.utc).replace(tzinfo=None)))
+            runtimes = {row.external_id: title_runtime(row.payload or {}) for row in snapshots}
+            for item in items:
+                if title_runtime(item) is None and runtimes.get(str(item['id'])):
+                    item['runtime'] = runtimes[str(item['id'])]
+
+    async def load(item):
+        if title_runtime(item) is not None:
+            return
+        media = known.get(item['id'])
+        if media:
+            runtime = title_runtime({'runtime': media.runtime}) or title_runtime(media.tmdb_data or {})
+            if runtime is not None:
+                item['runtime'] = runtime
+                return
+        if _runtime_retry.get(retry_key(item)):
+            return
+        async with semaphore:
+            try:
+                data = await tmdb.get_movie_light(item['id'], api_key=api_key)
+                if title_runtime(data) is not None:
+                    item['runtime'] = data['runtime']
+            except Exception:
+                _runtime_retry.set(retry_key(item), {'deferred': True}, _RUNTIME_RETRY_SECONDS)
+
+    try:
+        await asyncio.wait_for(asyncio.gather(*(load(item) for item in {item['id']: item for item in items}.values())), timeout=.9)
+    except TimeoutError:
+        # Include queued work: another request should not immediately start the
+        # remaining fan-out after this batch exhausted its latency budget.
+        for item in items:
+            if title_runtime(item) is None:
+                _runtime_retry.set(retry_key(item), {'deferred': True}, _RUNTIME_RETRY_SECONDS)
 
 
 def exact_title_match(term, item):
@@ -194,40 +261,37 @@ def title_match_rank(term, title):
 def search_rank(term: str, item: dict, *, streaming_available: bool = False,
                 theatrical: bool = False) -> float:
     """One comparable search score for movies and series, using list metadata only."""
-    query = term.strip().casefold()
-    names = [str(item.get(field) or '').casefold() for field in
-             ('title', 'name', 'original_title', 'original_name')]
+    from core.discovery_policy import numeric
+    normalize = lambda value: ' '.join(re.findall(r'\w+', str(value or '').casefold()))
+    query = normalize(term)
+    names = [normalize(item.get(field)) for field in ('title', 'name', 'original_title', 'original_name')]
     names = [name for name in names if name]
-    if not names or not query:
+    if not query or not names:
         return 0.0
-    if query in names:
-        relevance = 40
-    elif any(name.startswith(query) for name in names):
-        relevance = 30
-    elif any(re.search(r'(?<!\w)' + re.escape(query), name) for name in names):
-        relevance = 20
-    elif any(query in name for name in names):
-        relevance = 12
-    else:
-        similarity = max(SequenceMatcher(None, query, name).ratio() for name in names)
-        relevance = 15 * similarity if similarity >= .5 else -30
-    votes = item.get('vote_count')
-    if votes is None:
-        votes = item.get('imdb_votes') or (item.get('imdb') or {}).get('votes')
-    def logarithmic_signal(value, weight):
-        try:
-            number = float(value or 0)
-            return weight * math.log10(max(0, number) + 1) if math.isfinite(number) else 0
-        except (TypeError, ValueError):
-            return 0
-    vote_weight = logarithmic_signal(votes, 5)
-    popularity_weight = logarithmic_signal(item.get('popularity'), 2)
-    poster_weight = .5 if item.get('poster_path') or item.get('poster') else 0
-    # These are alternative release signals. Stacking them gives movies a
-    # second bonus that series can never earn in combined search results.
-    available = streaming_available or theatrical
-    return round(relevance + vote_weight + popularity_weight +
-                 (15 if available else 0) + poster_weight, 3)
+    def match(name):
+        if name == query: return 1.0
+        if name.startswith(query): return .97
+        if re.search(r'(?<!\w)' + re.escape(query), name): return .92
+        if query in name: return .85
+        # A shared franchise token is insufficient evidence for a specific
+        # sequel query. Require fuzzy support for each token before prominence
+        # can amplify a result whose complete phrase did not match.
+        words = name.split()
+        coverage = sum(any(word.startswith(token) or
+                           SequenceMatcher(None, token, word).ratio() >= .72
+                           for word in words) for token in query.split()) / len(query.split())
+        return SequenceMatcher(None, query, name).ratio() * .9 * coverage
+    relevance = max(map(match, names))
+    if normalize(item.get('_provider_query')) == query and not any(
+            token in name.split() for token in query.split() for name in names):
+        relevance = max(relevance, .92)
+    # Popularity can outweigh an obscure exact name, but cannot rescue an
+    # unrelated title. No provider/streaming lookups are required to rank.
+    popularity = numeric(item.get('popularity')) or 0
+    votes = numeric(item.get('vote_count')) or numeric(item.get('imdb_votes')) or 0
+    recognition = 12 * math.log10(1 + popularity) + min(3, math.log10(1 + votes))
+    return round(25 * relevance + recognition * relevance ** 3 +
+                 (.1 if streaming_available or theatrical else 0), 3)
 
 
 def media_search_rank(term: str, item: dict, media_type: str) -> float:

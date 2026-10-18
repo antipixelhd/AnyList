@@ -4,6 +4,7 @@ import {predictionAllowed} from './predictive-loading';
 export type BrowseItem = {
   id: number | null; tmdb_id: number | null; type: string; title: string;
   poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
+  release_event?: string | null; release_season?: number | null; release_country?: string | null;
   list_status?: string | null; score?: number | null; rating_mode?: string;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];
 };

@@ -1,4 +1,4 @@
-export const MINIMUM_BROWSE_SKELETON_MS = 350;
+export const MINIMUM_BROWSE_SKELETON_MS = 0;
 
 /** Cached images paint immediately; slow images share the bounded skeleton timing. */
 export function prepareBrowsePoster(image: HTMLImageElement, signal: AbortSignal, readyPosters = new Set<string>()) {
@@ -45,7 +45,7 @@ export function prepareBrowsePoster(image: HTMLImageElement, signal: AbortSignal
 }
 
 /** Existing content stays readable; only missing content needs a skeleton. */
-export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement, now = () => performance.now()) {
+export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement, now = () => performance.now(), minimumMs = MINIMUM_BROWSE_SKELETON_MS) {
   let shownAt: number | undefined;
   const grid = skeleton.querySelector<HTMLElement>('[data-skeleton-grid]')!;
   const sections = skeleton.querySelector<HTMLElement>('[data-skeleton-sections]')!;
@@ -76,7 +76,7 @@ export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement, 
       skeleton.hidden = false;
     },
     remaining() {
-      return shownAt === undefined ? 0 : Math.max(0, MINIMUM_BROWSE_SKELETON_MS - (now() - shownAt));
+      return shownAt === undefined ? 0 : Math.max(0, minimumMs - (now() - shownAt));
     },
     handoff(covers: HTMLElement[]) {
       if (shownAt === undefined) return;

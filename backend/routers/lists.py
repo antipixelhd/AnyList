@@ -15,7 +15,7 @@ from models.media import Media
 from models.base import MediaType, PrivacyLevel
 from models.show import Show as ShowModel
 from models.users import UserSettings
-from dependencies import get_current_user_or_api_key, get_optional_user_or_api_key
+from dependencies import get_current_user_or_api_key
 from models.users import User
 from models.follows import Follow
 from models.global_settings import GlobalSettings
@@ -171,7 +171,7 @@ async def _attach_season_show_info(db: AsyncSession, media: dict) -> None:
 @router.get("/public")
 async def get_public_lists(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         # Anonymous visitor: this becomes the whole /lists page rather than a
@@ -275,7 +275,7 @@ async def create_list(
 async def get_list(
     list_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
         select(ListModel)

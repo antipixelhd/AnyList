@@ -1,21 +1,13 @@
 import { timelineGroups, type TimelineItem } from './browse-timeline-data';
 import { setLocalDateTime } from './date-time-dom';
 
-/** Keep the existing cards and month sections when pagination crosses a boundary. */
-export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, cards: HTMLElement[], items: Map<HTMLElement,T>) {
-  const existing = [...root.querySelectorAll<HTMLElement>('[data-browse-card]')];
-  const anchor = existing.find(card => {
-    const bounds = card.getBoundingClientRect();
-    return bounds.bottom > 0 && bounds.top < innerHeight;
-  });
-  const top = anchor?.getBoundingClientRect().top;
-  const byItem = new Map([...existing, ...cards].map(card => [items.get(card)!, card]));
+/** Provider pages share one chronological snapshot. Append new cards only;
+ * existing cards/headings keep their DOM positions and interaction state. */
+export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, cards: HTMLElement[], items: Map<HTMLElement,T>, ascending = false) {
+  const byItem = new Map(cards.filter(card => !root.contains(card)).map(card => [items.get(card)!, card]));
   const years = new Map([...root.querySelectorAll<HTMLElement>('[data-timeline-year]')].map(year => [year.dataset.timelineYear!, year]));
   const months = new Map([...root.querySelectorAll<HTMLElement>('[data-timeline-month]')].map(month => [month.dataset.timelineMonth!, month]));
-  const place = (parent: HTMLElement, child: HTMLElement, index: number) => {
-    if (parent.children[index] !== child) parent.insertBefore(child, parent.children[index] || null);
-  };
-  timelineGroups([...byItem.keys()].filter(Boolean)).forEach((group, index) => {
+  timelineGroups([...byItem.keys()].filter(Boolean), ascending).forEach(group => {
     let year = years.get(group.year);
     if (!year) {
       year = document.createElement('section');
@@ -27,10 +19,11 @@ export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, 
       const body = document.createElement('div');
       body.className = 'browse-timeline-months';
       year.append(heading, body);
+      root.append(year);
+      years.set(group.year, year);
     }
-    place(root, year, index);
     const body = year.querySelector<HTMLElement>('.browse-timeline-months')!;
-    group.months.forEach((group, index) => {
+    group.months.forEach(group => {
       let month = months.get(group.key);
       if (!month) {
         month = document.createElement('section');
@@ -42,14 +35,11 @@ export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, 
         const grid = document.createElement('div');
         grid.className = 'browse-grid';
         month.append(heading, grid);
+        body.append(month);
+        months.set(group.key, month);
       }
-      place(body, month, index);
       const grid = month.querySelector<HTMLElement>('.browse-grid')!;
-      group.items.forEach((item, index) => place(grid, byItem.get(item)!, index));
+      group.items.forEach(item => grid.append(byItem.get(item)!));
     });
   });
-  if (anchor && top !== undefined) {
-    const delta = anchor.getBoundingClientRect().top - top;
-    if (Math.abs(delta) > 1) scrollBy({top: delta, behavior: 'instant'});
-  }
 }

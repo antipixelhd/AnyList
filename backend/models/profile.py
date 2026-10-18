@@ -1,11 +1,13 @@
 from typing import TYPE_CHECKING
 from typing import Optional
+import json
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, PrivacyLevel
+from core.result_categories import default_excluded_categories
 
 if TYPE_CHECKING:
     from .users import User
@@ -21,8 +23,9 @@ class UserProfileData(Base):
     bio                 : Mapped[Optional[str]]        = mapped_column(String(5000))
     background_url      : Mapped[Optional[str]]        = mapped_column(String(2048))
     country             : Mapped[Optional[str]]        = mapped_column(String(2))
+    minimum_votes       : Mapped[int]                  = mapped_column(Integer, default=0, server_default="0", nullable=False)
     minimum_movie_runtime : Mapped[int]                = mapped_column(Integer, default=30, server_default="30", nullable=False)
-    excluded_categories : Mapped[list[int]]            = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
+    excluded_categories : Mapped[list[int]]            = mapped_column(JSONB, default=default_excluded_categories, server_default=json.dumps(default_excluded_categories()), nullable=False)
     movie_genres        : Mapped[Optional[list[str]]]  = mapped_column(JSONB)
     show_genres         : Mapped[Optional[list[str]]]  = mapped_column(JSONB)
     disliked_genres     : Mapped[Optional[list[str]]]  = mapped_column(JSONB)

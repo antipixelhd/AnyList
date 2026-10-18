@@ -27,8 +27,18 @@ async def main():
         gs.enable_logged_out_navigation=True
         fixtures=[('Severance','watching',8.5,12,'2022-02-18','/pPHpeI2X1qEd1CS1SeyrdhZ4qnT.jpg'),('The Bear','watching',8,18,'2022-06-23',None),('Dark','completed',9.5,26,'2017-12-01',None),('Better Call Saul','completed',9,63,'2015-02-08',None),('The Last of Us','paused',7.5,4,'2023-01-15',None),('Silo','planning',None,0,'2023-05-05',None)]
         for name,status,score,progress,released,poster in fixtures:
-            media=Media(title=name,media_type=MediaType.series,poster_path=poster,release_date=released,overview='Synthetic local preview entry. Metadata and scores are demonstration fixtures.',tmdb_data={'genres':[{'name':'Drama'}],'seasons':[{'name':'Season 1','season_number':1,'episode_count':10,'air_date':released}]})
-            db.add(media);await db.flush()
+            # Keep the preview Silo entry connected to its real provider identity.
+            tmdb_id=125988 if name=='Silo' else None
+            media=await db.scalar(select(Media).where(Media.tmdb_id==tmdb_id,Media.media_type==MediaType.series)) if tmdb_id else None
+            if media is None:
+                media=Media(tmdb_id=tmdb_id,title=name,media_type=MediaType.series,poster_path=poster,release_date=released,overview='Synthetic local preview entry. Metadata and scores are demonstration fixtures.',tmdb_data={'genres':[{'name':'Drama'}],'seasons':[{'name':'Season 1','season_number':1,'episode_count':10,'air_date':released}]})
+                db.add(media);await db.flush()
+            if media.tmdb_id:
+                from core.enrichment import enrich_media
+                from core.settings_store import get_server_tmdb_key
+                key=get_server_tmdb_key(gs)
+                if key:
+                    await enrich_media(media,api_key=key)
             db.add(TrackedEntry(user_id=user.id,media_id=media.id,status=status,manual_score=score,progress=progress,favorite=status=='completed'))
         await db.commit()
     await engine.dispose()

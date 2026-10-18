@@ -1,5 +1,8 @@
 import asyncio
+import copy
+import hashlib
 import time
+import weakref
 import httpx
 from core.config import settings
 
@@ -72,15 +75,90 @@ class _TTLCache:
         if time.monotonic() >= expires_at:
             del self._store[key]
             return None
-        return value
+        return copy.deepcopy(value)
 
     def set(self, key: tuple, value: dict, ttl: float) -> None:
         if key not in self._store and len(self._store) >= self._maxsize:
             self._store.pop(next(iter(self._store)))
-        self._store[key] = (time.monotonic() + ttl, value)
+        self._store[key] = (time.monotonic() + ttl, copy.deepcopy(value))
 
 
 _cache = _TTLCache()
+
+
+def _cached_response(url, params):
+    """Compose cached title parts without extending any component's expiry."""
+    params = params or {}
+    exact = _cache.get((url, tuple(sorted(params.items()))))
+    if exact is not None:
+        return exact
+    appended = params.get('append_to_response')
+    if not appended:
+        return None
+    parts = url.removeprefix(TMDB_BASE + '/').split('/')
+    if len(parts) != 2 or parts[0] not in ('movie', 'tv') or not parts[1].isdigit():
+        return None
+    base_params = tuple(sorted((key, value) for key, value in params.items() if key != 'append_to_response'))
+    base = _cache.get((url, base_params))
+    if base is None:
+        return None
+    for name in appended.split(','):
+        value = _cache.get((url + '/' + name, base_params))
+        if value is None:
+            return None
+        base[name] = value
+    return base
+
+def _cache_response(url, params, data, ttl):
+    """Share base title and appended evidence without mixing language variants."""
+    _cache.set((url, tuple(sorted((params or {}).items()))), data, ttl)
+    relative = url.removeprefix(TMDB_BASE + '/')
+    parts = relative.split('/')
+    if len(parts) != 2 or parts[0] not in ('movie', 'tv') or not parts[1].isdigit():
+        return
+    appended = (params or {}).get('append_to_response')
+    if not appended:
+        return
+    base_params = {key: value for key, value in params.items() if key != 'append_to_response'}
+    names = appended.split(',')
+    base = {key: value for key, value in data.items() if key not in names}
+    _cache.set((url, tuple(sorted(base_params.items()))), base, ttl)
+    for name in names:
+        payload = data.get(name)
+        if isinstance(payload, dict):
+            _cache.set((url + '/' + name, tuple(sorted(base_params.items()))), payload, ttl)
+
+
+# Each event loop owns its connections and cancellation state. Public payloads
+# are shared, but callers always receive independent mutable dictionaries.
+_transports = weakref.WeakKeyDictionary()
+_MAX_INFLIGHT = 128
+
+
+class _Transport:
+    def __init__(self):
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT),
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
+        self.slots = asyncio.Semaphore(16)
+        self.inflight = {}
+
+
+def _transport():
+    loop = asyncio.get_running_loop()
+    if loop not in _transports:
+        _transports[loop] = _Transport()
+    return _transports[loop]
+
+
+async def close():
+    """Close this application's pooled connections after background jobs stop."""
+    state = _transports.pop(asyncio.get_running_loop(), None)
+    if state is not None:
+        tasks = [entry[0] for entry in state.inflight.values()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await state.client.aclose()
 
 
 def get_headers(api_key: str = None) -> dict:
@@ -115,34 +193,73 @@ async def _get(
     cache_key = None
     if cache_ttl is not None:
         cache_key = (url, tuple(sorted((params or {}).items())))
-        cached = _cache.get(cache_key)
+        cached = _cached_response(url, params)
         if cached is not None:
             return cached
 
     if _breaker_blocked():
         raise TMDBUnavailable("TMDB circuit breaker open")
 
+    state = _transport()
+    if cache_key is None:
+        # Authentication validation and forced refreshes must neither share an
+        # in-flight task nor populate the public response cache.
+        async with state.slots:
+            return await _request(state.client, url, headers, params, max_retries)
+    # Do not let a failed/invalid credential poison a concurrent caller's
+    # request. Only completed public metadata is credential-independent.
+    auth = hashlib.sha256(str(sorted((headers or {}).items())).encode()).digest()
+    flight_key = (cache_key, auth, max_retries, cache_ttl)
+    entry = state.inflight.get(flight_key)
+    if entry is None and len(state.inflight) >= _MAX_INFLIGHT:
+        # Bound retained tasks even during a burst of unique searches.
+        async with state.slots:
+            cached = _cached_response(url, params)
+            if cached is not None:
+                return cached
+            data = await _request(state.client, url, headers, params, max_retries)
+            _cache_response(url, params, data, cache_ttl)
+            return data
+    if entry is None:
+        async def load():
+            async with state.slots:
+                data = await _request(state.client, url, headers, params, max_retries)
+                _cache_response(url, params, data, cache_ttl)
+                return data
+        entry = [asyncio.create_task(load()), 0]
+        state.inflight[flight_key] = entry
+    entry[1] += 1
+    try:
+        return copy.deepcopy(await asyncio.shield(entry[0]))
+    finally:
+        entry[1] -= 1
+        if entry[1] == 0:
+            state.inflight.pop(flight_key, None)
+            if not entry[0].done():
+                entry[0].cancel()
+            # Observe failures even when every awaiting caller was cancelled.
+            entry[0].add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+
+
+async def _request(client, url, headers, params, max_retries):
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(_HTTP_TIMEOUT)) as client:
-                r = await client.get(url, headers=headers or {}, params=params)
-                if r.status_code == 429:
-                    from core.catalogue_providers import retry_after_seconds
-                    wait = retry_after_seconds(r.headers.get("Retry-After", ''), 2 ** (attempt + 1))
-                    last_exc = httpx.HTTPStatusError(
-                        "429 Too Many Requests", request=r.request, response=r
-                    )
-                    if wait > 5:
-                        raise last_exc
-                    await asyncio.sleep(wait)
-                    continue
-                r.raise_for_status()
-                data = r.json()
-                if cache_key is not None:
-                    _cache.set(cache_key, data, cache_ttl)
-                _breaker_record_success()
-                return data
+            r = await client.get(url, headers=headers or {}, params=params)
+            if r.status_code == 429:
+                from core.catalogue_providers import retry_after_seconds
+                wait = retry_after_seconds(r.headers.get("Retry-After", ''), 2 ** (attempt + 1))
+                last_exc = httpx.HTTPStatusError(
+                    "429 Too Many Requests", request=r.request, response=r
+                )
+                if wait > 5:
+                    raise last_exc
+                await asyncio.sleep(wait)
+                continue
+            r.raise_for_status()
+            data = r.json()
+            _breaker_record_success()
+            return data
         except _RETRYABLE as e:
             last_exc = e
             if attempt < max_retries:

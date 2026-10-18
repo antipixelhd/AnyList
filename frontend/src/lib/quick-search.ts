@@ -1,10 +1,9 @@
 
 import { editorStore, type EditorTitle } from './editor-store';
-  import { showDialog, closeDialog, reveal } from './ui-motion';
+  import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,rankCombinedMedia,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
-import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference, searchStreamingCountry } from './streaming-region';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -18,13 +17,16 @@ export function mountQuickSearch() {
   const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
   if (!dialog || !openButton) return;
   mountedDialog=dialog;
+  const searchReader=createQuickSearchReader(pageListeners.signal);
+  document.addEventListener('anylist:cache-invalidated',()=>searchReader.clear(),{signal:pageListeners.signal});
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
   const mobile=matchMedia('(max-width:650px)');
+  const combined=()=>dialog.dataset.combined==='yes';
   const tabs: ReadonlyArray<{kind:SearchSection;label:string}> = [
-    {kind:'all',label:'Movies & Series'}, {kind:'actor',label:'Actors'},
+    {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'actor',label:'Actors'},
     {kind:'staff',label:'Crew'}, {kind:'studio',label:'Studios'},
   ];
-  let activeTab:SearchSection='all';
+  let activeTab:SearchSection=combined()?'all':'movie';
   const tabTitle=dialog.querySelector<HTMLElement>('[data-search-tab-title]')!;
   const tabButtons=[...dialog.querySelectorAll<HTMLButtonElement>('[data-search-tab-step]')];
   const tabMarkers=[...dialog.querySelectorAll<HTMLElement>('[data-search-tab-marker]')];
@@ -49,7 +51,7 @@ export function mountQuickSearch() {
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
   const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
-  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0);
+  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined());
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
   function updateTabs(available=availableTabs()) {
     activeTab=resolvedQuickSearchTab(activeTab,available);
@@ -145,9 +147,9 @@ export function mountQuickSearch() {
     state.textContent = message;
     state.hidden = !message;
   }
-  function render(updated?:'movie'|'series'|'contributors', tabChange=false) {
-    if(updated==='movie'||updated==='series'){
-      fill(updated,latest[updated]);fill('all', rankCombinedMedia(latest.movie, latest.series));
+  function render(updated?:'titles'|'contributors') {
+    if(updated==='titles'){
+      fill('movie',latest.movie);fill('series',latest.series);fill('all', rankCombinedMedia(latest.movie, latest.series));
     }
     if(updated==='contributors')for(const kind of ['actor','staff','studio'] as const)fillContributors(kind);
     const counts=resultCounts();
@@ -159,9 +161,7 @@ export function mountQuickSearch() {
       if (section) section.hidden = !visible.includes(kind);
     }
     if (resultShell) {
-      const wasHidden=resultShell.hidden;
       resultShell.hidden = !visible.length;
-      if (wasHidden&&!resultShell.hidden&&!tabChange) reveal(resultShell);
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
@@ -173,7 +173,7 @@ export function mountQuickSearch() {
     direction??=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
     activeTab=next;
     updateTabs();
-    if ((input?.value.trim().length||0)>=2) render(undefined,true);
+    if ((input?.value.trim().length||0)>=2) render();
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (!mobile.matches||matchMedia('(prefers-reduced-motion:reduce)').matches) return;
     const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};
@@ -202,20 +202,28 @@ export function mountQuickSearch() {
     clearTimeout(progressTimer);
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
-      const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part=>part.trim())
-        .find(part=>part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length+1));
-      const requests=quickSearchRequests(query,searchStreamingCountry(dialog?.dataset.accountCountry,savedRegion,deviceStreamingCountry()));pending=requests.length;
+      const requests=quickSearchRequests(query);pending=requests.length;
+      const settleTitles = createQuickTitleBatch<SearchResult>();
       updateTabs();
       await Promise.all(requests.map(async request=>{
+        let titleRows: SearchResult[] = [];
         try{
-          await readQuickSearch(request,current.signal,data=>{
+          await searchReader.read(request,current.signal,data=>{
             if(controller!==current||current.signal.aborted)return;
             if(request.kind==='contributors'){contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;}
-            else latest[request.kind]=unique(data.results||[]);
-            render(request.kind);
+            else titleRows=unique(data.results||[]);
+            if(request.kind==='contributors')render('contributors');
           });
         }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
-        finally{if(controller===current&&!current.signal.aborted){pending--;if(request.kind==='movie'||request.kind==='series')mediaPending--;render();}}
+        finally{if(controller===current&&!current.signal.aborted){
+          pending--;
+          if(request.kind==='movie'||request.kind==='series'){
+            mediaPending--;
+            const batch=settleTitles(request.kind,titleRows);
+            if(batch){latest=batch;render('titles');}
+          }
+          render();
+        }}
       }));
     } catch (cause) {
       if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
@@ -225,7 +233,7 @@ export function mountQuickSearch() {
     clearTimeout(timer);
     clearTimeout(progressTimer);progress?.classList.remove('visible');
     controller?.abort();
-    activeTab='all';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
+    activeTab=combined()?'all':'movie';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (input) input.value = '';
     latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=0;
@@ -273,7 +281,7 @@ export function mountQuickSearch() {
     if (announcement) announcement.textContent = '';
     showState('');
     updateTabs();
-    timer = window.setTimeout(search, 180);
+    timer = window.setTimeout(search, 60);
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
     const direction=Number(button.dataset.searchTabStep);
@@ -298,6 +306,11 @@ export function mountQuickSearch() {
   },{passive:false,signal:pageListeners.signal});
   dialog.addEventListener('touchcancel',()=>{touchStart=null;},{signal:pageListeners.signal});
   mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open&&(input?.value.trim().length||0)>=2)render();},{signal:pageListeners.signal});
+  document.addEventListener('anylist:combine-lists-changed',event=>{
+    dialog.dataset.combined=(event as CustomEvent<{combineLists:boolean}>).detail.combineLists?'yes':'no';
+    if((input?.value.trim().length||0)>=2)render();
+    else updateTabs();
+  },{signal:pageListeners.signal});
   pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }

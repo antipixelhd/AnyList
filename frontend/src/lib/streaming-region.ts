@@ -34,6 +34,14 @@ export function searchStreamingCountry(accountCountry: string | null | undefined
   return (preference?.manual ? preference.country : undefined) || streamingCountry(accountCountry) || preference?.country || deviceCountry;
 }
 
+export function rememberDeviceRegion(cookie = document.cookie, detected = deviceStreamingCountry()) {
+  const value = cookie.split(';').map(part => part.trim()).find(part => part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length + 1);
+  const saved = streamingRegionPreference(value);
+  if (saved?.manual || !detected) return saved;
+  if (saved?.country !== detected) document.cookie = `${STREAMING_REGION_COOKIE}=auto.${detected}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+  return { country: detected, manual: false };
+}
+
 export function deviceStreamingCountry(timeZone?: string, languages?: readonly string[]): string | undefined {
   let zone = timeZone;
   if (zone === undefined) {

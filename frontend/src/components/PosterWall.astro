@@ -1,7 +1,7 @@
 ---
 // Decorative full-viewport poster-wall background, shared by /login and /link.
-// Pulls a cached snapshot of trending posters (public endpoint); falls back to
-// gradient tiles when the instance has no TMDB key yet. Sits behind page
+// Pulls a cached snapshot of trending posters; falls back to gradient tiles
+// when no authenticated request is available. Sits behind page
 // content at z-0 with a theme-aware wash over it for legibility.
 import { api } from "../lib/api";
 import { responsiveArtwork } from "../lib/responsive-artwork";

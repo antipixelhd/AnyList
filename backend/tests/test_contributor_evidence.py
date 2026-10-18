@@ -16,10 +16,11 @@ def film(**values):
 
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
-    def test_person_evidence_is_shared_across_filters_but_studio_variants_preserve_them(self):
-        other = {**FILTERS, 'min_runtime':1000}
+    def test_raw_evidence_is_shared_across_filters_and_company_groups(self):
+        other = {**FILTERS, 'excluded_genres':[99], 'min_popularity':1000}
         self.assertEqual(evidence.evidence_key('person',1,FILTERS,True), evidence.evidence_key('person',1,other,False))
-        self.assertNotEqual(evidence.evidence_key('studio',1,FILTERS,True), evidence.evidence_key('studio',1,other,True))
+        self.assertEqual(evidence.evidence_key('studio',1,FILTERS,True), evidence.evidence_key('studio',1,other,False))
+        self.assertNotEqual(evidence.evidence_key('studio',1,FILTERS,True), evidence.evidence_key('studio',1,{**FILTERS,'min_runtime':1000},True))
         self.assertEqual(evidence.evidence_key('studio',429,FILTERS,True),evidence.evidence_key('studio',9993,FILTERS,True))
 
     def test_visibility_role_filters_deduplication_and_unknown_are_distinct(self):
@@ -30,6 +31,19 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence.work_summary({'cast':rows},'actor',FILTERS,True)['works'],1)
         anime = film(genre_ids=[16],original_language='ja')
         self.assertEqual(evidence.work_summary({'cast':[anime]},'actor',FILTERS,False)['works'],0)
+
+    def test_policy_negative_summaries_reuse_credit_scan_and_expire_with_evidence(self):
+        evidence._summary_cache._store.clear()
+        payload={'cast':[film(runtime=10)],'complete':True,'_fresh':True,
+                 '_cache_identity':['person',1,'v3','expiry-1']}
+        with patch.object(evidence,'eligible_work',wraps=evidence.eligible_work) as check:
+            self.assertEqual(evidence.work_summary(payload,'actor',FILTERS,True)['works'],0)
+            self.assertEqual(evidence.work_summary(payload,'actor',FILTERS,True)['works'],0)
+            self.assertEqual(check.call_count,1)
+            self.assertEqual(evidence.work_summary(payload,'actor',{**FILTERS,'min_runtime':0},True)['works'],1)
+            self.assertEqual(check.call_count,2)
+            evidence.work_summary({**payload,'_fresh':False},'actor',FILTERS,True)
+            self.assertEqual(check.call_count,3)
 
     async def test_verification_fetches_person_once_and_preserves_both_roles(self):
         profile={'id':7,'combined_credits':{'cast':[film()],'crew':[film(job='Director')]}}
@@ -55,10 +69,33 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(series.await_count,1)
         self.assertEqual(movies.call_args.kwargs['with_companies'],'429|9993|165407')
 
+    async def test_studio_sample_uses_popularity_and_keeps_provider_runtime_without_personal_categories(self):
+        _,config=evidence.evidence_key('studio',7,{'min_runtime':90,'excluded_genres':[99],'min_popularity':25},False)
+        provider=AsyncMock(return_value={'results':[film(popularity=80,genre_ids=[99])],'total_pages':1})
+        with patch.object(evidence.tmdb,'discover_movies',provider),patch.object(evidence.tmdb,'discover_shows',provider):
+            payload=await evidence.load_evidence({'kind':'studio','config':config},'key')
+        movie_call=provider.await_args_list[0].kwargs
+        self.assertEqual(movie_call['minimum_runtime'],90)
+        self.assertEqual(movie_call['excluded_genre_ids'],[])
+        self.assertEqual(movie_call['sort_by'],'popularity.desc')
+        self.assertEqual(evidence.work_summary(payload,'studio',{'min_runtime':90,'excluded_genres':[99],'min_popularity':25},False)['works'],0)
+        self.assertGreater(evidence.work_summary(payload,'studio',{'min_runtime':90,'excluded_genres':[],'min_popularity':25},True)['works'],0)
+
     async def test_malformed_provider_data_is_not_verified_empty(self):
         with patch.object(evidence.tmdb,'get_person',AsyncMock(return_value={'id':7})):
             with self.assertRaises(ValueError):
                 await evidence.load_evidence({'kind':'person','native_id':7},'key')
+
+    async def test_studio_eligibility_has_a_lifetime_budget_when_every_work_is_excluded(self):
+        job={'kind':'studio','native_id':7,'config':{'companies':[7], 'filters':FILTERS,'show_anime':True}}
+        provider=AsyncMock(return_value={'results':[], 'total_pages':500})
+        with patch.object(evidence.tmdb,'discover_movies',provider),patch.object(evidence.tmdb,'discover_shows',provider):
+            first=await evidence.load_evidence(job,'key')
+            last=await evidence.load_evidence({**job,'payload':first},'key')
+        self.assertTrue(last['complete'])
+        self.assertEqual(last['scope'],'eligibility_sample')
+        self.assertEqual(last['pages'],{'movie':None,'series':None})
+        self.assertEqual(provider.await_count,4)
 
     async def test_actor_full_credits_override_shortlist_and_empty_results_stay_out(self):
         from core import contributor_search as search
@@ -75,3 +112,16 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
             pending=await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),SimpleNamespace(id=1),groups,'key')
         self.assertTrue(pending)
         self.assertEqual([r['name'] for r in groups['actor']],['Beyond shortlist','Known'])
+
+    async def test_quick_people_verification_bounds_jobs_and_local_candidates(self):
+        from core import contributor_search as search
+        groups = {section: [{'key': f'tmdb:{i}', '_native': i, '_known_for': [film(job='Director')]}
+                           for i in range(1, 31)] for section in ('actor', 'staff')}
+        with patch.object(search, 'result_filters', AsyncMock(return_value=FILTERS)), \
+             patch.object(search, 'local_evidence', AsyncMock(return_value={})) as local, \
+             patch.object(search, 'cached_evidence', AsyncMock(return_value=({}, True))) as cached:
+            await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),
+                SimpleNamespace(id=1), groups, 'key')
+        self.assertEqual(len(cached.await_args.args[1]), 8)
+        self.assertEqual([len(call.args[1]) for call in local.await_args_list], [8, 8])
+        self.assertEqual([len(group) for group in groups.values()], [8, 8])

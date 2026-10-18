@@ -243,3 +243,12 @@ body.tracker .media-detail .lab-public-score h2 { font-size:14px; font-weight:60
 @media (hover:none),(pointer:coarse) { .media-detail :is(.lab-person,.lab-related-card,.lab-similar-grid img,.lab-poster,.lab-gallery img,.lab-art-image img):hover { transform:none; }.media-detail .lab-person:hover { background:var(--panel); } }
 @media (prefers-reduced-motion:reduce) { .media-scroll-reveal { translate:none; opacity:1; } }
 .media-detail .media-credit-episodes { display:inline-block; margin-top:3px; padding:2px 6px; border-radius:5px; background:var(--panel); color:var(--muted); font-size:.75rem; }
+
+/* Title visibility owns its color and icon; hover must not imply enabled. */
+.media-detail [data-episode-spoilers],
+.media-detail [data-episode-spoilers]:hover { color: var(--lab-muted); }
+.media-detail [data-episode-spoilers][aria-pressed=true] { color: var(--blue); }
+[data-episode-spoilers] [data-episode-titles-shown],
+[data-episode-spoilers][aria-pressed=true] [data-episode-titles-hidden] { display: none; }
+[data-episode-spoilers][aria-pressed=true] [data-episode-titles-shown] { display: inline-flex; }
+[data-episode-spoilers] [data-episode-titles-hidden] { line-height: 0; }

@@ -27,7 +27,7 @@ from models.episode_order import EpisodeOrderMapping, UserShowEpisodeOrder
 from models.rewatch import RewatchProgress
 
 
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, ANON_USER_ID
+from dependencies import get_current_user, get_current_user_or_api_key, ANON_USER_ID
 from core import tmdb
 from core import tvdb as tvdb_client
 from core.episode_order import (
@@ -805,7 +805,7 @@ async def get_active_episode_order_job(
 async def get_show(
     series_tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1328,7 +1328,7 @@ async def get_show(
 async def get_show_recommendations(
     series_tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Fetch series recommendations from TMDB and enrich with state."""
     if current_user is None:
@@ -1368,7 +1368,7 @@ async def get_show_season(
     series_tmdb_id: int,
     season_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1793,7 +1793,7 @@ async def get_episode_detail(
     season_number: int,
     episode_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -2183,7 +2183,7 @@ async def refresh_show_metadata(
 async def get_tvdb_show(
     tvdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -2519,7 +2519,7 @@ async def get_tvdb_season(
     tvdb_id: int,
     season_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -2880,7 +2880,7 @@ async def get_tvdb_episode(
     season_number: int,
     episode_number: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)

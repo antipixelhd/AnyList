@@ -18,7 +18,6 @@ let combineLists = true;
 let quietNotifications = 0;
 let attentionNotifications = 0;
 let avatarUrl: string | null = null;
-let accountCountry: string | null = null;
 
 if (user) {
   const [preferenceResult, notificationResult, profileResult] = await Promise.allSettled([
@@ -35,7 +34,6 @@ if (user) {
     quietNotifications = Math.max(0, (notifications.results?.length ?? 0) - attentionNotifications);
   }
   if (profileResult.status === 'fulfilled' && profileResult.value.avatar_url) avatarUrl = `/api/proxy${profileResult.value.avatar_url}`;
-  if (profileResult.status === 'fulfilled') accountCountry = profileResult.value.country;
 }
 
 const notificationTotal = quietNotifications + attentionNotifications;
@@ -85,7 +83,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   </div>
 </header>
 <MobileNavigation {...mobileNavigation} quiet={quietNotifications} attention={attentionNotifications} notificationLabel={notificationLabel}/>
-{user && <QuickSearch combineLists={combineLists} accountCountry={accountCountry} hideTrigger/>}
+{user && <QuickSearch combineLists={combineLists} hideTrigger/>}
 {user && <TrackingEditor />}
 {user && <script>
   import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';

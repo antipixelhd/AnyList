@@ -274,7 +274,7 @@ export function mountMediaDetail() {
   root.querySelector<HTMLButtonElement>('[data-episode-spoilers]')?.addEventListener('click',event=>{
     const button=event.currentTarget as HTMLButtonElement;
     const showing=root.dataset.spoilers!=='true';root.dataset.spoilers=String(showing);
-    button.setAttribute('aria-pressed',String(showing));button.querySelector('span:not(.ui-icon)')!.textContent=showing?'Titles shown':'Titles hidden';
+    button.setAttribute('aria-pressed',String(showing));button.querySelector('[data-episode-spoilers-label]')!.textContent=showing?'Titles shown':'Titles hidden';
     paintEpisodeTitles();
   },{signal});
   root.querySelector<HTMLInputElement>('[data-season-average]')?.addEventListener('change',async event=>{

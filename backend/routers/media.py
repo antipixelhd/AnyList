@@ -11,7 +11,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, Query, HTTPException, Request
 from fastapi.responses import Response
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,7 @@ from core.translations import (
     upsert_media_translation,
     apply_translations,
 )
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, get_optional_user, ANON_USER_ID, require_admin
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, ANON_USER_ID, require_admin
 from models.users import User, UserSettings
 from models.show import Show as ShowModel
 
@@ -247,7 +247,7 @@ async def search_media(
     page: int = Query(1, ge=1),
     in_library: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
         await media_presentation.require_anon_nav_allowed(db)
@@ -1673,7 +1673,7 @@ async def get_media_details(
     type: MediaType,
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Unified endpoint for Movies and Episodes details."""
     if current_user is None:
@@ -1980,7 +1980,7 @@ async def get_media_recommendations(
     type: MediaType,
     tmdb_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user_or_api_key),
+    current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Fetch movie/series recommendations from TMDB and enrich with state."""
     if current_user is None:
@@ -2029,12 +2029,12 @@ async def get_media_recommendations(
 
 from fastapi.responses import FileResponse, RedirectResponse
 
-async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db)) -> int | None:
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+async def verify_image_token(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    api_key: str | None = Query(None, description="AnyList API key"),
+    x_api_key: str | None = Header(None, alias="X-Api-Key"),
+) -> int:
     token = None
     auth = request.headers.get("Authorization")
     if auth and auth.startswith("Bearer "):
@@ -2047,19 +2047,14 @@ async def verify_image_token(request: Request, db: AsyncSession = Depends(get_db
             if match:
                 token = urllib.parse.unquote(match.group(1))
 
-    if not token:
-        # Poster/backdrop images carry no per-user data (just a TMDB path), so
-        # once the admin opts into anonymous browsing, letting those pages
-        # load images without a session is safe too.
-        gs = await settings_store.get_global_settings(db)
-        if gs and gs.enable_logged_out_navigation:
-            return None
-        raise credentials_exception
-
-    user = await get_optional_user(db=db, token=token)
-    if user is None:
-        raise credentials_exception
-    return user.id
+    user = await get_optional_user(db=db, token=token) if token else None
+    authenticated = await get_current_user_or_api_key(
+        db=db,
+        jwt_user=user,
+        api_key=api_key,
+        x_api_key=x_api_key,
+    )
+    return authenticated.id
 
 
 @router.get("/image/{size}/{path:path}")

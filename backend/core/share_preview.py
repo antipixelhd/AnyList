@@ -1,4 +1,4 @@
-"""Anonymous-only preview projections, independent of the sharing viewer."""
+"""Preview projections for shareable content, independent of the viewing user."""
 import asyncio
 import hashlib
 import ipaddress

@@ -8,9 +8,10 @@ test('timeline requests retain every filter and use date ordering without mutati
   const values=new URLSearchParams('view=timeline&media_type=series&sort=score&genres=18&provider=8&region=DE&min_score=0&q=story&page=3&source=remote');
   const request=browseRequestParams(values,'2026-10-11');
   assert.equal(isCategoryView(values),false);assert.equal(request.get('sort'),'newest');assert.equal(request.get('end'),'2026-10-11');
+  assert.equal(request.get('timeline'),'true');
   for(const key of ['media_type','genres','provider','region','min_score','q','page','source'])assert.equal(request.get(key),values.get(key));
   assert.equal(request.has('view'),false);assert.equal(values.get('sort'),'score');
-  assert.equal(browseLayout(new URLSearchParams('sort=newest')),'timeline');
+  assert.equal(browseLayout(new URLSearchParams('sort=newest')),'grid');
   for(const query of ['view=timeline&status=upcoming','view=timeline&start=2027-01-01'])assert.equal(browseRequestParams(new URLSearchParams(query),'2026-10-11').has('end'),false);
   assert.equal(browseRequestParams(new URLSearchParams('view=timeline&end=2030-12-31'),'2026-10-11').get('end'),'2030-12-31');
 });
@@ -32,4 +33,14 @@ test('multiple pages share month and year groups, ordered newest first with unda
   assert.deepEqual(groups[0].months[0].items.map(item=>item.title),['Later','October']);
   assert.equal(groups.flatMap(year=>year.months.flatMap(month=>month.items)).length,items.length);
   assert.equal(items[0].title,'Earlier');
+});
+
+
+test('upcoming timeline shows nearest releases first and keeps equal-date provider order', () => {
+  const request = browseRequestParams(new URLSearchParams('view=timeline&sort=upcoming&region=DE'), '2026-10-18');
+  assert.equal(request.get('sort'), 'upcoming');
+  assert.equal(request.has('end'), false);
+  const entries = [{title:'Z',release_date:'2026-11-02'}, {title:'A',release_date:'2026-11-02'}, {title:'Next year',release_date:'2027-01-01'}];
+  assert.deepEqual(timelineGroups(entries, true).flatMap(y => y.months.flatMap(m => m.items)).map(i=>i.title), ['Z','A','Next year']);
+  assert.deepEqual(timelineGroups([...entries, {title:'Later page',release_date:'2026-11-02'}], true)[0].months[0].items.map(i=>i.title), ['Z','A','Later page']);
 });

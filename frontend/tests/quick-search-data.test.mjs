@@ -1,6 +1,80 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {quickSearchRequests,rankCombinedMedia,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
+
+test('warm titles reuse private dialog cache until expiry, invalidation or unmount',async()=>{
+  let calls=0, now=0;
+  const lifetime=new AbortController(), query=new AbortController();
+  const fetcher=async()=>({ok:true,json:async()=>({results:[++calls]})});
+  const reader=createQuickSearchReader(lifetime.signal,fetcher,()=>now);
+  const request={kind:'movie',url:'/movie?q=below&region=DE'};
+  const rows=[];
+  await reader.read(request,query.signal,data=>rows.push(data.results));
+  await reader.read(request,query.signal,data=>rows.push(data.results));
+  assert.deepEqual(rows,[[1],[1]]);
+  await reader.read({...request,url:'/movie?q=below&region=US'},query.signal,()=>{});
+  assert.equal(calls,2);
+  now=60001;
+  await reader.read(request,query.signal,()=>{});
+  assert.equal(calls,3);
+  reader.clear();
+  await reader.read(request,query.signal,()=>{});
+  assert.equal(calls,4);
+  lifetime.abort();
+  await reader.read(request,query.signal,()=>assert.fail('unmounted reader must not publish'));
+  const other=createQuickSearchReader(new AbortController().signal,fetcher,()=>now);
+  await other.read(request,query.signal,()=>{});
+  assert.equal(calls,5);
+});
+
+test('invalidated in-flight responses cannot refill the title cache',async()=>{
+  let release, calls=0;
+  const reader=createQuickSearchReader(new AbortController().signal,async()=>{
+    calls++;
+    if(calls===1)await new Promise(resolve=>release=resolve);
+    return {ok:true,json:async()=>({results:[]})};
+  });
+  const request={kind:'series',url:'/series?q=war'}, signal=new AbortController().signal;
+  const pending=reader.read(request,signal,()=>{});
+  reader.clear();release();await pending;
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,2);
+});
+
+test('search cache stays bounded, skips degraded results and retains completed contributors',async()=>{
+  let calls=0;
+  const reader=createQuickSearchReader(new AbortController().signal,async url=>({ok:true,json:async()=>{
+    calls++;
+    return {results:[],...(url.includes('degraded')?{notice:'Local matches only'}:{})};
+  }}));
+  const signal=new AbortController().signal;
+  for(let i=0;i<41;i++)await reader.read({kind:'movie',url:`/movie?q=${i}`},signal,()=>{});
+  await reader.read({kind:'movie',url:'/movie?q=0'},signal,()=>{});
+  assert.equal(calls,42);
+  for(const request of [{kind:'movie',url:'/degraded'},{kind:'contributors',url:'/people'}]){
+    await reader.read(request,signal,()=>{});
+    await reader.read(request,signal,()=>{});
+  }
+  assert.equal(calls,45);
+});
+
+test('combined title ordering publishes once after both categories settle in either order', () => {
+  for (const first of ['movie', 'series']) {
+    const settle = createQuickTitleBatch();
+    const second = first === 'movie' ? 'series' : 'movie';
+    assert.equal(settle(first, [{title:first, search_rank:1}]), undefined);
+    const batch = settle(second, [{title:second, search_rank:2}]);
+    assert.deepEqual(rankCombinedMedia(batch.movie, batch.series).map(row => row.title), [second, first]);
+    assert.equal(settle(first, [{title:'late replacement'}]), undefined);
+    assert.equal(batch[first][0].title, first);
+  }
+});
+
+test('a failed title source settles empty rather than suppressing the successful category', () => {
+  const settle = createQuickTitleBatch();
+  assert.equal(settle('series', [{title:'Below'}]), undefined);
+  assert.deepEqual(settle('movie'), {movie:[], series:[{title:'Below'}]});
+});
 
 test('pending contributor evidence renders immediately and refreshes only its own request',async()=>{
   const values=[],requests=[];
@@ -51,9 +125,23 @@ test('desktop shows only matching sections and respects combined media; mobile d
   const counts={all:3,movie:1,series:2,actor:2,staff:0,studio:1};
   assert.deepEqual(visibleQuickSearchSections(false,'all',true,counts),['all','actor','studio']);
   assert.deepEqual(visibleQuickSearchSections(false,'all',false,counts),['movie','series','actor','studio']);
-  assert.deepEqual(visibleQuickSearchSections(true,'all',false,counts),['all']);
+  assert.deepEqual(visibleQuickSearchSections(true,'all',false,counts),['movie']);
+  assert.deepEqual(visibleQuickSearchSections(true,'series',false,counts),['series']);
   assert.deepEqual(visibleQuickSearchSections(true,'studio',true,counts),['studio']);
   assert.deepEqual(visibleQuickSearchSections(true,'staff',true,counts),[]);
+});
+
+test('separate mobile lists navigate movies and series independently through loading and empty results',()=>{
+  const empty={all:0,movie:0,series:0,actor:0,staff:0,studio:0};
+  assert.deepEqual(availableQuickSearchTabs(empty,false,false,false),['movie','series','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(empty,true,true,false),['movie','series']);
+  const counts={...empty,all:2,series:2,actor:1};
+  const available=availableQuickSearchTabs(counts,true,false,false);
+  assert.deepEqual(available,['series','actor']);
+  assert.equal(resolvedQuickSearchTab('movie',available),'series');
+  assert.equal(steppedQuickSearchTab('series',available,1),'actor');
+  assert.equal(steppedQuickSearchTab('actor',available,1),'series');
+  assert.equal(resolvedQuickSearchTab('series',availableQuickSearchTabs(counts,true,false,true)),'all');
 });
 
 test('mobile navigation removes empty tabs, recovers selection, and wraps through available results',()=>{
@@ -67,4 +155,30 @@ test('mobile navigation removes empty tabs, recovers selection, and wraps throug
   assert.equal(steppedQuickSearchTab('studio',available,1),'actor');
   assert.equal(steppedQuickSearchTab('actor',['actor'],1),null);
   assert.equal(resolvedQuickSearchTab('staff',[]),'all');
+});
+
+
+test('completed empty contributor results are cached and invalidation immediately restores discovery', async () => {
+  let calls=0, now=0;
+  const reader=createQuickSearchReader(new AbortController().signal,async()=>{
+    calls++;return {ok:true,json:async()=>({results:{studio:[]},verification_pending:false})};
+  },()=>now);
+  const request={kind:'contributors',url:'/studio?q=obscure'}, signal=new AbortController().signal;
+  await reader.read(request,signal,()=>{});
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,1);
+  now=60001;
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,2);
+  reader.clear();
+  await reader.read(request,signal,()=>{});
+  assert.equal(calls,3);
+});
+
+test('unchanged contributor rows publish completion so pending responses never become a false terminal cache', async () => {
+  let calls=0;
+  const updates=[];
+  await readQuickSearch({kind:'contributors',url:'/studio'},new AbortController().signal,
+    data=>updates.push(data.verification_pending),async()=>({ok:true,json:async()=>({results:{studio:[]},verification_pending:++calls===1})}),async()=>{});
+  assert.deepEqual(updates,[true,false]);
 });
