@@ -4,7 +4,7 @@ import { editorStore, type EditorTitle } from './editor-store';
 import { responsiveArtwork } from './responsive-artwork';
 import {quickSearchRequests,rankCombinedMedia,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
-import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
+import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference, searchStreamingCountry } from './streaming-region';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -204,7 +204,7 @@ export function mountQuickSearch() {
     try {
       const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part=>part.trim())
         .find(part=>part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length+1));
-      const requests=quickSearchRequests(query,savedRegion?.country||deviceStreamingCountry());pending=requests.length;
+      const requests=quickSearchRequests(query,searchStreamingCountry(dialog.dataset.accountCountry,savedRegion,deviceStreamingCountry()));pending=requests.length;
       updateTabs();
       await Promise.all(requests.map(async request=>{
         try{

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deviceStreamingCountry, streamingCountry, streamingRegionPreference } from '../src/lib/streaming-region.ts';
+import { deviceStreamingCountry, streamingCountry, streamingRegionPreference, searchStreamingCountry } from '../src/lib/streaming-region.ts';
 
 test('streaming country uses the actual country behind the device time zone', () => {
   assert.equal(deviceStreamingCountry('Europe/Berlin', ['en-US']), 'DE');
@@ -16,4 +16,11 @@ test('streaming preference distinguishes a manual country from an automatic hint
   assert.equal(streamingRegionPreference('manual.123'), undefined);
   assert.equal(streamingCountry('DE'), 'DE');
   assert.equal(streamingCountry('Germany'), undefined);
+});
+
+test('search honors the account country before automatic device hints', () => {
+  assert.equal(searchStreamingCountry('DE',streamingRegionPreference('auto.US'),'US'),'DE');
+  assert.equal(searchStreamingCountry('DE',streamingRegionPreference('manual.AT'),'US'),'AT');
+  assert.equal(searchStreamingCountry(null,streamingRegionPreference('auto.US'),'DE'),'US');
+  assert.equal(searchStreamingCountry(null,undefined,'DE'),'DE');
 });

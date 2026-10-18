@@ -1,9 +1,9 @@
 ---
 import Icon from './Icon.astro';
-const { combineLists = true, hideTrigger = false } = Astro.props;
+const { combineLists = true, hideTrigger = false, accountCountry } = Astro.props;
 ---
 {!hideTrigger && <button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>}
-<dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
+<dialog class="quick-search-dialog" data-quick-search data-account-country={accountCountry} data-combined={combineLists ? 'yes' : 'no'} aria-labelledby="quick-search-heading">
   <h1 class="sr-only" id="quick-search-heading">Fast search</h1>
   <div class="quick-search-bar">
     <Icon name="search" />

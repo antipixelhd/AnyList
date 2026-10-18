@@ -127,6 +127,11 @@ function mountNetflixImport() {
   }
 
   function showError(message: string) {
+    if (remapDialog.open) {
+      remapState.textContent = message;
+      remapState.hidden = false;
+      return;
+    }
     showMessage(message, 'error');
   }
 

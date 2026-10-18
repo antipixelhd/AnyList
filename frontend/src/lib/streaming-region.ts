@@ -30,6 +30,10 @@ export function streamingRegionPreference(value: string | null | undefined): { c
   return match ? { country: match[2], manual: match[1] === 'manual' } : undefined;
 }
 
+export function searchStreamingCountry(accountCountry: string | null | undefined, preference: ReturnType<typeof streamingRegionPreference>, deviceCountry?: string): string | undefined {
+  return (preference?.manual ? preference.country : undefined) || streamingCountry(accountCountry) || preference?.country || deviceCountry;
+}
+
 export function deviceStreamingCountry(timeZone?: string, languages?: readonly string[]): string | undefined {
   let zone = timeZone;
   if (zone === undefined) {
