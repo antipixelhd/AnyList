@@ -448,11 +448,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     updateFooter();
     updateUrl();
     paintChips();
-    if (cached) loadingView.finish();
-    else if (!append) {
+    if (!append) {
       cancelUiMotion(region);
       grid.hidden = true;
       sections.hidden = true;
+      // Hide the old DOM before changing its layout. A cached first page may
+      // still need asynchronous viewport filling, so it also needs this handoff.
+      const view = field('view').value;
+      root.dataset.browseView = view;
+      grid.className = view === 'timeline' ? 'browse-timeline' : 'browse-grid';
       notice.textContent = "";
       loadingView.show(false, categoryView, field('view').value==='timeline');
     } else if (!field('q').value.trim()) {
@@ -675,8 +679,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     event.preventDefault();
     const view=link.dataset.browseLayout!;
     if(field('view').value===view)return;
-    field('view').value=view;root.dataset.browseView=view;
-    grid.className=view==='timeline'?'browse-timeline':'browse-grid';
+    field('view').value=view;
     changed();
   },{signal}));
   root
