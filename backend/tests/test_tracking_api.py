@@ -860,7 +860,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         results=payload['results']
         self.assertEqual([(row['username'],row['status']) for row in results],[(self.friend.username,'completed')])
         self.assertEqual(results[0]['user_id'],self.friend.id)
-        self.assertEqual(results[0]['display_name'],self.friend.username)
+        self.assertEqual(results[0]['display_name'],'Friendly Viewer')
         self.assertTrue(results[0]['has_avatar'])
         self.assertEqual(results[0]['key'],f'{self.friend.id}:{self.movie.id}:{now.date().isoformat()}')
         self.assertEqual(results[0]['payload']['episodes_watched'],1)
