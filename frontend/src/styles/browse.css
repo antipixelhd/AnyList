@@ -1008,3 +1008,6 @@
 ) {
   background: var(--dropdown-hover);
 }
+
+.browse-rereleases-toggle { display: flex; align-items: center; gap: .6rem; cursor: pointer; }
+.browse-rereleases-toggle input { width: 1rem; height: 1rem; accent-color: var(--accent); }

@@ -86,7 +86,8 @@ async def page(db, media_type, filters, *, show_anime=True, lower=None, upper=No
                 continue
             for event in events(raw, media_type, upcoming_only=upcoming,
                     include_returning=filters.get('include_returning', True),
-                    country=filters.get('cinema_country') or filters.get('region'), cinema=filters.get('cinema', False)):
+                    country=filters.get('cinema_country') or filters.get('region'), cinema=filters.get('cinema', False),
+                include_rereleases=filters.get('include_rereleases', False)):
                 if event['release_date'] != value or event['release_event'] in seen:
                     continue
                 bounds = window(value)

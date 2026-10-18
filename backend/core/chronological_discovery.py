@@ -117,7 +117,8 @@ async def _selection(media_type, key, filters, lower, upper, show_anime, term=''
             continue
         for event in events(item, media_type, upcoming_only=upcoming,
                 include_returning=filters.get('include_returning', True),
-                country=filters.get('cinema_country') or filters.get('region'), cinema=filters.get('cinema', False)):
+                country=filters.get('cinema_country') or filters.get('region'), cinema=filters.get('cinema', False),
+                include_rereleases=filters.get('include_rereleases', False)):
             bounds = window(event['release_date'])
             if not bounds or (lower and bounds[1].isoformat() < lower) or (upper and bounds[0].isoformat() > upper):
                 continue

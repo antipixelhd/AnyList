@@ -1,4 +1,4 @@
-const filters = ["q", "genres", "start", "end", "status", "provider", "cinema", "min_score"];
+const filters = ["q", "genres", "start", "end", "status", "provider", "cinema", "include_rereleases", "min_score"];
 export function browseLayout(values: URLSearchParams) { return values.get('view')==='timeline'?'timeline':'grid'; }
 export function genreSelectionLabel(value: string, genres: { id: number | string; name: string }[]) {
   const selected = value.split(',').filter(Boolean);

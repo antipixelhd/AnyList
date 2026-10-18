@@ -67,3 +67,13 @@ test("view-all links retain category dates and the selected media type and strea
     "/browse?sort=score&region=US",
   );
 });
+
+test('country rerelease opt-in survives timeline requests and pagination', () => {
+  const values = new URLSearchParams('include_rereleases=true&view=timeline&region=DE&page=2');
+  const request = browseRequestParams(values);
+  assert.equal(request.get('include_rereleases'), 'true');
+  assert.equal(request.get('region'), 'DE');
+  assert.equal(request.get('page'), '2');
+  assert.equal(isCategoryView(values), false);
+  assert.equal(browseRequestParams(new URLSearchParams()).has('include_rereleases'), false);
+});

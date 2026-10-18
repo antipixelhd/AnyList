@@ -71,10 +71,12 @@ class ReleaseEventTests(unittest.TestCase):
 
     def test_theatrical_rereleases_have_distinct_country_and_window_identities(self):
         movie={'id':1,'title':'A classic','theatrical_release_dates_by_country':{'DE':['2000-01-01','2020-01-01','2099-01-01','2099-02-01']}}
-        releases=events(movie,'movie',cinema=True,country='DE')
+        self.assertEqual([row['release_date'] for row in events(movie,'movie',cinema=True,country='DE')], ['2000-01-01'])
+        self.assertEqual(events(movie,'movie',cinema=True,country='DE',upcoming_only=True), [])
+        releases=events(movie,'movie',cinema=True,country='DE',include_rereleases=True)
         self.assertEqual(len(releases),4)
         self.assertEqual(len({row['release_event'] for row in releases}),4)
-        future=events(movie,'movie',cinema=True,country='DE',upcoming_only=True)
+        future=events(movie,'movie',cinema=True,country='DE',upcoming_only=True,include_rereleases=True)
         self.assertEqual([row['release_date'] for row in future],['2099-01-01'])
 
 

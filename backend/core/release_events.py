@@ -23,7 +23,7 @@ def future(value, *, upcoming=False, today=None):
     return bool(bounds and (bounds[0] > today or (bounds[1] >= today and upcoming)))
 
 
-def events(item, media_type, *, upcoming_only=False, include_returning=True, country=None, cinema=False):
+def events(item, media_type, *, upcoming_only=False, include_returning=True, country=None, cinema=False, include_rereleases=False):
     """Use explicit cached season identity. Never infer it from total season count."""
     title = item.get('title') or item.get('name') or ''
     original = item.get('first_air_date') if media_type == 'series' else item.get('release_date')
@@ -34,6 +34,8 @@ def events(item, media_type, *, upcoming_only=False, include_returning=True, cou
     if cinema and media_type == 'movie':
         from core.cinema_releases import theatrical_dates
         dates = theatrical_dates(item, country)
+        if not include_rereleases:
+            dates = dates[:1]
         dates = [value for value in dates if future(value)] if upcoming_only else dates
         candidates.extend((value, None, False) for value in dates)
     else:
@@ -47,6 +49,9 @@ def events(item, media_type, *, upcoming_only=False, include_returning=True, cou
                 local = theatrical_dates(item, country)
         if local:
             original = local[0]
+        if media_type == 'movie' and country and include_rereleases:
+            from core.cinema_releases import theatrical_dates
+            candidates.extend((value, None, False) for value in theatrical_dates(item, country) if value != original)
         if window(original):
             candidates.append((original, None, item.get('status') in ('Planned', 'In Production', 'Post Production')))
     if media_type == 'series' and include_returning:

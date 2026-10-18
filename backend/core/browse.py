@@ -215,7 +215,7 @@ def metadata_fields(data):
 def remote_params(
     media_type, *, page, genres, start, end, status, provider, region, sort,
     min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
-    min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True,
+    min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True, include_rereleases=False,
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_average.gte"] = min_score
@@ -291,7 +291,7 @@ def local_query(
     show_anime,
     mdblist_key=None,
     min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None,
-    min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True,
+    min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True, include_rereleases=False,
 ):
     query = select(Media).where(
         Media.media_type == MediaType(media_type), Media.adult.is_(False)
@@ -451,7 +451,7 @@ def local_query(
     return query.order_by(ordering['upcoming' if status == 'upcoming' and sort in ('popular', 'trending', 'newest') else sort], Media.id)
 
 
-def matches(item, *, media_type, genres, start, end, status, provider, region, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None, min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True):
+def matches(item, *, media_type, genres, start, end, status, provider, region, min_score=0, min_runtime=0, excluded_genres=(), cinema=False, cinema_country=None, min_votes=0, min_popularity=0, require_release=False, require_poster=False, audience_curation=True, include_returning=True, include_rereleases=False):
     if item.get("adult"):
         return False
     from core.discovery_policy import DiscoveryPolicy

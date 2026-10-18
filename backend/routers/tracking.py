@@ -1268,6 +1268,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  cinema: Annotated[bool, Query()] = False,
                  unfiltered: Annotated[bool, Query()] = False,
                  include_returning: Annotated[bool, Query(include_in_schema=False)] = True,
+                 include_rereleases: Annotated[bool, Query()] = False,
                  timeline: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
@@ -1298,7 +1299,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
             status=status, provider=provider, region=region, sort=sort, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
             **(await browse_preferences(db, viewer, media_type, 'search' if q.strip() else 'upcoming' if status == 'upcoming' else sort, unfiltered=unfiltered)),
             min_score=min_score, cinema=cinema and media_type=='movie', audience_curation=not unfiltered,
-            include_returning=include_returning,
+            include_returning=include_returning, include_rereleases=include_rereleases,
             cinema_country=country if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
