@@ -85,6 +85,30 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
+
+def _cached_response(url, params):
+    """Compose cached title parts without extending any component's expiry."""
+    params = params or {}
+    exact = _cache.get((url, tuple(sorted(params.items()))))
+    if exact is not None:
+        return exact
+    appended = params.get('append_to_response')
+    if not appended:
+        return None
+    parts = url.removeprefix(TMDB_BASE + '/').split('/')
+    if len(parts) != 2 or parts[0] not in ('movie', 'tv') or not parts[1].isdigit():
+        return None
+    base_params = tuple(sorted((key, value) for key, value in params.items() if key != 'append_to_response'))
+    base = _cache.get((url, base_params))
+    if base is None:
+        return None
+    for name in appended.split(','):
+        value = _cache.get((url + '/' + name, base_params))
+        if value is None:
+            return None
+        base[name] = value
+    return base
+
 def _cache_response(url, params, data, ttl):
     """Share base title and appended evidence without mixing language variants."""
     _cache.set((url, tuple(sorted((params or {}).items()))), data, ttl)
@@ -169,7 +193,7 @@ async def _get(
     cache_key = None
     if cache_ttl is not None:
         cache_key = (url, tuple(sorted((params or {}).items())))
-        cached = _cache.get(cache_key)
+        cached = _cached_response(url, params)
         if cached is not None:
             return cached
 
@@ -190,7 +214,7 @@ async def _get(
     if entry is None and len(state.inflight) >= _MAX_INFLIGHT:
         # Bound retained tasks even during a burst of unique searches.
         async with state.slots:
-            cached = _cache.get(cache_key)
+            cached = _cached_response(url, params)
             if cached is not None:
                 return cached
             data = await _request(state.client, url, headers, params, max_retries)

@@ -44,7 +44,8 @@ async def verified_studios(db, viewer, rows, api_key):
         if row.get('_native'):
             key, config = evidence_key('studio', row['_native'], filters, show_anime)
             jobs[key] = config
-    evidence, pending = await cached_evidence(db, jobs, viewer.id if viewer else None, enqueue=bool(api_key))
+    evidence, pending = await cached_evidence(db, jobs, viewer.id if viewer else None, enqueue=bool(api_key),
+        summaries={key: (('studio', filters, show_anime),) for key in jobs})
     # Fresh complete evidence is authoritative for this bounded sample, including
     # negative decisions. Only unknown/stale candidates need local credit reads.
     unresolved = [row for row in candidates if not (row.get('_native') and

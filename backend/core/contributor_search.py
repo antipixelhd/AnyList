@@ -116,14 +116,16 @@ async def verified_people(db, viewer, groups, api_key):
     filters = await result_filters(db, viewer)
     settings = await db.get(GlobalSettings, 1)
     show_anime = settings is None or settings.show_anime
-    jobs = {}
+    jobs, summaries = {}, {}
     for section in ('actor', 'staff'):
         groups[section] = groups[section][:MAX_CANDIDATES]
         for row in groups[section]:
             if row.get('_native'):
                 key, config = evidence_key('person', row['_native'], filters, show_anime)
                 jobs[key] = config
-    evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key))
+                summaries.setdefault(key, []).append((section, filters, show_anime))
+    evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key),
+        summaries=summaries)
     for section in ('actor', 'staff'):
         unresolved = [row for row in groups[section] if not (row.get('_native') and
             (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and

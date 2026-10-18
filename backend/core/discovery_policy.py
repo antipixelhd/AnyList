@@ -41,13 +41,21 @@ def tuning(preferences, media_type, surface, minimum_votes=0):
 
 
 async def viewer_policy(db, viewer, media_type, surface, *, unfiltered=False):
+    return (await viewer_policies(db, viewer, media_type, (surface,), unfiltered=unfiltered))[surface]
+
+
+async def viewer_policies(db, viewer, media_type, surfaces, *, unfiltered=False):
+    """Read one policy context for all sections, without caching private state."""
     if unfiltered:
-        return DiscoveryPolicy()
+        return {surface: DiscoveryPolicy() for surface in surfaces}
     from sqlalchemy import select
     from models.profile import UserProfileData
-    from models.users import UserSettings
+    from models.users import User, UserSettings
     votes, preferences = 0, {}
     if viewer:
-        votes = await db.scalar(select(UserProfileData.minimum_votes).where(UserProfileData.user_id == viewer.id)) or 0
-        preferences = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == viewer.id)) or {}
-    return tuning(preferences, media_type, surface, votes)
+        row = (await db.execute(select(UserProfileData.minimum_votes, UserSettings.preferences)
+            .select_from(User).outerjoin(UserProfileData, UserProfileData.user_id == User.id)
+            .outerjoin(UserSettings, UserSettings.user_id == User.id).where(User.id == viewer.id))).first()
+        if row:
+            votes, preferences = row[0] or 0, row[1] or {}
+    return {surface: tuning(preferences, media_type, surface, votes) for surface in surfaces}

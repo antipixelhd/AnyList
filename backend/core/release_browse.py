@@ -24,7 +24,7 @@ def remote_projection(item, kind):
 
 
 async def page(db, viewer, *, media_type, filters, key, show_anime, page_number, cursor=None,
-               source='', prefetched=None, size=24, term='', event_view=False):
+               source='', prefetched=None, size=24, term='', event_view=False, attach_context=True):
     from core.tracking_editor import attach_editor_context
     upcoming = filters['sort'] == 'upcoming' or filters.get('status') == 'upcoming'
     if source == 'remote' and not key:
@@ -108,7 +108,8 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
     for row in rows:
         row.update(list_status=None, score=None, rating_mode='manual')
     media_rows = {media.id: media for media in [*known, *(entry[0] for entry in local)]}
-    await attach_editor_context(db, viewer, rows, media_rows=list(media_rows.values()))
+    if attach_context:
+        await attach_editor_context(db, viewer, rows, media_rows=list(media_rows.values()))
     if term and not event_view:
         from core.catalog_search import media_search_rank
         provider_metadata = {item['id']: item for item in provider}

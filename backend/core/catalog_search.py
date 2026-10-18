@@ -3,10 +3,17 @@
 import re
 import math
 import asyncio
+import hashlib
 from difflib import SequenceMatcher
 
 from sqlalchemy import Float, func
 from core.result_categories import default_excluded_categories
+from core import tmdb
+
+# A budget-exhausted batch must not impose the same wait on every keystroke.
+# This is retry scheduling, never evidence that a title fails the runtime rule.
+_runtime_retry = tmdb._TTLCache(maxsize=512)
+_RUNTIME_RETRY_SECONDS = 30
 
 
 async def result_filters(db, viewer):
@@ -67,8 +74,9 @@ async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=Non
     """
     if not min_runtime or not api_key:
         return
-    from core import tmdb
     semaphore = asyncio.Semaphore(4)
+    credential = hashlib.sha256(api_key.encode()).hexdigest()
+    retry_key = lambda item: (credential, item['id'])
     if db is not None:
         from datetime import datetime, timezone
         from sqlalchemy import select
@@ -94,18 +102,24 @@ async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=Non
             if runtime is not None:
                 item['runtime'] = runtime
                 return
+        if _runtime_retry.get(retry_key(item)):
+            return
         async with semaphore:
             try:
                 data = await tmdb.get_movie_light(item['id'], api_key=api_key)
                 if title_runtime(data) is not None:
                     item['runtime'] = data['runtime']
             except Exception:
-                pass
+                _runtime_retry.set(retry_key(item), {'deferred': True}, _RUNTIME_RETRY_SECONDS)
 
     try:
         await asyncio.wait_for(asyncio.gather(*(load(item) for item in {item['id']: item for item in items}.values())), timeout=.9)
     except TimeoutError:
-        pass
+        # Include queued work: another request should not immediately start the
+        # remaining fan-out after this batch exhausted its latency budget.
+        for item in items:
+            if title_runtime(item) is None:
+                _runtime_retry.set(retry_key(item), {'deferred': True}, _RUNTIME_RETRY_SECONDS)
 
 
 def exact_title_match(term, item):

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 
 import test_statistics_pg as fixture
 from core import contributor_evidence as evidence
@@ -29,6 +29,50 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             result = await evidence.cached_evidence(db,{key:config},self.user_id)
         return key,result
 
+    async def test_cached_summaries_skip_payload_transfer_and_observe_policy_and_expiry(self):
+        evidence._summary_cache._store.clear()
+        key, config = evidence.evidence_key('person', 888, FILTERS, True)
+        expires = evidence.now() + timedelta(days=1)
+        async with self.Session() as db, db.begin():
+            db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                payload={'cast': [film(runtime=12)], 'complete': True}, expires_at=expires))
+        statements = []
+        def record(conn, cursor, statement, parameters, context, many):
+            statements.append(statement)
+        async def read(filters=FILTERS):
+            statements.clear()
+            async with self.Session() as db:
+                rows, _ = await evidence.cached_evidence(db, {key: config}, self.user_id, enqueue=False,
+                    summaries={key: (('actor', filters, True),)})
+            return rows[key]
+        event.listen(self.engine.sync_engine, 'before_cursor_execute', record)
+        try:
+            payload = await read()
+            self.assertEqual(len(statements), 2)
+            self.assertEqual(evidence.work_summary(payload, 'actor', FILTERS, True)['works'], 0)
+            payload = await read()
+            self.assertEqual(len(statements), 1)
+            self.assertNotIn('.payload', statements[0])
+            self.assertIn('_cached_summaries', payload)
+            # The request owns its tiny summary even if the shared TTL expires.
+            evidence._summary_cache._store.clear()
+            self.assertEqual(evidence.work_summary(payload, 'actor', FILTERS, True)['works'], 0)
+            permissive = {**FILTERS, 'min_runtime': 0}
+            self.assertIsNone(evidence.work_summary(payload, 'actor', permissive, True))
+            payload = await read(permissive)
+            self.assertEqual(len(statements), 2)
+            self.assertEqual(evidence.work_summary(payload, 'actor', permissive, True)['works'], 1)
+            async with self.Session() as db, db.begin():
+                await db.execute(update(ContributorEvidence).where(ContributorEvidence.native_id == 888).values(
+                    expires_at=evidence.now() - timedelta(seconds=1)))
+            payload = await read(permissive)
+            self.assertEqual(len(statements), 2)
+            self.assertFalse(payload['_fresh'])
+            self.assertNotIn('_cached_summaries', payload)
+            self.assertEqual(evidence.work_summary(payload, 'actor', permissive, True)['works'], 1)
+        finally:
+            event.remove(self.engine.sync_engine, 'before_cursor_execute', record)
+
     async def test_migration_round_trip_and_cross_request_deduplication(self):
         async with self.engine.begin() as conn:
             def migrate(sync):
@@ -41,6 +85,25 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),1)
             row=await db.scalar(select(ContributorEvidence))
             self.assertNotIn('key',row.config)
+
+    async def test_mixed_people_reuse_each_candidates_requested_role_summary(self):
+        evidence._summary_cache._store.clear()
+        jobs, summaries = {}, {}
+        async with self.Session() as db, db.begin():
+            for native, section in ((881, 'actor'), (882, 'staff')):
+                key, config = evidence.evidence_key('person', native, FILTERS, True)
+                jobs[key] = config
+                summaries[key] = ((section, FILTERS, True),)
+                db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                    payload={'cast': [film()], 'crew': [film(job='Director')], 'complete': True},
+                    expires_at=evidence.now() + timedelta(days=1)))
+        async with self.Session() as db:
+            rows, _ = await evidence.cached_evidence(db, jobs, self.user_id, summaries=summaries)
+            for key, ((section, filters, show_anime),) in summaries.items():
+                self.assertEqual(evidence.work_summary(rows[key], section, filters, show_anime)['works'], 1)
+        async with self.Session() as db:
+            rows, _ = await evidence.cached_evidence(db, jobs, self.user_id, summaries=summaries)
+            self.assertTrue(all('_cached_summaries' in row for row in rows.values()))
 
     async def test_parallel_workers_share_lease_and_persist_results_without_importing_titles(self):
         key,_=await self.queue()

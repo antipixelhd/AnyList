@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer
 
 from core import settings_store, tmdb
 from core.browse import anime_visible
@@ -56,9 +56,17 @@ def eligible_work(raw, kind, filters, show_anime, *, released=False):
     return policy.accepts(raw) and matches_result_filters(raw, kind, **personal) and anime_visible(raw, show_anime)
 
 
+def _summary_key(identity, section, filters, show_anime):
+    return (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime)
+
+
 def work_summary(payload, section, filters, show_anime):
     identity = payload.get('_cache_identity') if payload and payload.get('_fresh') and payload.get('complete') else None
-    key = (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime) if identity else None
+    key = _summary_key(identity, section, filters, show_anime) if identity else None
+    if payload and '_cached_summaries' in payload:
+        # Retain the request's snapshot even if its shared TTL expires between
+        # reading the evidence header and applying the result policy.
+        return payload['_cached_summaries'].get(key)
     if key:
         cached = _summary_cache.get(key)
         if cached is not None:
@@ -87,14 +95,41 @@ def _work_summary(payload, section, filters, show_anime):
     return {'works': len(visible), 'popularity': max((float(r.get('popularity') or 0) for r in visible.values()), default=0), 'latest': max((r.get('release_date') or r.get('first_air_date') or '' for r in visible.values()), default='')}
 
 
-async def cached_evidence(db, jobs, viewer_id, *, enqueue=True):
-    """One indexed read and one bounded upsert; no provider work on this path."""
+async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
+    """Read headers once, uncached payloads only, and admit bounded refresh work."""
     if not jobs:
         return {}, False
     table = ContributorEvidence
     current = now()
-    existing = { (row.kind, row.native_id, row.variant): row for row in await db.scalars(
-        select(table).where(tuple_(table.kind, table.native_id, table.variant).in_(jobs))) }
+    statement = select(table).where(tuple_(table.kind, table.native_id, table.variant).in_(jobs))
+    if summaries:
+        statement = statement.options(defer(table.payload))
+    existing = {(row.kind, row.native_id, row.variant): row for row in await db.scalars(statement)}
+    payloads, missing = {}, []
+    for key, row in existing.items():
+        requests = (summaries or {}).get(key, ())
+        if requests and row.expires_at and row.expires_at > current:
+            resolved = {}
+            for section, filters, show_anime in requests:
+                cache_key = _summary_key([*key, row.expires_at.isoformat()], section, filters, show_anime)
+                value = _summary_cache.get(cache_key)
+                if value is None:
+                    break
+                resolved[cache_key] = value
+            else:
+                payloads[key] = {'complete': True, '_cached_summaries': resolved}
+                continue
+        if summaries:
+            missing.append(key)
+        else:
+            payloads[key] = row.payload
+    if missing:
+        # Only uncached policies/evidence need the potentially huge JSON credits.
+        # Cache hits still read expiry/queue state, so edits and invalidation are
+        # observed without transferring the same filmographies on every poll.
+        payloads.update({(kind, native, variant): payload for kind, native, variant, payload in await db.execute(
+            select(table.kind, table.native_id, table.variant, table.payload).where(
+                tuple_(table.kind, table.native_id, table.variant).in_(missing)))})
     due = [key for key in jobs if key not in existing or
            ((existing[key].expires_at is None or existing[key].expires_at <= current)
             and (existing[key].next_attempt_at is None or existing[key].next_attempt_at <= current)
@@ -121,9 +156,9 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True):
                 pending = True
             await db.commit()
             _wake.set()
-    return {key: {**row.payload, '_fresh': bool(row.expires_at and row.expires_at > current),
-                           '_cache_identity': [*key, row.expires_at.isoformat() if row.expires_at else None]}
-            for key, row in existing.items() if row.payload is not None}, pending
+    return {key: {**payload, '_fresh': bool(existing[key].expires_at and existing[key].expires_at > current),
+                           '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}
+            for key, payload in payloads.items() if payload is not None}, pending
 
 
 async def local_evidence(db, rows, section, filters, show_anime):

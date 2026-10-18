@@ -258,6 +258,21 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(broad['partial'])
             self.assertEqual(len(rows), 1)
 
+    async def test_expensive_search_filters_only_enrich_candidates_without_known_exclusions(self):
+        raw=[{'id':1,'title':'Match popular','popularity':80,'genre_ids':[18]},
+             {'id':2,'title':'Match obscure','popularity':2,'genre_ids':[18]},
+             {'id':3,'title':'Match excluded','popularity':80,'genre_ids':[99]},
+             {'id':4,'title':'Match unknown'}]
+        async def detail(identifier, **kwargs):
+            return {'id':identifier,'title':'Match','popularity':80,'runtime':100,
+                    'watch/providers':{'results':{'US':{'flatrate':[{'provider_id':8}]}}}}
+        with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':1,'results':raw})), \
+             patch('core.tmdb.get_movie',AsyncMock(side_effect=detail)) as read:
+            _,rows=await remote_page('Match','movie','key',
+                {**FILTERS,'provider':8,'min_popularity':25,'excluded_genres':[99]},1)
+        self.assertEqual({call.args[0] for call in read.await_args_list},{1,4})
+        self.assertEqual({row['id'] for row in rows},{1,4})
+
     async def test_single_letter_search_does_not_scan_large_ranked_catalogue(self):
         feed=[{'id':i,'title':f'A movie {i}','imdb_votes':500} for i in range(1,10001)]
         with patch('core.tmdb.search_movies',AsyncMock(return_value={'total_pages':500,'results':[]})) as search, \
@@ -408,6 +423,7 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
 class BrowseFilterApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.db = AsyncMock()
+        self.db.scalar.return_value = None
         result = MagicMock()
         result.scalars.return_value.all.return_value = []
         self.db.execute.return_value = result
@@ -420,6 +436,7 @@ class BrowseFilterApiTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_current_user_or_api_key] = lambda: User(id=1, username='browse-test', password_hash='unused')
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         for target, value in [
+            ("routers.tracking.browse_preferences", {"min_votes": 0, "min_popularity": 0}),
             ("routers.tracking.catalog_access", None),
             ("routers.tracking.anime_is_visible", True),
             ("core.settings_store.get_user_tmdb_key", "key"),
@@ -649,6 +666,11 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             )
             for i in range(55)
         ]
+        # These pagination/ranking fixtures intentionally exercise the complete
+        # catalogue. Popularity policy has dedicated default/override tests.
+        from models.users import UserSettings
+        self.db.add_all([UserSettings(user_id=user.id, preferences={'minimum_popularity': 0})
+                         for user in (self.owner, self.other)])
         self.db.add_all(self.movies)
         await self.db.flush()
         self.db.add_all(
@@ -1071,6 +1093,11 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_popularity_preference_defaults_persists_and_show_all_bypasses(self):
         from core.discovery_policy import viewer_policy
+        from models.users import UserSettings
+        from sqlalchemy import select
+        settings = await self.db.scalar(select(UserSettings).where(UserSettings.user_id == self.owner.id))
+        settings.preferences = {}
+        await self.db.flush()
         response = await self.client.get('/tracking/preferences')
         self.assertEqual(response.json()['minimum_popularity'], 25)
         for value in (30, 0):

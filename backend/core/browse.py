@@ -147,9 +147,12 @@ async def browse_sections(
         }
         for _, values in specs
     ]
-    from core.catalog_search import browse_preferences
+    from core.discovery_policy import viewer_policies
+    policies = await viewer_policies(db, viewer, media_type,
+        tuple(values['sort'] for values in filters), unfiltered=unfiltered)
     for values in filters:
-        values.update(await browse_preferences(db, viewer, media_type, values['sort'], unfiltered=unfiltered))
+        policy = policies[values['sort']]
+        values.update(min_votes=policy.min_votes, min_popularity=policy.min_popularity)
     # Fetch remote feeds concurrently, but use the shared database session sequentially.
     semaphore = asyncio.Semaphore(2)
 
@@ -186,6 +189,7 @@ async def browse_sections(
             key=key,
             mdblist_key=mdblist_key,
             prefetched=remote,
+            attach_context=False,
             **full_filters,
         )
         sections.append(
@@ -193,6 +197,10 @@ async def browse_sections(
         )
         if page.get("notice"):
             notices.append(page["notice"])
+    # Only six cards per section are rendered. Read viewer state once for those
+    # cards, rather than enriching four full pages and discarding most of them.
+    from core.tracking_editor import attach_editor_context
+    await attach_editor_context(db, viewer, [row for section in sections for row in section['results']])
     return {"sections": sections, "notice": next(iter(notices), None)}
 
 
@@ -694,11 +702,20 @@ async def remote_page(
     data['has_more'] = data['provider_more']
     needs_details = filters['status'] in ('airing', 'returning', 'finished', 'cancelled') or filters['provider'] or (media_type == 'movie' and filters.get('cinema'))
     if needs_details:
+        # Reject only known violations before paying for details. Missing fields
+        # remain eligible for enrichment; explicit filters still run afterwards.
+        from core.discovery_policy import DiscoveryPolicy, numeric
+        selected = [item for item in items[:20] if not item.get('adult')
+            and matches_result_filters(item, media_type, min_runtime=filters.get('min_runtime', 0),
+                excluded_genres=filters.get('excluded_genres', ()))
+            and anime_visible(item, show_anime)
+            and (numeric(item.get('popularity')) is None or
+                 DiscoveryPolicy(min_popularity=filters.get('min_popularity', 0)).accepts(item))]
         semaphore = asyncio.Semaphore(4)
         async def detail(item):
             async with semaphore:
                 return await (tmdb.get_movie if media_type == 'movie' else tmdb.get_show)(item['id'], api_key=key)
-        items = await asyncio.gather(*(detail(item) for item in items[:20]))
+        items = await asyncio.gather(*(detail(item) for item in selected))
     predicate = {k: v for k, v in filters.items() if k != 'sort'}
     return data, [item for item in items if matches(item, media_type=media_type, **predicate)]
 
@@ -717,6 +734,7 @@ async def browse_page(
     prefetched=None,
     cursor=None,
     event_view=False,
+    attach_context=True,
     **filters,
 ):
     from core.browse_cursor import encode_search_cursor
@@ -733,7 +751,7 @@ async def browse_page(
             source = 'local'
         return await release_page(db, viewer, media_type=media_type, filters=filters, key=key,
             show_anime=show_anime, page_number=page, cursor=cursor, source=source, prefetched=prefetched,
-            term=term, event_view=event_view)
+            term=term, event_view=event_view, attach_context=attach_context)
     remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters
@@ -873,7 +891,8 @@ async def browse_page(
         row.update(list_status=None, score=None, rating_mode="manual")
     from core.tracking_editor import attach_editor_context
     context_rows = known if remote is not None else [media for media in rows if any(row.get('id') == media.id for row in results)]
-    await attach_editor_context(db, viewer, results, media_rows=context_rows)
+    if attach_context:
+        await attach_editor_context(db, viewer, results, media_rows=context_rows)
     if term:
         from core.catalog_search import media_search_rank
         media_by_id = {media.id: media for media in (known if remote is not None else rows)}

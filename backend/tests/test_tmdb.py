@@ -54,6 +54,22 @@ class SharedTransportTests(TransportTestCase):
             await tmdb._get(tmdb.TMDB_BASE + '/movie/42', params={'append_to_response': 'credits'}, cache_ttl=None)
             self.assertFalse(tmdb._cache._store)
 
+    async def test_different_detail_shapes_compose_existing_parts_without_new_http(self):
+        payload={'id':42,'runtime':110,'release_dates':{'results':[]},'watch/providers':{'results':{}}}
+        with patch.object(tmdb,'_request',AsyncMock(return_value=payload)) as request:
+            await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'credits,release_dates,watch/providers'})
+            composed=await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'release_dates,watch/providers'})
+            self.assertEqual(request.await_count,1)
+            self.assertEqual(composed['runtime'],110)
+            composed['release_dates']['results'].append('mutation')
+            repeated=await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'release_dates,watch/providers'})
+            self.assertEqual(repeated['release_dates']['results'],[])
+            # A missing/expired part must trigger a real refresh. Composing a
+            # response must never turn it into a longer-lived exact cache entry.
+            tmdb._cache._store.pop((tmdb.TMDB_BASE+'/movie/42/release_dates',()))
+            await tmdb._get(tmdb.TMDB_BASE+'/movie/42',params={'append_to_response':'release_dates,watch/providers'})
+            self.assertEqual(request.await_count,2)
+
     async def test_identical_reads_share_request_but_not_mutable_results(self):
         started, release = asyncio.Event(), asyncio.Event()
         requests = []

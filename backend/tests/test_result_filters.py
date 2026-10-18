@@ -194,6 +194,51 @@ class ProviderFilterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SearchRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from core.catalog_search import _runtime_retry
+        _runtime_retry._store.clear()
+
+    async def test_failed_lookup_retries_after_cooldown_and_isolates_credentials(self):
+        from core.catalog_search import enrich_search_runtimes, _runtime_retry
+        with patch('core.tmdb.get_movie_light', AsyncMock(side_effect=OSError('offline'))) as read:
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30)
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 1)
+            await enrich_search_runtimes([{'id': 1}], {}, 'another-key', min_runtime=30)
+            self.assertEqual(read.await_count, 2)
+            for key, (_, value) in list(_runtime_retry._store.items()):
+                _runtime_retry._store[key] = (0, value)
+            await enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 3)
+
+    async def test_timeout_defers_batch_but_known_metadata_remains_usable(self):
+        from core.catalog_search import enrich_search_runtimes
+        async def stalled(*args, **kwargs):
+            await asyncio.Event().wait()
+        with patch('core.tmdb.get_movie_light', side_effect=stalled) as read:
+            items = [{'id': i} for i in range(8)]
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 4)
+            await enrich_search_runtimes(items, {}, 'key', min_runtime=30)
+            self.assertEqual(read.await_count, 4)
+            self.assertTrue(all('runtime' not in item for item in items))
+            await enrich_search_runtimes(items, {0: SimpleNamespace(runtime=12, tmdb_data={})}, 'key', min_runtime=30)
+            self.assertEqual(items[0]['runtime'], 12)
+
+    async def test_caller_cancellation_does_not_schedule_cooldown(self):
+        from core.catalog_search import enrich_search_runtimes, _runtime_retry
+        started = asyncio.Event()
+        async def stalled(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+        with patch('core.tmdb.get_movie_light', side_effect=stalled):
+            task = asyncio.create_task(enrich_search_runtimes([{'id': 1}], {}, 'key', min_runtime=30))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertFalse(_runtime_retry._store)
+
     async def test_reuses_known_runtime_and_only_fetches_missing_evidence(self):
         from core.catalog_search import enrich_search_runtimes
         items = [{'id': 1}, {'id': 2, 'runtime': 90}, {'id': 3}]
