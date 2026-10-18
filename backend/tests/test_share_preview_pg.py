@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import test_statistics_pg as fixture
 from core import share_preview as preview
 from core.share_preview import card_data
-from models import GlobalSettings, Media, UserProfileData
+from models import GlobalSettings, Media, User, UserProfileData
 from models.base import PrivacyLevel
 from models.catalogue import CatalogueCredit, CatalogueEntity
 from routers.sharing import router
@@ -30,13 +30,17 @@ class ShareDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(card['stats'][0], {'value':'1','label':'Movies watched'})
             profile = await db.get(UserProfileData, self.user_id)
             profile.privacy_level = PrivacyLevel.private
+            other = User(email='share-reader@example.test', username='share-reader', api_key='share-reader')
+            db.add(other)
             await db.commit()
+            self.viewer = other
         for endpoint in ['metadata','image']:
             response = await self.client.get(f'/sharing/{endpoint}', params={'path':'/user/statistics-fixture'}, headers={'Authorization':'Bearer ignored'})
             self.assertEqual(response.status_code, 403)
 
     async def test_media_and_global_gate(self):
         self.app.include_router(router)
+        self.viewer = None
         async with self.Session() as db:
             media = await db.get(Media, self.media_id)
             media.imdb_rating = 8.3

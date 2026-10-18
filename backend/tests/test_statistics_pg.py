@@ -14,14 +14,14 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/
 import httpx
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from core import statistics_snapshots as snapshots
 from db import get_db
-from dependencies import get_current_user, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
 from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink, CatalogueIdentity
@@ -107,9 +107,14 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 yield db
 
-        self.viewer = None
+        self.viewer = user
         app.dependency_overrides[get_db] = db_override
         app.dependency_overrides[get_optional_user] = lambda: self.viewer
+        def authenticated_viewer():
+            if self.viewer is None:
+                raise HTTPException(401, 'Could not validate credentials')
+            return self.viewer
+        app.dependency_overrides[get_current_user_or_api_key] = authenticated_viewer
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
     async def asyncTearDown(self):
@@ -265,6 +270,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
             await db.commit()
+        self.viewer = None
         self.assertEqual((await self.client.get(f'/tracking/studios/catalogue:{self.studio_id}')).status_code, 401)
 
     async def test_legacy_studio_page_uses_saved_company_metadata(self):
@@ -319,6 +325,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
             await db.commit()
+        self.viewer = None
         self.assertEqual((await self.client.get(f'/tracking/staff/catalogue:{person_id}')).status_code, 401)
 
     async def test_legacy_creator_has_a_person_page_without_person_or_credit_projection(self):
@@ -619,6 +626,12 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.viewer = await db.get(User, self.user_id)
         self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 200)
         self.viewer = None
+        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 401)
+        async with self.Session() as db:
+            other = User(email='private-reader@example.test', username='private-reader', api_key='private-reader')
+            db.add(other)
+            await db.commit()
+            self.viewer = other
         self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 403)
 
     async def test_visibility_change_invalidates_existing_generation(self):

@@ -7,7 +7,7 @@ import httpx
 import logging
 import re
 import urllib.parse
-from typing import Optional
+from typing import Annotated, Optional
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -2032,8 +2032,8 @@ from fastapi.responses import FileResponse, RedirectResponse
 async def verify_image_token(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    api_key: str | None = Query(None, description="AnyList API key"),
-    x_api_key: str | None = Header(None, alias="X-Api-Key"),
+    api_key: Annotated[str | None, Query(description="AnyList API key")] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-Api-Key")] = None,
 ) -> int:
     token = None
     auth = request.headers.get("Authorization")

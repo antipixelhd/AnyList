@@ -294,7 +294,7 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.media_credits.CatalogueProviders', return_value=self.providers), patch(
             'core.screen_character_art.fill_character_art',AsyncMock(return_value={'state':'ready','pending':False})):
             self.viewer = None
-            self.assertEqual((await self.client.get(f'/tracking/title/{media_id}')).json()['people'], [])
+            self.assertEqual((await self.client.get(f'/tracking/title/{media_id}')).status_code, 401)
             self.providers.detail.assert_not_awaited()
             async with self.Session() as db:
                 self.viewer = await db.get(User, self.user_id)

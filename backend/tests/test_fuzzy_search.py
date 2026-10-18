@@ -5,7 +5,7 @@ import unittest
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
-from routers.tracking import fuzzy_remote_terms, is_close_title_match
+from core.catalog_search import fuzzy_remote_terms, is_close_title_match
 
 
 class FuzzyRemoteSearchTests(unittest.TestCase):

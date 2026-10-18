@@ -229,14 +229,16 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             gallery.assert_not_awaited()
 
     async def test_background_public_access_uses_the_same_gate_as_the_title(self):
-        from dependencies import get_optional_user
         from models import GlobalSettings
-        self.app.dependency_overrides[get_optional_user]=lambda:None
+        self.viewer = None
         with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value=None)):
-            self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,200)
+            for path in ('', '/background'):
+                self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}{path}')).status_code,401)
             async with self.Session() as db:
                 settings=await db.get(GlobalSettings,1);settings.enable_logged_out_navigation=False;await db.commit()
             self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,401)
+            await self.login()
+            self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,200)
 
     async def test_background_failure_records_cooldown_and_retries_without_leaking_unverified_art(self):
         await self.login()
@@ -314,9 +316,11 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([episode['watched'] for episode in data['seasons'][0]['episodes']],[True,False])
         self.assertEqual(data['seasons'][0]['episodes'][0]['image'],'/still.jpg')
         self.assertFalse(data['seasons'][1]['episodes'][0]['released'])
-        self.viewer=None
+        self.viewer=other
         public=(await self.client.get(f'/tracking/title/{media_id}')).json()
-        self.assertFalse(any(episode['watched'] for season in public['seasons'] for episode in season['episodes']))
+        self.assertEqual([episode['watched'] for episode in public['seasons'][0]['episodes']], [False, True])
+        self.viewer=None
+        self.assertEqual((await self.client.get(f'/tracking/title/{media_id}')).status_code,401)
 
     async def test_individual_episode_edits_preserve_gaps_and_later_history(self):
         await self.login()

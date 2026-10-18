@@ -1,6 +1,7 @@
 """Intent previews read light provider metadata without importing media."""
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault('SECRET_KEY', 'preview-tests-only')
@@ -21,7 +22,8 @@ class CatalogPreviewTests(unittest.IsolatedAsyncioTestCase):
         async def session():
             yield self.db
         app.dependency_overrides[get_db] = session
-        app.dependency_overrides[get_optional_user] = lambda: None
+        self.viewer = SimpleNamespace(id=1)
+        app.dependency_overrides[get_optional_user] = lambda: self.viewer
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test')
         for target, value in [('routers.tracking.catalog_access', None),
                               ('routers.tracking.anime_is_visible', True),
@@ -32,6 +34,13 @@ class CatalogPreviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.aclose()
+
+    async def test_anonymous_preview_is_rejected_before_provider_work(self):
+        self.viewer = None
+        with patch('core.tmdb.get_movie_light', AsyncMock()) as light:
+            response = await self.client.get('/tracking/catalog/movie/123/preview')
+        self.assertEqual(response.status_code, 401)
+        light.assert_not_awaited()
 
     async def test_light_preview_never_imports_or_writes(self):
         for media_type, provider in [('movie', 'get_movie_light'), ('series', 'get_show_light')]:

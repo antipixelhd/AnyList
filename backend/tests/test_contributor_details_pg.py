@@ -28,7 +28,7 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
                 db.add(CatalogueIdentity(entity_id=entity.id,namespace='tmdb.company',external_id=str(native),source='tmdb'))
             shared = await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie',CatalogueEntity.name=='Fixture movie'))
             for work in (shared,exclusive,old_work,new_work):
-                work.attributes={**(work.attributes or {}),'vote_count':500,
+                work.attributes={**(work.attributes or {}),'vote_count':500,'popularity':80,
                     'release_date':(work.attributes or {}).get('release_date','2020-01-01')}
             for company, work in [(root,shared),(branch,shared),(branch,exclusive),(historical,old_work),(current,new_work)]:
                 db.add(CatalogueCredit(work_id=work.id,contributor_id=company.id,provider='tmdb',source_key=f'{company.id}-{work.id}',role='producer'))
@@ -243,16 +243,18 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         return await self.client.get(f'/tracking/contributors/{kind}/{key or "catalogue:" + str(self.person_id)}', params=params)
 
     async def test_viewer_state_is_private_and_anonymous_filters_require_login(self):
+        self.viewer = None
+        self.assertEqual((await self.request()).status_code, 401)
+        self.assertEqual((await self.request(list_scope='in')).status_code, 401)
+        self.assertEqual((await self.request(status='completed')).status_code, 401)
+        await self.login()
         response = await self.request()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers['cache-control'], 'private, no-store')
         row = response.json()['works'][0]
         self.assertEqual(row['characters'], ['Fixture Character'])
-        self.assertIsNone(row['entry'])
-        self.assertIsNone(response.json()['list_count'])
-        self.assertEqual((await self.request(list_scope='in')).status_code, 401)
-        self.assertEqual((await self.request(status='completed')).status_code, 401)
-        await self.login()
+        self.assertEqual(row['entry']['status'], 'completed')
+        self.assertEqual(response.json()['list_count'], 1)
         data = (await self.request(list_scope='in', status='completed')).json()
         self.assertEqual(data['list_count'], 1)
         self.assertEqual(data['works'][0]['score'], 8)
