@@ -12,13 +12,13 @@ from core.release_events import events, window
 from models import Media
 
 
-async def page(db, media_type, filters, *, show_anime=True, lower=None, upper=None, offset=0, size=24):
+async def page(db, media_type, filters, *, show_anime=True, lower=None, upper=None, offset=0, size=24, term=''):
     from core.browse import local_query
     from core.chronological_discovery import audience_relevant
 
     upcoming = filters['sort'] == 'upcoming' or filters.get('status') == 'upcoming'
     # Premiere dates cannot prefilter season returns or later country releases.
-    eligible = local_query(media_type, term='', show_anime=show_anime,
+    eligible = local_query(media_type, term=term, show_anime=show_anime,
         **{**filters, 'start': None, 'end': None, 'status': '' if upcoming else filters.get('status', ''),
            'sort': 'title', 'cinema': False}).order_by(None).cte('release_titles')
     # All SQL is static; provider/country values remain bound parameters.

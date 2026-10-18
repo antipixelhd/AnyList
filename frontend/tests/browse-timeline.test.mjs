@@ -8,6 +8,7 @@ test('timeline requests retain every filter and use date ordering without mutati
   const values=new URLSearchParams('view=timeline&media_type=series&sort=score&genres=18&provider=8&region=DE&min_score=0&q=story&page=3&source=remote');
   const request=browseRequestParams(values,'2026-10-11');
   assert.equal(isCategoryView(values),false);assert.equal(request.get('sort'),'newest');assert.equal(request.get('end'),'2026-10-11');
+  assert.equal(request.get('timeline'),'true');
   for(const key of ['media_type','genres','provider','region','min_score','q','page','source'])assert.equal(request.get(key),values.get(key));
   assert.equal(request.has('view'),false);assert.equal(values.get('sort'),'score');
   assert.equal(browseLayout(new URLSearchParams('sort=newest')),'grid');

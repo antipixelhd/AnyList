@@ -22,6 +22,7 @@ export function browseRequestParams(values: URLSearchParams, today = new Date().
   const request = new URLSearchParams(values);
   request.delete('view');
   if(browseLayout(values)==='timeline'){
+    request.set('timeline','true');
     request.set('sort', values.get('sort') === 'upcoming' || values.get('status') === 'upcoming' ? 'upcoming' : 'newest');
     if(!request.has('end')&&request.get('sort')!=='upcoming'&&!(request.get('start')!>today))request.set('end',today);
     return request;

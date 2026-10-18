@@ -1,6 +1,6 @@
 
 import { editorStore, type EditorTitle } from './editor-store';
-  import { showDialog, closeDialog, reveal } from './ui-motion';
+  import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
 import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
@@ -147,7 +147,7 @@ export function mountQuickSearch() {
     state.textContent = message;
     state.hidden = !message;
   }
-  function render(updated?:'titles'|'contributors', tabChange=false) {
+  function render(updated?:'titles'|'contributors') {
     if(updated==='titles'){
       fill('movie',latest.movie);fill('series',latest.series);fill('all', rankCombinedMedia(latest.movie, latest.series));
     }
@@ -161,9 +161,7 @@ export function mountQuickSearch() {
       if (section) section.hidden = !visible.includes(kind);
     }
     if (resultShell) {
-      const wasHidden=resultShell.hidden;
       resultShell.hidden = !visible.length;
-      if (wasHidden&&!resultShell.hidden&&!tabChange) reveal(resultShell);
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
@@ -175,7 +173,7 @@ export function mountQuickSearch() {
     direction??=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
     activeTab=next;
     updateTabs();
-    if ((input?.value.trim().length||0)>=2) render(undefined,true);
+    if ((input?.value.trim().length||0)>=2) render();
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (!mobile.matches||matchMedia('(prefers-reduced-motion:reduce)').matches) return;
     const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};

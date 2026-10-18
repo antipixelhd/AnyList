@@ -702,6 +702,7 @@ async def browse_page(
     mdblist_key=None,
     prefetched=None,
     cursor=None,
+    event_view=False,
     **filters,
 ):
     from core.browse_cursor import encode_search_cursor
@@ -710,12 +711,15 @@ async def browse_page(
         filters = {**filters, 'status': 'upcoming'}
     if term:
         filters = {**filters, 'min_votes': 0, 'require_release': False, 'require_poster': False}
-    if not term and (filters['sort'] in ('newest', 'upcoming') or filters.get('status') == 'upcoming'):
+    if (not term and filters['sort'] in ('newest', 'upcoming')) or filters.get('status') == 'upcoming' or (term and event_view):
         from core.release_browse import page as release_page
+        if term:
+            filters = {**filters, 'audience_curation': False}
         if any(isinstance(value, str) for value in filters.get('genres', [])):
             source = 'local'
         return await release_page(db, viewer, media_type=media_type, filters=filters, key=key,
-            show_anime=show_anime, page_number=page, cursor=cursor, source=source, prefetched=prefetched)
+            show_anime=show_anime, page_number=page, cursor=cursor, source=source, prefetched=prefetched,
+            term=term, event_view=event_view)
     remote_position, local_position, feed_position = cursor or (page, (page-1)*PAGE_SIZE, 0 if page == 1 else -1)
     query = local_query(
         media_type, term=term, show_anime=show_anime, mdblist_key=mdblist_key, **filters

@@ -341,6 +341,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
               : (field(name) as HTMLSelectElement).selectedOptions[0]
                   ?.textContent || field(name).value;
         add(label, () => {
+          if (name === 'status' && sort.value === 'upcoming') sort.value = 'newest';
           field(name).value = name === "min_score" ? "0" : "";
           field(name).dispatchEvent(new Event("input", { bubbles: true }));
         });
@@ -532,6 +533,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
   }
   function changed(event?: Event) {
+    if (sort.value === 'upcoming' && field('status').value !== 'upcoming') {
+      if (event?.target === field('status')) sort.value = 'newest';
+      else {
+        field('status').value = 'upcoming';
+        refreshSelect(field('status') as HTMLSelectElement);
+      }
+    }
     searchClear.hidden = !field("q").value;
     // Update immediately; only network requests from typing/dragging are debounced.
     const debounce = event?.type === 'input' ? 100 : 0;

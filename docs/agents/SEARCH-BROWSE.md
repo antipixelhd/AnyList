@@ -64,6 +64,13 @@ retain foreign hits with broad distribution. Text search never uses this rule.
 
 - Ordinary title search: one provider page/media kind; weak queries may add at
   most two correction pages. No per-result credits/release/streaming reads.
+- Text queries within chronological/Upcoming filters use the same candidate
+  adapter, finalize at most three search pages plus bounded first-page corrections,
+  and resolve release events before filtering. Thus a query for a returning show
+  tests its next season window rather than its historical premiere. The timeline
+  orders the completed event batch by date; ordinary grid title search retains
+  relevance ordering. The existing status control reflects Upcoming and can
+  switch the timeline back to ordinary chronological discovery.
 - Chronological selection: at most six discover pages. Two cover premieres and
   four cover returning/regional dates; single-feed modes use six. At most 120
 raw title candidates, deduplicated/cheap-filtered before six-way detail reads.
@@ -100,9 +107,11 @@ Database tests require a disposable test database. Also run Astro check/build an
 verify authenticated desktop/mobile pages, repeat switches and scroll append.
 
 Local Chrome observations (390×844/1440×1000, 30 searches each, 2026-10-18;
-includes debounce): mobile warm clickable p50/p75/p95 69/72/79 ms; first browser
-title-cache misses 259/451/536 ms. Warm artwork 83/84/87 ms. Desktop warm clickable
-70/77/86 ms, artwork 83/85/92 ms. Desktop had already warmed server/browser data,
+includes debounce, visible layout and a browser frame): mobile warm clickable
+p50/p75/p95 80/83/87 ms; first browser title-cache misses 317/425/680 ms. Warm
+decoded artwork 98/101/105 ms. Desktop warm clickable 81/83/87 ms, decoded artwork
+100/102/107 ms. Query-result entrance animation is omitted; dialog/tab motion is
+preserved. Desktop had already warmed server/browser data,
 so its first round is not a cold-provider measurement. These are preview lab
 measurements, not VPS/network guarantees. Preserve that distinction when tuning.
 

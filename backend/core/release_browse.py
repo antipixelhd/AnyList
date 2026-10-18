@@ -24,7 +24,7 @@ def remote_projection(item, kind):
 
 
 async def page(db, viewer, *, media_type, filters, key, show_anime, page_number, cursor=None,
-               source='', prefetched=None, size=24):
+               source='', prefetched=None, size=24, term='', event_view=False):
     from core.browse import anime_visible
     from core.tracking_editor import attach_editor_context
     upcoming = filters['sort'] == 'upcoming' or filters.get('status') == 'upcoming'
@@ -39,7 +39,7 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
             if isinstance(prefetched, BaseException):
                 raise prefetched
             remote, provider = prefetched or await chronological_discovery.page(
-                media_type, key, filters, offset=feed_offset, show_anime=show_anime, size=size)
+                media_type, key, filters, offset=feed_offset, show_anime=show_anime, size=size, term=term)
         except Exception:
             if source == 'remote' or page_number > 1:
                 raise
@@ -49,7 +49,7 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
     if not upcoming and not upper:
         upper = date.today().isoformat()
     local, consumed, local_more = await release_catalogue.page(db, media_type, filters,
-        lower=lower, upper=upper, offset=local_offset, size=size, show_anime=show_anime)
+        lower=lower, upper=upper, offset=local_offset, size=size, show_anime=show_anime, term=term)
     known = list(await db.scalars(select(Media).where(Media.media_type == MediaType(media_type),
         Media.tmdb_id.in_([item['id'] for item in provider])))) if provider else []
     by_tmdb = {media.tmdb_id: media for media in known}
@@ -111,6 +111,14 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
         row.update(list_status=None, score=None, rating_mode='manual')
     media_rows = {media.id: media for media in [*known, *(entry[0] for entry in local)]}
     await attach_editor_context(db, viewer, rows, media_rows=list(media_rows.values()))
+    if term and not event_view:
+        from core.catalog_search import media_search_rank
+        provider_metadata = {item['id']: item for item in provider}
+        local_metadata = {media.tmdb_id: media.tmdb_data or {} for media in media_rows.values()}
+        for row in rows:
+            row['search_rank'] = media_search_rank(term, {**local_metadata.get(row['tmdb_id'], {}),
+                **provider_metadata.get(row['tmdb_id'], {}), 'title':row['title']}, media_type)
+        rows.sort(key=lambda row: row['search_rank'], reverse=True)
     return {'results': rows, 'has_more': has_more, 'page': page_number,
             'cursor': encode_search_cursor(1, local_next, feed_next) if has_more else None,
             'source': 'remote' if remote else 'local', 'partial': bool(remote and remote['partial']),

@@ -48,7 +48,7 @@ def audience_relevant(item, country, *, global_floor=60):
     return float(item.get('popularity') or 0) >= global_floor and (not markets or len(markets) >= 3)
 
 
-async def _selection(media_type, key, filters, lower, upper, show_anime):
+async def _selection(media_type, key, filters, lower, upper, show_anime, term=''):
     from core.browse import anime_visible, matches, remote_params
     kind = 'movie' if media_type == 'movie' else 'tv'
     upcoming = filters.get('status') == 'upcoming' or filters['sort'] == 'upcoming'
@@ -82,8 +82,18 @@ async def _selection(media_type, key, filters, lower, upper, show_anime):
         count = min(per_feed, first.get('total_pages', 1))
         batches = [first, *await asyncio.gather(*(read(number) for number in range(2, count + 1)))]
         return batches, first.get('total_pages', 1) > per_feed
-    feeds = await asyncio.gather(*(feed(field) for field in fields))
-    batches = [batch for group, _ in feeds for batch in group]
+    if term:
+        from core.title_search import candidates as search_candidates
+        first, search_rows = await search_candidates(term, media_type, key)
+        count = min(first.get('total_pages', 1), 3)
+        following = await asyncio.gather(*(search_candidates(term, media_type, key, number)
+            for number in range(2, count + 1)))
+        batches = [{'results': search_rows}, *({'results': rows} for _, rows in following)]
+        partial = first.get('total_pages', 1) > 3
+    else:
+        feeds = await asyncio.gather(*(feed(field) for field in fields))
+        batches = [batch for group, _ in feeds for batch in group]
+        partial = any(partial for _, partial in feeds)
     predicate = {name: value for name, value in filters.items() if name not in ('sort', 'audience_curation', 'include_returning')}
     cheap = {**predicate, 'start': None, 'end': None, 'status': '', 'cinema': False, 'provider': None}
     candidates = {item['id']: item for batch in batches for item in batch.get('results', [])
@@ -119,25 +129,25 @@ async def _selection(media_type, key, filters, lower, upper, show_anime):
             if matches(event, media_type=media_type, **check):
                 rows.append(event)
     rows.sort(key=lambda item: (window(item['release_date'])[0], item['release_event']), reverse=not upcoming)
-    return {'rows': rows, 'partial': any(partial for _, partial in feeds)}
+    return {'rows': rows, 'partial': partial}
 
 
-async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24):
+async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, term=''):
     upcoming = filters.get('status') == 'upcoming' or filters['sort'] == 'upcoming'
     window_index, position = divmod(max(offset, 0), CURSOR_STRIDE)
     upper = filters.get('end')
     lower = filters.get('start')
     more_windows = False
-    if not upcoming:
+    if not upcoming and not term:
         ceiling = date.fromisoformat(upper) if upper else date.today()
         ceiling -= timedelta(days=window_index * WINDOW_DAYS)
         floor = ceiling - timedelta(days=WINDOW_DAYS - 1)
         floor = max(floor, date.fromisoformat(lower) if lower else date(1880, 1, 1))
         upper, lower = ceiling.isoformat(), floor.isoformat()
         more_windows = floor > (date.fromisoformat(filters['start']) if filters.get('start') else date(1880, 1, 1))
-    else:
+    elif upcoming:
         lower = max(lower or '', (date.today() + timedelta(days=1)).isoformat())
-    cache_key = (media_type, repr(sorted(filters.items())), lower, upper, show_anime)
+    cache_key = (media_type, repr(sorted(filters.items())), lower, upper, show_anime, term)
     selected = _cache.get(cache_key)
     if selected is None:
         loop = asyncio.get_running_loop()
@@ -147,7 +157,7 @@ async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24):
             if sum(identity[0] is loop for identity in _pending) >= MAX_SELECTIONS:
                 raise tmdb.TMDBUnavailable('Discovery selection capacity reached')
             async def load():
-                result = await _selection(media_type, key, filters, lower, upper, show_anime)
+                result = await _selection(media_type, key, filters, lower, upper, show_anime, term)
                 _cache.set(cache_key, result, 1800)
                 return result
             entry = [asyncio.create_task(load()), 0]

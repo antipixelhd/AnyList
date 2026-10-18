@@ -21,6 +21,7 @@ import {
 const params = new URLSearchParams(Astro.url.search);
 params.delete("streaming");
 params.delete("unfiltered");
+if (params.get('sort') === 'upcoming') params.set('status', 'upcoming');
 const account = Astro.locals.token ? await api.profile.get(Astro.locals.token).catch(() => null) : null;
 const preference = streamingRegionPreference(Astro.cookies.get(STREAMING_REGION_COOKIE)?.value);
 const region = streamingCountry(params.get('region')) || (preference?.manual ? preference.country : undefined) || preference?.country || streamingCountry(account?.country) || 'US';

@@ -1014,6 +1014,29 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.get('/tracking/browse',params={'sort':sort,'source':'remote','page':2})
             self.assertEqual(response.status_code,502,response.text)
 
+    async def test_text_query_in_upcoming_finds_a_dated_return_instead_of_testing_the_original_premiere(self):
+        from core.chronological_discovery import _cache
+        _cache._store.clear()
+        raw={'id':990011,'name':'Silo','first_air_date':'2020-01-01','popularity':80,'genre_ids':[18]}
+        cached=Media(title='Silo',media_type=MediaType.series,tmdb_id=990011,release_date='2020-01-01',
+            tmdb_data={**raw,'seasons':[{'season_number':2,'air_date':'2098'}]})
+        self.db.add(cached);await self.db.flush()
+        detail={**raw,'seasons':[{'season_number':2,'air_date':'2099-02'}]}
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
+             patch('core.tmdb.search_shows',AsyncMock(return_value={'results':[raw],'total_pages':1})) as search, \
+             patch('core.tmdb._get',AsyncMock(return_value=detail)) as metadata:
+            for timeline in (False,True):
+                response=await self.client.get('/tracking/browse',params={'q':'Silo','media_type':'series',
+                    'sort':'upcoming','timeline':str(timeline).lower(),'genres':'18'})
+                self.assertEqual(response.status_code,200,response.text)
+                rows=response.json()['results']
+                self.assertEqual([(row['title'],row['release_date']) for row in rows],[('Silo · Season 2','2099-02')])
+            response=await self.client.get('/tracking/browse',params={'q':'Silo','media_type':'series',
+                'sort':'upcoming','timeline':'true','include_returning':'false'})
+            self.assertEqual(response.json()['results'],[])
+        self.assertEqual(search.await_count,2)  # Independent include-returning policy; same raw provider cache in production.
+        self.assertEqual(metadata.await_count,2)
+
     async def test_invalid_filters_are_rejected(self):
         for filters in [
             {"genres": "123456"},

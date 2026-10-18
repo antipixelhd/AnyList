@@ -1268,6 +1268,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  cinema: Annotated[bool, Query()] = False,
                  unfiltered: Annotated[bool, Query()] = False,
                  include_returning: Annotated[bool, Query(include_in_schema=False)] = True,
+                 timeline: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
@@ -1291,7 +1292,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
     try:
-        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions,
+        return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions, event_view=timeline,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
             status=status, provider=provider, region=region, sort=sort, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
