@@ -204,7 +204,7 @@ export function mountQuickSearch() {
     try {
       const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part=>part.trim())
         .find(part=>part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length+1));
-      const requests=quickSearchRequests(query,searchStreamingCountry(dialog.dataset.accountCountry,savedRegion,deviceStreamingCountry()));pending=requests.length;
+      const requests=quickSearchRequests(query,searchStreamingCountry(dialog?.dataset.accountCountry,savedRegion,deviceStreamingCountry()));pending=requests.length;
       updateTabs();
       await Promise.all(requests.map(async request=>{
         try{
