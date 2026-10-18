@@ -32,6 +32,11 @@ adult exclusion and administrator anime visibility. It survives filter/view/type
 changes, resets on query change/reload, and never writes account settings.
 Quick search has no Show all.
 
+Partial public search metadata cannot erase a cached title's restrictions.
+`known_result_visible` applies known category/runtime evidence and the hard
+adult/anime rules consistently in ordinary and chronological result merging.
+Show all neutralizes only the personal category/runtime policy.
+
 ## Chronological discovery
 
 `chronological_discovery` builds public event selections; `release_catalogue`

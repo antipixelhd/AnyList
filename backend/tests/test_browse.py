@@ -1014,6 +1014,22 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.get('/tracking/browse',params={'sort':sort,'source':'remote','page':2})
             self.assertEqual(response.status_code,502,response.text)
 
+    async def test_public_search_metadata_cannot_bypass_known_adult_or_admin_anime_exclusions(self):
+        self.movies[0].adult=True
+        self.movies[1].tmdb_data={**self.movies[1].tmdb_data,'genres':['Animation'], 'original_language':'ja','origin_country':['JP']}
+        self.movies[2].tmdb_data={**self.movies[2].tmdb_data,'genres':['Documentary']}
+        await self.db.flush()
+        raw=[{'id':movie.tmdb_id,'title':'Public search match','adult':False,'genre_ids':[], 'popularity':80} for movie in self.movies[:3]]
+        with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value='fixture')), \
+             patch('core.tmdb.search_movies',AsyncMock(return_value={'results':raw,'total_pages':1})), \
+             patch('routers.tracking.anime_is_visible',AsyncMock(return_value=False)):
+            for endpoint in ('catalog','browse'):
+                response=await self.client.get('/tracking/'+endpoint,params={'q':'Public search match'})
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertEqual(response.json()['results'],[])
+            broad=await self.client.get('/tracking/browse',params={'q':'Public search match','unfiltered':'true'})
+            self.assertEqual([row['id'] for row in broad.json()['results']],[self.movies[2].id])
+
     async def test_text_query_in_upcoming_finds_a_dated_return_instead_of_testing_the_original_premiere(self):
         from core.chronological_discovery import _cache
         _cache._store.clear()

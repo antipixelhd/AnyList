@@ -7,7 +7,7 @@ from sqlalchemy import Boolean, Float, and_, case, func, literal, or_, select, t
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core import mdblist_discovery, tmdb, tracking_projection
-from core.catalog_search import matches_result_filters, apply_result_filters, known_result_metadata, has_release, release_clause, enrich_release_evidence
+from core.catalog_search import matches_result_filters, apply_result_filters, has_release, release_clause, enrich_release_evidence
 from core.cinema_releases import theatrical_dates, theatrical_country_dates, has_cinema_release
 from models import Media
 from models.base import MediaType
@@ -841,10 +841,11 @@ async def browse_page(
             else []
         )
         remote_metadata = {item['id']: item for item in items}
-        known_metadata = {m.tmdb_id: known_result_metadata(remote_metadata.get(m.tmdb_id, {}), m) for m in known}
-        results = [row for row in results if row['tmdb_id'] not in known_metadata or matches_result_filters(
-            known_metadata[row['tmdb_id']], media_type,
-            min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
+        from core.catalog_search import known_result_visible
+        known_titles = {m.tmdb_id: m for m in known}
+        results = [row for row in results if row['tmdb_id'] not in known_titles or known_result_visible(
+            remote_metadata.get(row['tmdb_id'], {}), known_titles[row['tmdb_id']], media_type,
+            show_anime=show_anime, min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))]
         mapping = {m.tmdb_id: m.id for m in known}
         for row in results:
             row["id"] = row.get("id") or mapping.get(row["tmdb_id"])

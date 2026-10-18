@@ -48,6 +48,17 @@ def known_result_metadata(item, media):
     return merged
 
 
+def known_result_visible(item, media, media_type, *, show_anime, min_runtime=0, excluded_genres=()):
+    """A partial provider row cannot erase restrictions on an existing title."""
+    from core.browse import anime_visible
+    saved = {**(media.tmdb_data or {}), 'runtime': media.runtime or (media.tmdb_data or {}).get('runtime')}
+    merged = known_result_metadata(item, media)
+    if media.adult or saved.get('adult') or merged.get('adult'):
+        return False
+    return all(anime_visible(metadata, show_anime) and matches_result_filters(metadata, media_type,
+        min_runtime=min_runtime, excluded_genres=excluded_genres) for metadata in (saved, merged))
+
+
 def exact_title_match(term, item):
     """Identify exact titles when reserving search enrichment slots."""
     query = (term or '').strip().casefold()

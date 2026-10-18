@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from core import chronological_discovery, release_catalogue
 from core.browse_cursor import encode_search_cursor
-from core.catalog_search import known_result_metadata, matches_result_filters
+from core.catalog_search import known_result_visible
 from core.release_events import window
 from models import Media
 from models.base import MediaType
@@ -25,7 +25,6 @@ def remote_projection(item, kind):
 
 async def page(db, viewer, *, media_type, filters, key, show_anime, page_number, cursor=None,
                source='', prefetched=None, size=24, term='', event_view=False):
-    from core.browse import anime_visible
     from core.tracking_editor import attach_editor_context
     upcoming = filters['sort'] == 'upcoming' or filters.get('status') == 'upcoming'
     if source == 'remote' and not key:
@@ -56,9 +55,8 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
     visible = []
     for item in provider:
         cached = by_tmdb.get(item['id'])
-        metadata = known_result_metadata(item, cached) if cached else item
-        if cached and (cached.adult or not anime_visible(metadata, show_anime) or not matches_result_filters(
-                metadata, media_type, min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ()))):
+        if cached and not known_result_visible(item, cached, media_type, show_anime=show_anime,
+                min_runtime=filters.get('min_runtime', 0), excluded_genres=filters.get('excluded_genres', ())):
             visible.append(None)  # Keep the provider position consumed.
         else:
             row = remote_projection(item, media_type)
