@@ -1,10 +1,12 @@
 ---
-import { sharePagePath, sharePath } from '../lib/share-preview';
-const {title, description: suppliedDescription} = Astro.props;
+import { loginSharePage, sharePagePath, sharePath } from '../lib/share-preview';
+const {title: pageTitle, description: suppliedDescription} = Astro.props;
+const loginPage = Astro.url.pathname === '/login' ? loginSharePage(Astro.url.searchParams.get('next')) : null;
+const title = loginPage?.title || pageTitle;
 const path = sharePath(Astro.url.pathname);
 const description = suppliedDescription || (path?.startsWith('/user/') ? `${title} on AnyList` : 'Track movies and series with AnyList.');
 const origin = process.env.SERVER_URL || Astro.url.origin;
-const canonical = new URL(sharePagePath(Astro.url.pathname,Astro.url.search), origin).href;
+const canonical = new URL(loginPage?.path || sharePagePath(Astro.url.pathname,Astro.url.search), origin).href;
 const image = new URL(path ? `/api/proxy/sharing/image?${new URLSearchParams({path})}` : '/share-preview.png', origin).href;
 const imageType = path ? 'image/jpeg' : 'image/png';
 ---

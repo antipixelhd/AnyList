@@ -1,3 +1,41 @@
+/** Public labels only: never derive a login preview from arbitrary return-path text. */
+const generalPages: Record<string, string> = {
+  '/': 'Welcome', '/login': 'Welcome', '/home': 'Home', '/browse': 'Browse',
+  '/about': 'About', '/settings': 'Account', '/user-settings': 'Profile',
+  '/settings/media': 'Movies & series', '/settings/lists': 'Lists',
+  '/settings/notifications': 'Notifications', '/connections': 'Connections',
+  '/recent-events': 'Notifications', '/requests': 'Requests',
+  '/admin': 'Administration', '/admin/data-health': 'Data health', '/register': 'Register',
+  '/movies': 'Movies', '/shows': 'Series', '/trending/movies': 'Trending movies',
+  '/trending/shows': 'Trending series', '/collection/movies': 'Movie collection',
+  '/collection/shows': 'Series collection', '/calendar': 'Calendar', '/lists': 'Lists',
+  '/history': 'History', '/dropped': 'Dropped', '/progress': 'Progress',
+  '/next-up': 'Next up', '/continue-watching': 'Continue watching', '/airing-today': 'Airing today',
+  '/discover': 'Discover', '/search': 'Search',
+};
+
+export function generalSharePage(pathname: string, search = ''): {path: string; title: string} | null {
+  const path = pathname.replace(/\/$/, '') || '/';
+  if (!Object.hasOwn(generalPages, path)) return null;
+  if (path === '/connections') {
+    const section = new URLSearchParams(search).get('section');
+    const sections: Record<string, string> = {imports: 'Import data', apps: 'Connected apps', developer: 'Developer'};
+    if (section && Object.hasOwn(sections, section)) return {path: `${path}?section=${section}`, title: sections[section]};
+  }
+  return {path: path === '/login' ? '/' : path, title: generalPages[path]};
+}
+
+export function shareLoginPath(pathname: string, search = ''): string {
+  const page = generalSharePage(pathname, search);
+  return page ? `/login?${new URLSearchParams({next: page.path})}` : '/login';
+}
+
+export function loginSharePage(next: string | null): {path: string; title: string} | null {
+  if (!next || !next.startsWith('/') || next.startsWith('//') || /[\\\u0000-\u0020\u007f#]/.test(next)) return null;
+  const split = next.indexOf('?');
+  return generalSharePage(split < 0 ? next : next.slice(0, split), split < 0 ? '' : next.slice(split));
+}
+
 /** Share identities exclude filters, pagination, tracking tokens and tabs. */
 export function sharePath(pathname: string): string | null {
   let path: string;

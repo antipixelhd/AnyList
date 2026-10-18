@@ -1,6 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
+import {generalSharePage, loginSharePage, shareLoginPath, sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
+
+test('general previews retain public page labels through the login redirect', () => {
+  for (const [path, title] of [['/', 'Welcome'], ['/home', 'Home'], ['/settings', 'Account'],
+    ['/settings/media', 'Movies & series'], ['/settings/notifications', 'Notifications']]) {
+    const redirect = new URL(shareLoginPath(path, '?token=secret&sort=score'), 'https://anylist.test');
+    assert.deepEqual(loginSharePage(redirect.searchParams.get('next')), {path, title});
+    assert.ok(!redirect.href.includes('secret'));
+  }
+  assert.deepEqual(generalSharePage('/connections', '?section=apps&token=secret'),
+    {path: '/connections?section=apps', title: 'Connected apps'});
+});
+
+test('login previews never disclose arbitrary paths or replace dedicated cards', () => {
+  for (const path of ['/title/12', '/user/alex', '/actors/42', '/reset-password/secret',
+    '//evil.test/home', '/home#secret', '/home\\secret', '/unknown/secret', '/%68ome']) {
+    assert.equal(loginSharePage(path), null, path);
+  }
+  assert.equal(shareLoginPath('/title/12'), '/login');
+  assert.deepEqual(loginSharePage('/home?token=secret'), {path: '/home', title: 'Home'});
+});
 
 test('share identities discard profile sections and reject URLs and query credentials', () => {
   assert.equal(sharePath('/user/Alex%20B/stats/'), '/user/Alex%20B');

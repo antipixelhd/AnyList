@@ -1,3 +1,5 @@
 ---
+import { shareLoginPath } from '../lib/share-preview';
+if (!Astro.locals.user) return Astro.redirect(shareLoginPath('/'));
 return Astro.redirect('/home');
 ---

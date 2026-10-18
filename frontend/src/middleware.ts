@@ -3,6 +3,7 @@ import { displayPreferenceCookies } from "./lib/display-preferences";
 import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
+import { shareLoginPath } from "./lib/share-preview";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -163,13 +164,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
         context.cookies.delete(sessionCookieName("token"), { path: "/" });
       }
       if (!isPublicRoute && !(await isAllowedAnonymousPublicPage())) {
-        return context.redirect("/login", 302);
+        return context.redirect(shareLoginPath(pathname, context.url.search), 302);
       }
     }
   } else {
     // No token, redirect to login if not a public route
     if (!isPublicRoute && !(await isAllowedAnonymousPublicPage())) {
-      return context.redirect("/login", 302);
+      return context.redirect(shareLoginPath(pathname, context.url.search), 302);
     }
   }
 
