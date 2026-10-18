@@ -150,6 +150,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         from models import GlobalSettings
         from routers.media import router as media_router
         self.app.include_router(media_router,prefix='/media')
+        self.assertEqual((await self.client.get('/media/image/w300/still.jpg')).status_code,401)
+        self.client.headers['X-Api-Key'] = 'fixture-key'
         async with self.Session() as db:
             settings=await db.get(GlobalSettings,1)
             settings.image_cache_enabled=True;settings.image_cache_limit_gb=None;settings.enable_logged_out_navigation=True
