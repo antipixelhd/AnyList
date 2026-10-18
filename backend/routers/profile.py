@@ -7,7 +7,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, U
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, case, or_, text
+from sqlalchemy import func, case, or_, text, cast
+from sqlalchemy.dialects.postgresql import insert, JSONB
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from datetime import date as DateType, timedelta as TimeDelta
@@ -157,11 +158,11 @@ async def update_profile(
         setattr(profile, field, value)
 
     if ranking:
-        user_settings = await db.scalar(select(UserSettings).where(UserSettings.user_id == current_user.id))
-        if user_settings is None:
-            user_settings = UserSettings(user_id=current_user.id)
-            db.add(user_settings)
-        user_settings.preferences = {**(user_settings.preferences or {}), **ranking}
+        statement = insert(UserSettings).values(user_id=current_user.id, preferences=ranking)
+        await db.execute(statement.on_conflict_do_update(
+            index_elements=[UserSettings.user_id],
+            set_={"preferences": func.coalesce(UserSettings.preferences, cast({}, JSONB)).op('||')(statement.excluded.preferences)},
+        ))
 
     await db.commit()
     await db.refresh(profile)

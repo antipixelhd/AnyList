@@ -529,6 +529,24 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         await update_profile(UserProfileUpdate(minimum_movie_runtime=0,excluded_categories=[]),current_user=self.owner,db=self.db)
         self.assertEqual(len((await self.client.get('/tracking/catalog')).json()['results']),55)
 
+    async def test_ranking_patch_merges_database_preferences_over_a_stale_loaded_row(self):
+        from sqlalchemy import select, update
+        from models.users import UserSettings
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        settings = UserSettings(user_id=self.owner.id, preferences={'unrelated': 'keep'})
+        self.db.add(settings)
+        await self.db.flush()
+        # Another save has changed the JSON since this session loaded it.
+        await self.db.execute(update(UserSettings).where(UserSettings.user_id == self.owner.id)
+                              .values(preferences={'unrelated': 'keep', 'prefer_streaming_series': False})
+                              .execution_options(synchronize_session=False))
+        response = await update_profile(UserProfileUpdate(prefer_theatrical_movies=False), current_user=self.owner, db=self.db)
+        saved = await self.db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == self.owner.id))
+        self.assertEqual(saved, {'unrelated': 'keep', 'prefer_streaming_series': False, 'prefer_theatrical_movies': False})
+        self.assertFalse(response.prefer_streaming_series)
+        self.assertFalse(response.prefer_theatrical_movies)
+
     async def test_saved_vote_floor_applies_to_browse_and_catalog_with_tmdb_only_score(self):
         from routers.profile import update_profile
         from schemas import UserProfileUpdate

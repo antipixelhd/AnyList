@@ -49,10 +49,11 @@ class FakeConnection:
         return []
 
     async def execute(self, query, *args):
-        if query == backup.AVATAR_WRITE_LOCK_SQL:
+        if query in (backup.AVATAR_WRITE_LOCK_SQL, backup.AVATAR_RESTORE_LOCK_SQL):
             self.avatar_locked = True
 
     async def copy_to_table(self, table, source, format):
+        assert self.avatar_locked
         self.copied.append((table, source.read(), format))
 
     async def copy_from_table(self, table, output, format):
@@ -89,6 +90,14 @@ class BackupAvatarTests(unittest.IsolatedAsyncioTestCase):
             (avatars / "7.jpg").write_bytes(b"old image")
             (avatars / "8.png").write_bytes(b"unrelated image")
             connection = FakeConnection()
+            original_close = connection.close
+
+            async def close_after_swap():
+                self.assertTrue(connection.avatar_locked)
+                self.assertEqual((avatars / '7.webp').read_bytes(), b'new image')
+                await original_close()
+
+            connection.close = close_after_swap
             with patch.object(backup.settings, "data_dir", root), patch.object(backup, "asyncpg_conn", AsyncMock(return_value=connection)):
                 await backup.restore_backup(archive(2, {"user_profiles": b"profile data"}, {"7.webp": b"new image"}))
             self.assertEqual((avatars / "7.webp").read_bytes(), b"new image")

@@ -16,6 +16,7 @@ _MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
 
 AVATAR_WRITE_LOCK_SQL = "SELECT pg_advisory_xact_lock(1935897199, 1)"
+AVATAR_RESTORE_LOCK_SQL = "SELECT pg_advisory_lock(1935897199, 1)"
 
 
 def avatar_backup_files(avatar_dir: Path, rows: list) -> dict[str, bytes]:
@@ -144,6 +145,8 @@ async def restore_backup(content: bytes) -> None:
 
         conn = await asyncpg_conn()
         try:
+            # A session lock survives the DB commit until the avatar directory is swapped.
+            await conn.execute(AVATAR_RESTORE_LOCK_SQL)
             # Backup headers are untrusted; only interpolate names from pg_tables.
             schema_rows = await conn.fetch(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
@@ -188,16 +191,15 @@ async def restore_backup(content: bytes) -> None:
                     f'SELECT setval($1, COALESCE((SELECT MAX("{row["col"]}") FROM "{row["tbl"]}"), 1), true)',
                     row["seq"],
                 )
+            avatars_dir = settings.data_dir / "avatars"
+            previous_avatars = temporary_dir / "old"
+            if avatars_dir.exists():
+                avatars_dir.rename(previous_avatars)
+            try:
+                staged_avatars.rename(avatars_dir)
+            except OSError:
+                if previous_avatars.exists():
+                    previous_avatars.rename(avatars_dir)
+                raise
         finally:
             await conn.close()
-
-        avatars_dir = settings.data_dir / "avatars"
-        previous_avatars = temporary_dir / "old"
-        if avatars_dir.exists():
-            avatars_dir.rename(previous_avatars)
-        try:
-            staged_avatars.rename(avatars_dir)
-        except OSError:
-            if previous_avatars.exists():
-                previous_avatars.rename(avatars_dir)
-            raise
