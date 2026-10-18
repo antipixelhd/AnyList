@@ -42,10 +42,12 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.admin = create_async_engine(URL)
         async with self.admin.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA "{self.schema}"'))
-        # Tables stay in the disposable schema; pg_trgm operators may live in public.
+        # Runtime queries need public pg_trgm operators, but setup must not see
+        # pre-existing public application tables through SQLAlchemy checkfirst.
         self.engine = create_async_engine(URL, connect_args={"server_settings": {"search_path": f'{self.schema},public'}})
 
         def setup(conn):
+            conn.execute(text(f'SET LOCAL search_path TO "{self.schema}"'))
             wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search")]
             Base.metadata.create_all(conn, tables=wanted)
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
