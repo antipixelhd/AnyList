@@ -1,14 +1,12 @@
-"""Shared catalogue vote thresholds and conservative remote typo recovery."""
+"""Shared catalogue filters, release evidence and conservative remote typo recovery."""
 
 import re
 import math
 import asyncio
-from datetime import date
 from difflib import SequenceMatcher
 
 from sqlalchemy import Float, func
 
-DEFAULT_MIN_VOTES = 250
 EXCLUDABLE_CATEGORIES = {99, 10402, 10770, 10763, 10764, 10766, 10767}
 
 
@@ -16,21 +14,21 @@ async def result_filters(db, viewer):
     """Read all account result filters together; never partition provider caches."""
     from sqlalchemy import select
     from models.profile import UserProfileData
-    defaults = dict(min_votes=DEFAULT_MIN_VOTES, min_runtime=30, excluded_genres=[])
+    defaults = dict(min_runtime=30, excluded_genres=[])
     if viewer is None:
         return defaults
-    row = (await db.execute(select(UserProfileData.minimum_votes, UserProfileData.minimum_movie_runtime,
+    row = (await db.execute(select(UserProfileData.minimum_movie_runtime,
                                   UserProfileData.excluded_categories).where(UserProfileData.user_id == viewer.id))).first()
     if row is None:
         return defaults
-    return dict(min_votes=row.minimum_votes, min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
+    return dict(min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
 
 
-async def search_preferences(db, viewer):
-    """Optional per-account ranking preferences stored in user settings JSON."""
+async def browse_preferences(db, viewer):
+    """Browse-only requirements stored in user settings JSON."""
     from sqlalchemy import select
     from models.users import UserSettings
-    defaults = {'prefer_streaming_series': True, 'prefer_theatrical_movies': True}
+    defaults = {'require_release': False, 'require_poster': False}
     if viewer is None:
         return defaults
     saved = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == viewer.id))
@@ -58,7 +56,7 @@ def known_result_metadata(item, media):
 
 
 def exact_title_match(term, item):
-    """An explicit title lookup should find its title even before votes accrue."""
+    """Identify exact titles when reserving search enrichment slots."""
     query = (term or '').strip().casefold()
     return bool(query) and any(
         (item.get(field) or '').strip().casefold() == query
@@ -66,19 +64,18 @@ def exact_title_match(term, item):
     )
 
 
-def has_streaming_offer(item: dict, region: str) -> bool:
-    providers = item.get('watch_providers') or (item.get('watch/providers') or {}).get('results') or {}
+def has_streaming_offer(item: dict, region: str | None = None) -> bool:
+    providers = ((item.get('watch/providers') or {}).get('results')
+                 if 'watch/providers' in item else item.get('watch_providers')) or {}
     if not isinstance(providers, dict):
         return False
-    offers = providers.get(region) or {}
-    return isinstance(offers, dict) and any(offers.get(kind) for kind in ('flatrate', 'free', 'ads'))
+    territories = [providers.get(region)] if region else providers.values()
+    return any(isinstance(offers, dict) and any(offers.get(kind) for kind in ('flatrate', 'free', 'ads'))
+               for offers in territories)
 
 
-def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), search_term=''):
+def matches_result_filters(item, media_type, *, min_runtime=0, excluded_genres=()):
     from core.browse import GENRES
-    upcoming = (item.get('release_date') or item.get('first_air_date') or '') > date.today().isoformat()
-    if not upcoming and title_vote_count(item) < min_votes and not exact_title_match(search_term, item):
-        return False
     runtime = title_runtime(item)
     if media_type == 'movie' and runtime is not None and runtime < min_runtime:
         return False
@@ -93,20 +90,9 @@ def matches_result_filters(item, media_type, *, min_votes=0, min_runtime=0, excl
     return not any(native in ids or GENRES.get(native, '').casefold() in names for native in excluded_genres)
 
 
-def apply_result_filters(query, data, media_type, *, min_votes=0, min_runtime=0, excluded_genres=(), runtime=None, imdb_votes=None, release_date=None, search_term='', title=None, original_title=None):
+def apply_result_filters(query, data, media_type, *, min_runtime=0, excluded_genres=(), runtime=None):
     from sqlalchemy import or_
     from core.browse import GENRES
-    if min_votes:
-        votes = stored_vote_count(data, imdb_votes=imdb_votes) >= min_votes
-        allowed = [votes]
-        if release_date is not None:
-            allowed.append(release_date > date.today().isoformat())
-        if search_term:
-            if title is not None:
-                allowed.append(func.lower(title) == search_term.casefold())
-            if original_title is not None:
-                allowed.append(func.lower(original_title) == search_term.casefold())
-        query = query.where(or_(*allowed))
     if media_type == 'movie' and min_runtime:
         duration = func.nullif(func.coalesce(runtime, data['runtime'].astext.cast(Float)), 0)
         query = query.where(or_(duration.is_(None), duration >= min_runtime))
@@ -125,14 +111,6 @@ def title_vote_count(item: dict) -> int:
     if votes is None:
         votes = item.get("vote_count")
     return int(votes or 0)
-
-
-def stored_vote_count(data, *, imdb_votes=None):
-    return func.coalesce(
-        data["imdb"]["votes"].astext.cast(Float) if imdb_votes is None else imdb_votes,
-        data["vote_count"].astext.cast(Float),
-        0,
-    )
 
 
 def fuzzy_remote_terms(term: str) -> list[str]:
@@ -214,8 +192,7 @@ def title_match_rank(term, title):
 
 
 def search_rank(term: str, item: dict, *, streaming_available: bool = False,
-                theatrical: bool = False, prefer_streaming: bool = True,
-                prefer_theatrical: bool = False) -> float:
+                theatrical: bool = False) -> float:
     """One comparable search score for movies and series, using list metadata only."""
     query = term.strip().casefold()
     names = [str(item.get(field) or '').casefold() for field in
@@ -248,19 +225,66 @@ def search_rank(term: str, item: dict, *, streaming_available: bool = False,
     poster_weight = .5 if item.get('poster_path') or item.get('poster') else 0
     # These are alternative release signals. Stacking them gives movies a
     # second bonus that series can never earn in combined search results.
-    available = (streaming_available and prefer_streaming) or (theatrical and prefer_theatrical)
+    available = streaming_available or theatrical
     return round(relevance + vote_weight + popularity_weight +
                  (15 if available else 0) + poster_weight, 3)
 
 
-def media_search_rank(term: str, item: dict, media_type: str, region: str,
-                      preferences: dict) -> float:
+def media_search_rank(term: str, item: dict, media_type: str) -> float:
     from core.cinema_releases import theatrical_dates
     return search_rank(term, item,
-        streaming_available=has_streaming_offer(item, region),
-        theatrical=bool(theatrical_dates(item, region)) if media_type == 'movie' else False,
-        prefer_streaming=preferences.get('prefer_streaming_series', True) if media_type == 'series' else True,
-        prefer_theatrical=preferences.get('prefer_theatrical_movies', True))
+        streaming_available=has_streaming_offer(item),
+        theatrical=bool(theatrical_dates(item)) if media_type == 'movie' else False)
+
+
+def has_release(item: dict, media_type: str) -> bool:
+    """A streaming offer anywhere, or an actual movie theatrical release anywhere."""
+    from core.cinema_releases import has_cinema_release
+    return has_streaming_offer(item) or (media_type == 'movie' and has_cinema_release(item))
+
+
+def release_clause(data, media_type):
+    """SQL equivalent of has_release for stored public provider metadata."""
+    from datetime import date, timedelta
+    from sqlalchemy import or_, literal, cast
+    from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
+    offers = [func.jsonb_path_exists(source, cast(f'$.*.{kind}[*] ? (@ != null)', JSONPATH))
+              for source in (data['watch_providers'], data['watch/providers']['results'])
+              for kind in ('flatrate', 'free', 'ads')]
+    clauses = [func.coalesce(offer, False) for offer in offers]
+    if media_type == 'movie':
+        today = date.today()
+        clauses.extend([
+            data['theatrical_release_dates'][0].astext <= today.isoformat(),
+            func.jsonb_path_exists(data['theatrical_release_dates_by_country'], cast('$.*[*] ? (@ <= $today)', JSONPATH),
+                                  literal({'today': today.isoformat()}, type_=JSONB)),
+            func.jsonb_path_exists(data['release_dates'],
+                cast('$.results[*].release_dates[*] ? ((@.type == 2 || @.type == 3) && @.release_date < $tomorrow)', JSONPATH),
+                literal({'tomorrow': (today + timedelta(days=1)).isoformat()}, type_=JSONB)),
+        ])
+    return or_(*clauses)
+
+
+async def enrich_release_evidence(items, media_type, api_key):
+    """Read only missing public release evidence, bounded to six concurrent calls."""
+    if not api_key:
+        return
+    from core import tmdb
+    from core.cinema_releases import has_cinema_release
+    semaphore = asyncio.Semaphore(6)
+
+    async def load(item):
+        async with semaphore:
+            if has_release(item, media_type):
+                return
+            if 'watch/providers' not in item and 'watch_providers' not in item:
+                provider = tmdb.get_movie_watch_providers if media_type == 'movie' else tmdb.get_show_watch_providers
+                item['watch/providers'] = await provider(item['id'], api_key=api_key)
+            if media_type == 'movie' and not has_streaming_offer(item) and not has_cinema_release(item):
+                if not any(name in item for name in ('release_dates', 'theatrical_release_dates', 'theatrical_release_dates_by_country')):
+                    item['release_dates'] = await tmdb.get_movie_release_dates(item['id'], api_key=api_key)
+
+    await asyncio.gather(*(load(item) for item in items))
 
 
 async def enrich_search_evidence(items: list[dict], term: str, media_type: str,

@@ -126,11 +126,10 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_account_result_filters_apply_to_works_and_preserve_cached_credits(self):
         from models import UserProfileData
-        self.vote_floor.stop()
+        self.result_policy.stop()
         await self.login()
         async with self.Session() as db:
             profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
-            profile.minimum_votes = 250
             profile.excluded_categories = [99]
             for i, votes in enumerate((249, 250, 500)):
                 work = CatalogueEntity(kind='movie', name=f'Votes {votes}', attributes={'vote_count': votes, 'release_date': f'202{i}-01-01',
@@ -140,10 +139,9 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             count = await db.scalar(select(func.count()).select_from(CatalogueCredit))
         data = (await self.request()).json()
-        self.assertEqual([row['title'] for row in data['works']], ['Votes 250'])
+        self.assertEqual([row['title'] for row in data['works']], ['Votes 250', 'Fixture movie'])
         async with self.Session() as db:
             profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
-            profile.minimum_votes = 0
             profile.minimum_movie_runtime = 0
             profile.excluded_categories = []
             await db.commit()
@@ -225,9 +223,9 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
-        self.vote_floor = patch('core.contributor_details.result_filters', AsyncMock(return_value={'min_votes':0,'min_runtime':0,'excluded_genres':[]}))
-        self.vote_floor.start()
-        self.addCleanup(self.vote_floor.stop)
+        self.result_policy = patch('core.contributor_details.result_filters', AsyncMock(return_value={'min_runtime':0,'excluded_genres':[]}))
+        self.result_policy.start()
+        self.addCleanup(self.result_policy.stop)
         self.keys = patch('core.contributor_details.settings_store.get_user_tmdb_key', AsyncMock(return_value=None))
         self.key_mock = self.keys.start()
         self.addCleanup(self.keys.stop)

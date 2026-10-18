@@ -123,8 +123,8 @@ async def get_profile(
     )
     profile = result.scalar_one_or_none()
     resp = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
-    from core.catalog_search import search_preferences
-    for name, value in (await search_preferences(db, current_user)).items():
+    from core.catalog_search import browse_preferences
+    for name, value in (await browse_preferences(db, current_user)).items():
         setattr(resp, name, value)
     if profile and profile.avatar_path:
         resp.avatar_url = f"/profile/avatar/{current_user.id}"
@@ -153,7 +153,7 @@ async def update_profile(
         db.add(profile)
 
     values = body.model_dump(exclude_unset=True)
-    ranking = {name: values.pop(name) for name in ('prefer_streaming_series', 'prefer_theatrical_movies') if name in values}
+    ranking = {name: values.pop(name) for name in ('require_release', 'require_poster') if name in values}
     for field, value in values.items():
         setattr(profile, field, value)
 
@@ -167,8 +167,8 @@ async def update_profile(
     await db.commit()
     await db.refresh(profile)
     resp = schemas.UserProfileResponse.model_validate(profile)
-    from core.catalog_search import search_preferences
-    for name, value in (await search_preferences(db, current_user)).items():
+    from core.catalog_search import browse_preferences
+    for name, value in (await browse_preferences(db, current_user)).items():
         setattr(resp, name, value)
     return resp
 

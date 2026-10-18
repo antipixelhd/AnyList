@@ -136,7 +136,7 @@ def related_pending(media):
         ('recommendations' not in data and 'recommendations' not in cache)))
 
 
-async def screen_related(db, media, details, *, min_votes=0, min_runtime=0, excluded_genres=()):
+async def screen_related(db, media, details, *, min_runtime=0, excluded_genres=()):
     data = media.tmdb_data or {}
     cache = data.get('_anylist_related') or {}
     kind = media.media_type.value
@@ -172,7 +172,7 @@ async def screen_related(db, media, details, *, min_votes=0, min_runtime=0, excl
     relations = unique(relations)
     excluded = {(row['type'], row['url']) for row in relations}
     candidates = [row for raw in recommendations if isinstance(raw, dict) and (row := card(raw))] + list(details.get('similar') or [])
-    similar = unique([row for row in candidates if matches_result_filters(row, row['type'], min_votes=min_votes, min_runtime=min_runtime, excluded_genres=excluded_genres)], excluded)[:12]
+    similar = unique([row for row in candidates if matches_result_filters(row, row['type'], min_runtime=min_runtime, excluded_genres=excluded_genres)], excluded)[:12]
     retry = 0
     try:
         retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)

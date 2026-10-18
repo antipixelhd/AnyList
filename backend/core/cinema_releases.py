@@ -7,6 +7,9 @@ def theatrical_dates(data, country=None):
     stored = ((data.get('theatrical_release_dates_by_country') or {}).get(country, [])
         if country and isinstance(data.get('theatrical_release_dates_by_country'),dict)
         else None if country else data.get('theatrical_release_dates'))
+    if stored is None and not country and isinstance(data.get('theatrical_release_dates_by_country'), dict):
+        stored = [value for dates in data['theatrical_release_dates_by_country'].values()
+                  if isinstance(dates, list) for value in dates]
     if isinstance(stored,list):
         values=stored
     else:

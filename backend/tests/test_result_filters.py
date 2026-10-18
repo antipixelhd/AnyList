@@ -25,14 +25,14 @@ class ResultPolicyTests(unittest.TestCase):
                  'theatrical_release_dates_by_country': {'DE': ['2021-01-01']}}
         series = {'name': 'Silo', 'vote_count': 1500, 'popularity': 30,
                   'poster_path': '/series.jpg', 'watch_providers': offers}
-        movie_score = media_search_rank('silo', movie, 'movie', 'DE', {})
-        series_score = media_search_rank('silo', series, 'series', 'DE', {})
+        movie_score = media_search_rank('silo', movie, 'movie')
+        series_score = media_search_rank('silo', series, 'series')
         self.assertGreater(series_score, movie_score)
         self.assertEqual(movie_score, media_search_rank('silo',
-            {**movie, 'theatrical_release_dates_by_country': {}}, 'movie', 'DE', {}))
+            {**movie, 'theatrical_release_dates_by_country': {}}, 'movie'))
         # Equal popularity and votes should yield equal scores across types.
         self.assertEqual(movie_score, media_search_rank('silo',
-            {**series, 'vote_count': 150, 'popularity': 3}, 'series', 'DE', {}))
+            {**series, 'vote_count': 150, 'popularity': 3}, 'series'))
 
     def test_shared_rank_balances_exact_match_with_popularity_and_availability(self):
         exact_low = {'title':'War', 'vote_count':10, 'popularity':8, 'poster_path':'/war.jpg'}
@@ -42,7 +42,6 @@ class ResultPolicyTests(unittest.TestCase):
         self.assertGreater(search_rank('war', prefix, streaming_available=True), search_rank('war', exact_low))
         self.assertGreater(search_rank('war', exact_high, streaming_available=True), search_rank('war', prefix, streaming_available=True))
         self.assertGreater(search_rank('war', exact_low, streaming_available=True), search_rank('war', exact_low))
-        self.assertEqual(search_rank('war', exact_low, streaming_available=True, prefer_streaming=False), search_rank('war', exact_low))
         self.assertGreater(search_rank('war', exact_low), search_rank('war', {**exact_low, 'poster_path':None}))
         self.assertTrue(has_streaming_offer({'watch_providers':{'DE':{'flatrate':[{'provider_id':1}]}}}, 'DE'))
         self.assertFalse(has_streaming_offer({'watch_providers':{'DE':{'rent':[{'provider_id':1}]}}}, 'DE'))
@@ -52,10 +51,10 @@ class ResultPolicyTests(unittest.TestCase):
             {'iso_3166_1':'DE','release_dates':[{'type':3,'release_date':'2099-10-01T00:00:00.000Z'}]}
         ]}}
         self.assertEqual(theatrical_dates(future, 'DE'), ['2099-10-01'])
-        self.assertGreater(search_rank('war', future, theatrical=True, prefer_theatrical=True),
-                           search_rank('war', future, theatrical=False, prefer_theatrical=True))
-        self.assertGreater(media_search_rank('war', future, 'movie', 'DE', {'prefer_theatrical_movies': True}),
-                           media_search_rank('war', future, 'movie', 'DE', {'prefer_theatrical_movies': False}))
+        self.assertGreater(search_rank('war', future, theatrical=True),
+                           search_rank('war', future, theatrical=False))
+        self.assertGreater(media_search_rank('war', future, 'movie'),
+                           media_search_rank('war', {**future, 'release_dates': {}}, 'movie'))
 
     def test_runtime_boundary_unknown_and_series(self):
         for runtime, expected in ((2, False), (29, False), (30, True), (31, True), (None, True), (0, True)):

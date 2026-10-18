@@ -89,7 +89,7 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await self.queue(1);await self.queue(2);await self.queue(3)
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),2)
-        await self.queue(1,{**FILTERS,'min_votes':1000})
+        await self.queue(1,{**FILTERS, 'min_runtime':1000})
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(ContributorEvidence)),3)
 
@@ -108,8 +108,10 @@ class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             work=await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='movie'))
             person=await db.scalar(select(CatalogueEntity).where(CatalogueEntity.kind=='person'))
             rows=[{'key':f'catalogue:{person.id}'}]
+            work.attributes = {**work.attributes, 'runtime': 2}
+            await db.flush()
             self.assertEqual(await evidence.local_evidence(db,rows,'actor',FILTERS,True),{})
-            work.attributes={'vote_count':500,'release_date':'2025-01-01'}
+            work.attributes={'vote_count':500,'runtime':30,'release_date':'2025-01-01'}
             await db.commit()
             self.assertEqual((await evidence.local_evidence(db,rows,'actor',FILTERS,True))[rows[0]['key']]['works'],1)
-            self.assertEqual(await evidence.local_evidence(db,rows,'actor',{**FILTERS,'min_votes':1000},True),{})
+            self.assertEqual(await evidence.local_evidence(db,rows,'actor',{**FILTERS, 'min_runtime':1000},True),{})

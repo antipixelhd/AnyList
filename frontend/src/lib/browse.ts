@@ -364,7 +364,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     empty.hidden =
       displayedCategories ||
       loading ||
-      (!!field('q').value.trim() && payload.has_more) ||
+      payload.has_more ||
       !!grid.childElementCount ||
       !error.hidden;
   };

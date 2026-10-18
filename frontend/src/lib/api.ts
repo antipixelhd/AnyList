@@ -281,10 +281,9 @@ export interface PersonalDataSelection {
 }
 
 export interface UserPreferences {
-  minimum_votes?: number;
   minimum_movie_runtime?: number;
-  prefer_streaming_series?: boolean;
-  prefer_theatrical_movies?: boolean;
+  require_release?: boolean;
+  require_poster?: boolean;
   excluded_categories?: number[];
   background_url?: string | null;
   profile_color: string;

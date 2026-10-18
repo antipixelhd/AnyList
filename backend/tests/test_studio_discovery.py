@@ -17,7 +17,7 @@ def candidate(native, name, **kwargs):
 
 class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.filters = {'min_votes':250, 'min_runtime':30, 'excluded_genres':[]}
+        self.filters = {'min_runtime':30, 'excluded_genres':[]}
         self.db = SimpleNamespace(get=AsyncMock(return_value=None))
         self.viewer = SimpleNamespace(id=1)
         self.cached = AsyncMock(return_value=({}, True))
@@ -56,12 +56,11 @@ class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                 {**candidate(12,'Known'),'key':'catalogue:1'},candidate(23,'Unknown',_works=100)],None)
         self.assertEqual([r['name'] for r in rows],['Known'])
 
-    async def test_candidate_limits_and_recognition_floor_are_preserved(self):
-        self.filters['min_votes']=0
+    async def test_candidate_limits_preserve_runtime_filters_without_vote_floor(self):
         await discovery.verified_studios(self.db,self.viewer,[candidate(i,f'Studio {i}') for i in range(1,30)],'key')
         jobs=self.cached.call_args.args[1]
         self.assertEqual(len(jobs),discovery.MAX_CANDIDATES)
-        self.assertTrue(all(config['filters']['min_votes']==250 for config in jobs.values()))
+        self.assertTrue(all('min_votes' not in config['filters'] for config in jobs.values()))
 
     async def test_latest_released_works_rank_above_larger_historical_catalogues(self):
         groups={k:[] for k in search.KINDS}

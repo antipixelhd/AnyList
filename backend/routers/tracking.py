@@ -1,6 +1,6 @@
 """Tracked lists are independent of connected streaming-library membership."""
 import asyncio
-from core.catalog_search import result_filters, search_preferences, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, exact_title_match, media_search_rank, enrich_search_evidence
+from core.catalog_search import result_filters, browse_preferences, matches_result_filters, apply_result_filters, known_result_metadata, fuzzy_remote_terms, is_close_title_match, exact_title_match, media_search_rank, enrich_search_evidence
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
@@ -1248,7 +1248,8 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
     )
     try:
         return await sections(db, viewer, media_type=media_type, region=region,
-                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **(await result_filters(db, viewer)), min_score=min_score)
+                              show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **(await result_filters(db, viewer)),
+                              **(await browse_preferences(db, viewer)), min_score=min_score)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
@@ -1285,7 +1286,9 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         return await browse_page(db, viewer, term=q.strip(), media_type=media_type, page=page, source=source, cursor=positions,
             show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, genres=genre_ids,
             start=start.isoformat() if start else None, end=end.isoformat() if end else None,
-            status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)), min_score=min_score, cinema=cinema and media_type=='movie',
+            status=status, provider=provider, region=region, sort=sort, **(await result_filters(db, viewer)),
+            **((await browse_preferences(db, viewer)) if not q.strip() else {'require_release': False, 'require_poster': False}),
+            min_score=min_score, cinema=cinema and media_type=='movie',
             cinema_country=await account_cinema_country(db,viewer) if cinema and media_type=='movie' else None)
     except Exception:
         raise HTTPException(502, 'Unable to load more titles. Try again.')
@@ -1299,13 +1302,9 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
     show_anime=await anime_is_visible(db)
     filters = await result_filters(db, viewer)
     term = q.strip()[:200]
-    if term:
-        filters = {**filters, 'min_votes': 0}
     region = region or await account_cinema_country(db, viewer) or 'US'
-    ranking = await search_preferences(db, viewer) if term else {}
     query = apply_result_filters(select(Media).where(Media.media_type == MediaType(media_type)),
-                                 Media.tmdb_data, media_type, runtime=Media.runtime,
-                                 search_term=term, title=Media.title, original_title=Media.original_title, **filters)
+                                 Media.tmdb_data, media_type, runtime=Media.runtime, **filters)
     if term:
         escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
         similarity = func.greatest(func.similarity(Media.title, term),
@@ -1324,7 +1323,7 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
             metadata = {**(media.tmdb_data or {}), 'title': media.title,
                         'original_title': media.original_title or (media.tmdb_data or {}).get('original_title'),
                         'poster_path': result.get('poster')}
-            result['search_rank'] = media_search_rank(term, metadata, media_type, region, ranking)
+            result['search_rank'] = media_search_rank(term, metadata, media_type)
         results.append(result)
     notice = None
     if term:
@@ -1372,24 +1371,23 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                                   for item in remote_results]
                 await enrich_search_evidence([item for item in remote_results if not item.get('adult')],
                     term, media_type, key, region,
-                    theatrical=media_type == 'movie' and ranking.get('prefer_theatrical_movies', True),
-                    streaming=media_type == 'movie' or ranking.get('prefer_streaming_series', True))
+                    theatrical=media_type == 'movie')
                 remote_by_id = {item['id']: item for item in remote_results}
                 for result in results:
                     item = remote_by_id.get(result.get('tmdb_id'))
                     if item:
                         result['search_rank'] = media_search_rank(term,
                             {**item, 'title': result['title'], 'poster_path': result.get('poster') or item.get('poster_path')},
-                            media_type, region, ranking)
+                            media_type)
                 for item in remote_results:
                     candidate_data={'genres':[{'name':'Animation'}] if 16 in item.get('genre_ids',[]) else [],'original_language':item.get('original_language'),'origin_country':item.get('origin_country',[])}
                     candidate=type('Candidate',(),{'tmdb_data':candidate_data})()
-                    if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, search_term=term, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
+                    if item['id'] in known or item.get('adult') or not matches_result_filters(item, media_type, **filters) or (not show_anime and tracking_projection.is_anime(candidate)):
                         continue
                     known.add(item['id'])
                     results.append({'id':None,'tmdb_id':item['id'],'type':media_type,'title':item.get('title') or item.get('name'),
                         'poster':item.get('poster_path'),'year':(item.get('release_date') or item.get('first_air_date') or '')[:4],
-                        'search_rank':media_search_rank(term, item, media_type, region, ranking)})
+                        'search_rank':media_search_rank(term, item, media_type)})
             except Exception:
                 notice = 'Metadata search is temporarily unavailable. Showing local matches.'
         else:

@@ -41,8 +41,8 @@ class FilterTests(unittest.TestCase):
         predicate={k:v for k,v in FILTERS.items() if k!='sort'}
         for kind,field in [('movie','release_date'),('series','first_air_date')]:
             item={field:'2099-12-01','vote_count':0,'status':'Returning Series'}
-            self.assertTrue(matches(item,media_type=kind,min_votes=250,**predicate))
-            self.assertTrue(matches(item,media_type=kind,min_votes=250,**{**predicate,'status':'upcoming'}))
+            self.assertTrue(matches(item,media_type=kind,**predicate))
+            self.assertTrue(matches(item,media_type=kind,**{**predicate,'status':'upcoming'}))
 
     def test_airing_requires_started_season_and_future_episode_returning_excludes_it(self):
         predicate={k:v for k,v in FILTERS.items() if k!='sort'}
@@ -60,14 +60,6 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(matches({'vote_average': 7.5, 'imdb_score': 1}, media_type='movie', min_score=7.5, **predicate))
         self.assertEqual(remote_params('movie', page=1, **{**FILTERS, 'sort': 'newest', 'min_score': 7.5})['vote_average.gte'], 7.5)
 
-    def test_account_vote_floor_validation(self):
-        from schemas import UserProfileUpdate
-        from pydantic import ValidationError
-        for value in (0, 250, 1000000):
-            self.assertEqual(UserProfileUpdate(minimum_votes=value).model_dump(exclude_unset=True), {'minimum_votes': value})
-        for value in (-1, 1000001, None, 2.5):
-            with self.assertRaises(ValidationError):
-                UserProfileUpdate(minimum_votes=value)
 
     def test_country_cinema_evidence_cannot_fall_back_to_other_countries(self):
         from core.cinema_releases import has_cinema_release
@@ -123,23 +115,7 @@ class FilterTests(unittest.TestCase):
             ["Trending now", "Newest", "All-time popular", "Highest rated"],
         )
 
-    def test_vote_floor_has_an_inclusive_boundary_and_explicit_zero(self):
-        predicate = {k: v for k, v in FILTERS.items() if k != "sort"}
-        for votes, expected in [(249, False), (250, True), (251, True)]:
-            self.assertEqual(matches({"vote_count": votes}, media_type="movie", min_votes=250, **predicate), expected)
-        self.assertFalse(matches({}, media_type="movie", min_votes=250, **predicate))
-        self.assertTrue(matches({}, media_type="movie", min_votes=0, **predicate))
-        self.assertFalse(matches({"imdb_votes": 200, "vote_count": 10000}, media_type="movie", min_votes=250, **predicate))
-        params = remote_params("movie", page=1, **{**FILTERS, "sort": "newest", "min_votes": 250})
-        self.assertEqual(params["vote_count.gte"], 0)
 
-    def test_exact_title_search_survives_vote_floor_without_lifting_other_filters(self):
-        from core.catalog_search import matches_result_filters
-        exact = {'name': 'War', 'vote_count': 4, 'genre_ids': [18]}
-        self.assertTrue(matches_result_filters(exact, 'series', min_votes=250, search_term=' WAR '))
-        self.assertFalse(matches_result_filters(exact, 'series', min_votes=250))
-        self.assertFalse(matches_result_filters({'name': 'War Stories', 'vote_count': 4}, 'series', min_votes=250, search_term='war'))
-        self.assertFalse(matches_result_filters(exact, 'series', min_votes=250, excluded_genres=[18], search_term='war'))
 
     def test_newest_sorts_released_titles_without_a_season_boundary(self):
         for today in [date(2024, 2, 29), date(2026, 12, 31)]:
@@ -304,23 +280,23 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
             'core.tmdb.get_movie',AsyncMock(side_effect=detail)):
             _,items=await remote_page('title','movie','fixture',{**FILTERS,'cinema':True},1)
         self.assertEqual([r['id'] for r in items],[1])
-    async def test_vote_floor_is_applied_before_feed_pagination_and_survives_detail_fetch(self):
+    async def test_low_vote_titles_survive_feed_pagination_and_detail_fetch(self):
         rows = [{"id": i, "imdb_id": f"tt{i}", "imdb_score": 8, "imdb_votes": 249 if i < 30 else 250} for i in range(60)]
         async def detail(identifier, api_key):
             return {"id": identifier, "vote_count": 1, "watch/providers": {"results": {"US": {"flatrate": [{"provider_id": 8}]}}}}
         with patch("core.mdblist_discovery.ranked_rows", AsyncMock(return_value=(rows, False))), patch("core.tmdb.get_movie", AsyncMock(side_effect=detail)):
-            first, items = await remote_page("", "movie", "key", {**FILTERS, "provider": 8, "min_votes": 250}, 1, mdblist_key="mdb")
-            second, more = await remote_page("", "movie", "key", {**FILTERS, "provider": 8, "min_votes": 250}, 2, mdblist_key="mdb")
-        self.assertEqual([item["id"] for item in items], list(range(30, 54)))
-        self.assertEqual([item["id"] for item in more], list(range(54, 60)))
+            first, items = await remote_page("", "movie", "key", {**FILTERS, "provider": 8, }, 1, mdblist_key="mdb")
+            second, more = await remote_page("", "movie", "key", {**FILTERS, "provider": 8, }, 2, mdblist_key="mdb")
+        self.assertEqual([item["id"] for item in items], list(range(0, 24)))
+        self.assertEqual([item["id"] for item in more], list(range(24, 48)))
         self.assertTrue(first["has_more"])
-        self.assertFalse(second["has_more"])
+        self.assertTrue(second["has_more"])
 
-    async def test_browse_search_excludes_low_vote_and_unknown_counts(self):
+    async def test_browse_search_includes_low_vote_and_unknown_counts(self):
         with patch("core.tmdb.search_movies", AsyncMock(return_value={"results": [
             {"id": 1, "title":"Title One", "vote_count": 249}, {"id": 2, "title":"Title Two", "vote_count": 250}, {"id": 3,"title":"Title Three"}], "total_pages": 2})):
-            data, items = await remote_page("title", "movie", "key", {**FILTERS, "min_votes": 250}, 1)
-        self.assertEqual([item["id"] for item in items], [2])
+            data, items = await remote_page("title", "movie", "key", FILTERS, 1)
+        self.assertEqual([item["id"] for item in items], [1, 2, 3])
         self.assertEqual(data["total_pages"], 2)
 
     async def test_browse_search_keeps_new_exact_series_title(self):
@@ -328,8 +304,8 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
             {'id': 1, 'name': 'War Stories', 'vote_count': 12},
             {'id': 2, 'name': 'War', 'vote_count': 12},
         ], 'total_pages': 1})):
-            _, items = await remote_page('war', 'series', 'key', {**FILTERS, 'min_votes': 250}, 1)
-        self.assertEqual([item['id'] for item in items], [2])
+            _, items = await remote_page('war', 'series', 'key', FILTERS, 1)
+        self.assertEqual([item['id'] for item in items], [1, 2])
 
     async def test_filtered_feed_is_paged_after_matching_and_excluding_anime(self):
         rows = [
@@ -391,7 +367,7 @@ class RemotePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items, [])
 
 
-class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
+class BrowseFilterApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.db = AsyncMock()
         result = MagicMock()
@@ -418,16 +394,13 @@ class VoteThresholdApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_browse_score_is_separate_from_account_vote_floor(self):
+    async def test_browse_score_validation_and_forwarding(self):
         for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
             with patch(target, AsyncMock(return_value={"results": []})) as browse:
-                for floor in [0, 250, 500]:
-                    with patch("routers.tracking.result_filters", AsyncMock(return_value={"min_votes":floor,"min_runtime":30,"excluded_genres":[]})):
-                        for score in [0, 7.5, 10]:
-                            response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": score, "min_votes": 0})
-                            self.assertEqual(response.status_code, 200, response.text)
-                            self.assertEqual(browse.await_args.kwargs["min_votes"], floor)
-                            self.assertEqual(browse.await_args.kwargs["min_score"], score)
+                for score in [0, 7.5, 10]:
+                    response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": score})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(browse.await_args.kwargs["min_score"], score)
                 for value in [-1, 10.1, "invalid"]:
                     response = await self.client.get(f"/tracking/{endpoint}", params={"min_score": value})
                     self.assertEqual(response.status_code, 422)
@@ -513,7 +486,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.movies[1].runtime=30
         self.movies[2].tmdb_data={**self.movies[2].tmdb_data,'genres':[{'id':99,'name':'Documentary'}]}
         await self.db.flush()
-        await update_profile(UserProfileUpdate(minimum_votes=0,excluded_categories=[99,10764]),current_user=self.owner,db=self.db)
+        await update_profile(UserProfileUpdate(excluded_categories=[99,10764]),current_user=self.owner,db=self.db)
         pages=[(await self.client.get('/tracking/browse',params={'page':page})).json()['results'] for page in (1,2,3)]
         ids=[row['id'] for page in pages for row in page]
         self.assertEqual(len(ids),53)
@@ -539,25 +512,14 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.flush()
         # Another save has changed the JSON since this session loaded it.
         await self.db.execute(update(UserSettings).where(UserSettings.user_id == self.owner.id)
-                              .values(preferences={'unrelated': 'keep', 'prefer_streaming_series': False})
+                              .values(preferences={'unrelated': 'keep', 'require_release': False})
                               .execution_options(synchronize_session=False))
-        response = await update_profile(UserProfileUpdate(prefer_theatrical_movies=False), current_user=self.owner, db=self.db)
+        response = await update_profile(UserProfileUpdate(require_poster=True), current_user=self.owner, db=self.db)
         saved = await self.db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == self.owner.id))
-        self.assertEqual(saved, {'unrelated': 'keep', 'prefer_streaming_series': False, 'prefer_theatrical_movies': False})
-        self.assertFalse(response.prefer_streaming_series)
-        self.assertFalse(response.prefer_theatrical_movies)
+        self.assertEqual(saved, {'unrelated': 'keep', 'require_release': False, 'require_poster': True})
+        self.assertFalse(response.require_release)
+        self.assertTrue(response.require_poster)
 
-    async def test_saved_vote_floor_applies_to_browse_and_catalog_with_tmdb_only_score(self):
-        from routers.profile import update_profile
-        from schemas import UserProfileUpdate
-        await update_profile(UserProfileUpdate(minimum_votes=1000), current_user=self.owner, db=self.db)
-        for endpoint in ('browse', 'catalog'):
-            response = await self.client.get(f'/tracking/{endpoint}')
-            self.assertEqual([row['id'] for row in response.json()['results']], [self.movies[0].id])
-        await update_profile(UserProfileUpdate(minimum_votes=0), current_user=self.owner, db=self.db)
-        response = await self.client.get('/tracking/browse', params={'min_score': 8.99})
-        self.assertEqual({row['id'] for row in response.json()['results']}, {self.movies[0].id, self.movies[1].id})
-        self.assertGreater(self.movies[0].tmdb_rating, self.movies[0].imdb_rating)
 
     async def test_exact_series_title_is_findable_in_catalog_and_browse(self):
         series = Media(title='War', media_type=MediaType.series, release_date='2026-10-01',
@@ -587,6 +549,39 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 titles = [row['title'] for row in response.json()['results']]
                 self.assertEqual(titles[0], 'War')
                 self.assertIn('War Stories', titles)
+
+    async def test_browse_requirements_are_independent_worldwide_and_skip_relevance(self):
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        for movie in self.movies:
+            movie.tmdb_data = {}
+        for movie in self.movies[:5]:
+            movie.poster_path = '/poster.jpg'
+        self.movies[0].tmdb_data = {'watch_providers': {'BR': {'flatrate': [{'provider_id': 8}]}}}
+        self.movies[1].tmdb_data = {'theatrical_release_dates_by_country': {'JP': ['2020-01-01']}}
+        self.movies[2].tmdb_data = {'watch_providers': {'DE': {'rent': [{'provider_id': 8}]}}}
+        self.movies[3].tmdb_data = {'watch/providers': {'results': {'CA': {'ads': [{'provider_id': 8}]}}}}
+        self.movies[3].poster_path = None
+        self.movies[4].tmdb_data = {'theatrical_release_dates': ['2099-01-01']}
+        await self.db.flush()
+        await update_profile(UserProfileUpdate(require_release=True, require_poster=True), current_user=self.owner, db=self.db)
+        for region in ('DE', 'US'):
+            response = await self.client.get('/tracking/browse', params={'sort': 'title', 'region': region})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual([row['id'] for row in response.json()['results']], [m.id for m in self.movies[:2]])
+        await update_profile(UserProfileUpdate(require_poster=False), current_user=self.owner, db=self.db)
+        response = await self.client.get('/tracking/browse', params={'sort': 'title'})
+        self.assertEqual([row['id'] for row in response.json()['results']], [self.movies[i].id for i in (0, 1, 3)])
+        await update_profile(UserProfileUpdate(require_release=False, require_poster=True), current_user=self.owner, db=self.db)
+        response = await self.client.get('/tracking/browse', params={'sort': 'title'})
+        self.assertEqual([row['id'] for row in response.json()['results']], [self.movies[i].id for i in (0, 1, 2, 4)])
+        await update_profile(UserProfileUpdate(require_release=True), current_user=self.owner, db=self.db)
+        response = await self.client.get('/tracking/browse', params={'q': 'Browse'})
+        ids = {row['id'] for row in response.json()['results']}
+        self.assertIn(self.movies[2].id, ids)
+        self.assertIn(self.movies[3].id, ids)
+        response = await self.client.get('/tracking/catalog')
+        self.assertEqual(len(response.json()['results']), 55)
 
     async def asyncSetUp(self):
         self.engine = create_async_engine(os.environ["TRACKING_TEST_DATABASE_URL"])

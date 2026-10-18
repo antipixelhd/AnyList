@@ -574,7 +574,6 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(data['related_pending'])
             async with self.Session() as db:
                 profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
-                profile.minimum_votes = 0
                 profile.minimum_movie_runtime = 0
                 profile.excluded_categories = []
                 await db.commit()
