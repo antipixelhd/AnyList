@@ -17,7 +17,7 @@
   right:14px
 }
 .activity-stream .event-action {
-  margin:28px 72px 28px 0;
+  margin:0 72px 0 0;
   text-align:left
 }
 .activity-stream .event-action>span {
@@ -30,14 +30,14 @@
     right:11px
   }
   .activity-stream .event-action {
-    margin:25px 62px 25px 0
+    margin:0 62px 0 0
   }
 }
 /* Following updates stack the author, message, and avatar as one centered block. */
 .activity-stream .following-event .event-body {
   /* The card's two 1px borders bring the standard outer height to 100px. */
   min-height:98px;
-  padding:14px;
+  padding:4px 14px;
 }
 .activity-stream .following-event .event-content {
   display:flex;
