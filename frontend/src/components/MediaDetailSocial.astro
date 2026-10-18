@@ -12,7 +12,8 @@ const {data,type}=Astro.props as {data:{people:any[];activities:any[]};type:'mov
     <h2 id="media-social-people-heading">People you follow</h2>
     {data.people.length?<div class="media-social-list">{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='movie'?'movies':'series'}`}>
       <span class="lab-friend-avatar" aria-hidden="true">{person.has_avatar?<img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>:(person.display_name||person.username).slice(0,1).toUpperCase()}</span>
-      <span class="media-social-person-copy"><strong>{person.display_name||person.username}</strong><span>{statuses.find(([id])=>id===person.status)?.[1]||person.status}</span></span>
+      <strong class="media-social-person-name">{person.display_name||person.username}</strong>
+      <span class="media-social-person-status">{statuses.find(([id])=>id===person.status)?.[1]||person.status}</span>
       <span class="media-social-score">{scoreLabel(person.score)} <small>/ 10</small></span>
     </a>)}</div>:<p class="section-empty">No one has added this title yet.</p>}
   </section>

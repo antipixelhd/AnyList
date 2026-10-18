@@ -54,3 +54,18 @@ class DetailOptionalReadsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['people'][0]['score'], 7)
         self.assertIsNone(result['people'][1]['score'])
         self.assertEqual(result['activities'], [])
+
+    async def test_social_people_sort_by_status_then_descending_score(self):
+        movie = SimpleNamespace(media_type=MediaType.movie, tmdb_data={})
+        viewer = SimpleNamespace(id=99, username='viewer')
+        cases = [('planning', 10), ('dropped', 10), ('paused', 10),
+                 ('watching', 10), ('completed', None), ('completed', 4), ('completed', 9)]
+        rows = [(SimpleNamespace(rating_mode='manual', manual_score=score, season_scores={}, status=status),
+                 SimpleNamespace(id=i, username=str(i)), None)
+                for i, (status, score) in enumerate(cases)]
+        db = SimpleNamespace(get=AsyncMock(return_value=movie),
+            execute=AsyncMock(side_effect=[Result(rows), Result([])]))
+        result = await title_social(1, db, viewer)
+        self.assertEqual([(person['status'], person['score']) for person in result['people']],
+            [('completed', 9), ('completed', 4), ('completed', None),
+             ('watching', 10), ('paused', 10), ('dropped', 10), ('planning', 10)])

@@ -1636,7 +1636,8 @@ async def title_social(media_id: Annotated[int, Path(gt=0)],
                'score': effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
                'self': user.id == viewer.id}
               for entry, user, profile in entries]
-    people.sort(key=lambda person: (person['score'] is None, -(person['score'] or 0), not person['self'], (person['display_name'] or person['username']).casefold()))
+    status_rank = {status: rank for rank, status in enumerate(('completed', 'watching', 'paused', 'dropped', 'planning'))}
+    people.sort(key=lambda person: (status_rank.get(person['status'], len(status_rank)), person['score'] is None, -(person['score'] or 0), not person['self'], (person['display_name'] or person['username']).casefold()))
     activity_rows = (await db.execute(select(TrackingActivity, Media, User, UserProfileData)
         .join(Media, Media.id == TrackingActivity.media_id)
         .join(User, User.id == TrackingActivity.user_id)
