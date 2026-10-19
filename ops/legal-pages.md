@@ -6,7 +6,10 @@ Privacy's storage section. The old `/impressum` and `/dev/impressum` paths redir
 to the corresponding English `/legal-notice` route. Previews are public, noindex, uncached and use empty
 operator fields, even when production disclosures are configured.
 
-Normal routes and their footer links are disabled by default. `LEGAL_PAGES_ENABLED=true`
+Normal notice routes are disabled by default. The footer itself always renders;
+private preview slots link to the `/dev` drafts. Regular pages omit Legal notice,
+which remains in the footer on `/dev` pages. Disabled production shows the brand
+link without links to unpublished notices. `LEGAL_PAGES_ENABLED=true`
 and all six nonempty disclosure fields are required to publish them. Failure to
 load configuration also hides the pages. The disclosure API returns blank fields
 when disabled or incomplete. Published notices are reachable without signing in.
