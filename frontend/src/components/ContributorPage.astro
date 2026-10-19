@@ -57,7 +57,7 @@ if (data) {
       <div class="contributor-main">
         <header class="contributor-heading"><p class="contributor-kicker">{kind === 'studio' ? 'Production studio' : kind === 'actor' ? 'Actor' : 'Staff'}</p><h1>{data.name}</h1>
           {data.roles.length > 0 && <p class="contributor-roles">{data.roles.slice(0,4).join(' / ')}</p>}
-          {signedIn && <a class="contributor-list-link" href={`${Astro.url.pathname}?list_scope=in&view=${view}`}><Icon name="list" /><span><strong data-contributor-list-count>{data.list_count || 0}</strong> in your list</span></a>}
+          {signedIn && <a class="contributor-list-link" href={`${Astro.url.pathname}?list_scope=in&view=${view}#contributor-works`}><Icon name="list" /><span><strong data-contributor-list-count>{data.list_count || 0}</strong> in your list</span></a>}
         </header>
         {data.description && <section class="contributor-biography" aria-labelledby="contributor-about-heading"><h2 id="contributor-about-heading">{kind === 'studio' ? 'About' : 'Biography'}</h2>
           {kind === 'studio' ? <p>{data.description}</p> : <>
@@ -67,7 +67,7 @@ if (data) {
           </>}
         </section>}
         {data.aliases.length > 0 && <details class="contributor-aliases"><summary>Also known as</summary><p>{data.aliases.join(' · ')}</p></details>}
-        <section class="contributor-works" aria-labelledby="contributor-works-heading">
+        <section id="contributor-works" class="contributor-works" aria-labelledby="contributor-works-heading">
           <header class="contributor-works-heading"><h2 id="contributor-works-heading">Works</h2>
             <div class="contributor-view-switch" role="group" aria-label="Works layout"><button type="button" data-contributor-view="timeline" aria-pressed={view === 'timeline'}><Icon name="list" /><span>Timeline</span></button><button type="button" data-contributor-view="grid" aria-pressed={view === 'grid'}><Icon name="grid" /><span>Compact</span></button></div>
           </header>
@@ -87,7 +87,7 @@ if (data) {
         </section>
       </div>
     </div>
-    <ImageLightbox id="contributor-image-viewer" imageKind={kind==='studio'?'logo':undefined}/>
+    <ImageLightbox id="contributor-image-viewer" gallery imageKind={kind==='studio'?'logo':undefined}/>
     <script type="application/json" data-contributor-data set:html={JSON.stringify(data).replaceAll('<','\u003c')} />
   </article> : <div class="page-width contributor-error"><h1>{kind === 'studio' ? 'Studio' : 'Person'}</h1><p role="alert">{error}</p><a href="/browse">Browse titles</a></div>}
 </Tracker>

@@ -4,6 +4,8 @@ import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
+import { legalConfig } from './lib/legal';
+import { publicLegalPage } from './lib/legal-routes';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -34,6 +36,7 @@ const PUBLIC_RECENTLY_WATCHED_PAGE_RE = /^\/recently-watched-(?:movies|shows)\/\
 // enabled logged-out navigation (Admin Settings) and a global TMDB key is set.
 const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|discover|discover-title)?|trending\/(?:movies|shows))\/?$/;
 const PUBLIC_CATALOG_IMPORT_RE = /^\/api\/proxy\/tracking\/catalog\/(?:movie|series)\/[1-9][0-9]*\/?$/;
+const PUBLIC_PERSON_IMAGES_RE = /^\/api\/proxy\/tracking\/contributors\/(?:actor|staff)\/(?:catalogue|tmdb)(?:%3[Aa]|:)[1-9][0-9]*\/images\/?$/;
 // Movie/episode and show/season/episode detail pages (TMDB- and TVDB-numbered
 // variants), gated the same way as PUBLIC_EXPLORE_PAGE_RE above.
 const PUBLIC_MEDIA_DETAIL_PAGE_RE =
@@ -88,6 +91,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return response;
   }
 
+  if (publicLegalPage(pathname) && !(await legalConfig()).enabled) {
+    return new Response('Not found', {status:404, headers:{...SECURITY_HEADERS, 'Cache-Control':'no-store'}});
+  }
+
   // Requests to the backend proxy carrying a Scrob API key (header or query
   // param) skip the cookie/JWT gate below — the proxy forwards the key as-is
   // (see api/proxy/[...path].ts) and the backend's own per-endpoint auth
@@ -108,11 +115,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   // Skip auth for static assets and public routes
-  const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname);
+  const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname) || /^\/fonts\/[a-z-]+-OFL\.txt$/.test(pathname);
   const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.includes(pathname);
   const isPublicRoute =
     !isAdminOnlyRoute &&
-    (hasApiKey || hasProxyBearer || isStaticAsset || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
+    (hasApiKey || hasProxyBearer || isStaticAsset || publicLegalPage(pathname) || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
 
   // Anonymous access to any of these read-only pages is allowed only when the
   // admin has enabled logged-out navigation (Admin Settings) and a global
@@ -131,6 +138,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_EXPLORE_PAGE_RE.test(pathname) ||
       (context.request.method === 'POST' && PUBLIC_CATALOG_IMPORT_RE.test(pathname)) ||
       PUBLIC_MEDIA_DETAIL_PAGE_RE.test(pathname) ||
+      (context.request.method === 'GET' && PUBLIC_PERSON_IMAGES_RE.test(pathname)) ||
       PUBLIC_RECOMMENDATIONS_PARTIAL_RE.test(pathname) ||
       PUBLIC_PERSON_CREDITS_PARTIAL_RE.test(pathname) ||
       PUBLIC_MEDIA_ROWS_PROXY_RE.test(pathname);

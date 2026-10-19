@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calendarDate, formatDate, formatDateTime, formatTime, localToday, requestDateLocale, timestamp } from '../src/lib/date-time.ts';
-import { browserDateRegion, dateRegion, deviceDateRegion } from '../src/lib/date-region.ts';
+import { calendarDate, dateInputPlaceholder, parseDateInput, formatDate, formatDateTime, formatTime, localToday, requestDateLocale, timestamp } from '../src/lib/date-time.ts';
+import { DATE_REGIONS, browserDateRegion, dateRegion, deviceDateRegion } from '../src/lib/date-region.ts';
 
 test('calendar dates follow German, US and British ordering with a complete year', () => {
   assert.equal(formatDate('2026-03-04', {locale:'de-DE'}), '04.03.2026');
   assert.equal(formatDate('2026-03-04', {locale:'en-US'}), '03/04/2026');
   assert.equal(formatDate('2026-03-04', {locale:'en-GB'}), '04/03/2026');
+});
+
+test('editable dates round-trip every configured region without changing the ISO calendar day', () => {
+  for (const [locale] of DATE_REGIONS) {
+    for (const iso of ['2022-12-19', '2024-02-29', '2026-03-04']) {
+      const display = formatDate(iso, {locale});
+      assert.equal(parseDateInput(display, {locale}), iso, `${locale}: ${display}`);
+    }
+  }
+  assert.equal(dateInputPlaceholder({locale:'de-DE'}), 'DD.MM.YYYY');
+  assert.equal(dateInputPlaceholder({locale:'en-US'}), 'MM/DD/YYYY');
+  assert.equal(parseDateInput('19.12.2022', {locale:'de-DE'}), '2022-12-19');
+  for (const value of ['31.02.2022','29.02.2023','19/12/2022','nonsense']) {
+    assert.equal(parseDateInput(value, {locale:'de-DE'}), null);
+  }
 });
 
 test('timeline month/day labels respect locale and omit the year without inventing missing days', () => {

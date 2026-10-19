@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotate AnyList application and database logs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/anylist-logging/logrotate.status /etc/logrotate-anylist.conf

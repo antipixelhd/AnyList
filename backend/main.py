@@ -12,6 +12,7 @@ from db import engine, Base
 import models # noqa: F401
 from routers import media_discovery, media_playback, webhooks, media, history, ratings, sync, shows, auth, lists, oidc, profile, trakt, simkl, mdblist, bingebase, comments, admin, compat, export, yamtrack, calendar, push, netflix_import
 from routers import sharing
+from routers import legal
 
 from core.access_log import install as install_access_log_redaction
 install_access_log_redaction()
@@ -110,6 +111,7 @@ app.include_router(shows.router, prefix="/shows", tags=["shows"])
 app.include_router(lists.router, prefix="/lists", tags=["lists"])
 app.include_router(profile.router, prefix="/profile", tags=["profile"])
 app.include_router(sharing.router)
+app.include_router(legal.router)
 app.include_router(trakt.router, prefix="/trakt", tags=["trakt"])
 app.include_router(simkl.router, prefix="/simkl", tags=["simkl"])
 app.include_router(mdblist.router, prefix="/mdblist", tags=["mdblist"])

@@ -8,6 +8,17 @@ ContributorKind = Literal["actor", "staff", "studio"]
 ListScope = Literal["all", "in", "out"]
 
 
+class ContributorImageStatus(BaseModel):
+    state: Literal['ready', 'unavailable', 'deferred']
+    error: str | None = None
+    retry_after: int = Field(default=0, ge=0)
+
+
+class ContributorImages(BaseModel):
+    posters: list[str] = Field(default_factory=list, max_length=5)
+    image_status: ContributorImageStatus
+
+
 class ContributorLink(BaseModel):
     label: str
     href: str

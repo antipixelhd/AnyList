@@ -1,6 +1,6 @@
 import { browserDateRegion, dateRegion, deviceDateRegion } from './date-region.ts';
 
-/** Display only: API values and native date/datetime inputs remain ISO. */
+/** Shared display/input conversion: API values and native picker values remain ISO. */
 export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'month' | 'month-short' | 'month-name' | 'month-name-short' | 'month-day';
 export type DateTimeContext = { locale?: string | string[]; timeZone?: string };
 const formatters = new Map<string, Intl.DateTimeFormat>();
@@ -36,6 +36,21 @@ export function timestamp(value: string | number | Date | null | undefined): Dat
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
+function dateFormatter(style: DateTimeStyle, context: DateTimeContext = {}) {
+  const calendar = style === 'date' || style.startsWith('month');
+  const options = { ...styles[style], calendar:'gregory', ...(calendar ? { timeZone: 'UTC' } : context.timeZone ? { timeZone: context.timeZone } : {}) };
+  const textual = style.startsWith('month');
+  const locale = context.locale ?? browserDateRegion() ?? (typeof document !== 'undefined' && !textual ? deviceDateRegion() : undefined);
+  const key = JSON.stringify([locale ?? null, options]);
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, options);
+    if (formatters.size >= 32) formatters.delete(formatters.keys().next().value!);
+    formatters.set(key, formatter);
+  }
+  return formatter;
+}
+
 export function formatDateTime(value: string | number | Date | null | undefined, style: DateTimeStyle = 'date', context: DateTimeContext = {}): string {
   const calendar = style === 'date' || style.startsWith('month');
   if (style === 'date' && typeof value === 'string' && /^\d{4}$/.test(value)) return value;
@@ -46,17 +61,37 @@ export function formatDateTime(value: string | number | Date | null | undefined,
   const date = calendar ? calendarDate(style.startsWith('month') && /^\d{4}-\d{2}$/.test(raw) ? `${raw}-01` : raw) : timestamp(value);
   if (!date) return '';
   // UTC here preserves a calendar day; real instants use the viewer's zone.
-  const options = { ...styles[style], ...(calendar ? { timeZone: 'UTC' } : context.timeZone ? { timeZone: context.timeZone } : {}) };
-  const textual = style.startsWith('month');
-  const locale = context.locale ?? browserDateRegion() ?? (typeof document !== 'undefined' && !textual ? deviceDateRegion() : undefined);
-  const key = JSON.stringify([locale ?? null, options]);
-  let formatter = formatters.get(key);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat(locale, options);
-    if (formatters.size >= 32) formatters.delete(formatters.keys().next().value!);
-    formatters.set(key, formatter);
-  }
-  return formatter.format(date);
+  return dateFormatter(style, context).format(date);
+}
+
+const cleanDateText = (value: string) => value.replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
+const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function dateInputPlaceholder(context: DateTimeContext = {}): string {
+  return cleanDateText(dateFormatter('date', context).formatToParts(new Date('2006-11-22T00:00:00Z'))
+    .map(part => (({day:'DD',month:'MM',year:'YYYY'} as Record<string,string>)[part.type] ?? part.value)).join(''));
+}
+
+/** Parse the same localized ordering and separators that formatDate displays. */
+export function parseDateInput(value: string, context: DateTimeContext = {}): string | null {
+  if (calendarDate(value)) return value;
+  const formatter = dateFormatter('date', context);
+  const numbers = new Intl.NumberFormat(formatter.resolvedOptions().locale, {useGrouping:false});
+  const digits = new Map(Array.from({length:10}, (_, digit) => [numbers.format(digit), String(digit)]));
+  const normalized = [...cleanDateText(value).trim()].map(character => digits.get(character) ?? character).join('');
+  const order: string[] = [];
+  const pattern = formatter.formatToParts(new Date('2006-11-22T00:00:00Z')).map(part => {
+    if (part.type === 'day' || part.type === 'month' || part.type === 'year') {
+      order.push(part.type);
+      return part.type === 'year' ? '(\\d{4})' : '(\\d{1,2})';
+    }
+    return cleanDateText(part.value).split(/\s+/).map(escapePattern).join('\\s*');
+  }).join('');
+  const match = normalized.match(new RegExp(`^${pattern}$`));
+  if (!match) return null;
+  const fields = Object.fromEntries(order.map((field, index) => [field, match[index + 1].padStart(field === 'year' ? 4 : 2, '0')]));
+  const iso = `${fields.year}-${fields.month}-${fields.day}`;
+  return calendarDate(iso) ? iso : null;
 }
 
 export const formatDate = (value: string | null | undefined, context?: DateTimeContext) => formatDateTime(value, 'date', context);

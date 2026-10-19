@@ -1,0 +1,8 @@
+---
+import {legalTextParts} from '../lib/legal-text';
+interface Props {
+  text: string;
+}
+const {text} = Astro.props;
+---
+{legalTextParts(text).map(part => part.href ? <a href={part.href} rel="noreferrer">{part.text}</a> : part.text)}

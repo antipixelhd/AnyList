@@ -8,7 +8,7 @@ const lowerFacts=new Set(['Language','Country','Budget','Box office','Platforms'
 const finalGroups=new Set(['Studios','Publisher']);
 ---
 <dl>
-  {facts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','First published'].includes(fact.label)?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
+  {facts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','Releases','First published'].includes(fact.label)?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
   {organizations.filter(group=>!finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
   {facts.filter(fact=>lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
   {organizations.filter(group=>finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}

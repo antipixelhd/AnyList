@@ -1,0 +1,6 @@
+---
+import Page from '../components/CreditsPage.astro';
+import {legalConfig} from '../lib/legal';
+const config = await legalConfig();
+---
+<Page {config}/>

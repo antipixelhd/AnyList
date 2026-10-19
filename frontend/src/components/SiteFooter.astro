@@ -1,0 +1,13 @@
+---
+import '../styles/footer.css';
+import {legalConfig} from '../lib/legal';
+import {footerLinks} from '../lib/footer';
+const published = (await legalConfig()).enabled;
+const footer = footerLinks(Astro.url.pathname, published);
+---
+<footer class="page-footer"><div class="page-footer-inner">
+  <a class="footer-brand" href={footer.brand}>AnyList</a>
+  {footer.links.length > 0 && <nav aria-label="Legal and information">
+    {footer.links.map(link => <a href={link.href}>{link.label}</a>)}
+  </nav>}
+</div></footer>

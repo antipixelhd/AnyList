@@ -10,6 +10,7 @@ import { cancelUiMotion, reveal } from './ui-motion';
 import { mountPortraitViewer } from './image-viewer';
 import {createPrediction,bindPredictivePagination} from './predictive-loading';
 import { setLocalDateTime } from './date-time-dom';
+import { createSectionScroll } from './section-scroll';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -58,6 +59,22 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   if (portrait?.complete && !portrait.naturalWidth) missingPortrait();
   root.dataset.enhanced = '';
   form.addEventListener('change', () => form.requestSubmit(), {signal});
+  const scrollToWorks = createSectionScroll(signal);
+  root.querySelector<HTMLAnchorElement>('.contributor-list-link')?.addEventListener('click',event=>{
+    if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
+    if(!scope)return;
+    event.preventDefault();
+    if(!scope.checked){
+      scope.checked=true;
+      const action=form.action;
+      form.action=`${action.split('#')[0]}#contributor-works`;
+      try { form.requestSubmit(); } finally { form.action=action; }
+      return;
+    }
+    const works = root.querySelector<HTMLElement>('.contributor-works');
+    if (works) scrollToWorks(works);
+  },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]').forEach(button => {
     button.addEventListener('click', () => {
       const view = button.dataset.contributorView!;
@@ -187,6 +204,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   more.addEventListener('click',()=>void loadMore(),{signal});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();
+    const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
     const submitted=new URLSearchParams();
@@ -204,7 +222,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
       notice.textContent=next.notice||'';notice.hidden=!next.notice;
       const url=new URL(location.href);url.search=query.toString();
+      if (worksAnchor) url.hash='contributor-works';
       url.searchParams.set('view',requestedView||'timeline');history.replaceState(history.state,'',url);
+      if (worksAnchor) {
+        const works=root.querySelector<HTMLElement>('.contributor-works');
+        if (works) scrollToWorks(works);
+      }
     }).catch(cause=>{
       if(!signal.aborted&&!request.signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load works.');
     }).finally(()=>{

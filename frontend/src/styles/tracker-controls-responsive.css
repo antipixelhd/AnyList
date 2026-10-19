@@ -178,7 +178,7 @@
   pointer-events:none;
   transition:opacity .12s
 }
-.entry-row:not([data-editor-deselected]):hover .progress-increment,.entry-row:not([data-editor-deselected]):focus-within .progress-increment,.progress-increment:focus-visible {
+.entry-row:not([data-editor-deselected]):hover .progress-increment,.entry-row:not([data-editor-deselected]):has(:focus-visible) .progress-increment,.progress-increment:focus-visible {
   opacity:1;
   pointer-events:auto
 }
@@ -190,10 +190,10 @@
   outline:2px solid var(--blue);
   outline-offset:2px
 }
-.entry-row[data-editor-deselected]:is(:hover,:focus-within) {
+.entry-row[data-editor-deselected]:is(:hover,:has(:focus-visible)) {
   background:transparent
 }
-.grid-view .entry-row[data-editor-deselected]:is(:hover,:focus-within) {
+.grid-view .entry-row[data-editor-deselected]:is(:hover,:has(:focus-visible)) {
   background:var(--panel)
 }
 .entry-row {

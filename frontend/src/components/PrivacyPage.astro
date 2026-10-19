@@ -1,0 +1,33 @@
+---
+import Legal from '../layouts/Legal.astro';
+import LegalText from './LegalText.astro';
+import {emptyLegalConfig, legalDraft, legalHref} from '../lib/legal';
+const {config = emptyLegalConfig} = Astro.props;
+const href = (page: string) => legalHref(Astro.url.pathname, page);
+---
+<Legal title="Privacy policy" draft={legalDraft(config)}>
+  <p>Last updated: 19 October 2026</p>
+  <h2>Contact</h2>
+  <address>{config.operator_name || 'Operator name to be supplied.'}<br/>{config.operator_address || 'Operator address to be supplied.'}</address>
+  {config.privacy_email ? <p>Privacy: <a href={`mailto:${config.privacy_email}`}>{config.privacy_email}</a></p> : <p class="legal-missing">Privacy contact to be supplied.</p>}
+  <h2>Information we use</h2>
+  <ul>
+    <li>Account details, media lists, ratings, progress and optional profile content provide the features you use (Article 6(1)(b) GDPR). Account details are necessary to provide an account; profile additions and service connections are optional.</li>
+    <li>IP addresses, browser and request information support delivery, troubleshooting and security, based on our legitimate interest in running a reliable service (Article 6(1)(f) GDPR).</li>
+    <li>Messages sent to us are used to answer your request (Article 6(1)(b) or (f) GDPR).</li>
+  </ul>
+  <p>Profiles and activity are shared according to their visibility settings. Public content may also be cached by search engines and messaging services.</p>
+  <h2>Hosting and external services</h2>
+  <p class:list={{'legal-missing':!config.hosting_details}} class="legal-preserve"><LegalText text={config.hosting_details || 'Hosting and service provider details to be supplied.'}/></p>
+  <p>Media searches and identifiers are sent to configured <a href={href('credits')}>metadata providers</a>. If you connect another service, we store the necessary access tokens and exchange the data needed for your selected features (Article 6(1)(b) GDPR).</p>
+  <p>AnyList displays images and videos from external platforms, including YouTube and Vimeo. These services may collect usage data, such as your IP address and browser information, and use cookies when their content is displayed, even if you do not interact with it. External content supports the media and profiles you request (Article 6(1)(f) GDPR).</p>
+  <p class:list={{'legal-missing':!config.transfer_details}} class="legal-preserve"><LegalText text={config.transfer_details || 'Any applicable international transfer details and safeguards still need to be verified.'}/></p>
+  <h2 id="cookies">Cookies and local storage</h2>
+  <p>AnyList's application code does not use advertising or analytics trackers. Cookies support sign-in (up to seven days), temporary sign-on security (up to ten minutes) and preferences (up to one year). Some preferences are renewed during use; regional defaults may be saved automatically from your browser settings.</p>
+  <p>Local browser storage remembers themes and dismissed prompts until changed or cleared. Navigation data generally lasts for the tab session; cached files remain until replaced or cleared. You can remove website data in your browser, which may reset preferences or sign you out. Storage strictly necessary for a service you expressly request is exempt from consent under section 25(2)(2) TDDDG.</p>
+  <h2>Retention and deletion</h2>
+  <p>Account data is kept while your account is in use. You can export your data or delete your account in Settings. Data already held by connected services is subject to their own retention policies.</p>
+  <p class:list={{'legal-missing':!config.retention_details}} class="legal-preserve"><LegalText text={config.retention_details || 'Log and backup retention details to be supplied.'}/></p>
+  <h2>Your rights</h2>
+  <p>You can request access, correction, deletion, restriction or portability of your data, object to processing based on legitimate interests, and withdraw consent where applicable (Articles 15-21 GDPR). Contact us above to exercise these rights. You can also complain to a data protection authority, including <a href="https://www.lda.bayern.de/de/beschwerde.html">Bavaria's data protection authority</a> (Article 77 GDPR).</p>
+</Legal>

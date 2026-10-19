@@ -135,12 +135,31 @@
   pointer-events:none
 }
 .editor-favorite:has(input:checked) {
-  color:#ef81a5!important
+  color:#f05296!important
 }
 .editor-favorite:has(input:focus-visible) {
-  outline:2px solid var(--blue);
-  outline-offset:2px;
-  border-radius:4px
+  outline:none
+}
+.editor-hero-actions :is(.editor-favorite,.editor-library) {
+  background:transparent;
+  border:0;
+  box-shadow:none;
+  transition:color .16s ease
+}
+.editor-hero-actions .editor-favorite:not(:has(input:checked)),
+.editor-hero-actions .editor-library[aria-pressed=false] {
+  color:var(--muted)!important
+}
+.editor-hero-actions .editor-favorite:not(:has(input:checked)):is(:hover,:has(input:focus-visible)),
+.editor-hero-actions .editor-library[aria-pressed=false]:is(:hover,:focus-visible) {
+  color:var(--bright)!important
+}
+.editor-hero-actions .editor-library:focus-visible {
+  outline:none
+}
+.editor-hero-actions .editor-library:focus-visible .ui-icon,
+.editor-hero-actions .editor-favorite:has(input:focus-visible) .ui-icon {
+  filter:drop-shadow(0 0 3px currentColor)
 }
 .editor-library {
   border:0;
@@ -193,7 +212,7 @@
   margin-top:6px;
   min-height:42px;
   padding:8px 12px;
-  background:#0d1926;
+  background:var(--field);
   border:1px solid transparent;
   border-radius:4px;
   color:var(--text);
@@ -233,11 +252,6 @@
 .editor-status-trigger .ui-icon {
   font-size:var(--type-meta-size);
   color:var(--muted)
-}
-.editor-status-trigger:focus-visible {
-  border-color:var(--blue);
-  outline:none;
-  background:color-mix(in srgb,var(--blue) 11%,var(--panel))
 }
 .editor-status-options {
   position:absolute;
@@ -299,27 +313,23 @@
   background:#ffffff12;
   color:var(--bright)
 }
-.editor-score-field>label {
+:is(.editor-score-field,.editor-number-field)>label {
   font-size:var(--type-label-size);
   color:var(--muted)
 }
-.editor-score-field>.score-stepper {
+:is(.editor-score-field,.editor-number-field)>.score-stepper {
   margin-top:6px
 }
-.editor-score-field .score-stepper input {
+:is(.editor-score-field,.editor-number-field) .score-stepper input {
   width:100%;
   min-height:42px;
   margin:0;
-  background:#0d1926;
+  background:var(--field);
   border:1px solid transparent;
   border-radius:4px;
   color:var(--text);
   font-size:var(--type-control-size);
   padding:8px 30px 8px 12px
-}
-.editor-score-field .score-stepper input:focus {
-  border-color:var(--blue);
-  box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 11%,transparent)
 }
 .score-stepper {
   position:relative;
@@ -354,8 +364,12 @@
   line-height:1
 }
 .score-stepper-controls button:hover,.score-stepper-controls button:focus-visible {
+  outline:none;
   background:#244058;
   color:var(--bright)
+}
+.editor .score-stepper-controls button:is(:hover,:focus-visible) {
+  background:transparent
 }
 .score-stepper-controls .ui-icon {
   font-size:9px
@@ -419,18 +433,55 @@
 }
 @media(max-width:460px) {
   .editor-hero {
-    height:170px
+    height:auto;
+    min-height:170px;
+    display:grid;
+    grid-template-columns:76px minmax(0,1fr);
+    grid-template-rows:minmax(110px,auto) auto;
+    align-items:center;
+    gap:18px 14px;
+    padding:52px 18px 18px
+  }
+  .editor-poster {
+    position:relative;
+    left:auto;
+    bottom:auto;
+    grid-column:1;
+    grid-row:1;
+    align-self:start
   }
   .editor-heading {
-    left:108px;
-    right:45px;
-    bottom:65px
+    position:relative;
+    inset:auto;
+    grid-column:2;
+    grid-row:1;
+    min-width:0
+  }
+  .editor-heading h2 {
+    overflow-wrap:anywhere
   }
   .editor-hero-actions {
-    bottom:12px
+    position:relative;
+    inset:auto;
+    grid-column:1/-1;
+    grid-row:2;
+    gap:8px
+  }
+  .editor-hero-actions :is(.editor-favorite,.editor-library) {
+    width:44px;
+    height:44px;
+    flex:none
+  }
+  .editor-hero-actions :is(.editor-favorite,.editor-library) .ui-icon {
+    font-size:18px
+  }
+  .editor-save {
+    margin-left:auto;
+    min-width:96px;
+    min-height:44px
   }
   .editor form {
-    padding-top:43px
+    padding-top:22px
   }
   .editor-fields {
     grid-template-columns:minmax(0,1fr);
@@ -453,6 +504,9 @@
     width:auto!important;
     margin:0!important
   }
+}
+@media(prefers-reduced-motion:reduce) {
+  .editor-hero-actions :is(.editor-favorite,.editor-library) { transition:none }
 }
 .library-toggle {
   width:100%;
@@ -802,4 +856,12 @@
   .profile-overview {
     gap:34px
   }
+}
+
+/* Editor fields keep the same surface while being edited or expanded. */
+.tracker .editor :is(input:not([type=checkbox]),textarea,select,.editor-status-trigger):is(:focus,:focus-visible,[aria-expanded=true]) {
+  outline:none;
+  border-color:transparent;
+  box-shadow:none;
+  background:var(--field);
 }

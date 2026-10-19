@@ -6,6 +6,10 @@ from core.screen_metadata_policy import screen_sources
 _slots = asyncio.Semaphore(2)
 
 
+class ArtworkIdentityUnavailable(ValueError):
+    """No verified provider bridge exists; this is not a provider outage."""
+
+
 def artwork_candidates(raw, types, kind):
     taxonomy = {row['id']: row for row in types if isinstance(row, dict) and row.get('recordType') == kind}
     result = {'posters': [], 'backdrops': []}
@@ -47,7 +51,7 @@ async def title_artwork(db, media, tvdb_key, tmdb_key=None):
                               if isinstance(row.get(kind), dict) and type(row[kind].get('id')) is int}
                 native = next(iter(candidates)) if len(candidates) == 1 else None
         if not native:
-            raise ValueError('No verified TVDB title identity')
+            raise ArtworkIdentityUnavailable('No verified TVDB title identity')
         path = f'/series/{native}/artworks' if kind == 'series' else f'/movies/{native}/extended'
         artwork, taxonomy = await asyncio.gather(tvdb._get(path,tvdb_key),tvdb._get('/artwork/types',tvdb_key))
         raw = artwork.get('data') or {}

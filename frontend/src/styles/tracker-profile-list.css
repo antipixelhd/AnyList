@@ -167,18 +167,33 @@
   height:44px;
   padding:0;
   border:0;
-  border-radius:4px;
+  border-radius:5px;
   background:var(--panel);
-  color:var(--muted);
+  color:var(--blue);
   cursor:pointer;
   transition:color .15s ease,background .15s ease
 }
-.mobile-filter-toggle:is(:hover,[aria-expanded="true"],[data-active]) {
-  color:var(--blue)
+.mobile-filter-toggle:focus-visible {
+  background:color-mix(in srgb,var(--blue) 18%,var(--panel))
+}
+.mobile-filter-toggle:is([aria-expanded="true"],[data-active]) {
+  color:#fff;
+  background:var(--blue)
+}
+.mobile-filter-toggle:is([aria-expanded="true"],[data-active]):focus-visible {
+  background:color-mix(in srgb,var(--blue) 85%,white)
+}
+/* Touch browsers can retain :hover after closing the panel. */
+@media (hover:hover) and (pointer:fine) {
+  .mobile-filter-toggle:hover {
+    background:color-mix(in srgb,var(--blue) 18%,var(--panel))
+  }
+  .mobile-filter-toggle:is([aria-expanded="true"],[data-active]):hover {
+    background:color-mix(in srgb,var(--blue) 85%,white)
+  }
 }
 .mobile-filter-toggle:focus-visible {
-  outline:2px solid var(--blue);
-  outline-offset:3px
+  outline:none
 }
 .mobile-filter-toggle .ui-icon {
   font-size:18px
@@ -563,7 +578,7 @@
   opacity:0;
   transition:none
 }
-.grid-view .entry-row:not([data-editor-deselected]):is(:hover,:focus-within) .entry-thumbnail .row-menu,
+.grid-view .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail .row-menu,
 .grid-view .entry-thumbnail .row-menu:focus-visible {
   opacity:1
 }

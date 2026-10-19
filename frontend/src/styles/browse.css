@@ -799,14 +799,21 @@
   /* Native mobile layout already matches the enhanced layout before controls move. */
   .browse-page[data-browse-scripted] .browse-controls > :is(.browse-filter, .browse-sort) { display: none; }
   .browse-search { padding-right: 54px; }
-  .browse-more { position: static; width: 0; height: 0; }
+  .browse-more { position: static; width: auto; height: auto; }
   .browse-more > summary { position: absolute; right: 0; top: calc(2.25rem + 9px); }
   .browse-secondary-filters {
-    top: calc(2.25rem + 61px);
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    margin-top: 20px;
     width: 100%;
     max-width: 100%;
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
     gap: 24px 20px;
     padding: 24px 20px;
+    box-shadow: none;
   }
   .browse-filters[data-mobile-filters] { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .browse-page[data-browse-sorted] .browse-filters[data-mobile-filters] { grid-template-columns: minmax(0, 1fr); }

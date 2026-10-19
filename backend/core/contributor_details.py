@@ -235,7 +235,7 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
     return output, more, json.dumps({"scope": scope, "positions": positions}, separators=(",", ":")) if more else None
 
 
-async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
+async def resolve_contributor(db, kind, key):
     namespace, raw_id = key.split(":")
     native = positive_id(raw_id) if namespace == "tmdb" else None
     if kind == 'studio' and native:
@@ -257,6 +257,14 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         native = next((positive_id(i.external_id) for i in identities if i.namespace == f"tmdb.{provider_kind}"), None)
     if kind == 'studio' and native:
         native = studio_root(native)
+    return entity, native
+
+
+async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
+    resolved = await resolve_contributor(db, kind, key)
+    if resolved is None:
+        return None
+    entity, native = resolved
     local = await known_works(db, entity, native, kind, viewer)
     if kind == 'studio' and entity and not native and not local:
         return None  # A broadcaster-only organization is not a production studio.

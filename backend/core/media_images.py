@@ -177,13 +177,16 @@ async def fill_artwork_preview(db,media,api_key,tvdb_key):
         try:
             if datetime.fromisoformat(cache.get('expires_at',''))>now:return
         except (ValueError,TypeError):pass
-        from core.screen_artwork import title_artwork
+        from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
         try:
             raw=await title_artwork(db,media,tvdb_key,api_key)
             rows=image_candidates(raw,'tvdb')['artwork']
             first=next(iter(rows),{})
             cache={'image':first.get('url'),'thumbnail':image(first.get('thumbnail')),
                    'expires_at':(now+timedelta(days=30)).isoformat()}
+        except ArtworkIdentityUnavailable:
+            cache={'image':cache.get('image'),'thumbnail':cache.get('thumbnail'),
+                   'expires_at':(now+timedelta(days=1)).isoformat()}
         except Exception as error:
             logger.warning('Artwork preview failed for media %s (%s)',media.id,type(error).__name__)
             # Preserve a usable preview and bound retries during provider outages.
@@ -204,7 +207,7 @@ def screen_images(media, details):
         retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)
     except (TypeError, ValueError):
         pass
-    status = {'state': 'deferred' if retry else 'ready' if cache.get('version') == IMAGE_POLICY_VERSION else 'pending',
+    status = {'state': 'deferred' if retry else 'unavailable' if cache.get('unavailable') and cache.get('version') == IMAGE_POLICY_VERSION else 'ready' if cache.get('version') == IMAGE_POLICY_VERSION else 'pending',
               'error': cache.get('last_error') if retry else None, 'retry_after': retry}
     primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
     background={**screen_backdrop(media),**screen_artwork_preview(media)}
@@ -243,7 +246,7 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
         except (ValueError, TypeError):
             pass
     from core import tmdb
-    from core.screen_artwork import title_artwork
+    from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
     try:
         fetch_primary = tmdb.get_movie_light if media.media_type.value == 'movie' else tmdb.get_show_light
         raw = await title_artwork(db, media, tvdb_key, api_key)
@@ -267,6 +270,15 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
         thumbnails={row['url']:image(row.get('thumbnail')) for row in candidates['artwork'] if row.get('thumbnail')}
         cache = {**selected, 'primary_poster': primary, 'thumbnails':thumbnails,
                  'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
+    except ArtworkIdentityUnavailable:
+        # Keep usable images, and recheck the bridge tomorrow rather than
+        # retrying a known missing match as though the provider were down.
+        if cache.get('version') != IMAGE_POLICY_VERSION:
+            cache = {}
+        cache={name:value for name,value in cache.items()
+               if name not in ('retry_after','retry_version','last_error')}
+        cache.update(version=IMAGE_POLICY_VERSION,unavailable='unmatched_title',
+                     expires_at=(now+timedelta(days=1)).isoformat())
     except Exception as error:
         logger.warning('Image curation failed for media %s (%s)', media.id, type(error).__name__)
         delay = 600

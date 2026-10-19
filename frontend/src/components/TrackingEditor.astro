@@ -1,8 +1,9 @@
 ---
 import {statuses} from '../lib/tracker';
 import Icon from './Icon.astro';
+import CalendarDateInput from './CalendarDateInput.astro';
 ---
-<dialog class="editor" id="tracking-editor" aria-labelledby="editor-title">
+<dialog class="editor" id="tracking-editor" aria-labelledby="editor-title" data-motion-static>
   <div class="editor-hero">
     <img id="editor-backdrop" class="editor-backdrop" alt="" />
     <div class="editor-hero-shade"></div>
@@ -18,16 +19,23 @@ import Icon from './Icon.astro';
   <form id="tracking-form">
     <div class="editor-fields">
       <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><select name="status" class="editor-status-native" tabindex="-1" aria-hidden="true">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select><div class="editor-status-dropdown" data-motion-static><button type="button" id="editor-status-trigger" class="editor-status-trigger tracker-dropdown-trigger" aria-labelledby="editor-status-label editor-status-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="editor-status-options"><span id="editor-status-value">Watching</span><Icon name="chevron-down" /></button><div id="editor-status-options" class="editor-status-options tracker-dropdown-menu" role="listbox" aria-labelledby="editor-status-label" hidden>{statuses.map(([value,label]) => <button type="button" role="option" aria-selected="false" data-editor-status={value}>{label}</button>)}</div></div></div>
-      <div class="editor-score-field"><label for="editor-manual-score">Score</label><div class="score-stepper" data-score-stepper><input id="editor-manual-score" name="manual_score" type="number" min="0" max="10" step="0.1" placeholder="Unrated"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase score to the next half point"><Icon name="chevron-down" rotate={180} /></button><button type="button" data-score-step="down" aria-label="Decrease score to the previous half point"><Icon name="chevron-down" /></button></span></div></div>
-      <label id="progress-field">Episode progress<input name="progress" type="number" min="0" step="1"/></label>
-      <label class="editor-start-date">Start date<input name="start_date" type="date"/></label><label class="editor-finish-date">Finish date<input name="finish_date" type="date"/></label>
-      <label class="editor-rewatches">Total rewatches<input name="rewatch_count" type="number" min="0" max="10000" step="1"/></label>
-      <label class="wide editor-notes">Notes<textarea name="notes" rows="2" placeholder="Visible to anyone who can access your list"></textarea></label>
+      <div class="editor-score-field"><label for="editor-manual-score">Score</label><div class="score-stepper" data-score-stepper><input id="editor-manual-score" name="manual_score" type="number" min="0" max="10" step="0.1" value="0"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase score to the next half point"><Icon name="chevron-down" rotate={180} /></button><button type="button" data-score-step="down" aria-label="Decrease score to the previous half point"><Icon name="chevron-down" /></button></span></div></div>
+      <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><div class="score-stepper" data-number-stepper><input id="editor-progress" name="progress" type="number" min="0" step="1"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button><button type="button" data-score-step="down" aria-label="Decrease episode progress"><Icon name="chevron-down"/></button></span></div></div>
+      <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
+      <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<span class="score-stepper" data-number-stepper><input id="editor-rewatches" aria-label="Total rewatches" name="rewatch_count" type="number" min="0" max="10000" step="1"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase total rewatches"><Icon name="chevron-down" rotate={180}/></button><button type="button" data-score-step="down" aria-label="Decrease total rewatches"><Icon name="chevron-down"/></button></span></span></label>
+      <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
-      <button type="button" class="button-danger" id="delete-tracked-entry"><Icon name="trash" />Delete entry</button>
+      <button type="button" class="editor-delete-button" id="delete-tracked-entry"><Icon name="trash" />Delete entry</button>
     </div>
+  </form>
+</dialog>
+<dialog class="editor-confirmation" id="editor-confirmation" aria-labelledby="editor-confirmation-title" aria-describedby="editor-confirmation-body" data-motion-static>
+  <form method="dialog">
+    <header><h2 id="editor-confirmation-title">Warning</h2><button type="submit" class="editor-confirmation-close" value="cancel" aria-label="Close confirmation"><Icon name="close" /></button></header>
+    <p id="editor-confirmation-body"></p>
+    <div class="editor-confirmation-actions"><button type="submit" value="cancel" autofocus>Cancel</button><button type="submit" value="confirm">OK</button></div>
   </form>
 </dialog>
 <dialog class="score-override-dialog" id="editor-score-override" aria-labelledby="score-override-title">
@@ -41,16 +49,38 @@ import Icon from './Icon.astro';
 </dialog>
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
+import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
 let pageListeners: AbortController;
+document.addEventListener('astro:before-swap', () => pageListeners?.abort());
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
   const sessionSignal = pageListeners.signal;
   if (!document.querySelector('#tracking-editor')) return;
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
-  setupScoreSteppers(dialog);
+  const actionConfirmation = document.querySelector<HTMLDialogElement>('#editor-confirmation')!;
+  actionConfirmation.addEventListener('click', event => {
+    if (event.target === actionConfirmation) void closeDialog(actionConfirmation, 'cancel');
+  });
+  const confirmEntryAction = (message: string) => new Promise<boolean>(resolve => {
+    if (sessionSignal.aborted || actionConfirmation.open) { resolve(false); return; }
+    actionConfirmation.querySelector('#editor-confirmation-body')!.textContent = message;
+    actionConfirmation.returnValue = 'cancel';
+    const finish = (accepted: boolean) => {
+      actionConfirmation.removeEventListener('close', closed);
+      sessionSignal.removeEventListener('abort', aborted);
+      resolve(accepted);
+    };
+    const closed = () => finish(actionConfirmation.returnValue === 'confirm');
+    const aborted = () => { finish(false); if (actionConfirmation.open) actionConfirmation.close('cancel'); };
+    actionConfirmation.addEventListener('close', closed, {once:true});
+    sessionSignal.addEventListener('abort', aborted, {once:true});
+    showDialog(actionConfirmation);
+  });
+  setupScoreSteppers(dialog, sessionSignal);
+  const refreshDateInputs = setupCalendarDateInputs(dialog, sessionSignal);
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
   let current: any = null;
   let currentTitle: EditorTitle | null = null;
@@ -155,9 +185,10 @@ document.addEventListener('astro:page-load', () => {
     else if(!backdropPath) { backdrop.removeAttribute('src'); backdrop.removeAttribute('srcset'); backdrop.removeAttribute('sizes'); }
     backdrop.hidden = !backdropPath;
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
+    refreshDateInputs();
     syncStatus(); closeStatus();
     const calculatedScore = current.rating_mode === 'average' ? current.score : current.manual_score;
-    field('manual_score').value = calculatedScore == null ? '' : String(current.rating_mode === 'average' ? Number(Number(calculatedScore).toFixed(1)) : calculatedScore);
+    field('manual_score').value = calculatedScore == null ? '0' : String(current.rating_mode === 'average' ? Number(Number(calculatedScore).toFixed(1)) : calculatedScore);
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
     loadLibraryState(title);
@@ -265,10 +296,18 @@ document.addEventListener('astro:page-load', () => {
     opener = null;
   });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
-    if(!current||!confirm('Delete this entry, including ratings, notes, dates, and watch history? Your streaming-library membership will be kept. Supported connected-service resets may remain pending.'))return;
-    const button=event.currentTarget as HTMLButtonElement;button.disabled=true;
-    try{const id=await editorStore.remove(currentTitle!);finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+    const button=event.currentTarget as HTMLButtonElement;
+    const editing = currentTitle;
+    if(!current||!editing||!await confirmEntryAction('Are you sure you want to delete this list entry?'))return;
+    if(sessionSignal.aborted || currentTitle !== editing || !dialog.open)return;
+    button.disabled=true;
+    try{const id=await editorStore.remove(editing);if(sessionSignal.aborted)return;finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){if(sessionSignal.aborted)return;error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
   });
+  form.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) return;
+    event.preventDefault();
+    event.target.blur();
+  }, {signal:sessionSignal});
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!current) return;
     error.hidden = true;
@@ -291,7 +330,7 @@ document.addEventListener('astro:page-load', () => {
     if (!field('progress').disabled && Number(field('progress').value) !== current.progress) {
       body.progress = Number(field('progress').value);
       if (body.progress < current.progress) {
-        if (!confirm('Mark the later episodes unwatched?')) return;
+        if (!await confirmEntryAction('Mark the later episodes unwatched?') || sessionSignal.aborted || !current) return;
         body.confirm_rollback = true;
       }
     }
@@ -330,3 +369,22 @@ document.addEventListener('astro:page-load', () => {
   document.addEventListener('focusin', prepare, {signal:pageListeners.signal});
 });
 </script>
+<style>
+  .editor-delete-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; border:0; border-radius:3px; padding:7px 12px; background:#0b1622; color:var(--muted,#a2b5c7); font-size:var(--type-meta-size,13px); cursor:pointer; transition:background-color .16s,color .16s; }
+  .editor-delete-button:focus-visible { outline:none; background:#ed577a; color:#fff; }
+  @media (hover:hover) { .editor-delete-button:hover { background:#ed577a; color:#fff; } }
+  .editor-delete-button:disabled { opacity:.6; cursor:wait; }
+  .editor-confirmation { width:min(440px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:20px; border:0; border-radius:4px; background:var(--panel,#151f2e); color:var(--muted,#a2b5c7); box-shadow:0 20px 65px #02071199; }
+  .editor-confirmation::backdrop { background:#03091280; }
+  .editor-confirmation header { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+  .editor-confirmation h2 { margin:0; font-size:18px; font-weight:500; line-height:1.4; }
+  .editor-confirmation-close { display:grid; place-items:center; flex:none; width:30px; height:30px; margin:-5px -5px -5px 0; padding:0; border:0; border-radius:3px; background:transparent; color:inherit; cursor:pointer; }
+  .editor-confirmation-close:hover,.editor-confirmation-close:focus-visible { outline:none; background:#ffffff12; color:var(--bright,#edf5fa); }
+  .editor-confirmation p { margin:18px 0; font-size:14px; line-height:1.6; }
+  .editor-confirmation-actions { display:flex; justify-content:flex-end; gap:10px; }
+  .editor-confirmation-actions button { min-height:32px; padding:6px 15px; border:0; border-radius:3px; background:#0b1622; color:var(--muted,#a2b5c7); font-size:13px; cursor:pointer; transition:background-color .16s,color .16s; }
+  .editor-confirmation-actions button[value=confirm] { background:var(--blue,#3db4f2); color:#fff; }
+  .editor-confirmation-actions button:hover,.editor-confirmation-actions button:focus-visible { outline:none; color:var(--bright,#edf5fa); }
+  .editor-confirmation-actions button[value=confirm]:hover,.editor-confirmation-actions button[value=confirm]:focus-visible { background:color-mix(in srgb,var(--blue,#3db4f2) 80%,white); color:#fff; }
+  @media(prefers-reduced-motion:reduce) { .editor-delete-button,.editor-confirmation-actions button { transition:none; } }
+</style>

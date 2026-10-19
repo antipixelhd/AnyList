@@ -2,7 +2,7 @@
   color: var(--blue);
   background: color-mix(in srgb, var(--blue) 17%, var(--panel));
 }
-.tracker[data-theme-active] .entry-row:is(:hover, :focus-within) {
+.tracker[data-theme-active] .entry-row:is(:hover, :has(:focus-visible)) {
   background: color-mix(in srgb, var(--blue) 14%, var(--panel));
 }
 .tracker[data-theme-active] .entry-thumbnail .row-menu,

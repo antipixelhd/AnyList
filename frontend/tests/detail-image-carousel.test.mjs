@@ -16,18 +16,19 @@ function gallery(reduced=false) {
     querySelector(selector){return this.children.find(child=>selector==='img'?child.tag==='img':child.className?.includes('image-viewer-slide-loading'));}
     addEventListener(name,callback){this.listeners.set(name,callback);}
     fire(name){this.listeners.get(name)?.();}
+    closest(){return null;}
     scrollTo(options){this.scrolled=options;this.scrollLeft=options.left;}
   }
-  const controller=new AbortController(),selected=[],prepared=[],frames=[];
+  const controller=new AbortController(),selected=[],prepared=[],frames=[];let now=0;
   let observer;
-  const context={document:{createElement:tag=>new Element(tag)},matchMedia:()=>({matches:reduced}),
+  const context={document:{createElement:tag=>new Element(tag)},matchMedia:()=>({matches:reduced,addEventListener(){}}),performance:{now:()=>now},
     requestAnimationFrame:callback=>(frames.push(callback),frames.length),cancelAnimationFrame:()=>{},
     ResizeObserver:class {constructor(callback){observer=this;this.callback=callback;} observe(){} disconnect(){this.disconnected=true;}},reconcileGalleryChildren};
-  const source=readFileSync(new URL('../src/lib/detail-image-carousel.ts',import.meta.url),'utf8');
+  const source=readFileSync(new URL('../src/lib/gallery-spring.ts',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../src/lib/detail-image-carousel.ts',import.meta.url),'utf8');
   runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.create=createDetailImageCarousel;',context);
   const track=new Element(),render=context.create(track,controller.signal,index=>selected.push(index),index=>prepared.push(index));
-  const paint=(rows,index=0,scroll=true,animate=false,total=rows.length)=>render(rows,url=>url,total,index,'Artwork',scroll,animate);
-  return {track,paint,selected,prepared,controller,resize:()=>observer.callback(),observer:()=>observer,flush:()=>frames.splice(0).forEach(callback=>callback())};
+  const paint=(rows,index=0,scroll=true,animate=false,total=rows.length,fast=false)=>render(rows,url=>url,total,index,'Artwork',scroll,animate,fast);
+  return {track,paint,selected,prepared,controller,resize:()=>observer.callback(),observer:()=>observer,flush:(ms=16)=>{now+=ms;frames.splice(0).forEach(callback=>callback(now));}};
 }
 
 test('swipes prepare the exposed slide before selection without touching unseen neighbors',()=>{
@@ -68,9 +69,39 @@ test('native swipe selection follows scroll position without forcing the row bac
 
 test('animated navigation ignores intermediate positions, but direct gestures can interrupt it',()=>{
   const g=gallery();g.paint(['one','two','three'],2,true,true);
-  assert.equal(g.track.scrolled.behavior,'smooth');
-  g.track.scrollLeft=390;g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[]);
+  assert.equal(g.track.dataset.viewerNavigating,'');
+  g.track.fire('scroll');g.flush(70);assert.deepEqual(g.selected,[]);
   g.track.fire('pointerdown');g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[1]);
+});
+
+test('rapid targets share one spring and continue from the displayed position',()=>{
+  const g=gallery();g.paint(['one','two','three','four'],1,true,true);g.flush(40);
+  const before=g.track.scrollLeft;g.paint(['one','two','three','four'],3,true,true);
+  assert.equal(g.track.scrollLeft,before);g.flush(16);assert.ok(g.track.scrollLeft>before);
+  g.flush(800);assert.equal(g.track.scrollLeft,1170);assert.equal(g.track.dataset.viewerNavigating,undefined);
+  assert.deepEqual(g.selected,[]);
+});
+
+test('portrait stage resizing preserves the transition rather than snapping to the new picture',()=>{
+  const g=gallery();g.paint(['primary','extra'],1,true,true);g.flush(100);
+  const fraction=g.track.scrollLeft/g.track.clientWidth;
+  g.track.clientWidth=500;g.resize();
+  assert.ok(Math.abs(g.track.scrollLeft/500-fraction)<1e-10);
+  assert.equal(g.track.dataset.viewerNavigating,'');
+  assert.ok(g.track.scrollLeft<500);
+  // A height-only resize must not interrupt paging either.
+  g.resize();assert.equal(g.track.dataset.viewerNavigating,'');
+  g.flush(800);assert.equal(g.track.scrollLeft,500);
+});
+
+test('normal navigation is slower than wheel navigation and switching speed preserves position',()=>{
+  const normal=gallery(),wheel=gallery(),rows=['one','two','three'];
+  normal.paint(rows,1,true,true);wheel.paint(rows,1,true,true,rows.length,true);
+  normal.flush(100);wheel.flush(100);
+  assert.ok(wheel.track.scrollLeft>normal.track.scrollLeft);
+  const before=wheel.track.scrollLeft;
+  wheel.paint(rows,2,true,true);assert.equal(wheel.track.scrollLeft,before);
+  wheel.flush(600);assert.equal(wheel.track.scrollLeft,780);
 });
 
 test('reduced motion, orientation changes and page teardown preserve selection safely',()=>{
@@ -78,4 +109,12 @@ test('reduced motion, orientation changes and page teardown preserve selection s
   assert.equal(g.track.scrolled.behavior,'instant');
   g.track.clientWidth=844;g.resize();assert.equal(g.track.scrolled.left,844);
   g.controller.abort();assert.equal(g.observer().disconnected,true);
+});
+
+
+
+test('dragging warms exposed slides without committing a selection and zoom resizing never selects a neighbor',()=>{
+ const g=gallery();g.paint(['one','two','three']);g.track.dataset.viewerSwiping='';
+ g.track.scrollLeft=250;g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[]);assert.deepEqual(g.prepared,[0,1]);
+ g.track.closest=()=>({});delete g.track.dataset.viewerSwiping;g.track.scrollLeft=780;g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[]);assert.deepEqual(g.prepared,[0,1]);
 });

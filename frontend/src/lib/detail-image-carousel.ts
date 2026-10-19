@@ -1,6 +1,9 @@
 import {reconcileGalleryChildren} from './detail-gallery-dom';
+import {createGallerySpring,gallerySpatial} from './gallery-spring';
 
-/** Native scrolling keeps touch movement, momentum and pinch zoom in the browser. */
+const deliberateNavigationStiffness=300;
+
+/** Scroll-backed slides share decoded images; phone touch arbitration lives in detail-image-zoom. */
 export function visibleDetailImageIndices(left:number,width:number,count:number) {
   if(width<=0||count<=0)return [];
   const start=Math.max(0,Math.min((count-1)*width,left));
@@ -12,31 +15,54 @@ export function visibleDetailImageIndices(left:number,width:number,count:number)
 export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,select:(index:number)=>void,prepare:(index:number)=>void=()=>{}) {
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   let current=0,count=0,frame=0,navigating=false;
-  const align=(animate=false)=>{
+  let width=track.clientWidth,stiffness=deliberateNavigationStiffness;
+  const motion=createGallerySpring({left:track.scrollLeft},value=>track.scrollTo({left:value.left,behavior:'instant'}),signal,{
+    stiffness:gallerySpatial.fast,precision:{left:.5},
+    bounds:()=>({left:{min:0,max:Math.max(0,(count-1)*track.clientWidth)}}),
+  });
+  const clearNavigation=()=>{navigating=false;delete track.dataset.viewerNavigating;};
+  const align=(animate=false,fast=false)=>{
+    if(!motion.active)motion.snap({left:track.scrollLeft});
     navigating=animate&&!reduced.matches;
-    track.scrollTo({left:current*track.clientWidth,behavior:navigating?'smooth':'instant'});
+    if(navigating)track.dataset.viewerNavigating='';
+    stiffness=fast?gallerySpatial.fast:deliberateNavigationStiffness;
+    motion.to({left:current*track.clientWidth},{immediate:!navigating,stiffness,done:clearNavigation});
   };
   track.addEventListener('scroll',()=>{
     if(frame)return;
     frame=requestAnimationFrame(()=>{
       frame=0;
       if(navigating||!track.clientWidth||!count)return;
+      if(track.closest('[data-viewer-zoom-frame]'))return;
       // Prepare the incoming image as soon as the gesture exposes it, before
       // it crosses the selection boundary. Programmatic jumps skip this.
       visibleDetailImageIndices(track.scrollLeft,track.clientWidth,count).forEach(prepare);
+      if('viewerSwiping' in track.dataset)return;
       const index=Math.max(0,Math.min(count-1,Math.round(track.scrollLeft/track.clientWidth)));
       if(index!==current){current=index;select(index);}
     });
   },{signal,passive:true});
-  track.addEventListener('scrollend',()=>{navigating=false;},{signal});
-  const interrupt=()=>{navigating=false;};
+  const interrupt=()=>{motion.stop();clearNavigation();};
   track.addEventListener('pointerdown',interrupt,{signal,passive:true});
-  track.addEventListener('wheel',interrupt,{signal,passive:true});
-  const resize=new ResizeObserver(()=>{if(track.clientWidth)align();});
+  track.addEventListener('wheel',event=>{if(Math.abs(event.deltaX)>Math.abs(event.deltaY))interrupt();},{signal,passive:true});
+  track.closest('dialog')?.addEventListener('close',interrupt,{signal});
+  reduced.addEventListener('change',()=>{if(reduced.matches)motion.finish();},{signal});
+  const resize=new ResizeObserver(()=>{
+    const nextWidth=track.clientWidth;
+    if(!nextWidth||nextWidth===width)return;
+    const ratio=width?nextWidth/width:1;width=nextWidth;
+    if(motion.active){
+      // Different portrait proportions can resize the stage mid-transition.
+      // Preserve the visible slide fraction and momentum instead of snapping.
+      const state=motion.read();
+      motion.snap({left:state.value.left*ratio});
+      motion.to({left:current*nextWidth},{stiffness,velocity:{left:state.velocity.left*ratio},done:clearNavigation});
+    }else align();
+  });
   resize.observe(track);
   signal.addEventListener('abort',()=>{resize.disconnect();cancelAnimationFrame(frame);},{once:true});
 
-  const render=(rows:string[],key:(url:string)=>string,total:number,index:number,alt:string,scroll=true,animate=false)=>{
+  const render=(rows:string[],key:(url:string)=>string,total:number,index:number,alt:string,scroll=true,animate=false,fast=false)=>{
     current=index;count=total;
     const existing=new Map([...track.children].map(slide=>[(slide as HTMLElement).dataset.imageKey,slide as HTMLElement]));
     const slides=Array.from({length:Math.max(1,total)},(_,position)=>{
@@ -44,7 +70,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
       let slide=existing.get(identity);
       if(!slide){
         slide=document.createElement('div');slide.className='image-viewer-slide';slide.dataset.imageKey=identity;
-        const image=document.createElement('img');image.draggable=false;image.alt=alt;image.style.visibility='hidden';
+        const image=document.createElement('img');image.draggable=false;image.alt=alt;image.dataset.motionFade='';image.style.visibility='hidden';
         const loading=document.createElement('div');loading.className='image-viewer-slide-loading detail-image-skeleton';
         loading.setAttribute('aria-label','Loading image');loading.setAttribute('role','status');
         slide.append(image,loading);
@@ -55,7 +81,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
       return slide;
     });
     reconcileGalleryChildren(track,slides);
-    if(scroll)align(animate);
+    if(scroll)align(animate,fast);
     const selected=slides[index]||slides[0];
     return {image:selected.querySelector<HTMLImageElement>('img')!,skeleton:selected.querySelector<HTMLElement>('.image-viewer-slide-loading')!};
   };

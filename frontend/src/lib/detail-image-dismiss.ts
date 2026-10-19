@@ -1,14 +1,23 @@
-/** Keep horizontal swipes native; own only a single-finger downward drag. */
+import {createGallerySpring} from './gallery-spring';
+
+/** Own only a single-finger downward drag; relinquish it to paging or zoom. */
 export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLElement,signal:AbortSignal) {
   const mobile=matchMedia('(max-width:650px), (max-height:650px)');
   const reduced=matchMedia('(prefers-reduced-motion:reduce)');
   let unlock:(()=>void)|undefined;
   let gesture:{id:number;x:number;y:number;axis?:'horizontal'|'vertical';distance:number;samples:{y:number;time:number}[]}|undefined;
   const pointers=new Set<number>();
-  let settling:ReturnType<typeof setTimeout>|undefined,ignoreClickUntil=0;
+  let settling=false,ignoreClickUntil=0;
+  const motion=createGallerySpring({y:0},value=>{
+    dialog.style.translate=`0 ${value.y}px`;
+    dialog.style.setProperty('--viewer-backdrop',String(.8*Math.max(0,1-value.y/window.innerHeight)));
+  },signal,{bounds:()=>({y:{min:0,max:window.innerHeight}})});
+  reduced.addEventListener('change',()=>{if(reduced.matches)motion.finish();},{signal});
 
   const reset=()=>{
-    clearTimeout(settling);settling=undefined;gesture=undefined;
+    motion.snap({y:0});settling=false;
+    const pointer=gesture?.id;gesture=undefined;
+    if(pointer!==undefined&&track.hasPointerCapture?.(pointer))track.releasePointerCapture(pointer);
     delete dialog.dataset.viewerDragging;delete dialog.dataset.viewerSettling;
     dialog.style.removeProperty('translate');dialog.style.removeProperty('--viewer-backdrop');
   };
@@ -24,23 +33,22 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
       window.scrollTo({left:x,top:y,behavior:'instant'});unlock=undefined;
     };
   };
-  const settle=(close=false)=>{
-    gesture=undefined;delete dialog.dataset.viewerDragging;
-    dialog.dataset.viewerSettling='';
-    dialog.style.translate=close?`0 ${window.innerHeight}px`:'0 0';
-    dialog.style.setProperty('--viewer-backdrop',close?'0':'.8');
-    clearTimeout(settling);
-    const finish=()=>{if(close&&dialog.open)dialog.close();reset();};
-    if(reduced.matches)finish();else settling=setTimeout(finish,240);
+  const settle=(close=false,velocity=0)=>{
+    gesture=undefined;delete dialog.dataset.viewerDragging;dialog.dataset.viewerSettling='';settling=true;
+    motion.to({y:close?window.innerHeight:0},{velocity:{y:velocity},immediate:reduced.matches,done:()=>{
+      if(close&&dialog.open)dialog.close();reset();
+    }});
   };
   track.addEventListener('pointerdown',event=>{
     if(!mobile.matches||!dialog.open||dialog.hasAttribute('data-motion-closing'))return;
     pointers.add(event.pointerId);
     if(pointers.size>1){settle();return;}
-    if(settling||(window.visualViewport?.scale||1)>1)return;
-    gesture={id:event.pointerId,x:event.clientX,y:event.clientY,distance:0,samples:[{y:event.clientY,time:performance.now()}]};
+    if((window.visualViewport?.scale||1)>1)return;
+    const at=settling?motion.stop().value.y:0;settling=false;delete dialog.dataset.viewerSettling;
+    gesture={id:event.pointerId,x:event.clientX,y:event.clientY-at,axis:at?'vertical':undefined,distance:at,samples:[{y:event.clientY,time:performance.now()}]};
   },{signal,passive:true});
   track.addEventListener('pointermove',event=>{
+    if('viewerZoomed' in dialog.dataset){reset();return;}
     if(!gesture||gesture.id!==event.pointerId||pointers.size!==1)return;
     const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;
     const now=performance.now();
@@ -55,8 +63,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
     track.setPointerCapture(event.pointerId);
     gesture.distance=Math.max(0,dy);
     dialog.dataset.viewerDragging='';
-    dialog.style.translate=`0 ${gesture.distance}px`;
-    dialog.style.setProperty('--viewer-backdrop',String(.8*Math.max(0,1-gesture.distance/window.innerHeight)));
+    motion.drag({y:gesture.distance});
   },{signal,passive:false});
   const release=(event:PointerEvent)=>{
     pointers.delete(event.pointerId);
@@ -71,11 +78,19 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
       // pattern to CSS pixels, with minimum travel to reject accidental taps.
       // https://github.com/material-components/material-components-android/blob/master/lib/java/com/google/android/material/bottomsheet/BottomSheetBehavior.java
       const flick=gesture.distance>=32&&velocity>=.5;
-      settle(event.type!=='pointercancel'&&velocity>=-.2&&(gesture.distance>=threshold||flick));
+      settle(event.type!=='pointercancel'&&velocity>=-.2&&(gesture.distance>=threshold||flick),event.type==='pointercancel'?0:velocity*1000);
     }else gesture=undefined;
   };
   window.addEventListener('pointerup',release,{signal,passive:true});
   window.addEventListener('pointercancel',release,{signal,passive:true});
+  // Native back/forward and OS interruptions can omit pointerup/cancel. A
+  // bfcache restore retains these listeners and variables, including stale
+  // pointer IDs and pending settle timers, so reset without remounting images.
+  const interrupt=()=>{reset();pointers.clear();ignoreClickUntil=0;};
+  dialog.addEventListener('viewerinteractionstart',interrupt,{signal});
+  window.addEventListener('blur',interrupt,{signal});
+  window.addEventListener('pagehide',()=>{interrupt();unlock?.();},{signal});
+  window.addEventListener('pageshow',()=>{interrupt();if(dialog.open)lockPage();else unlock?.();},{signal});
   track.addEventListener('click',event=>{
     if(performance.now()<ignoreClickUntil){event.preventDefault();event.stopImmediatePropagation();}
   },{signal,capture:true});

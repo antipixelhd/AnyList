@@ -1,0 +1,32 @@
+.calendar-popover {
+  position:fixed; inset:auto; margin:0; padding:12px 14px 14px;
+  width:min(320px,calc(100vw - 16px)); max-height:calc(100dvh - 16px); overflow:auto;
+  box-sizing:border-box; border:0; border-radius:5px; background:var(--panel);
+  color:var(--text); box-shadow:0 8px 28px #02071166; font-size:13px;
+}
+.calendar-navigation { display:flex; align-items:center; gap:2px; min-height:32px; margin-bottom:12px; }
+.calendar-navigation button { border:0; padding:4px 6px; min-height:28px; background:transparent; color:var(--muted); cursor:pointer; border-radius:3px; font:inherit; }
+.calendar-navigation button:is(:hover,:focus-visible) { outline:none; background:#253449; color:var(--bright); }
+.calendar-navigation [data-calendar-year] { margin-left:auto; font-size:16px; font-weight:600; }
+.calendar-navigation [data-calendar-month] { margin-right:auto; font-size:16px; font-weight:600; }
+.calendar-navigation [data-calendar-month][hidden] { display:none; }
+.calendar-navigation [data-calendar-year]:has(+[hidden]) { margin-right:auto; }
+.calendar-popover .air-datepicker {
+  --adp-width:100%; --adp-font-family:inherit; --adp-font-size:13px;
+  --adp-background-color:var(--panel); --adp-background-color-hover:#253449;
+  --adp-color:var(--text); --adp-color-other-month:#738393; --adp-color-other-month-hover:var(--text);
+  --adp-color-current-date:var(--blue); --adp-day-name-color:var(--muted);
+  --adp-cell-background-color-selected:var(--blue); --adp-cell-background-color-selected-hover:#56c0f6;
+  --adp-background-color-selected-other-month:var(--blue); --adp-background-color-selected-other-month-focused:#56c0f6;
+  --adp-cell-border-radius:50%; --adp-day-cell-height:38px;
+  --adp-month-cell-height:64px; --adp-year-cell-height:64px;
+  --adp-padding:0; --adp-transition-duration:0s;
+  border:0; font-family:inherit;
+}
+.calendar-popover .air-datepicker--navigation { display:none; }
+.calendar-popover .air-datepicker-body--day-names { margin:0 0 4px; padding:0 0 12px; border-bottom:1px solid #8290a055; }
+.calendar-popover .air-datepicker-body--day-name { text-transform:none; font-size:12px; font-weight:600; }
+.calendar-popover .air-datepicker-cell { font-weight:500; }
+.calendar-popover .air-datepicker-cell:is(:hover,:focus-visible) { outline:none; background:#253449; }
+.calendar-popover .air-datepicker-cell.-selected- { background:var(--blue); color:white; }
+.calendar-popover .air-datepicker-cell:not(.-day-) { border-radius:4px; }

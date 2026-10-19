@@ -17,6 +17,16 @@ class Settings(BaseSettings):
 
     server_url: str = "http://localhost:7330"
 
+    # Intentionally public operator disclosures, supplied privately at runtime.
+    legal_pages_enabled: bool = False
+    legal_operator_name: str = ""
+    legal_operator_address: str = ""
+    legal_contact_email: str = ""
+    legal_privacy_email: str = ""
+    legal_hosting_details: str = ""
+    legal_retention_details: str = ""
+    legal_transfer_details: str = ""
+
     # Already set to UTC in the Dockerfiles (ENV TZ=UTC) for the container's own
     # system clock; reused here as the server-side "today" for pages that have
     # no per-request browser timezone to go on (e.g. /airing-today's plain SSR

@@ -1,0 +1,13 @@
+---
+import SiteFooter from '../components/SiteFooter.astro';
+import BrandMark from '../components/BrandMark.astro';
+import PrimaryFontPreloads from '../components/PrimaryFontPreloads.astro';
+import '../styles/typography.css';
+import '../styles/global.css';
+import '../styles/legal.css';
+const {title, draft = false} = Astro.props;
+Astro.response.headers.set('Cache-Control', 'no-store');
+---
+<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>{Astro.url.pathname.startsWith('/dev/') && <meta name="robots" content="noindex, nofollow"/>}<title>{title} &#183; AnyList</title><PrimaryFontPreloads/><link rel="icon" href="/favicon-96x96.png"/></head>
+<body class="legal-page"><header class="legal-header"><a href="/"><BrandMark size={30}/><span>AnyList</span></a></header>
+<main class="legal-content"><h1>{title}</h1>{draft && <p class="legal-draft">Draft - required operator details are incomplete.</p>}<slot/></main><SiteFooter/></body></html>

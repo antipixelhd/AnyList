@@ -1,14 +1,19 @@
 # Working rules
 
-Commit changes for completed features, tests, verifications etc, leave specific smaller edits requested by the user open until the user confirms them
+Commit changes for completed features, tests, verifications etc, leave specific smaller edits requested by the user open until the user confirms them. Always commit bug fixes
 
 if you make changes to the database apply the migration before ending the turn
 
 Avoid cluttering UIs with excessive micro-copy, subtitles, helper text, badges, and tiny metadata. Prefer clean layouts with strong hierarchy, spacing, and obvious controls. If text is not necessary for understanding or action, leave it out.
 For UI use subtle motion where possible that stays consistent with the rest of the design language
 Do not use outlines for active or focused UI states; use color and background changes instead.
+Disable native touch tap highlights globally; preserve intentional control states and keyboard focus feedback.
 
 Dont prefer bandade fixes but prefer concrete systems that fix the problem or implement the features
+
+For icon hover states do not use a "square box", keep it clean and only have the icon colored
+Dont use outlines/borders for a selection/focus state
+For mobile/touch do not use a square/rectangular click feedback for buttons
 
 ## Architecture direction
 

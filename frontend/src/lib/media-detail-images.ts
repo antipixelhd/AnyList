@@ -1,17 +1,19 @@
-import {showDialog,reveal} from './ui-motion';
+import {showDialog,reveal,cancelUiMotion} from './ui-motion';
 import {showToast} from './toasts';
-import {bindImageViewerDismissal} from './image-viewer';
+import {bindImageViewerDismissal} from './image-viewer-dismissal';
 import {detailBackground,type DetailLoadState} from './detail-background';
 import {responsiveArtwork,applyResponsiveArtwork,artworkIdentity} from './responsive-artwork';
 import {reconcileGalleryChildren,createGalleryThumbnailWatcher,createGalleryImageLoader} from './detail-gallery-dom';
 import {createDetailImageCarousel} from './detail-image-carousel';
 import {bindDetailImageWheel} from './detail-image-wheel';
 import {bindDetailImageDragDismiss} from './detail-image-dismiss';
+import {bindDetailImageZoom} from './detail-image-zoom';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
 import {commitDetailHero} from './detail-hero';
+import {createGalleryPreviewTimer,galleryPreviewImagesSettled} from './gallery-preview-timer';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
@@ -25,14 +27,15 @@ export function uniqueDetailImages(values:unknown[]):string[] {
   }).slice(0,10);
 }
 
-export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) {
-  const lightbox=root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
+export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,standalone?:{lightbox:HTMLDialogElement;logo:boolean;imagesPath?:string}) {
+  const lightbox=standalone?.lightbox||root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
-  const name=root.querySelector('.lab-heading h1')!.textContent!;
+  const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
   const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
   const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
-  let pending=!!info.imagesAvailable&&info.imageStatus?.state!=='ready';
+  const galleryLimit=standalone&&!standalone.logo?5:10;
+  let pending=!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
   const announcement=lightbox.querySelector<HTMLElement>('[data-image-viewer-announcement]');
@@ -47,29 +50,33 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   const loadThumbnail=createGalleryImageLoader(signal,button=>{
     if(button.matches('.lab-gallery button,.lab-art-image'))watchLandscape(button as HTMLButtonElement);
     watchThumbnail(button);
+    if(slots.contains(button))refreshPreviewLoading();
   });
   const arrows=[...lightbox.querySelectorAll<HTMLButtonElement>('[data-image-viewer-step]')];
   const mobileViewer=matchMedia('(max-width:650px), (max-height:650px)');
-  let previewTimer:ReturnType<typeof setTimeout>|undefined;
   let previewInteracting=false;
   let previewGesture:{x:number;y:number;moved:boolean}|undefined;
-  const clearPreviewTimer=()=>{clearTimeout(previewTimer);previewTimer=undefined;};
-  const revealPreviews=()=>{
-    clearPreviewTimer();
-    delete lightbox.dataset.previewsHidden;
-    if(!mobileViewer.matches||!lightbox.open||previewInteracting)return;
-    previewTimer=setTimeout(()=>{
+  const previews=createGalleryPreviewTimer(()=>{
+      if(!lightbox.open||previewInteracting||'viewerZoomed' in lightbox.dataset||viewerPending())return false;
+      // Source-free offscreen thumbnails stay lazy and must not block forever.
+      if(!galleryPreviewImagesSettled(slots.querySelectorAll<HTMLImageElement>('img')))return false;
+      const selected=carousel.slide(current);
+      if(selected&&!selected.skeleton.hidden)return false;
       const focused=document.activeElement;
-      if(focused?.matches(':focus-visible')&&(slots.contains(focused)||arrows.includes(focused as HTMLButtonElement)))return;
-      lightbox.dataset.previewsHidden='true';
-    },2000);
-  };
+      return !(focused?.matches(':focus-visible')&&(slots.contains(focused)||arrows.includes(focused as HTMLButtonElement)));
+  },()=>{delete lightbox.dataset.previewsHidden;},()=>{lightbox.dataset.previewsHidden='true';},signal);
+  const clearPreviewTimer=previews.pause;
+  const revealPreviews=previews.reveal;
+  function refreshPreviewLoading(){if(lightbox.open)previews.refresh();}
+  slots.addEventListener('load',refreshPreviewLoading,{signal,capture:true});
+  slots.addEventListener('error',refreshPreviewLoading,{signal,capture:true});
   lightbox.addEventListener('pointerdown',event=>{
     previewInteracting=true;
     previewGesture={x:event.clientX,y:event.clientY,moved:false};
     clearPreviewTimer();
   },{signal,passive:true});
   lightbox.addEventListener('pointermove',event=>{
+    if(!mobileViewer.matches&&(event.target as Element).closest('.image-viewer-track,.image-viewer-button,.image-viewer-slots'))revealPreviews();
     if(previewInteracting&&previewGesture&&Math.hypot(event.clientX-previewGesture.x,event.clientY-previewGesture.y)>8)previewGesture.moved=true;
   },{signal,passive:true});
   const releasePreviews=()=>{
@@ -87,21 +94,29 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(mobileViewer.matches&&(event.target as Element).closest('[data-image-viewer-track]')){
       if(previewGesture?.moved)return;
       if(lightbox.dataset.previewsHidden)revealPreviews();
-      else {clearPreviewTimer();lightbox.dataset.previewsHidden='true';}
+      else previews.hide();
     }else revealPreviews();
   },{signal});
   lightbox.addEventListener('focusin',revealPreviews,{signal});
   lightbox.addEventListener('focusout',revealPreviews,{signal});
   slots.addEventListener('scroll',revealPreviews,{signal,passive:true});
   mobileViewer.addEventListener('change',revealPreviews,{signal});
-  lightbox.addEventListener('close',()=>{clearPreviewTimer();previewInteracting=false;delete lightbox.dataset.previewsHidden;},{signal});
+  lightbox.addEventListener('close',()=>{previews.reset();previewInteracting=false;delete lightbox.dataset.previewsHidden;},{signal});
+  window.addEventListener('pagehide',()=>{previews.reset();previewInteracting=false;previewGesture=undefined;},{signal});
+  window.addEventListener('pageshow',()=>{previewInteracting=false;previewGesture=undefined;if(lightbox.open)revealPreviews();},{signal});
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
-  const fitViewer=bindDetailViewerFrame(lightbox,signal);
+  const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
+    (index,preserveScroll=false,preserveZoom=false)=>showImage(index,false,!preserveScroll,preserveZoom),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
+  const fitViewer=bindDetailViewerFrame(lightbox,signal,!!standalone);
   let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;
-    const rows=galleries[active],count=viewerPending()?10:rows.length;
+    const rows=galleries[active],count=viewerPending()?galleryLimit:rows.length;
+    slots.hidden=!viewerPending()&&count<=1;
+    if(slots.hidden){
+      slots.replaceChildren();followedSlot=undefined;refreshPreviewLoading();return;
+    }
     const existing=new Map([...slots.querySelectorAll<HTMLButtonElement>('button')].map(button=>[button.dataset.slotKey,button]));
     const buttons=Array.from({length:count},(_,index)=>{
       const key=`${active}:${rows[index]?imageKey(rows[index]):`pending:${index}`}`;
@@ -110,13 +125,18 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         button=document.createElement('button');button.type='button';button.dataset.slotKey=key;
         if(rows[index]){const thumbnail=new Image();thumbnail.alt='';thumbnail.dataset.gallerySrc=responsiveArtwork(rows[index],{size:'w185',route:'auto'})?.src||rows[index];button.append(thumbnail);}
         else button.className='detail-image-skeleton';
-        button.addEventListener('click',()=>showImage(Number(button!.dataset.imageIndex),true),{signal});
+        button.addEventListener('click',()=>{
+          const index=Number(button!.dataset.imageIndex);
+          prepareImage(index);
+          if(!resetZoom.preview(index,current))showImage(index,true);
+        },{signal});
       }
       button.dataset.imageIndex=String(index);
       button.setAttribute('aria-label',`${active==='posters'?'Poster':'Artwork'} ${index+1}${rows[index]?'':': loading'}`);
       button.setAttribute('aria-current',String(current===index));loadThumbnail(button);return button;
     });
     reconcileGalleryChildren(slots,buttons);
+    refreshPreviewLoading();
     const selected=buttons[current];
     if(selected&&selected.dataset.slotKey!==followedSlot){
       followedSlot=selected.dataset.slotKey;
@@ -125,17 +145,18 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
     }
   };
-  const showImage=(index:number,animate=false,scroll=true)=>{
+  const showImage=(index:number,animate=false,scroll=true,preserveZoom=false,fast=false)=>{
+    if(!preserveZoom){if(scroll)resetZoom();else resetZoom.preserveInteraction();}
     const rows=galleries[active];
-    const count=viewerPending()?10:rows.length;
+    const count=viewerPending()?galleryLimit:rows.length;
     const previous=current;
     current=count?(index+count)%count:0;
     if(current!==previous)revealPreviews();
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${viewerPending()?'':` of ${count}`}`:'No images available';
-    const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
-    fitViewer(image,viewerGroup());
+    const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate,fast);
+    if(!preserveZoom)fitViewer(image,viewerGroup());
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=count<2;});
     paintSlots();
     if(!rows[current]){
@@ -170,12 +191,14 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const cached=image.complete&&image.naturalWidth>0;
     void ready.then(loaded=>{
       if(!loaded||signal.aborted)return;
-      if(group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
+      if(!standalone&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
       if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,viewerGroup());
       if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
+      refreshPreviewLoading();
     }).catch(()=>{
       if(signal.aborted)return;
       if(discard())showToast('Unable to load this image. Retry the gallery.','error');
+      refreshPreviewLoading();
     });
   };
   const watchLandscape=(button:HTMLButtonElement)=>{
@@ -249,7 +272,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   };
   const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
-      galleries.posters=uniqueDetailImages(data.posters||[]);
+      galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[]).slice(0,galleryLimit);
       galleries.artwork=uniqueDetailImages(data.artwork||[]);
       if(lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
       thumbnails={...thumbnails,...data.artwork_thumbnails};
@@ -264,13 +287,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       }
       fallback=data.backdrop_fallback||fallback;
       paintHero(data.backdrop);
-      editorStore.updateArtwork(info.id,{poster:primary});
+      if(!standalone)editorStore.updateArtwork(info.id,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
         const existing=new Map([...grid.querySelectorAll<HTMLButtonElement>('[data-detail-image]')].map((button,index)=>[
           button.dataset.detailImage?imageKey(button.dataset.detailImage):`pending:${index}`,button]));
-        const buttons=Array.from({length:pending?10:galleries.artwork.length},(_,index)=>{
+        const buttons=Array.from({length:pending?galleryLimit:galleries.artwork.length},(_,index)=>{
           const url=galleries.artwork[index];
           let button=existing.get(url?imageKey(url):`pending:${index}`);
           if(!button){
@@ -285,11 +308,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
       const preferred=data.image_replacements?.[selected]||selected;
       if(lightbox.open){
         const index=preferred?galleries[active].findIndex(url=>imageKey(url)===imageKey(preferred)):-1;
-        showImage(index>=0?index:Math.min(current,Math.max(0,(viewerPending()?10:galleries[active].length)-1)));
+        showImage(index>=0?index:Math.min(current,Math.max(0,(viewerPending()?galleryLimit:galleries[active].length)-1)));
       }
       return data.image_status;
   };
-  const resource=detailBackground(`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
+  const resource=detailBackground(standalone?.imagesPath||`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
     viewerStatus.hidden=state!=='retry';
     if(state==='retry'){
       viewerStatus.replaceChildren(document.createTextNode(error||'Images are temporarily unavailable. Retrying automatically.'));
@@ -320,12 +343,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(initialHero)paintHero(initialHero);
   }
   root.addEventListener('click',event=>{
-    const button=(event.target as Element).closest<HTMLButtonElement>('[data-detail-image]');
-    if(!button)return;
-    active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'?'posters':'artwork';
+    const button=(event.target as Element).closest<HTMLButtonElement>(standalone?'[data-portrait-image]':'[data-detail-image]');
+    if(!button||button.disabled)return;
+    active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'||(standalone&&!standalone.logo)?'posters':'artwork';
     if(active==='hero')galleries.hero=[button.dataset.detailImage!];
     lightbox.dataset.gallery=viewerGroup();
-    const url=button.dataset.detailImage!;
+    const url=(standalone?button.dataset.portraitImage:button.dataset.detailImage)!;
     if(active==='artwork'&&url&&!galleries.artwork.includes(url))galleries.artwork.unshift(url);
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
@@ -347,7 +370,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(info.imagesAvailable&&artworkPanel&&!artworkPanel.hidden)void loadImages();
   }
   bindImageViewerDismissal(lightbox,signal);
-  bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true));
+  bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true,true,false,true));
   lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}},{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep),true),{signal}));
   return loadImages;
