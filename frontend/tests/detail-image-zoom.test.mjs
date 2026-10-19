@@ -107,6 +107,14 @@ test('a different preview scrolls simultaneously with zoom-out and selects only 
  assert.ok(v.track.scrollLeft>0&&v.track.scrollLeft<400);assert.ok(v.images[1].style.transform);
  v.settle();assert.equal(v.track.scrollLeft,400);assert.deepEqual(v.selected,[1]);assert.equal(v.images[1].style.transform,undefined);assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
 });
+
+test('phone preview switches settle with the fast gallery motion within 400ms',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();
+ v.reset.preview(1,0);
+ for(let i=0;i<25;i++)v.advance(16);
+ assert.equal(v.track.scrollLeft,400);assert.deepEqual(v.selected,[1]);
+ assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
+});
 test('changing preview choice during zoom-out cancels the obsolete selection',()=>{
  const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();v.reset.preview(1,0);v.advance(80);
  v.reset.preview(0,0);assert.deepEqual(v.selected,[]);

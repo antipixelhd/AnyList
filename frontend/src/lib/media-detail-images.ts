@@ -148,7 +148,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         button.addEventListener('click',()=>{
           const index=Number(button!.dataset.imageIndex);
           prepareImage(index);
-          if(!resetZoom.preview(index,current))showImage(index,true);
+          if(!resetZoom.preview(index,current))showImage(index,true,true,false,true);
         },{signal});
       }
       button.dataset.imageIndex=String(index);

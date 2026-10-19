@@ -79,7 +79,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     base={scale,distance:distance(),center:c,anchor:{x:(c.x-stage.x-x)/scale,y:(c.y-stage.y-y)/scale}};
   };
   const interruptAnimation=()=>{motion.stop();cancelSelection();};
-  const returnToFit=(done?:()=>void,index?:number,gesture=false)=>{
+  const returnToFit=(done?:()=>void,index?:number,gesture=false,preview=false)=>{
     if(!fitted){scale=1;x=0;y=0;paint();changed();done?.();return;}
     const stage=stageCenter(),destination={scale:1,x:fitted.center.x-stage.x,y:fitted.center.y-stage.y,
       left:index===undefined?track.scrollLeft:index*track.clientWidth};
@@ -88,7 +88,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
       incoming=track.children[index]?.querySelector<HTMLImageElement>('img')||undefined;
       if(incoming&&incoming!==target)incoming.style.transform=`translate(${destination.x}px,${destination.y}px)`;
     }
-    motion.to(destination,{gesture,immediate:reduced.matches,done:()=>{
+    motion.to(destination,{gesture,stiffness:preview?gallerySpatial.fast:gallerySpatial.default,immediate:reduced.matches,done:()=>{
       if(selectionIndex!==undefined)track.scrollLeft=selectionIndex*track.clientWidth;
       const finishChrome=preserveChrome(),adopted=adoptedIndex;adoptedIndex=undefined;
       cancelSelection();restoreFrame();motion.snap({x:0,y:0,scale:1,left:track.scrollLeft});changed();
@@ -219,7 +219,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
   return Object.assign(reset,{preserveInteraction:()=>clear(true),preview:(index:number,current:number)=>{
     if(!fitted)return false;
     beforeGesture();interruptAnimation();
-    returnToFit(()=>select(index),index===current&&track.scrollLeft===index*track.clientWidth?undefined:index);
+    returnToFit(()=>select(index),index===current&&track.scrollLeft===index*track.clientWidth?undefined:index,false,true);
     return true;
   }});
 }
