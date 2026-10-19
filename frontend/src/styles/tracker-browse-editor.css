@@ -135,12 +135,31 @@
   pointer-events:none
 }
 .editor-favorite:has(input:checked) {
-  color:#ef81a5!important
+  color:#f05296!important
 }
 .editor-favorite:has(input:focus-visible) {
-  outline:2px solid var(--blue);
-  outline-offset:2px;
-  border-radius:4px
+  outline:none
+}
+.editor-hero-actions :is(.editor-favorite,.editor-library) {
+  background:transparent;
+  border:0;
+  box-shadow:none;
+  transition:color .16s ease
+}
+.editor-hero-actions .editor-favorite:not(:has(input:checked)),
+.editor-hero-actions .editor-library[aria-pressed=false] {
+  color:var(--muted)!important
+}
+.editor-hero-actions .editor-favorite:not(:has(input:checked)):is(:hover,:has(input:focus-visible)),
+.editor-hero-actions .editor-library[aria-pressed=false]:is(:hover,:focus-visible) {
+  color:var(--bright)!important
+}
+.editor-hero-actions .editor-library:focus-visible {
+  outline:none
+}
+.editor-hero-actions .editor-library:focus-visible .ui-icon,
+.editor-hero-actions .editor-favorite:has(input:focus-visible) .ui-icon {
+  filter:drop-shadow(0 0 3px currentColor)
 }
 .editor-library {
   border:0;
@@ -454,32 +473,12 @@
     gap:8px
   }
   .editor-hero-actions :is(.editor-favorite,.editor-library) {
-    --editor-action-color:var(--blue);
     width:44px;
     height:44px;
-    flex:none;
-    border-radius:5px;
-    background:var(--panel);
-    color:var(--editor-action-color)!important;
-    transition:background-color .16s ease,color .16s ease
-  }
-  .editor-hero-actions .editor-favorite {
-    --editor-action-color:#f05296
+    flex:none
   }
   .editor-hero-actions :is(.editor-favorite,.editor-library) .ui-icon {
     font-size:18px
-  }
-  .editor-hero-actions :is(.editor-favorite:hover,.editor-library:hover,.editor-library:focus-visible),
-  .editor-hero-actions .editor-favorite:has(input:focus-visible) {
-    outline:none;
-    background:color-mix(in srgb,var(--editor-action-color) 20%,var(--panel))
-  }
-  .editor-hero-actions :is(.editor-favorite:has(input:checked),.editor-library[aria-pressed=true]) {
-    background:var(--editor-action-color);
-    color:#ffffff!important
-  }
-  .editor-hero-actions :is(.editor-favorite:has(input:checked):hover,.editor-favorite:has(input:checked):has(input:focus-visible),.editor-library[aria-pressed=true]:is(:hover,:focus-visible)) {
-    background:color-mix(in srgb,var(--editor-action-color) 85%,white)
   }
   .editor-save {
     margin-left:auto;
@@ -511,7 +510,7 @@
     margin:0!important
   }
 }
-@media(max-width:460px) and (prefers-reduced-motion:reduce) {
+@media(prefers-reduced-motion:reduce) {
   .editor-hero-actions :is(.editor-favorite,.editor-library) { transition:none }
 }
 .library-toggle {
