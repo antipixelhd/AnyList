@@ -72,6 +72,7 @@ frontend/frontend.log
 
 # --- Common AI files ---
 .codex/
+.codex-remote-attachments/
 backend/data/avatars/
 backend/data/image_cache/
 backend/data/image_analysis/
