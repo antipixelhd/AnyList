@@ -1,0 +1,38 @@
+---
+import Legal from '../layouts/Legal.astro';
+import {legalConfig, legalDraft} from '../lib/legal';
+const config = await legalConfig();
+---
+<Legal title="Datenschutzerklärung" draft={legalDraft(config)}>
+  <p>Stand: 19. Oktober 2026</p>
+  <h2>Verantwortlicher</h2>
+  <address>{config.operator_name || 'Betreibername wird ergänzt.'}<br/>{config.operator_address || 'Anschrift wird ergänzt.'}</address>
+  {config.contact_email ? <p>Datenschutzkontakt: <a href={`mailto:${config.contact_email}`}>{config.contact_email}</a></p> : <p class="legal-missing">Datenschutzkontakt wird ergänzt.</p>}
+  <h2>Welche Daten wir wofür verarbeiten</h2>
+  <ul>
+    <li>Beim Seitenaufruf werden IP-Adresse, Zeitpunkt, angeforderte Adresse, Browserinformationen und technische Verbindungsdaten zur Auslieferung, Fehlerbehebung und Absicherung verarbeitet. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO; berechtigtes Interesse ist der sichere Betrieb.</li>
+    <li>Für ein Konto werden E-Mail-Adresse, Benutzername, ein Passwort-Hash beziehungsweise eine SSO-Kennung sowie Sicherheits- und Kontoeinstellungen verarbeitet. Medienlisten, Bewertungen, Fortschritt, Notizen und freiwillige Profilangaben dienen den von Ihnen angeforderten Funktionen (Art. 6 Abs. 1 lit. b DSGVO).</li>
+    <li>Öffentliche Profile, Listen, Kommentare und soziale Aktivitäten sind entsprechend den Sichtbarkeitseinstellungen für andere Personen sichtbar. Öffentlich freigegebene Profilvorschauen können von Suchmaschinen und Messenger-Diensten abgerufen und dort zwischengespeichert werden. Veröffentlichen Sie dort keine vertraulichen Informationen.</li>
+    <li>Bei Kontaktanfragen verarbeiten wir die übermittelten Angaben zur Bearbeitung Ihrer Anfrage (Art. 6 Abs. 1 lit. b oder f DSGVO).</li>
+  </ul>
+  <h2>Hosting, Versand und weitere Empfänger</h2>
+  <p class:list={{'legal-missing':!config.hosting_details}} class="legal-preserve">{config.hosting_details || 'Noch zu ergänzen: Hosting-/VPS-Anbieter und Standort, gegebenenfalls vorgeschalteter CDN-/Sicherheitsdienst, E-Mail-Versand und SSO-Dienst einschließlich ihrer Rolle.'}</p>
+  <p>Administratoren haben Zugriff, soweit dies für Betrieb, Support und Sicherheit erforderlich ist. Eingebundene technische Dienstleister benötigen geeignete vertragliche Datenschutzregelungen, soweit sie als Auftragsverarbeiter tätig sind.</p>
+  <h2>Metadaten und externe Bilder</h2>
+  <p>Suchanfragen und Medienkennungen werden vom Server an die jeweils verwendeten Metadatendienste übermittelt. Dazu gehören insbesondere TMDB, TheTVDB, TVmaze und MDBList. Optionale Adapter für Spiele und Bücher können IGDB/Twitch, RAWG, IsThereAnyDeal, Hardcover und Open Library verwenden. Die verfügbaren Dienste sind unter <a href="/credits">Quellen &amp; Lizenzen</a> beschrieben. Geben Sie in Mediensuchfelder keine sensiblen personenbezogenen Angaben ein.</p>
+  <p>Poster, Hintergründe und Porträts werden häufig unmittelbar von den Bildservern des jeweiligen Anbieters geladen. Dieser erhält dabei insbesondere Ihre IP-Adresse und technische Browserdaten. Auch externe Bilder in freiwilligen Profilinhalten können einen solchen Abruf auslösen. Die Einbindung zur Darstellung des angeforderten Medienkatalogs wird auf Art. 6 Abs. 1 lit. f DSGVO gestützt; die Interessenabwägung und die Empfänger-/Transferangaben müssen vom Betreiber für die konkrete Installation geprüft werden.</p>
+  <h2>Optionale Verbindungen und externe Videos</h2>
+  <p>Wenn Sie einen Tracking-, Wiedergabe- oder Bibliotheksdienst verbinden, verarbeiten wir die dafür erforderlichen Zugangstoken und übertragen die für diese Verbindung ausgewählten Konto-, Listen-, Bewertungs- und Fortschrittsdaten. Beispiele sind Trakt, Simkl, Plex, Jellyfin, Emby, Stremio, Nuvio und Kodi. Die Verbindung ist freiwillig; ihre Aktivierung und Synchronisation dienen Ihrer angeforderten Funktion (Art. 6 Abs. 1 lit. b DSGVO). Nach dem Trennen bereits beim anderen Dienst gespeicherte Daten werden dadurch nicht automatisch gelöscht.</p>
+  <p>Profilbeschreibungen können eingebettete Videos von YouTube (über youtube-nocookie.com), Vimeo oder anderen angegebenen Hosts enthalten. Solche Einbindungen laden beim Aufruf beziehungsweise beim Erreichen des sichtbaren Bereichs automatisch; Lazy Loading verhindert die Übermittlung nicht grundsätzlich. Der Anbieter erhält dabei insbesondere IP-Adresse und Browserdaten und kann weitere Daten oder Gerätespeicher verarbeiten. Es gibt derzeit keine vorgeschaltete Einwilligung und keine gespeicherte Anbieterfreigabe in AnyList. Die Rechtsgrundlage für die konkrete Einbindung und etwaige Übermittlungen muss vor einer abschließenden Freigabe geprüft werden; diese Information ersetzt keine gegebenenfalls erforderliche Einwilligung.</p>
+  <h2>Cookies und Gerätespeicher</h2>
+  <p>Wir verwenden keine im Anwendungscode eingebauten Werbe- oder Analyse-Tracker. Für Anmeldung, Sicherheit, gewünschte Einstellungen und Bedienfunktionen werden Cookies und andere Browser-Speicher verwendet. Einzelheiten, Zwecke und Laufzeiten stehen unter <a href="/cookies">Cookies &amp; lokaler Speicher</a>. Zusätzliche Dienste des Hosters/CDN sind gesondert zu prüfen.</p>
+  <h2>Verarbeitung außerhalb des EWR</h2>
+  <p>Einzelne externe Anbieter können Daten außerhalb des Europäischen Wirtschaftsraums verarbeiten. Ein Standort oder ein wirksamer Übermittlungsmechanismus wird hier nicht pauschal zugesichert.</p>
+  <p class:list={{'legal-missing':!config.transfer_details}} class="legal-preserve">{config.transfer_details || 'Noch zu ergänzen: tatsächliche Empfängerländer und die jeweils einschlägigen Garantien nach Art. 44 ff. DSGVO, etwa Angemessenheitsbeschluss oder Standardvertragsklauseln.'}</p>
+  <h2>Aufbewahrung und Löschung</h2>
+  <p>Kontodaten und gespeicherte Medienaktivitäten werden für die Nutzung Ihres Kontos verarbeitet. Sie können das Konto in den Kontoeinstellungen löschen und verfügbare Exportfunktionen nutzen. Gesetzliche Aufbewahrungspflichten und die Behandlung vorhandener Sicherungskopien sind zu berücksichtigen.</p>
+  <p class:list={{'legal-missing':!config.retention_details}} class="legal-preserve">{config.retention_details || 'Noch zu ergänzen: konkrete Fristen für Zugriffs-/Sicherheitsprotokolle, Sicherungskopien und nach Kontolöschung verbleibende Daten. Eine sofortige Entfernung aus allen Sicherungskopien wird nicht zugesichert.'}</p>
+  <h2>Ihre Rechte</h2>
+  <p>Sie haben nach den jeweiligen gesetzlichen Voraussetzungen Rechte auf Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch, insbesondere gegen Verarbeitungen auf Grundlage berechtigter Interessen (Art. 15–21 DSGVO). Eine Einwilligung können Sie mit Wirkung für die Zukunft widerrufen. Sie können sich bei einer Datenschutzaufsichtsbehörde beschweren, insbesondere am gewöhnlichen Aufenthaltsort, Arbeitsplatz oder Ort des vermuteten Verstoßes (Art. 77 DSGVO).</p>
+  <p>Die für ein Konto benötigten Angaben sind für dessen Bereitstellung erforderlich. Freiwillige Profilangaben und externe Einbindungen sind optional. Es findet keine im Anwendungscode vorgesehene automatisierte Entscheidung mit rechtlicher oder vergleichbar erheblicher Wirkung im Sinne von Art. 22 DSGVO statt.</p>
+</Legal>

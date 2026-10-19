@@ -5,6 +5,7 @@ import '../styles/tracker.css';
 import '../styles/checkbox.css';
 import '../styles/action-controls.css';
 import '../styles/footer.css';
+import SiteFooter from '../components/SiteFooter.astro';
 import '../styles/profile-theme.css';
 import Icon from '../components/Icon.astro';
 import AppBar from '../components/AppBar.astro';
@@ -74,7 +75,7 @@ const pathname = Astro.url.pathname;
     </div>
     {user && <QuickRating />}
     {user && <AttentionPrompt />}
-    <footer class="page-footer"><div class="page-footer-inner">AnyList</div></footer>
+    <SiteFooter />
     <PwaRuntime />
     <NavigationRuntime />
     <MotionRuntime />

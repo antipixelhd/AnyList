@@ -1,0 +1,20 @@
+---
+import Legal from '../layouts/Legal.astro';
+---
+<Legal title="Cookies & lokaler Speicher">
+  <p>AnyList setzt im Anwendungscode keine Werbe- oder Analyse-Cookies ein. Ein allgemeiner Einwilligungsbanner wird deshalb für die unten beschriebenen erforderlichen Funktionen nicht eingesetzt. Maßgeblich ist die konkrete Funktion, nicht die Bezeichnung als Cookie: Auch Local Storage, Session Storage und Browser-Caches unterliegen den gesetzlichen Vorgaben.</p>
+  <div class="legal-table"><table><thead><tr><th>Speicher</th><th>Zweck</th><th>Laufzeit</th></tr></thead><tbody>
+    <tr><td><code>token</code></td><td>Angemeldet bleiben; HttpOnly, SameSite=Lax, Secure bei HTTPS. Beta-/Preview-Instanzen nutzen einen eigenen Namenspräfix.</td><td>Bis zu 7 Tage; Ende der gültigen Sitzung kann früher sein.</td></tr>
+    <tr><td><code>oidc_state</code>, <code>oidc_next</code></td><td>SSO-Anmeldung absichern und zum angeforderten Ziel zurückkehren; gegebenenfalls Preview-Präfix.</td><td>Bis zu 10 Minuten.</td></tr>
+    <tr><td><code>blur_explicit</code>, <code>time_format_24h</code></td><td>Gewünschte Darstellungs- und Uhrzeitoptionen.</td><td>Bis zu 1 Jahr; bei Nutzung aktualisiert.</td></tr>
+    <tr><td><code>anylist_date_region</code>, <code>anylist_streaming_region</code></td><td>Datumsformat und gewünschtes Veröffentlichungs-/Angebotsland. Automatische Voreinstellung aus Sprache/Zeitzone des Browsers; keine GPS-Ortung.</td><td>Bis zu 1 Jahr.</td></tr>
+    <tr><td>Local Storage</td><td>Gewähltes Farbschema sowie bereits geschlossene Installations- und Funktionshinweise. Keine werbliche Nutzerkennung.</td><td>Bis zur Änderung oder Löschung im Browser; einzelne Hinweise besitzen zusätzlich eine erneute Anzeige nach einer Wartezeit.</td></tr>
+    <tr><td>Session Storage</td><td>Scrollwiederherstellung, Such-/Navigationszustand und Vermeidung wiederholter Dialoge.</td><td>Im Allgemeinen bis zum Ende der jeweiligen Tab-Sitzung; einzelne Werte werden früher entfernt.</td></tr>
+    <tr><td>Browser-/Service-Worker-Cache</td><td>Wiederverwendung von Schriften, Skripten, Bildern und Offline-Inhalten der installierbaren Anwendung.</td><td>Versions- und browserabhängig, bis zur Ersetzung, Verdrängung oder Löschung.</td></tr>
+  </tbody></table></div>
+  <h2>Rechtsgrundlagen und Wahlmöglichkeiten</h2>
+  <p>Die Speicherung für die ausdrücklich angeforderte Anmeldung, Sicherheitsfunktionen und funktionale Einstellungen erfolgt nach § 25 Abs. 2 Nr. 2 TDDDG, soweit sie hierfür unbedingt erforderlich ist. Die weitere personenbezogene Verarbeitung richtet sich nach den in der <a href="/privacy">Datenschutzerklärung</a> beschriebenen Rechtsgrundlagen. Diese Ausnahme ist keine pauschale Freigabe für neue Tracking-Funktionen.</p>
+  <p>Externe Videos in Profilbeschreibungen sind derzeit nicht durch eine Einwilligungsschranke geschützt. Der jeweilige Videoanbieter kann beim automatischen Laden eigene Cookies oder anderen Gerätespeicher einsetzen. Ob dafür eine vorherige Einwilligung erforderlich ist, muss gesondert geprüft werden; diese Übersicht und ein bloßer Hinweisbanner ersetzen sie nicht.</p>
+  <p>Sie können Cookies und Website-Daten in Ihrem Browser löschen oder blockieren. Dadurch können Anmeldung, Einstellungen oder Offline-Funktionen verloren gehen. Bereits beim externen Videoanbieter gespeicherte Daten werden dadurch nicht zwingend entfernt.</p>
+  <p>Diese Übersicht beschreibt die Anwendung. Vom Betreiber eingesetzte CDN-, Sicherheits- oder sonstige Zusatzdienste können weitere Speicherungen verursachen und müssen vor Veröffentlichung in der Datenschutzerklärung berücksichtigt werden.</p>
+</Legal>

@@ -4,6 +4,7 @@ import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
+import { publicLegalPage } from './lib/legal-routes';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -108,11 +109,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   // Skip auth for static assets and public routes
-  const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname);
+  const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname) || /^\/fonts\/[a-z-]+-OFL\.txt$/.test(pathname);
   const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.includes(pathname);
   const isPublicRoute =
     !isAdminOnlyRoute &&
-    (hasApiKey || hasProxyBearer || isStaticAsset || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
+    (hasApiKey || hasProxyBearer || isStaticAsset || publicLegalPage(pathname) || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
 
   // Anonymous access to any of these read-only pages is allowed only when the
   // admin has enabled logged-out navigation (Admin Settings) and a global

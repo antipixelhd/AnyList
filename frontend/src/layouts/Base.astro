@@ -16,6 +16,7 @@ import "../styles/checkbox.css";
 import "../styles/action-controls.css";
 import BrandMark from "../components/BrandMark.astro";
 import SharePreview from "../components/SharePreview.astro";
+import SiteFooter from "../components/SiteFooter.astro";
 import MobileNavigation from "../components/MobileNavigation.astro";
 import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
 import { api } from "../lib/api";
@@ -371,6 +372,7 @@ const mobileGroups: MobileNavigationGroup[] = [
     {hideNav && !fullBleed && <div class="safe-area-top" />}
     <slot />
   </main>
+  <SiteFooter />
 
   {!hideNav && <MobileNavigation items={mobileItems} groups={mobileGroups}/>}
 

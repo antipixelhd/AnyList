@@ -10,6 +10,14 @@ services:
       # Generate with: openssl rand -hex 32
       SECRET_KEY: changeme
 
+      # Public legal notices; personal values remain in the private .env file.
+      LEGAL_OPERATOR_NAME: ${LEGAL_OPERATOR_NAME:-}
+      LEGAL_OPERATOR_ADDRESS: ${LEGAL_OPERATOR_ADDRESS:-}
+      LEGAL_CONTACT_EMAIL: ${LEGAL_CONTACT_EMAIL:-}
+      LEGAL_HOSTING_DETAILS: ${LEGAL_HOSTING_DETAILS:-}
+      LEGAL_RETENTION_DETAILS: ${LEGAL_RETENTION_DETAILS:-}
+      LEGAL_TRANSFER_DETAILS: ${LEGAL_TRANSFER_DETAILS:-}
+
       # ── Registrations ────────────────────────────────────────────────────────
       # Registrations are disabled by default. Set to true to allow additional users.
       # ENABLE_REGISTRATIONS: "true"

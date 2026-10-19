@@ -4,7 +4,7 @@ body.tracker.settings-app .settings-shell {
   min-height: 100vh;
 }
 
-body.tracker .page-footer {
+.page-footer {
   --footer-background: #11161d;
   display: block;
   width: 100%;
@@ -19,11 +19,21 @@ body.tracker .page-footer {
 }
 
 .page-footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px 32px;
   width: 100%;
-  max-width: var(--page-max-width);
+  max-width: var(--page-max-width, 1280px);
   margin: 0 auto;
-  padding: 38px var(--page-gutter) 48px;
+  padding: 38px var(--page-gutter, 24px) 48px;
 }
+.page-footer nav {display:flex;flex-wrap:wrap;gap:12px 24px;font-size:14px;}
+.page-footer a {color:#96a6b7;text-decoration:none;transition:color .15s,background-color .15s;}
+.page-footer a:hover,.page-footer a:focus-visible {color:#58bdf0;outline:none;}
+.page-footer a:focus-visible {background:#1b3349;border-radius:3px;}
+.page-footer .footer-brand {color:#c3ceda;font-weight:600;}
 
 @media (max-width: 650px) {
   .page-footer-inner {

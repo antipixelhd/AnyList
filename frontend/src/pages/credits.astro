@@ -1,0 +1,30 @@
+---
+import Legal from '../layouts/Legal.astro';
+const providers = [
+  ['TheTVDB', 'https://thetvdb.com', 'Serien-, Episoden- und Bilddaten. Die jeweilige API-Lizenz und Quellenverweise gelten.'],
+  ['TVmaze', 'https://www.tvmaze.com', 'Serien- und Charakterdaten. Daten werden für die Anzeige vereinheitlicht und mit weiteren Quellen zusammengeführt.'],
+  ['MDBList', 'https://mdblist.com', 'Kuratierte Listen und aggregierte Bewertungen. Bewertungen kennzeichnen ihre jeweilige Originalquelle.'],
+  ['IGDB', 'https://www.igdb.com', 'Optionaler Spielekatalog über die Twitch/IGDB-API.'],
+  ['RAWG', 'https://rawg.io', 'Optionale Spieledaten und Bilder; RAWG-Quellenlinks gehören zu den entsprechenden Datensätzen.'],
+  ['IsThereAnyDeal', 'https://isthereanydeal.com', 'Optionale Spielpreise und Angebotsdaten.'],
+  ['Hardcover', 'https://hardcover.app', 'Optionale Buch- und Autorendaten.'],
+  ['Open Library', 'https://openlibrary.org', 'Optionale bibliografische Daten und Cover. Cover können eigenen Rechten unterliegen.'],
+];
+---
+<Legal title="Quellen & Lizenzen">
+  <p>AnyList führt Metadaten verschiedener Quellen zusammen. Verwendete Dienste hängen von der Konfiguration und den aktivierten Verbindungen ab. Rechte an Postern, Porträts und anderen Werken verbleiben bei ihren jeweiligen Rechteinhabern.</p>
+  <h2>TMDB</h2>
+  <a href="https://www.themoviedb.org"><img src="/attribution/tmdb.svg" width="150" height="20" alt="The Movie Database (TMDB)"/></a>
+  <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+  <p>Film-, Serien-, Personen- und Bilddaten von <a href="https://www.themoviedb.org">The Movie Database</a>. <a href="https://developer.themoviedb.org/docs/faq">API- und Lizenzinformationen</a>.</p>
+  <h2>Streaming-Verfügbarkeit</h2>
+  <p>Streaming-Verfügbarkeitsdaten aus TMDB werden von <a href="https://www.justwatch.com">JustWatch</a> bereitgestellt. Angezeigte Dienste und Länder sind keine Garantie für ein aktuell verfügbares Angebot.</p>
+  <h2>Weitere Metadatenquellen</h2>
+  <dl>{providers.map(([name,url,note]) => <><dt><a href={url}>{name}</a></dt><dd>{note}</dd></>)}</dl>
+  <p>Öffentliche TVmaze-API-Daten stehen unter <a href="https://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution–ShareAlike 4.0</a>. Die <a href="https://www.tvmaze.com/api#licensing">TVmaze-Lizenzbedingungen</a>, die Namensnennung und die ShareAlike-Vorgaben gelten für entsprechende Bearbeitungen; dies ist keine pauschale Lizenz für Bilder anderer Anbieter oder den gesamten Datenbestand von AnyList.</p>
+  <h2>Verbundene Dienste und Bewertungsquellen</h2>
+  <p>Optionale Verbindungen unterstützen unter anderem <a href="https://trakt.tv">Trakt</a>, <a href="https://simkl.com">Simkl</a>, <a href="https://bingebase.com">Bingebase</a>, <a href="https://www.plex.tv">Plex</a>, <a href="https://jellyfin.org">Jellyfin</a>, <a href="https://emby.media">Emby</a>, <a href="https://kodi.tv">Kodi</a>, <a href="https://www.stremio.com">Stremio</a> und <a href="https://nuvio.tv">Nuvio</a>. RatingPosterDB kann optionale Bewertungs-Poster bereitstellen. Genannte Dienste, Bewertungsmarken wie IMDb und Rotten Tomatoes sowie ihre Logos gehören den jeweiligen Inhabern. Die Nennung beschreibt Datenherkunft oder Interoperabilität und keine Partnerschaft oder Empfehlung.</p>
+  <h2>Software und Schriften</h2>
+  <p>Lokale Schriften: Roboto und Overpass unter der SIL Open Font License 1.1 (<a href="/fonts/roboto-OFL.txt">Roboto-Lizenz</a>, <a href="/fonts/overpass-OFL.txt">Overpass-Lizenz</a>).</p>
+  <p>AnyList basiert auf <a href="https://github.com/ellite/scrob">Scrob</a> und verwendet die <a href="https://github.com/antipixelhd/AnyList">AnyList-Quelltexte</a> unter GNU GPL v3. Der jeweilige Lizenztext und bestehende Copyright-Hinweise bleiben maßgeblich. Verwendet werden unter anderem Astro, FastAPI, Tailwind CSS, Chart.js und markdown-it (jeweils MIT), PostgreSQL (PostgreSQL License) und Font Awesome Free (Icons: CC BY 4.0; Code: MIT). Die mitgelieferten Schriftdateien werden lokal ausgeliefert; ihre Lizenzdateien gehören zur Distribution.</p>
+</Legal>
