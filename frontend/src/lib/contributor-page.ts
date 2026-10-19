@@ -58,6 +58,16 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   if (portrait?.complete && !portrait.naturalWidth) missingPortrait();
   root.dataset.enhanced = '';
   form.addEventListener('change', () => form.requestSubmit(), {signal});
+  root.querySelector<HTMLAnchorElement>('.contributor-list-link')?.addEventListener('click',event=>{
+    if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
+    if(!scope)return;
+    event.preventDefault();
+    if(!scope.checked){scope.checked=true;form.requestSubmit();}
+    root.querySelector<HTMLElement>('.contributor-works')?.scrollIntoView({
+      block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',
+    });
+  },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]').forEach(button => {
     button.addEventListener('click', () => {
       const view = button.dataset.contributorView!;

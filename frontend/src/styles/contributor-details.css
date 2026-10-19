@@ -48,7 +48,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-aliases { color:var(--muted); font-size:13px; margin-bottom:32px; }
 .contributor-aliases summary { cursor:pointer; }
 .contributor-aliases p { line-height:1.7; }
-.contributor-works { margin-top:36px; container:contributor-works / inline-size; }
+.contributor-works { margin-top:36px; scroll-margin-top:96px; container:contributor-works / inline-size; }
 .contributor-works-heading { display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:22px; }
 .contributor-works-heading h2 { margin:0; }
 .contributor-view-switch { display:flex; gap:3px; padding:4px; border-radius:20px; background:var(--panel); }
