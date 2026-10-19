@@ -65,7 +65,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
     if(!scope)return;
     event.preventDefault();
-    if(!scope.checked){scope.checked=true;form.requestSubmit();}
+    if(!scope.checked){
+      scope.checked=true;
+      const action=form.action;
+      form.action=`${action.split('#')[0]}#contributor-works`;
+      try { form.requestSubmit(); } finally { form.action=action; }
+      return;
+    }
     const works = root.querySelector<HTMLElement>('.contributor-works');
     if (works) scrollToWorks(works);
   },{signal});
@@ -198,6 +204,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   more.addEventListener('click',()=>void loadMore(),{signal});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();
+    const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
     const submitted=new URLSearchParams();
@@ -215,7 +222,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
       notice.textContent=next.notice||'';notice.hidden=!next.notice;
       const url=new URL(location.href);url.search=query.toString();
+      if (worksAnchor) url.hash='contributor-works';
       url.searchParams.set('view',requestedView||'timeline');history.replaceState(history.state,'',url);
+      if (worksAnchor) {
+        const works=root.querySelector<HTMLElement>('.contributor-works');
+        if (works) scrollToWorks(works);
+      }
     }).catch(cause=>{
       if(!signal.aborted&&!request.signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load works.');
     }).finally(()=>{

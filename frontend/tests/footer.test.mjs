@@ -2,20 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {footerLinks} from '../src/lib/footer.ts';
 
-test('regular beta pages retain draft footer links without publishing Legal notice', () => {
-  assert.deepEqual(footerLinks('/login', false, 'beta'), {
-    brand:'/dev/about',
-    links:[{href:'/dev/privacy',label:'Privacy'},{href:'/dev/credits',label:'Credits & licenses'}],
-  });
+test('disabled publication hides notice navigation on normal and dev pages', () => {
+  for (const pathname of ['/login', '/home', '/dev/privacy']) {
+    assert.deepEqual(footerLinks(pathname, false), {brand:'/',links:[]});
+  }
 });
 
-test('draft pages include Legal notice and keep all links in dev', () => {
-  const footer = footerLinks('/dev/privacy', false);
+test('published dev pages include Legal notice and keep all links in dev', () => {
+  const footer = footerLinks('/dev/privacy', true);
   assert.equal(footer.brand, '/dev/about');
   assert.deepEqual(footer.links.map(link => link.href), ['/dev/legal-notice','/dev/privacy','/dev/credits']);
 });
 
-test('disabled production keeps its footer brand without exposing draft links', () => {
-  assert.deepEqual(footerLinks('/login', false), {brand:'/',links:[]});
-  assert.deepEqual(footerLinks('/login', true).links.map(link => link.href), ['/privacy','/credits']);
+test('published normal pages expose only the normal footer notices', () => {
+  assert.deepEqual(footerLinks('/login', true), {
+    brand:'/about', links:[{href:'/privacy',label:'Privacy'},{href:'/credits',label:'Credits & licenses'}],
+  });
 });

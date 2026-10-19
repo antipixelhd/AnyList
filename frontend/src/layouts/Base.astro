@@ -21,6 +21,7 @@ import MobileNavigation from "../components/MobileNavigation.astro";
 import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
 import { api } from "../lib/api";
 import { themeVariables, viewerProfileTheme } from "../lib/profile-theme";
+import {legalConfig, legalHref} from '../lib/legal';
 
 interface Props { title: string; hideNav?: boolean; fullBleed?: boolean }
 const { title, hideNav, fullBleed = false } = Astro.props;
@@ -54,6 +55,8 @@ if (!user) {
 const blurExplicit = Astro.cookies.get("blur_explicit")?.value !== "false";
 
 const pathname = Astro.url.pathname;
+const legalPagesEnabled = (await legalConfig()).enabled;
+const aboutHref = legalHref(pathname, 'about');
 // Pre-fills the nav search box with the query already being viewed, so
 // landing on /search (or a live-search edit that replaces the URL, see
 // search.astro) doesn't leave the box looking empty.
@@ -100,7 +103,7 @@ const mobileGroups: MobileNavigationGroup[] = [
       {label:'Statistics', icon:'star', href:`/user/${encodeURIComponent(user.username)}/stats`},
       ...(user.is_admin ? [{label:'Admin', icon:'sliders', href:'/admin'}, {label:'Requests', icon:'inbox', href:'/requests', badge:pendingRequestCount}] : []),
     ] : []),
-    {label:'About', icon:'info', href:'/about'},
+    ...(legalPagesEnabled ? [{label:'About', icon:'info', href:aboutHref}] : []),
     {label:'Theme', icon:'eye', action:'theme'},
   ]},
 ];
@@ -339,10 +342,10 @@ const mobileGroups: MobileNavigationGroup[] = [
                       )}
                     </a>
                   )}
-                  <a href="/about" class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
+                  {legalPagesEnabled && <a href={aboutHref} class="flex items-center gap-2.5 px-3 py-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 active:opacity-70 rounded-lg transition">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 opacity-70"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
                     About
-                  </a>
+                  </a>}
                   <div class="h-px bg-zinc-800 my-1 mx-1"></div>
                   <form method="POST" action="/logout" style="margin:0">
                     <button type="submit" class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition cursor-pointer">

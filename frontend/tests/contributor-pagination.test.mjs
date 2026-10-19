@@ -12,10 +12,10 @@ test('a failed replacement filter restores pagination and ignores the older page
   const region={setAttribute(){},removeAttribute(){}};
   const data={has_more:true,page:1,source:'provider',list_count:null};
   const context=vm.createContext({
-    Error,URLSearchParams,AbortController,FormData:class {forEach(){}},
+    Error,URL,URLSearchParams,AbortController,FormData:class {forEach(){}},
     signal:new AbortController().signal,
     root:{dataset:{endpoint:'people/1'},querySelector:()=>({})},
-    form:{addEventListener:(name,handler)=>{handlers[name]=handler;}},
+    form:{action:'https://example.test/person/1',addEventListener:(name,handler)=>{handlers[name]=handler;}},
     document:{addEventListener(){}},region,more,data,
     error:{hidden:true},params:new URLSearchParams(),
     createPrediction:()=>({cancel(){},consume:async()=>null}),
