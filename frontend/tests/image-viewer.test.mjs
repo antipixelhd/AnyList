@@ -15,7 +15,7 @@ function viewer() {
   dialog.querySelector=()=>button;
   const closed=[];
   const context={Element,closeDialog:dialog=>closed.push(dialog)};
-  const source=readFileSync(new URL('../src/lib/image-viewer.ts',import.meta.url),'utf8');
+  const source=readFileSync(new URL('../src/lib/image-viewer-dismissal.ts',import.meta.url),'utf8');
   runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.bind=bindImageViewerDismissal;',context);
   context.bind(dialog,new AbortController().signal);
   return {dialog,button,image,caption,previewGap,closed};

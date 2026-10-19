@@ -1,4 +1,5 @@
 import {reconcileGalleryChildren} from './detail-gallery-dom';
+import {createGallerySpring,gallerySpatial} from './gallery-spring';
 
 /** Scroll-backed slides share decoded images; phone touch arbitration lives in detail-image-zoom. */
 export function visibleDetailImageIndices(left:number,width:number,count:number) {
@@ -12,9 +13,16 @@ export function visibleDetailImageIndices(left:number,width:number,count:number)
 export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,select:(index:number)=>void,prepare:(index:number)=>void=()=>{}) {
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   let current=0,count=0,frame=0,navigating=false;
+  const motion=createGallerySpring({left:track.scrollLeft},value=>track.scrollTo({left:value.left,behavior:'instant'}),signal,{
+    stiffness:gallerySpatial.fast,precision:{left:.5},
+    bounds:()=>({left:{min:0,max:Math.max(0,(count-1)*track.clientWidth)}}),
+  });
+  const clearNavigation=()=>{navigating=false;delete track.dataset.viewerNavigating;};
   const align=(animate=false)=>{
+    if(!motion.active)motion.snap({left:track.scrollLeft});
     navigating=animate&&!reduced.matches;
-    track.scrollTo({left:current*track.clientWidth,behavior:navigating?'smooth':'instant'});
+    if(navigating)track.dataset.viewerNavigating='';
+    motion.to({left:current*track.clientWidth},{immediate:!navigating,done:clearNavigation});
   };
   track.addEventListener('scroll',()=>{
     if(frame)return;
@@ -30,10 +38,11 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
       if(index!==current){current=index;select(index);}
     });
   },{signal,passive:true});
-  track.addEventListener('scrollend',()=>{navigating=false;},{signal});
-  const interrupt=()=>{navigating=false;};
+  const interrupt=()=>{motion.stop();clearNavigation();};
   track.addEventListener('pointerdown',interrupt,{signal,passive:true});
-  track.addEventListener('wheel',interrupt,{signal,passive:true});
+  track.addEventListener('wheel',event=>{if(Math.abs(event.deltaX)>Math.abs(event.deltaY))interrupt();},{signal,passive:true});
+  track.closest('dialog')?.addEventListener('close',interrupt,{signal});
+  reduced.addEventListener('change',()=>{if(reduced.matches)motion.finish();},{signal});
   const resize=new ResizeObserver(()=>{if(track.clientWidth)align();});
   resize.observe(track);
   signal.addEventListener('abort',()=>{resize.disconnect();cancelAnimationFrame(frame);},{once:true});

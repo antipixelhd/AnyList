@@ -19,16 +19,16 @@ function gallery(reduced=false) {
     closest(){return null;}
     scrollTo(options){this.scrolled=options;this.scrollLeft=options.left;}
   }
-  const controller=new AbortController(),selected=[],prepared=[],frames=[];
+  const controller=new AbortController(),selected=[],prepared=[],frames=[];let now=0;
   let observer;
-  const context={document:{createElement:tag=>new Element(tag)},matchMedia:()=>({matches:reduced}),
+  const context={document:{createElement:tag=>new Element(tag)},matchMedia:()=>({matches:reduced,addEventListener(){}}),performance:{now:()=>now},
     requestAnimationFrame:callback=>(frames.push(callback),frames.length),cancelAnimationFrame:()=>{},
     ResizeObserver:class {constructor(callback){observer=this;this.callback=callback;} observe(){} disconnect(){this.disconnected=true;}},reconcileGalleryChildren};
-  const source=readFileSync(new URL('../src/lib/detail-image-carousel.ts',import.meta.url),'utf8');
+  const source=readFileSync(new URL('../src/lib/gallery-spring.ts',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../src/lib/detail-image-carousel.ts',import.meta.url),'utf8');
   runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.create=createDetailImageCarousel;',context);
   const track=new Element(),render=context.create(track,controller.signal,index=>selected.push(index),index=>prepared.push(index));
   const paint=(rows,index=0,scroll=true,animate=false,total=rows.length)=>render(rows,url=>url,total,index,'Artwork',scroll,animate);
-  return {track,paint,selected,prepared,controller,resize:()=>observer.callback(),observer:()=>observer,flush:()=>frames.splice(0).forEach(callback=>callback())};
+  return {track,paint,selected,prepared,controller,resize:()=>observer.callback(),observer:()=>observer,flush:(ms=16)=>{now+=ms;frames.splice(0).forEach(callback=>callback(now));}};
 }
 
 test('swipes prepare the exposed slide before selection without touching unseen neighbors',()=>{
@@ -69,9 +69,17 @@ test('native swipe selection follows scroll position without forcing the row bac
 
 test('animated navigation ignores intermediate positions, but direct gestures can interrupt it',()=>{
   const g=gallery();g.paint(['one','two','three'],2,true,true);
-  assert.equal(g.track.scrolled.behavior,'smooth');
-  g.track.scrollLeft=390;g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[]);
+  assert.equal(g.track.dataset.viewerNavigating,'');
+  g.track.fire('scroll');g.flush(50);assert.deepEqual(g.selected,[]);
   g.track.fire('pointerdown');g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[1]);
+});
+
+test('rapid targets share one spring and continue from the displayed position',()=>{
+  const g=gallery();g.paint(['one','two','three','four'],1,true,true);g.flush(40);
+  const before=g.track.scrollLeft;g.paint(['one','two','three','four'],3,true,true);
+  assert.equal(g.track.scrollLeft,before);g.flush(16);assert.ok(g.track.scrollLeft>before);
+  g.flush(500);assert.equal(g.track.scrollLeft,1170);assert.equal(g.track.dataset.viewerNavigating,undefined);
+  assert.deepEqual(g.selected,[]);
 });
 
 test('reduced motion, orientation changes and page teardown preserve selection safely',()=>{

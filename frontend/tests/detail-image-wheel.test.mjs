@@ -20,19 +20,19 @@ function viewer() {
 
 test('up advances right, repeated deliberate notches retain their steps',()=>{
   const v=viewer();v.wheel(-120);v.wheel(-120);v.wheel(-120);
-  assert.deepEqual(v.steps,[1]);v.advance();v.advance();assert.deepEqual(v.steps,[1,1,1]);
+  assert.deepEqual(v.steps,[1,1,1]);v.advance();v.advance();assert.deepEqual(v.steps,[1,1,1]);
   v.wheel(120);v.advance();assert.equal(v.steps.at(-1),-1);
 });
-test('large deltas and rapid bursts are bounded, and tiny trackpad deltas accumulate',()=>{
+test('each large delta is one step, rapid bursts retarget immediately, and tiny trackpad deltas accumulate',()=>{
   const v=viewer();v.wheel(-10000);assert.deepEqual(v.steps,[1]);
   for(let i=0;i<100;i++)v.wheel(-120);
-  for(let i=0;i<10;i++)v.advance();assert.equal(v.steps.length,4);
+  for(let i=0;i<10;i++)v.advance();assert.equal(v.steps.length,101);
   const small=viewer();small.wheel(-10);small.wheel(-10);small.wheel(-10);assert.equal(small.steps.length,0);
   small.wheel(-10);assert.deepEqual(small.steps,[1]);
 });
-test('browser zoom and horizontal gestures stay native; close and navigation cancel queued steps',()=>{
+test('browser zoom and horizontal gestures stay native; close and navigation leave no delayed steps',()=>{
   const v=viewer();assert.equal(v.wheel(-120,{ctrlKey:true}).prevented,undefined);
   assert.equal(v.wheel(-120,{deltaX:240}).prevented,undefined);
-  v.wheel(-120);v.wheel(-120);v.close();v.advance();assert.deepEqual(v.steps,[1]);
-  const other=viewer();other.wheel(-120);other.wheel(-120);other.controller.abort();other.advance();assert.deepEqual(other.steps,[1]);
+  v.wheel(-120);v.wheel(-120);v.close();v.advance();assert.deepEqual(v.steps,[1,1]);
+  const other=viewer();other.wheel(-120);other.wheel(-120);other.controller.abort();other.advance();assert.deepEqual(other.steps,[1,1]);
 });

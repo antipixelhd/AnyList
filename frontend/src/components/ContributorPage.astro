@@ -87,7 +87,7 @@ if (data) {
         </section>
       </div>
     </div>
-    <ImageLightbox id="contributor-image-viewer" imageKind={kind==='studio'?'logo':undefined}/>
+    <ImageLightbox id="contributor-image-viewer" gallery imageKind={kind==='studio'?'logo':undefined}/>
     <script type="application/json" data-contributor-data set:html={JSON.stringify(data).replaceAll('<','\u003c')} />
   </article> : <div class="page-width contributor-error"><h1>{kind === 'studio' ? 'Studio' : 'Person'}</h1><p role="alert">{error}</p><a href="/browse">Browse titles</a></div>}
 </Tracker>

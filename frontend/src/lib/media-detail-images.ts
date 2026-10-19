@@ -1,6 +1,6 @@
 import {showDialog,reveal,cancelUiMotion} from './ui-motion';
 import {showToast} from './toasts';
-import {bindImageViewerDismissal} from './image-viewer';
+import {bindImageViewerDismissal} from './image-viewer-dismissal';
 import {detailBackground,type DetailLoadState} from './detail-background';
 import {responsiveArtwork,applyResponsiveArtwork,artworkIdentity} from './responsive-artwork';
 import {reconcileGalleryChildren,createGalleryThumbnailWatcher,createGalleryImageLoader} from './detail-gallery-dom';
@@ -27,11 +27,11 @@ export function uniqueDetailImages(values:unknown[]):string[] {
   }).slice(0,10);
 }
 
-export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) {
-  const lightbox=root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
+export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,standalone?:{lightbox:HTMLDialogElement;logo:boolean}) {
+  const lightbox=standalone?.lightbox||root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
-  const name=root.querySelector('.lab-heading h1')!.textContent!;
+  const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
   const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
   const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
   let pending=!!info.imagesAvailable&&info.imageStatus?.state!=='ready';
@@ -75,7 +75,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     clearPreviewTimer();
   },{signal,passive:true});
   lightbox.addEventListener('pointermove',event=>{
-    if(!mobileViewer.matches)revealPreviews();
+    if(!mobileViewer.matches&&(event.target as Element).closest('.image-viewer-track,.image-viewer-button,.image-viewer-slots'))revealPreviews();
     if(previewInteracting&&previewGesture&&Math.hypot(event.clientX-previewGesture.x,event.clientY-previewGesture.y)>8)previewGesture.moved=true;
   },{signal,passive:true});
   const releasePreviews=()=>{
@@ -186,7 +186,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const cached=image.complete&&image.naturalWidth>0;
     void ready.then(loaded=>{
       if(!loaded||signal.aborted)return;
-      if(group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
+      if(!standalone&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
       if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,viewerGroup());
       if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
       refreshPreviewLoading();
@@ -338,12 +338,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     if(initialHero)paintHero(initialHero);
   }
   root.addEventListener('click',event=>{
-    const button=(event.target as Element).closest<HTMLButtonElement>('[data-detail-image]');
-    if(!button)return;
-    active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'?'posters':'artwork';
+    const button=(event.target as Element).closest<HTMLButtonElement>(standalone?'[data-portrait-image]':'[data-detail-image]');
+    if(!button||button.disabled)return;
+    active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'||(standalone&&!standalone.logo)?'posters':'artwork';
     if(active==='hero')galleries.hero=[button.dataset.detailImage!];
     lightbox.dataset.gallery=viewerGroup();
-    const url=button.dataset.detailImage!;
+    const url=(standalone?button.dataset.portraitImage:button.dataset.detailImage)!;
     if(active==='artwork'&&url&&!galleries.artwork.includes(url))galleries.artwork.unshift(url);
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
