@@ -95,7 +95,7 @@
 .media-detail .media-social-person { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; gap:13px; min-width:0; padding:11px 13px; border:0; border-radius:7px; background:var(--panel); transition:background-color .18s ease; }
 .media-detail .media-social-person .lab-friend-avatar { flex:none; background:color-mix(in srgb,var(--blue) 18%,var(--panel)); color:var(--bright); }
 .media-detail .media-social-person:is(:hover,:focus-visible) { outline:none; background:color-mix(in srgb,var(--blue) 11%,var(--panel)); }
-.media-detail .media-social-person-name { min-width:0; max-width:100%; margin:0; justify-self:stretch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:1.3rem; font-weight:600; color:var(--bright); }
+.media-detail .media-social-person-name { min-width:0; max-width:100%; margin:0; justify-self:stretch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:600; color:var(--bright); }
 .media-detail .media-social-person-status { min-width:0; justify-self:start; text-align:left; overflow-wrap:anywhere; font-family:var(--font-body); font-size:14px; font-weight:400; line-height:1.4; color:var(--lab-muted); }
 @container (max-width:360px) {
   .media-detail .media-social-person { grid-template-columns:36px minmax(0,1fr) max-content; column-gap:10px; row-gap:4px; }
