@@ -80,3 +80,35 @@ test('tiny flicks and reversing upward before release return rather than closing
   const reverse=viewer();reverse.prepare();reverse.pointer('pointerdown',100,100);reverse.advance(300);reverse.pointer('pointermove',100,300);reverse.advance(80);reverse.pointer('pointermove',100,240);reverse.release();reverse.finish();
   assert.equal(reverse.dialog.open,true);
 });
+
+test('history restoration clears an interrupted pointer without reopening the gallery',()=>{
+  const v=viewer();v.prepare();
+  v.pointer('pointerdown',100,100,1);v.pointer('pointermove',100,150,1);
+  // Native history navigation may freeze the document without pointerup/cancel.
+  v.window.fire('pagehide',{persisted:true});
+  assert.equal(v.document.body.style.position,'relative');
+  v.window.fire('pageshow',{persisted:true});
+  assert.equal(v.document.body.style.position,'fixed');
+  assert.equal(v.dialog.style.translate,undefined);
+  v.pointer('pointerdown',100,100,2);v.pointer('pointermove',100,310,2);
+  v.release(false,2);v.finish();
+  assert.equal(v.dialog.open,false);
+  assert.equal(v.document.body.style.position,'relative');
+  assert.equal(v.window.restored.top,520);
+});
+
+test('leaving during a dismiss animation cannot close the restored viewer later',()=>{
+  const v=viewer();v.prepare();v.pointer('pointerdown',100,100);v.pointer('pointermove',100,310);v.release();
+  v.window.fire('pagehide',{persisted:true});v.window.fire('pageshow',{persisted:true});v.finish();
+  assert.equal(v.dialog.open,true);
+  assert.equal(v.dialog.dataset.viewerSettling,undefined);
+  v.pointer('pointerdown',100,100,3);v.pointer('pointermove',100,310,3);v.release(false,3);v.finish();
+  assert.equal(v.dialog.open,false);
+});
+
+test('an interrupted gesture after focus loss cannot poison later single-finger swipes',()=>{
+  const v=viewer();v.prepare();v.pointer('pointerdown',100,100,1);
+  v.window.fire('blur');
+  v.pointer('pointerdown',100,100,2);v.pointer('pointermove',100,310,2);v.release(false,2);v.finish();
+  assert.equal(v.dialog.open,false);
+});

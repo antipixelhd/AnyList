@@ -8,7 +8,9 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
   let settling:ReturnType<typeof setTimeout>|undefined,ignoreClickUntil=0;
 
   const reset=()=>{
-    clearTimeout(settling);settling=undefined;gesture=undefined;
+    clearTimeout(settling);settling=undefined;
+    const pointer=gesture?.id;gesture=undefined;
+    if(pointer!==undefined&&track.hasPointerCapture?.(pointer))track.releasePointerCapture(pointer);
     delete dialog.dataset.viewerDragging;delete dialog.dataset.viewerSettling;
     dialog.style.removeProperty('translate');dialog.style.removeProperty('--viewer-backdrop');
   };
@@ -76,6 +78,13 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
   };
   window.addEventListener('pointerup',release,{signal,passive:true});
   window.addEventListener('pointercancel',release,{signal,passive:true});
+  // Native back/forward and OS interruptions can omit pointerup/cancel. A
+  // bfcache restore retains these listeners and variables, including stale
+  // pointer IDs and pending settle timers, so reset without remounting images.
+  const interrupt=()=>{reset();pointers.clear();ignoreClickUntil=0;};
+  window.addEventListener('blur',interrupt,{signal});
+  window.addEventListener('pagehide',()=>{interrupt();unlock?.();},{signal});
+  window.addEventListener('pageshow',()=>{interrupt();if(dialog.open)lockPage();else unlock?.();},{signal});
   track.addEventListener('click',event=>{
     if(performance.now()<ignoreClickUntil){event.preventDefault();event.stopImmediatePropagation();}
   },{signal,capture:true});
