@@ -8,7 +8,7 @@ export type BrowseItem = {
   list_status?: string | null; score?: number | null; rating_mode?: string;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];
 };
-const labels: Record<string, string> = {watching:'Watching',completed:'Completed',planning:'Plan to Watch',paused:'Paused',dropped:'Dropped'};
+const labels: Record<string, string> = {watching:'Watching',completed:'Completed',planning:'Planning',paused:'Paused',dropped:'Dropped'};
 export const sameBrowseTitle = (a: BrowseItem, b: Pick<EditorTitle, 'id' | 'tmdb_id' | 'type'>) =>
   !!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id && a.type === b.type);
 

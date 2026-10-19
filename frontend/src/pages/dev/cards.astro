@@ -74,7 +74,7 @@ const activities = [
         <section data-category="Notifications"><h2>Notifications</h2><div class="notice-list">
           {notices.map((notice, index) => <div data-sample data-name={notice.title}><NoticeCard variant={notice.variant} title={notice.title} source="Connection sync" badge={notice.badge} message={notice.message} image={index===4?episode.show_poster_path:null}>
             <Fragment slot="actions">
-              {notice.status && <label class="status-select">Status <select aria-label="Proposed status"><option>Paused</option><option>Watching</option><option>Completed</option><option>Dropped</option><option>Plan to Watch</option></select></label>}
+              {notice.status && <label class="status-select">Status <select aria-label="Proposed status"><option>Paused</option><option>Watching</option><option>Completed</option><option>Dropped</option><option>Planning</option></select></label>}
               {notice.search && <div class="provider-match"><div><input type="search" aria-label="Catalogue title" value="The Last Signal"/><button class="button-secondary" data-lab-action="search">Search</button></div><div class="match-results" data-results></div></div>}
               {notice.rating && <label>Score <input aria-label="Rating" type="number" min="1" max="10" step="0.5" value="8"/></label>}
               {notice.actions.map((action,i) => <button type="button" class={i===0?'button-primary':'button-quiet'} data-lab-action={action==='Dismiss'?'remove':'resolve'}>{action}</button>)}

@@ -3,7 +3,7 @@ import type { ProfileStats } from './profile-stats-data';
 export const statsStatuses = [
   { key: 'completed', label: 'Completed' },
   { key: 'watching', label: 'Watching' },
-  { key: 'planning', label: 'Plan to watch' },
+  { key: 'planning', label: 'Planning' },
   { key: 'paused', label: 'Paused' },
   { key: 'dropped', label: 'Dropped' },
 ] as const;

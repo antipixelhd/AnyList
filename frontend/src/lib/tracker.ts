@@ -12,7 +12,7 @@ export async function tracker(path: string, token?: string) {
 
 export const statuses = [
   ['watching', 'Watching'], ['completed', 'Completed'], ['paused', 'Paused'],
-  ['dropped', 'Dropped'], ['planning', 'Plan to Watch'],
+  ['dropped', 'Dropped'], ['planning', 'Planning'],
 ];
 
 export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='auto') {
