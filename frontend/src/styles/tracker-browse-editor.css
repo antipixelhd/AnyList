@@ -212,7 +212,7 @@
   margin-top:6px;
   min-height:42px;
   padding:8px 12px;
-  background:#0d1926;
+  background:var(--field);
   border:1px solid transparent;
   border-radius:4px;
   color:var(--text);
@@ -324,7 +324,7 @@
   width:100%;
   min-height:42px;
   margin:0;
-  background:#0d1926;
+  background:var(--field);
   border:1px solid transparent;
   border-radius:4px;
   color:var(--text);
@@ -863,5 +863,5 @@
   outline:none;
   border-color:transparent;
   box-shadow:none;
-  background:#0d1926;
+  background:var(--field);
 }

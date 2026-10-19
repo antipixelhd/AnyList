@@ -38,7 +38,7 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal) {
     };
     const refresh = () => {
       display.value = formatDate(input.value);
-      display.placeholder = dateInputPlaceholder();
+      display.removeAttribute('placeholder');
       valid();
       syncPicker();
     };
@@ -163,7 +163,10 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal) {
       valid(iso === null ? `Enter a date in the format ${dateInputPlaceholder()}.` : '');
       if (iso !== null) { input.value = iso; syncPicker(); }
     }, {signal});
-    display.addEventListener('blur', () => { if (display.validity.valid) refresh(); }, {signal});
+    display.addEventListener('blur', event => {
+      if (display.validity.valid) refresh();
+      if (!control.contains(event.relatedTarget as Node)) void close();
+    }, {signal});
     input.addEventListener('change', refresh, {signal});
     control.addEventListener('click', event => {
       if (!panel?.contains(event.target as Node)) open();
