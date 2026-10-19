@@ -51,9 +51,8 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     dialog.style.setProperty('--viewer-zoom-height',`${rect.height}px`);
     dialog.dataset.viewerZoomFrame='';dialog.dataset.viewerZoomed='';
     track.scrollLeft=index*track.clientWidth;
-    // Change layout once, then animate only the clipping aperture. Resizing the
-    // carousel on every animation frame fights scroll snapping and pinch math.
-    if(!reduced.matches)frameAnimation=dialog.animate([{clipPath:clip()},{clipPath:'inset(0px round 0px)'}],{duration:200,easing:'cubic-bezier(.2,0,0,1)'});
+    // The invisible interaction surface changes once. The same rounded photo
+    // stays under the fingers; no timed aperture competes with direct scaling.
   };
   const rebase=()=>{
     const c=center()||{x:0,y:0},stage=stageCenter();
@@ -144,8 +143,9 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     }
     consume(event);if(moved)delete dialog.dataset.viewerZoomControls;
     const next=Math.max(1,Math.min(4,base.scale*distance()/base.distance));
-    // A pinch inward from fit is a no-op. Expansion needs deliberate enlargement.
-    if(!fitted&&next<1.06){scale=1;x=0;y=0;paint();return;}
+    // Inward scaling at fit is a no-op. Outward scaling must remain continuous:
+    // discarding a percentage first creates a visible jump at that threshold.
+    if(!fitted&&next<=1){scale=1;x=0;y=0;paint();return;}
     expand();
     const c=center(),rect=track.getBoundingClientRect(),stage=stageCenter();
     ({scale,x,y}=zoomBounds(next,c.x-stage.x-base.anchor.x*next,c.y-stage.y-base.anchor.y*next,

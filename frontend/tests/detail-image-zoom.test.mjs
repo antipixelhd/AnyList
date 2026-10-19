@@ -41,7 +41,7 @@ test('pinching inward or resting two fingers at fit never expands, shrinks, or n
 test('zoom frame is latched across the boundary until all contacts lift, with one expansion',()=>{
  const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.match(v.image.style.transform,/scale\(1.5\)/);
  for(const x of [290,330,280,340,300])v.pointer('pointermove',x,300,2);
- assert.equal(v.dialog.animations.length,1);assert.ok('viewerZoomed' in v.dialog.dataset);
+ assert.equal(v.dialog.animations.length,0);assert.ok('viewerZoomed' in v.dialog.dataset);
  v.pointer('pointerup',300,300,2);assert.equal(v.image.animations.length,0);assert.ok('viewerZoomFrame' in v.dialog.dataset);
  v.pointer('pointerup',100,300);assert.equal(v.image.animations.length,1);v.image.animations.at(-1).onfinish();assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
 });
@@ -111,4 +111,13 @@ test('changing preview choice during zoom-out cancels the obsolete selection',()
  const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();v.reset.preview(1,0);v.advance(80);
  const old=v.image.animations.at(-1);v.reset.preview(0,0);old.onfinish();assert.deepEqual(v.selected,[]);
  v.image.animations.at(-1).onfinish();assert.deepEqual(v.selected,[0]);assert.equal(v.track.scrollLeft,0);
+});
+
+
+test('pinch entry follows small outward increments without a scale jump or independent frame animation',()=>{
+ const v=viewer();v.pinch();
+ for(const [x,scale] of [[300.4,1.002],[302,1.01],[306,1.03],[310,1.05],[312,1.06]]){
+  v.pointer('pointermove',x,300,2);const rendered=Number(v.image.style.transform.match(/scale\(([^)]+)\)/)[1]);assert.ok(Math.abs(rendered-scale)<.000001);
+  assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.equal(v.dialog.animations.length,0);assert.equal(v.image.animations.length,0);
+ }
 });
