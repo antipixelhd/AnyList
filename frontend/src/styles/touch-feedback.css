@@ -1,0 +1,5 @@
+/* Native tap highlights can linger across navigation and paint over popups.
+   Keep component state styling and keyboard focus feedback unchanged. */
+*, *::before, *::after {
+  -webkit-tap-highlight-color: transparent;
+}

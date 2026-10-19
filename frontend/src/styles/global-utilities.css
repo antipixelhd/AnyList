@@ -11,10 +11,8 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* Remove tap highlight flash on all interactive elements */
+/* Eliminate 300ms tap delay; allow native scroll. */
 a, button, input, select, textarea, label, [role="button"] {
-  -webkit-tap-highlight-color: transparent;
-  /* Eliminate 300ms tap delay; allow native scroll */
   touch-action: manipulation;
 }
 
