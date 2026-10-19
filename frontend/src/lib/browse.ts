@@ -753,7 +753,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     (event) => {
       if (!(event.target as Element).closest("[data-filter-menu]"))
         closeMenus();
-      if (!advancedFilters.contains(event.target as Node) &&
+      // Inline phone filters behave like the list-page section, not a popover.
+      if (!form.hasAttribute('data-mobile-filters') && !advancedFilters.contains(event.target as Node) &&
           !(event.target as Element).closest(".browse-select-options"))
         void closeAdvancedFilters();
     },
