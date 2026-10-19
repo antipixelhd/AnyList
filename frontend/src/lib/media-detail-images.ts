@@ -27,13 +27,14 @@ export function uniqueDetailImages(values:unknown[]):string[] {
   }).slice(0,10);
 }
 
-export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,standalone?:{lightbox:HTMLDialogElement;logo:boolean}) {
+export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,standalone?:{lightbox:HTMLDialogElement;logo:boolean;imagesPath?:string}) {
   const lightbox=standalone?.lightbox||root.querySelector<HTMLDialogElement>('#detail-lightbox')!;
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
   const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
   const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
   const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
+  const galleryLimit=standalone&&!standalone.logo?5:10;
   let pending=!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
@@ -111,7 +112,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;
-    const rows=galleries[active],count=viewerPending()?10:rows.length;
+    const rows=galleries[active],count=viewerPending()?galleryLimit:rows.length;
     slots.hidden=!viewerPending()&&count<=1;
     if(slots.hidden){
       slots.replaceChildren();followedSlot=undefined;refreshPreviewLoading();return;
@@ -147,7 +148,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const showImage=(index:number,animate=false,scroll=true,preserveZoom=false,fast=false)=>{
     if(!preserveZoom){if(scroll)resetZoom();else resetZoom.preserveInteraction();}
     const rows=galleries[active];
-    const count=viewerPending()?10:rows.length;
+    const count=viewerPending()?galleryLimit:rows.length;
     const previous=current;
     current=count?(index+count)%count:0;
     if(current!==previous)revealPreviews();
@@ -271,7 +272,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   };
   const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
-      galleries.posters=uniqueDetailImages(data.posters||[]);
+      galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[]).slice(0,galleryLimit);
       galleries.artwork=uniqueDetailImages(data.artwork||[]);
       if(lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
       thumbnails={...thumbnails,...data.artwork_thumbnails};
@@ -286,13 +287,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       fallback=data.backdrop_fallback||fallback;
       paintHero(data.backdrop);
-      editorStore.updateArtwork(info.id,{poster:primary});
+      if(!standalone)editorStore.updateArtwork(info.id,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
         const existing=new Map([...grid.querySelectorAll<HTMLButtonElement>('[data-detail-image]')].map((button,index)=>[
           button.dataset.detailImage?imageKey(button.dataset.detailImage):`pending:${index}`,button]));
-        const buttons=Array.from({length:pending?10:galleries.artwork.length},(_,index)=>{
+        const buttons=Array.from({length:pending?galleryLimit:galleries.artwork.length},(_,index)=>{
           const url=galleries.artwork[index];
           let button=existing.get(url?imageKey(url):`pending:${index}`);
           if(!button){
@@ -307,11 +308,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       const preferred=data.image_replacements?.[selected]||selected;
       if(lightbox.open){
         const index=preferred?galleries[active].findIndex(url=>imageKey(url)===imageKey(preferred)):-1;
-        showImage(index>=0?index:Math.min(current,Math.max(0,(viewerPending()?10:galleries[active].length)-1)));
+        showImage(index>=0?index:Math.min(current,Math.max(0,(viewerPending()?galleryLimit:galleries[active].length)-1)));
       }
       return data.image_status;
   };
-  const resource=detailBackground(`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
+  const resource=detailBackground(standalone?.imagesPath||`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
     viewerStatus.hidden=state!=='retry';
     if(state==='retry'){
       viewerStatus.replaceChildren(document.createTextNode(error||'Images are temporarily unavailable. Retrying automatically.'));

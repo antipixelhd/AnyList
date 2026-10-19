@@ -12,6 +12,32 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_portraits_are_lazy_and_obey_anonymous_catalog_access(self):
+        path=f'/tracking/contributors/actor/catalogue:{self.person_id}/images'
+        self.viewer=None
+        async with self.Session() as db:
+            settings=await db.get(GlobalSettings,1)
+            settings.enable_logged_out_navigation=False
+            await db.commit()
+        self.assertEqual((await self.client.get(path)).status_code,401)
+        async with self.Session() as db:
+            settings=await db.get(GlobalSettings,1)
+            settings.enable_logged_out_navigation=True
+            await db.commit()
+        self.key_mock.return_value='fixture'
+        raw={'id':42,'profiles':[{'file_path':'/portrait.jpg','aspect_ratio':.667}]}
+        with patch('core.contributor_images.resolve_contributor',AsyncMock(return_value=(None,42))), \
+             patch('core.tmdb.get_person',AsyncMock(return_value={'id':42,'name':'Fixture'})), \
+             patch('core.tmdb.get_person_images',AsyncMock(return_value=raw)) as provider:
+            await self.request()
+            provider.assert_not_awaited()
+            response=await self.client.get(path)
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['posters'],['https://image.tmdb.org/t/p/original/portrait.jpg'])
+            self.assertEqual(response.headers['cache-control'],'private, no-store')
+            provider.assert_awaited_once()
+        self.assertEqual((await self.client.get(path.replace('/actor/','/studio/'))).status_code,422)
+
     async def test_reviewed_studio_group_unions_credits_without_merging_historical_identities(self):
         from core.contributor_search import local_matches
         from core.studio_discovery import verified_studios

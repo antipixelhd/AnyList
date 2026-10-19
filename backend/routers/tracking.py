@@ -13,7 +13,7 @@ from sqlalchemy import select, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
-from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user, get_optional_user
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
@@ -21,7 +21,7 @@ from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
-from schemas_contributors import ContributorKind, ContributorPage, ListScope
+from schemas_contributors import ContributorKind, ContributorPage, ContributorImages, ListScope
 
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
@@ -861,6 +861,25 @@ async def save_external_entry(media_id: int, body: ExternalEntryPatch, backgroun
 
 
 
+
+
+@router.get('/contributors/{kind}/{contributor_key}/images')
+async def contributor_portraits(
+    kind: Literal['actor', 'staff'],
+    contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user)],
+) -> ContributorImages:
+    from core.contributor_images import contributor_images
+    await catalog_access(db, viewer)
+    if int(contributor_key.split(':')[1]) > 2147483647:
+        raise HTTPException(422, 'Invalid contributor identifier')
+    response.headers['Cache-Control'] = 'private, no-store'
+    result = await contributor_images(db, viewer, kind=kind, key=contributor_key)
+    if result is None:
+        raise HTTPException(404, 'Contributor not found')
+    return ContributorImages.model_validate(result)
 
 
 @router.get('/contributors/{kind}/{contributor_key}')

@@ -718,6 +718,11 @@ async def get_person_profile(person_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/person/{person_id}", headers=get_headers(api_key))
 
 
+async def get_person_images(person_id: int, api_key: str = None) -> dict:
+    """Optional public portraits share the bounded cache and in-flight requests."""
+    return await _get(f"{TMDB_BASE}/person/{person_id}/images", headers=get_headers(api_key), cache_ttl=86400)
+
+
 async def get_movie_videos(tmdb_id: int, api_key: str = None) -> dict:
     return await _get(f"{TMDB_BASE}/movie/{tmdb_id}/videos", headers=get_headers(api_key))
 
