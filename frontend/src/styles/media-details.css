@@ -64,6 +64,7 @@
 @media (prefers-reduced-motion:reduce) { .media-detail .media-tracking .media-personal-score { transition:none; } }
 .media-detail :is(.lab-rating-control,.lab-friends .lab-section-title) .ui-icon { color:#f7b731; }
 .media-detail .status-control { margin:0; min-width:0; flex:1; }
+.media-detail .status-options { width:100%; min-width:0; box-sizing:border-box; }
 .media-detail .media-tracking .media-action-row .status-split>button:first-child { display:flex; align-items:center; justify-content:center; min-width:0; padding:0 4px; font-size:1.4rem; font-weight:400; white-space:nowrap; }
 .media-detail .media-tracking .media-action-row .status-split .button-primary { height:var(--media-control-height); min-height:var(--media-control-height); background:var(--blue); color:#ffffff; }
 .media-detail .media-tracking .media-action-row .status-split .status-arrow { display:grid; place-items:center; width:34px; padding:0; border-left:0; background:color-mix(in srgb,#ffffff 14%,var(--blue)); color:rgba(255,255,255,.8); }
