@@ -419,18 +419,58 @@
 }
 @media(max-width:460px) {
   .editor-hero {
-    height:170px
+    height:auto;
+    min-height:170px;
+    display:grid;
+    grid-template-columns:76px minmax(0,1fr);
+    grid-template-rows:minmax(110px,auto) auto;
+    align-items:center;
+    gap:18px 14px;
+    padding:52px 18px 18px
+  }
+  .editor-poster {
+    position:relative;
+    left:auto;
+    bottom:auto;
+    grid-column:1;
+    grid-row:1;
+    align-self:start
   }
   .editor-heading {
-    left:108px;
-    right:45px;
-    bottom:65px
+    position:relative;
+    inset:auto;
+    grid-column:2;
+    grid-row:1;
+    min-width:0
+  }
+  .editor-heading h2 {
+    overflow-wrap:anywhere
   }
   .editor-hero-actions {
-    bottom:12px
+    position:relative;
+    inset:auto;
+    grid-column:1/-1;
+    grid-row:2;
+    gap:8px
+  }
+  .editor-hero-actions :is(.editor-favorite,.editor-library) {
+    width:44px;
+    height:44px;
+    flex:none;
+    border-radius:5px;
+    background:#172435b3
+  }
+  .editor-hero-actions .editor-library:focus-visible,.editor-favorite:has(input:focus-visible) {
+    outline:none;
+    background:#31516b
+  }
+  .editor-save {
+    margin-left:auto;
+    min-width:96px;
+    min-height:44px
   }
   .editor form {
-    padding-top:43px
+    padding-top:22px
   }
   .editor-fields {
     grid-template-columns:minmax(0,1fr);
