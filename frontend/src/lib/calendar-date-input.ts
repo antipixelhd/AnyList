@@ -1,8 +1,6 @@
 import AirDatepicker from 'air-datepicker';
 import englishLocale from 'air-datepicker/locale/en';
 import type {AirDatepickerLocale} from 'air-datepicker';
-import 'air-datepicker/air-datepicker.css';
-import '../styles/calendar-date-input.css';
 import {dateInputPlaceholder, formatDate, localToday, parseDateInput} from './date-time';
 import {dismiss, reveal} from './ui-motion';
 

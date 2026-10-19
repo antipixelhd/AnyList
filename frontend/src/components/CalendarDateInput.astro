@@ -1,4 +1,7 @@
 ---
+// Page-owned styles must be ready before the editor opens and survive client navigation.
+import 'air-datepicker/air-datepicker.css';
+import '../styles/calendar-date-input.css';
 const {id, name, label} = Astro.props;
 ---
 <div class="calendar-input" data-calendar-input>
