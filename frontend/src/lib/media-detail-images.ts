@@ -107,7 +107,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
   const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
     (index,preserveScroll=false,preserveZoom=false)=>showImage(index,false,!preserveScroll,preserveZoom),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
-  const fitViewer=bindDetailViewerFrame(lightbox,signal);
+  const fitViewer=bindDetailViewerFrame(lightbox,signal,!!standalone);
   let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;

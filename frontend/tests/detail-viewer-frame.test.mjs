@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {bindDetailViewerFrame,detailPosterViewerFrame,detailViewerFrame} from '../src/lib/detail-viewer-frame.ts';
+import {bindDetailViewerFrame,detailPosterViewerFrame,detailViewerFrame,detailEntityViewerFrame} from '../src/lib/detail-viewer-frame.ts';
+
+test('entity images open compactly on desktop and phones without upscaling',()=>{
+  const desktop=detailEntityViewerFrame(780,1170,1440,900);
+  assert.equal(desktop.height,600);
+  assert.ok(Math.abs(desktop.width-400)<1e-10);
+  assert.deepEqual(detailEntityViewerFrame(780,1170,390,844),{width:312,height:468});
+  assert.deepEqual(detailEntityViewerFrame(1280,720,1440,900),{width:600,height:337.5});
+  assert.deepEqual(detailEntityViewerFrame(120,80,1440,900),{width:120,height:80});
+});
 
 test('portrait frames use image width rather than filling the desktop',()=>{
   const frame=detailViewerFrame(780,1170,1440,1000);
