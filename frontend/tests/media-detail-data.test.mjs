@@ -3,12 +3,19 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
-import {formatDate} from '../src/lib/date-time.ts';
+import {formatDate,localToday} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
-const context={Intl,Date,URLSearchParams,countryLabel,formatDate};
+const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
 runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('release labels distinguish future calendar dates without guessing partial dates',()=>{
+  for(const [release,label] of [['2026-10-20','Releases'],['2026-10-19','Released'],['2026-10-18','Released'],['2027','Releases'],['2026-11','Releases'],['2026-10','Released']]) {
+    assert.equal(api.detailFacts(api.prepareDetail({type:'movie',release_date:release}),'2026-10-19')[0].label,label);
+  }
+  assert.equal(api.detailFacts(api.prepareDetail({type:'series',year:'2027'}),'2026-10-19')[0].label,'Releases');
+});
 
 test('header browse links preserve media type and select a full year in timeline view',()=>{
   assert.equal(api.detailBrowseHref('movie'), '/browse?type=movie');

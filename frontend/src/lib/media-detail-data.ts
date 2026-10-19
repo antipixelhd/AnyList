@@ -1,6 +1,6 @@
 import type { EditorTitle } from './editor-store';
 import {countryLabel} from './stats-overview-data';
-import {formatDate} from './date-time';
+import {formatDate,localToday} from './date-time';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
 export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
@@ -149,10 +149,12 @@ export function progressTotal(media: DetailMedia) {
   return seasons.some(season => season.released_count != null)
     ? seasons.reduce((sum, season) => sum + Number(season.released_count || 0), 0) : media.episode_count || null;
 }
-export function detailFacts(media: DetailMedia) {
+export function detailFacts(media: DetailMedia, today = localToday()) {
   const facts: {label: string; value: string}[] = [];
   const add = (label: string, value: unknown) => { if (value != null && value !== '' && value !== 0) facts.push({label,value:String(value)}); };
-  add(media.type === 'book' ? 'First published' : 'Released', detailDate(media.release_date) || media.year);
+  const release = (media.release_date || media.year || '').slice(0,10);
+  const future = /^\d{4}(?:-\d{2}){0,2}$/.test(release) && release > today.slice(0,release.length);
+  add(media.type === 'book' ? 'First published' : future ? 'Releases' : 'Released', detailDate(media.release_date) || media.year);
   add('Status',media.release_status);
   if (media.type === 'movie') add('Runtime',durationLabel(media.runtime));
   if (media.type === 'series') {
