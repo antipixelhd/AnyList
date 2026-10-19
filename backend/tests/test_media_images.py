@@ -81,6 +81,39 @@ class ImageProjectionTests(unittest.TestCase):
 
 
 class ImageProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_bridge_is_distinct_from_provider_failure(self):
+        from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
+        media=SimpleNamespace(media_type=SimpleNamespace(value='series'),tmdb_id=323132,imdb_id=None,
+                              tmdb_data={'external_ids':{'tvdb_id':None,'imdb_id':None}})
+        with patch('core.screen_artwork.screen_sources',AsyncMock(return_value=[('tmdb',323132),('tvdb',None)])), \
+             patch('core.tvdb._get',AsyncMock()) as provider:
+            with self.assertRaises(ArtworkIdentityUnavailable):
+                await title_artwork(None,media,'fixture','fixture')
+        provider.assert_not_awaited()
+
+    async def test_unmatched_gallery_keeps_poster_without_retrying_or_downloading_images(self):
+        from core.media_images import _fill_screen_images
+        from core.screen_artwork import ArtworkIdentityUnavailable
+        media=SimpleNamespace(id=7,media_type=SimpleNamespace(value='series'),tmdb_id=323132,imdb_id=None,
+                              poster_path='/primary.jpg',backdrop_path=None,tmdb_data={
+                                  '_anylist_images':{'version':0,'posters':['https://example.test/unapproved.jpg']}})
+        db=SimpleNamespace(refresh=AsyncMock(),commit=AsyncMock())
+        async def execute(statement):
+            for value in statement.compile().params.values():
+                if isinstance(value,dict) and '_anylist_images' in value:
+                    media.tmdb_data.update(value)
+        db.execute=AsyncMock(side_effect=execute)
+        with patch('core.screen_artwork.title_artwork',AsyncMock(side_effect=ArtworkIdentityUnavailable())) as provider, \
+             patch('core.tmdb.get_show_light',AsyncMock()) as primary, \
+             patch('core.media_image_analysis.inspect_image',AsyncMock()) as inspect:
+            await _fill_screen_images(db,media,'fixture','fixture')
+            await _fill_screen_images(db,media,'fixture','fixture')
+        provider.assert_awaited_once();primary.assert_not_awaited();inspect.assert_not_awaited()
+        projected=screen_images(media,{})
+        self.assertEqual(projected['image_status'],{'state':'unavailable','error':None,'retry_after':0})
+        self.assertEqual(projected['posters'],['https://image.tmdb.org/t/p/original/primary.jpg'])
+        self.assertNotIn('last_error',media.tmdb_data['_anylist_images'])
+
     async def test_movie_artwork_resolves_only_an_unambiguous_imdb_bridge(self):
         from core.screen_artwork import title_artwork
         media=SimpleNamespace(media_type=SimpleNamespace(value='movie'),tmdb_id=7,imdb_id='tt77',tmdb_data={})

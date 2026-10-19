@@ -34,7 +34,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
   const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
   const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
-  let pending=!!info.imagesAvailable&&info.imageStatus?.state!=='ready';
+  let pending=!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
   const announcement=lightbox.querySelector<HTMLElement>('[data-image-viewer-announcement]');
@@ -112,6 +112,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const paintSlots=()=>{
     if(!lightbox.open)return;
     const rows=galleries[active],count=viewerPending()?10:rows.length;
+    slots.hidden=!viewerPending()&&count<=1;
+    if(slots.hidden){
+      slots.replaceChildren();followedSlot=undefined;refreshPreviewLoading();return;
+    }
     const existing=new Map([...slots.querySelectorAll<HTMLButtonElement>('button')].map(button=>[button.dataset.slotKey,button]));
     const buttons=Array.from({length:count},(_,index)=>{
       const key=`${active}:${rows[index]?imageKey(rows[index]):`pending:${index}`}`;

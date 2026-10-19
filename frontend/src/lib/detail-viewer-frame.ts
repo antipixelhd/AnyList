@@ -17,6 +17,7 @@ export function detailEntityViewerFrame(width:number,height:number,viewportWidth
 }
 
 export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSignal,compact=false) {
+  if(compact)dialog.dataset.viewerCompact='';
   let selected:HTMLImageElement|undefined,group:'posters'|'artwork'='artwork';
   const fit=()=>{
     const ready=selected?.naturalWidth&&selected?.naturalHeight;
@@ -29,7 +30,7 @@ export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSigna
       :mobile?{width:width*scale,height:height*scale}
       :group==='posters'?detailPosterViewerFrame(window.innerWidth,window.innerHeight)
       :detailViewerFrame(ready?selected!.naturalWidth:1280,ready?selected!.naturalHeight:720,window.innerWidth,window.innerHeight);
-    dialog.dataset.viewerPreviewsBelow=String(mobile&&window.innerHeight-dimensions.height>=124);
+    dialog.dataset.viewerPreviewsBelow=String((mobile||compact)&&window.innerHeight-dimensions.height>=124);
     dialog.style.setProperty('--viewer-image-width',`${dimensions.width}px`);
     dialog.style.setProperty('--viewer-image-height',`${dimensions.height}px`);
   };

@@ -38,6 +38,7 @@
 .image-viewer-slide img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; user-select:none; }
 .image-viewer-slide-loading { position:absolute; inset:0; display:grid; place-items:center; }
 .image-lightbox[data-image-gallery] .image-viewer-slots { grid-column:1; grid-row:2; justify-content:safe center; padding:8px 12px; width:max-content; max-width:calc(100% - 48px); margin-inline:auto; }
+.image-lightbox[data-image-gallery] .image-viewer-slots[hidden] { display:none; }
 .image-lightbox[data-image-gallery] [data-image-viewer-status] { grid-column:1; padding:8px 12px; margin:0; }
 .image-lightbox[data-image-gallery] .image-viewer-button { position:absolute; z-index:1; border:0; background:#15233390; color:#e6eef5; transition:background-color .18s ease,color .18s ease; }
 .image-lightbox[data-image-gallery] .image-viewer-button:is(:hover,:focus-visible) { outline:none; background:#26445f; color:var(--bright); }
@@ -113,6 +114,8 @@
   .image-lightbox[data-image-gallery]:is(:not([data-previews-hidden]),:has(:focus-visible)) .image-viewer-slots { opacity:1; translate:0 0; visibility:visible; pointer-events:auto; }
   .image-lightbox[data-image-gallery][data-previews-hidden]:not(:has(:focus-visible)) .image-viewer-button { opacity:0; visibility:hidden; pointer-events:none; }
   .image-lightbox[data-image-gallery] [data-image-viewer-status] { position:absolute; grid-area:auto; top:60px; bottom:auto; left:12px; right:12px; padding:8px; background:#080f18c9; border-radius:8px; }
+  .image-lightbox[data-viewer-compact][data-viewer-previews-below=true] { height:fit-content; background:transparent; overflow:visible; grid-template-rows:var(--viewer-image-height) max-content; }
+  .image-lightbox[data-viewer-compact][data-viewer-previews-below=true] .image-viewer-slots { position:relative; grid-row:2; bottom:auto; left:auto; right:auto; margin:12px auto 0; }
 }
 @media (min-width:651px) and (min-height:651px) and (prefers-reduced-motion:reduce) {
   .image-lightbox[data-image-gallery],.image-lightbox[data-image-gallery] .image-viewer-slots { transition:none; }
