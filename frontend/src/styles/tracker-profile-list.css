@@ -173,15 +173,24 @@
   cursor:pointer;
   transition:color .15s ease,background .15s ease
 }
-.mobile-filter-toggle:is(:hover,:focus-visible) {
+.mobile-filter-toggle:focus-visible {
   background:color-mix(in srgb,var(--blue) 18%,var(--panel))
 }
 .mobile-filter-toggle:is([aria-expanded="true"],[data-active]) {
   color:#fff;
   background:var(--blue)
 }
-.mobile-filter-toggle:is([aria-expanded="true"],[data-active]):is(:hover,:focus-visible) {
+.mobile-filter-toggle:is([aria-expanded="true"],[data-active]):focus-visible {
   background:color-mix(in srgb,var(--blue) 85%,white)
+}
+/* Touch browsers can retain :hover after closing the panel. */
+@media (hover:hover) and (pointer:fine) {
+  .mobile-filter-toggle:hover {
+    background:color-mix(in srgb,var(--blue) 18%,var(--panel))
+  }
+  .mobile-filter-toggle:is([aria-expanded="true"],[data-active]):hover {
+    background:color-mix(in srgb,var(--blue) 85%,white)
+  }
 }
 .mobile-filter-toggle:focus-visible {
   outline:none
