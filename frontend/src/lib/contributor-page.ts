@@ -10,6 +10,7 @@ import { cancelUiMotion, reveal } from './ui-motion';
 import { mountPortraitViewer } from './image-viewer';
 import {createPrediction,bindPredictivePagination} from './predictive-loading';
 import { setLocalDateTime } from './date-time-dom';
+import { createSectionScroll } from './section-scroll';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -58,15 +59,15 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   if (portrait?.complete && !portrait.naturalWidth) missingPortrait();
   root.dataset.enhanced = '';
   form.addEventListener('change', () => form.requestSubmit(), {signal});
+  const scrollToWorks = createSectionScroll(signal);
   root.querySelector<HTMLAnchorElement>('.contributor-list-link')?.addEventListener('click',event=>{
     if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
     if(!scope)return;
     event.preventDefault();
     if(!scope.checked){scope.checked=true;form.requestSubmit();}
-    root.querySelector<HTMLElement>('.contributor-works')?.scrollIntoView({
-      block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',
-    });
+    const works = root.querySelector<HTMLElement>('.contributor-works');
+    if (works) scrollToWorks(works);
   },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]').forEach(button => {
     button.addEventListener('click', () => {
