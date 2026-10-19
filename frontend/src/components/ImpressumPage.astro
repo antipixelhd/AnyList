@@ -1,0 +1,14 @@
+---
+import Legal from '../layouts/Legal.astro';
+import {emptyLegalConfig, legalHref} from '../lib/legal';
+const {config = emptyLegalConfig} = Astro.props;
+const href = (page: string) => legalHref(Astro.url.pathname, page);
+const draft = !config.operator_name || !config.operator_address || !config.contact_email;
+---
+<Legal title="Legal notice" {draft}>
+  <h2>Operator and contact</h2>
+  <address>{config.operator_name || 'Operator name to be supplied.'}<br/>{config.operator_address || 'Service address to be supplied.'}</address>
+  {config.contact_email ? <p>Email: <a href={`mailto:${config.contact_email}`}>{config.contact_email}</a></p> : <p class="legal-missing">Contact email to be supplied.</p>}
+  <h2>Privacy and credits</h2>
+  <p>See our <a href={href('privacy')}>Privacy policy</a> for information about personal data and <a href={href('credits')}>Credits &amp; licenses</a> for data sources and attribution.</p>
+</Legal>

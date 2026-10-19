@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     server_url: str = "http://localhost:7330"
 
     # Intentionally public operator disclosures, supplied privately at runtime.
+    legal_pages_enabled: bool = False
     legal_operator_name: str = ""
     legal_operator_address: str = ""
     legal_contact_email: str = ""

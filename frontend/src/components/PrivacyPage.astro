@@ -1,0 +1,40 @@
+---
+import Legal from '../layouts/Legal.astro';
+import {emptyLegalConfig, legalDraft, legalHref} from '../lib/legal';
+const {config = emptyLegalConfig} = Astro.props;
+const href = (page: string) => legalHref(Astro.url.pathname, page);
+---
+<Legal title="Privacy policy" draft={legalDraft(config)}>
+  <p>Last updated: 19 October 2026</p>
+  <h2>Who is responsible</h2>
+  <address>{config.operator_name || 'Operator name to be supplied.'}<br/>{config.operator_address || 'Operator address to be supplied.'}</address>
+  {config.contact_email ? <p>Privacy contact: <a href={`mailto:${config.contact_email}`}>{config.contact_email}</a></p> : <p class="legal-missing">Privacy contact to be supplied.</p>}
+  <h2>Data and purposes</h2>
+  <ul>
+    <li>To deliver and protect the service, we process IP addresses, request times and URLs, browser information and connection data. The legal basis is our legitimate interest in secure operation (Article 6(1)(f) GDPR).</li>
+    <li>To provide your account, we process your email address, username, password hash or single sign-on identifier, account settings, media lists, ratings, progress, notes and optional profile information (Article 6(1)(b) GDPR).</li>
+    <li>Profiles, lists, comments and social activity are visible according to their visibility settings. Public profile previews can be fetched and cached by search engines and messaging services.</li>
+    <li>If you contact us, we use the information you provide to respond to your request (Article 6(1)(b) or (f) GDPR).</li>
+  </ul>
+  <h2>Hosting and service providers</h2>
+  <p class:list={{'legal-missing':!config.hosting_details}} class="legal-preserve">{config.hosting_details || 'To be supplied: hosting provider and location, CDN/security services, email delivery and sign-on providers, and their roles.'}</p>
+  <p>Administrators may access data where needed for operation, support and security.</p>
+  <h2>Media data and external content</h2>
+  <p>Our server sends media searches and identifiers to the configured metadata providers. These can include TMDB, TheTVDB, TVmaze and MDBList, with optional game and book providers listed in <a href={href('credits')}>Credits &amp; licenses</a>. This supports the requested catalogue and search functions (Article 6(1)(b) GDPR).</p>
+  <p>Images are often loaded directly from provider servers. External images in profiles can also load automatically. These providers receive your IP address and technical browser information. The purpose is to display the media and profile content you request, based on our legitimate interest in providing that content (Article 6(1)(f) GDPR).</p>
+  <p>Profile videos, including YouTube and Vimeo embeds, can load automatically as they approach the visible area, sending IP addresses and browser information to the provider. Providers may also use their own browser storage. AnyList currently has no consent gate for these embeds.</p>
+  <h2>Optional connections</h2>
+  <p>If you connect a tracking, playback or library service, we store the access tokens needed for that connection and exchange the account, list, rating and progress data used by the selected features (Article 6(1)(b) GDPR). Connecting a service is optional. Disconnecting it does not delete data already held by that service.</p>
+  <h2 id="cookies">Cookies and local storage</h2>
+  <p>AnyList's application code does not use advertising or analytics cookies. Sign-in cookies last up to seven days; temporary sign-on cookies last up to ten minutes. Display and regional preferences are stored for up to one year, with some renewed during use. Regional defaults can be saved automatically from your browser language or time zone; GPS location is not used.</p>
+  <p>Local browser storage remembers your theme and dismissed installation or feature prompts until changed or cleared. Temporary navigation data generally lasts for the tab session. Browser and offline caches retain files until replaced, evicted or cleared. You can remove website data in your browser; doing so may reset preferences or sign you out.</p>
+  <p>Storage or access strictly necessary for a service you expressly request does not require consent under section 25(2)(2) TDDDG. This exception does not automatically cover every preference, prompt or external embed.</p>
+  <h2>International transfers</h2>
+  <p class:list={{'legal-missing':!config.transfer_details}} class="legal-preserve">{config.transfer_details || 'To be supplied: recipient countries outside the EEA, applicable transfer safeguards and how to obtain a copy of those safeguards.'}</p>
+  <h2>Retention and deletion</h2>
+  <p>Account data and media activity are kept to provide your account. Account settings include account deletion and data export. Disconnecting external services or deleting browser data does not delete copies held by those services.</p>
+  <p class:list={{'legal-missing':!config.retention_details}} class="legal-preserve">{config.retention_details || 'To be supplied: retention periods or deletion criteria for server/security logs, backups and any data retained after account deletion.'}</p>
+  <h2>Your rights</h2>
+  <p>Subject to the applicable conditions, you can request access, correction, deletion, restriction and portability of your data. You can object to processing based on legitimate interests, and withdraw consent for future processing where consent is used (Articles 15–21 GDPR). Contact us using the details above. You can complain to a data protection authority, particularly where you live, work or believe an infringement occurred (Article 77 GDPR).</p>
+  <p>Account details are needed to provide an account; profile additions and service connections are optional. AnyList does not make automated decisions with legal or similarly significant effects.</p>
+</Legal>

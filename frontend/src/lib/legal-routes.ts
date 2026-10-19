@@ -1,4 +1,4 @@
-/** Required notices remain reachable without an account or logged-out browsing. */
+/** Publication is checked separately; enabled notices do not require an account. */
 export function publicLegalPage(pathname: string): boolean {
-  return /^\/(?:impressum|privacy|cookies|credits|about)\/?$/.test(pathname);
+  return /^\/(?:legal-notice|impressum|privacy|cookies|credits|about)\/?$/.test(pathname);
 }

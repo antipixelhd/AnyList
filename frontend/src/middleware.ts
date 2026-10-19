@@ -4,6 +4,7 @@ import { defineMiddleware } from "astro:middleware";
 import { api } from "./lib/api";
 import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
+import { legalConfig } from './lib/legal';
 import { publicLegalPage } from './lib/legal-routes';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
@@ -88,6 +89,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     response.headers.set('Cache-Control', 'no-store');
     for (const [header, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(header, value);
     return response;
+  }
+
+  if (publicLegalPage(pathname) && !(await legalConfig()).enabled) {
+    return new Response('Not found', {status:404, headers:{...SECURITY_HEADERS, 'Cache-Control':'no-store'}});
   }
 
   // Requests to the backend proxy carrying a Scrob API key (header or query

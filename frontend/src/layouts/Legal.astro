@@ -8,6 +8,6 @@ import '../styles/legal.css';
 const {title, draft = false} = Astro.props;
 Astro.response.headers.set('Cache-Control', 'no-store');
 ---
-<!doctype html><html lang="de"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>{title} · AnyList</title><PrimaryFontPreloads/><link rel="icon" href="/favicon-96x96.png"/></head>
+<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>{Astro.url.pathname.startsWith('/dev/') && <meta name="robots" content="noindex, nofollow"/>}<title>{title} &#183; AnyList</title><PrimaryFontPreloads/><link rel="icon" href="/favicon-96x96.png"/></head>
 <body class="legal-page"><header class="legal-header"><a href="/"><BrandMark size={30}/><span>AnyList</span></a></header>
-<main class="legal-content"><h1>{title}</h1>{draft && <p class="legal-draft">Beta-Entwurf: Betreiber- und Betriebsangaben sind noch nicht vollständig. Diese Fassung ist noch nicht zur Veröffentlichung auf der Hauptseite bestimmt.</p>}<slot/></main><SiteFooter/></body></html>
+<main class="legal-content"><h1>{title}</h1>{draft && <p class="legal-draft">Draft - operator and deployment details still need to be completed.</p>}<slot/></main><SiteFooter/></body></html>

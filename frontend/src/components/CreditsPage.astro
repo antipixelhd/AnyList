@@ -1,0 +1,30 @@
+---
+import Legal from '../layouts/Legal.astro';
+const providers = [
+  ['TheTVDB', 'https://thetvdb.com', 'Series, episodes and images. Provider API licensing and attribution terms apply.'],
+  ['TVmaze', 'https://www.tvmaze.com', 'Series and character data, normalized and combined with other sources.'],
+  ['MDBList', 'https://mdblist.com', 'Curated lists and aggregated ratings, attributed to their original sources.'],
+  ['IGDB', 'https://www.igdb.com', 'Optional game catalogue through Twitch/IGDB.'],
+  ['RAWG', 'https://rawg.io', 'Optional game data and images, with source links on the relevant entries.'],
+  ['IsThereAnyDeal', 'https://isthereanydeal.com', 'Optional game prices and deals.'],
+  ['Hardcover', 'https://hardcover.app', 'Optional book and author data.'],
+  ['Open Library', 'https://openlibrary.org', 'Optional book data and covers. Covers may have separate rights.'],
+];
+---
+<Legal title="Credits & licenses">
+  <p>AnyList combines metadata from several sources. Available providers depend on configuration. Posters, portraits and other works remain the property of their respective rights holders.</p>
+  <h2>TMDB</h2>
+  <a href="https://www.themoviedb.org"><img src="/attribution/tmdb.svg" width="150" height="20" alt="The Movie Database (TMDB)"/></a>
+  <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+  <p>Movie, series, people and image data from <a href="https://www.themoviedb.org">The Movie Database</a>. <a href="https://developer.themoviedb.org/docs/faq">API and licensing information</a>.</p>
+  <h2>Streaming availability</h2>
+  <p>Streaming availability supplied through TMDB is provided by <a href="https://www.justwatch.com">JustWatch</a>. Offers and regional availability can change.</p>
+  <h2>Other metadata sources</h2>
+  <dl>{providers.map(([name,url,note]) => <><dt><a href={url}>{name}</a></dt><dd>{note}</dd></>)}</dl>
+  <p>Public TVmaze API data is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution–ShareAlike 4.0</a>. <a href="https://www.tvmaze.com/api#licensing">TVmaze licensing terms</a>, attribution and ShareAlike requirements apply to adaptations of that data. This does not license other providers' images or AnyList's entire catalogue.</p>
+  <h2>Connected services and ratings</h2>
+  <p>Optional connections include <a href="https://trakt.tv">Trakt</a>, <a href="https://simkl.com">Simkl</a>, <a href="https://bingebase.com">Bingebase</a>, <a href="https://www.plex.tv">Plex</a>, <a href="https://jellyfin.org">Jellyfin</a>, <a href="https://emby.media">Emby</a>, <a href="https://kodi.tv">Kodi</a>, <a href="https://www.stremio.com">Stremio</a> and <a href="https://nuvio.tv">Nuvio</a>. RatingPosterDB can supply optional rating posters. Service names, rating brands including IMDb and Rotten Tomatoes, and their logos belong to their respective owners. References identify data sources or interoperability.</p>
+  <h2>Software and fonts</h2>
+  <p>Roboto and Overpass are served locally under the SIL Open Font License 1.1 (<a href="/fonts/roboto-OFL.txt">Roboto license</a>, <a href="/fonts/overpass-OFL.txt">Overpass license</a>).</p>
+  <p>AnyList is based on <a href="https://github.com/ellite/scrob">Scrob</a>. <a href="https://github.com/antipixelhd/AnyList">AnyList source code</a> is licensed under GNU GPL v3. Existing copyright and license notices apply. Dependencies include Astro, FastAPI, Tailwind CSS, Chart.js and markdown-it (MIT), PostgreSQL (PostgreSQL License), and Font Awesome Free (icons: CC BY 4.0; code: MIT).</p>
+</Legal>

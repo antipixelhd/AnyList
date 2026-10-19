@@ -11,6 +11,7 @@ services:
       SECRET_KEY: changeme
 
       # Public legal notices; personal values remain in the private .env file.
+      LEGAL_PAGES_ENABLED: ${LEGAL_PAGES_ENABLED:-false}
       LEGAL_OPERATOR_NAME: ${LEGAL_OPERATOR_NAME:-}
       LEGAL_OPERATOR_ADDRESS: ${LEGAL_OPERATOR_ADDRESS:-}
       LEGAL_CONTACT_EMAIL: ${LEGAL_CONTACT_EMAIL:-}

@@ -1,14 +1,3 @@
 ---
-import Legal from '../layouts/Legal.astro';
-import {legalConfig} from '../lib/legal';
-const config = await legalConfig();
-const draft = !config.operator_name || !config.operator_address || !config.contact_email;
+return Astro.redirect('/legal-notice', 301);
 ---
-<Legal title="Impressum" {draft}>
-  <h2>Betreiber und Kontakt</h2>
-  <address>{config.operator_name || 'Betreibername wird ergänzt.'}<br/>{config.operator_address || 'Ladungsfähige Anschrift wird ergänzt.'}</address>
-  {config.contact_email ? <p>E-Mail: <a href={`mailto:${config.contact_email}`}>{config.contact_email}</a></p> : <p class="legal-missing">Kontaktadresse wird ergänzt.</p>}
-  <p>AnyList ist ein nicht kommerziell betriebenes Projekt zur Verwaltung persönlicher Medienlisten.</p>
-  <h2>Datenschutz und Quellen</h2>
-  <p>Informationen zur Verarbeitung personenbezogener Daten stehen in der <a href="/privacy">Datenschutzerklärung</a>. Datenquellen, Urheber und Lizenzhinweise sind unter <a href="/credits">Quellen &amp; Lizenzen</a> aufgeführt.</p>
-</Legal>

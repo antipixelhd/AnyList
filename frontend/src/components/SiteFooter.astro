@@ -1,9 +1,13 @@
 ---
 import '../styles/footer.css';
+import {legalConfig, legalHref} from '../lib/legal';
+const preview = Astro.url.pathname.startsWith('/dev/');
+const visible = preview || (await legalConfig()).enabled;
+const href = (page: string) => legalHref(Astro.url.pathname, page);
 ---
-<footer class="page-footer"><div class="page-footer-inner">
-  <a class="footer-brand" href="/about">AnyList</a>
+{visible && <footer class="page-footer"><div class="page-footer-inner">
+  <a class="footer-brand" href={href('about')}>AnyList</a>
   <nav aria-label="Legal and information">
-    <a href="/impressum">Impressum</a><a href="/privacy">Datenschutz</a><a href="/cookies">Cookies</a><a href="/credits">Quellen &amp; Lizenzen</a>
+    <a href={href('legal-notice')}>Legal notice</a><a href={href('privacy')}>Privacy</a><a href={href('credits')}>Credits &amp; licenses</a>
   </nav>
-</div></footer>
+</div></footer>}
