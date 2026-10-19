@@ -120,7 +120,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         button=document.createElement('button');button.type='button';button.dataset.slotKey=key;
         if(rows[index]){const thumbnail=new Image();thumbnail.alt='';thumbnail.dataset.gallerySrc=responsiveArtwork(rows[index],{size:'w185',route:'auto'})?.src||rows[index];button.append(thumbnail);}
         else button.className='detail-image-skeleton';
-        button.addEventListener('click',()=>showImage(Number(button!.dataset.imageIndex),true),{signal});
+        button.addEventListener('click',()=>{
+          const index=Number(button!.dataset.imageIndex);
+          prepareImage(index);
+          if(!resetZoom.preview(index,current))showImage(index,true);
+        },{signal});
       }
       button.dataset.imageIndex=String(index);
       button.setAttribute('aria-label',`${active==='posters'?'Poster':'Artwork'} ${index+1}${rows[index]?'':': loading'}`);

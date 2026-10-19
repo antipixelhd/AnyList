@@ -7,7 +7,7 @@ function viewer(mobile=true,reduced=false){
  let now=1000,id=0;const frames=new Map();
  const element=()=>({listeners:{},dataset:{},style:{setProperty(k,v){this[k]=v;},removeProperty(k){delete this[k];}},animations:[],addEventListener(n,f){this.listeners[n]=f;},dispatchEvent(e){this.listeners[e.type]?.(e);},fire(type,e={}){const ev={type,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...e};this.listeners[type]?.(ev);return ev;},animate(keyframes,options){const a={keyframes,options,cancel(){this.cancelled=true;}};this.animations.push(a);return a;}});
  const dialog=element(),track=element(),window=element(),image=element(),controller=new AbortController(),selected=[];
- dialog.open=true;image.naturalWidth=780;track.clientWidth=400;track.scrollLeft=0;track.children=[{},{},{}];
+ dialog.open=true;image.naturalWidth=780;track.clientWidth=400;track.scrollLeft=0;const images=[image,element(),element()];track.children=images.map(img=>({querySelector:()=>img}));
  const rect=(h)=>({left:0,top:0,right:400,bottom:h,width:400,height:h});
  track.getBoundingClientRect=()=>rect('viewerZoomFrame' in dialog.dataset?844:600);dialog.getBoundingClientRect=()=>rect('viewerZoomFrame' in dialog.dataset?844:690);
  track.setPointerCapture=()=>{};track.hasPointerCapture=()=>false;
@@ -20,7 +20,7 @@ function viewer(mobile=true,reduced=false){
  const tap=()=>{pointer('pointerdown',200,300);pointer('pointerup',200,300);};
  const pinch=()=>{pointer('pointerdown',100,300);pointer('pointerdown',300,300,2);};
  const end=()=>{pointer('pointerup',400,300,2);pointer('pointerup',100,300);};
- return {dialog,track,window,image,controller,selected,pointer,reset,advance,tap,pinch,end,bounds:context.bounds};
+ return {images,dialog,track,window,image,controller,selected,pointer,reset,advance,tap,pinch,end,bounds:context.bounds};
 }
 test('fit swipes follow the finger immediately and finish with a bounded 160ms snap',()=>{
  const v=viewer();v.pointer('pointerdown',300,300);v.advance(20);v.pointer('pointermove',180,305);
@@ -87,4 +87,28 @@ test('small-axis letterboxing preserves the pinch anchor instead of jumping to t
  assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.match(v.image.style.transform,/translate\(6px,-104px\) scale\(1.06\)/);
  const anchored=v.bounds(1.06,0,-45,390,219,390,844,true);assert.equal(anchored.y,-45);
  const settled=v.bounds(1.06,0,-45,390,219,390,844);assert.equal(settled.y,0);
+});
+
+
+test('pinch release preserves the image position instead of recentering smaller axes',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',320,300,2);const held=v.image.style.transform;
+ v.pointer('pointerup',320,300,2);v.pointer('pointerup',100,300);
+ assert.equal(v.image.style.transform,held);assert.equal(v.image.animations.length,0);
+});
+test('same preview animates back to fit before committing the selection',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();
+ assert.equal(v.reset.preview(0,0),true);assert.deepEqual(v.selected,[]);assert.ok('viewerZoomFrame' in v.dialog.dataset);
+ const animation=v.image.animations.at(-1);assert.match(animation.keyframes[1].transform,/scale\(1\)/);
+ animation.onfinish();assert.deepEqual(v.selected,[0]);assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
+});
+test('a different preview scrolls simultaneously with zoom-out and selects only after completion',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();
+ assert.equal(v.reset.preview(1,0),true);assert.ok('viewerSwiping' in v.track.dataset);assert.deepEqual(v.selected,[]);v.advance(80);
+ assert.ok(v.track.scrollLeft>0&&v.track.scrollLeft<400);assert.ok(v.images[1].style.transform);
+ v.image.animations.at(-1).onfinish();assert.equal(v.track.scrollLeft,400);assert.deepEqual(v.selected,[1]);assert.equal(v.images[1].style.transform,undefined);assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
+});
+test('changing preview choice during zoom-out cancels the obsolete selection',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();v.reset.preview(1,0);v.advance(80);
+ const old=v.image.animations.at(-1);v.reset.preview(0,0);old.onfinish();assert.deepEqual(v.selected,[]);
+ v.image.animations.at(-1).onfinish();assert.deepEqual(v.selected,[0]);assert.equal(v.track.scrollLeft,0);
 });

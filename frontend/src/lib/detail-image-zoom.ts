@@ -17,6 +17,12 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
   let target:HTMLImageElement|undefined,scale=1,x=0,y=0;
   let fitted:{width:number;height:number;box:DOMRect;center:Point}|undefined;
   let animation:Animation|undefined,frameAnimation:Animation|undefined,returning=false;
+  let selectionFrame=0,selectionIndex:number|undefined,incoming:HTMLImageElement|undefined;
+  const cancelSelection=()=>{
+    cancelAnimationFrame(selectionFrame);selectionFrame=0;selectionIndex=undefined;
+    delete track.dataset.viewerSwiping;
+    if(incoming!==target)incoming?.style.removeProperty('transform');incoming=undefined;
+  };
   let origin:Point|undefined,axis:'horizontal'|'vertical'|undefined,moved=false,owned=false;
   let ignoreUntil=0,lastTap=0,lastPoint:Point|undefined,samples:{x:number;time:number}[]=[];
   let base={scale:1,distance:1,anchor:{x:0,y:0}};
@@ -54,6 +60,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     base={scale,distance:distance(),anchor:{x:(c.x-stage.x-x)/scale,y:(c.y-stage.y-y)/scale}};
   };
   const interruptAnimation=()=>{
+    cancelSelection();
     if(!animation||!target)return;
     const matrix=new DOMMatrixReadOnly(getComputedStyle(target).transform);
     scale=matrix.a;x=matrix.e;y=matrix.f;animation.cancel();animation=undefined;
@@ -69,16 +76,34 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     const running=target.animate([{transform:from},{transform:transform()}],{duration:200,easing:'cubic-bezier(.2,0,0,1)'});
     animation=running;running.onfinish=()=>{if(animation===running){animation=undefined;done?.();}};
   };
-  const returnToFit=()=>{
-    if(!fitted){scale=1;x=0;y=0;paint();changed();return;}
+  const returnToFit=(done?:()=>void,index?:number)=>{
+    if(!fitted){scale=1;x=0;y=0;paint();changed();done?.();return;}
     const from=transform(),stage=stageCenter();
     scale=1;x=fitted.center.x-stage.x;y=fitted.center.y-stage.y;returning=true;
+    if(index!==undefined){
+      selectionIndex=index;
+      track.dataset.viewerSwiping='';
+      incoming=track.children[index]?.querySelector<HTMLImageElement>('img')||undefined;
+      if(incoming&&incoming!==target)incoming.style.transform=`translate(${x}px,${y}px)`;
+      const fromLeft=track.scrollLeft,toLeft=index*track.clientWidth,began=performance.now();
+      const tick=(now:number)=>{
+        const progress=Math.min(1,(now-began)/200);
+        track.scrollLeft=fromLeft+(toLeft-fromLeft)*(1-(1-progress)**3);
+        if(progress<1)selectionFrame=requestAnimationFrame(tick);
+      };
+      if(!reduced.matches)selectionFrame=requestAnimationFrame(tick);
+    }
+    const currentClip=getComputedStyle(dialog).clipPath;
+    const fromClip=currentClip==='none'?'inset(0px round 0px)':currentClip;
     frameAnimation?.cancel();
-    if(!reduced.matches)frameAnimation=dialog.animate([{clipPath:'inset(0px round 0px)'},{clipPath:clip()}],{duration:200,easing:'cubic-bezier(.2,0,0,1)'});
-    animateImage(from,()=>{restoreFrame();scale=1;x=0;y=0;paint();changed();});
+    if(!reduced.matches)frameAnimation=dialog.animate([{clipPath:fromClip},{clipPath:clip()}],{duration:200,easing:'cubic-bezier(.2,0,0,1)'});
+    animateImage(from,()=>{
+      if(selectionIndex!==undefined)track.scrollLeft=selectionIndex*track.clientWidth;
+      cancelSelection();restoreFrame();scale=1;x=0;y=0;paint();changed();done?.();
+    });
   };
   const reset=()=>{
-    animation?.cancel();animation=undefined;swipe.cancel();
+    animation?.cancel();animation=undefined;swipe.cancel();cancelSelection();
     if(target)target.style.removeProperty('transform');
     for(const id of points.keys())if(track.hasPointerCapture(id))track.releasePointerCapture(id);
     points.clear();target=undefined;scale=1;x=0;y=0;origin=undefined;axis=undefined;owned=false;lastTap=0;
@@ -87,6 +112,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
   const consume=(event:PointerEvent)=>{event.preventDefault();event.stopImmediatePropagation();};
   track.addEventListener('pointerdown',event=>{
     if(!mobile.matches||event.pointerType!=='touch'||!dialog.open)return;
+    if(selectionIndex!==undefined){consume(event);return;}
     if(!points.size){swipe.cancel(true);beforeGesture();}
     target=image();if(!target?.naturalWidth||target.style.visibility==='hidden')return;
     interruptAnimation();
@@ -141,7 +167,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
           expand();const stage=stageCenter(),rect=track.getBoundingClientRect();
           const from=`translate(${previous.x-stage.x}px,${previous.y-stage.y}px) scale(${fromScale})`;
           ({scale,x,y}=zoomBounds(2.5,(origin.x-stage.x)-(origin.x-previous.x)*2.5,(origin.y-stage.y)-(origin.y-previous.y)*2.5,
-            fitted!.width,fitted!.height,rect.width,rect.height));
+            fitted!.width,fitted!.height,rect.width,rect.height,true));
           animateImage(from);
         }
         ignoreUntil=now+450;lastTap=0;
@@ -156,13 +182,6 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     owned=false;origin=undefined;axis=undefined;
     if(!doubleTap&&fitted&&scale<=1.04)returnToFit();
     else{
-      if(!doubleTap&&fitted){
-        // During contact keep the focal point even in letterboxed space. Only
-        // recenter a smaller axis after release, without a boundary jump.
-        const rect=track.getBoundingClientRect(),from=transform();
-        const settled=zoomBounds(scale,x,y,fitted.width,fitted.height,rect.width,rect.height);
-        if(settled.x!==x||settled.y!==y){x=settled.x;y=settled.y;animateImage(from);}
-      }
       if(wasOwned||doubleTap||moved)changed();
     }
     if(horizontal)swipe.finish(dx,velocity,event.type==='pointercancel');
@@ -175,5 +194,11 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
   },{signal,capture:true});
   for(const event of ['blur','pagehide','pageshow','resize'])window.addEventListener(event,reset,{signal});
   dialog.addEventListener('close',reset,{signal});mobile.addEventListener('change',reset,{signal});
-  signal.addEventListener('abort',reset,{once:true});return reset;
+  signal.addEventListener('abort',reset,{once:true});
+  return Object.assign(reset,{preview:(index:number,current:number)=>{
+    if(!fitted)return false;
+    beforeGesture();interruptAnimation();
+    returnToFit(()=>select(index),index===current&&track.scrollLeft===index*track.clientWidth?undefined:index);
+    return true;
+  }});
 }
