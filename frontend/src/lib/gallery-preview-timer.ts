@@ -14,7 +14,7 @@ export function createGalleryPreviewTimer(ready:()=>boolean,show:()=>void,hide:(
       if(signal.aborted||!visible)return;
       if(!ready()){show();return;}
       visible=false;hide();
-    },2000);
+    },1500);
   };
   const reveal=()=>{if(signal.aborted)return;pause();visible=true;show();schedule();};
   const refresh=()=>{if(!ready())reveal();else schedule();};

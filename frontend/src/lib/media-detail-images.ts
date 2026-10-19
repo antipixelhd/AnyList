@@ -64,8 +64,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       if(!galleryPreviewImagesSettled(slots.querySelectorAll<HTMLImageElement>('img')))return false;
       const selected=carousel.slide(current);
       if(selected&&!selected.skeleton.hidden)return false;
-      const focused=document.activeElement;
-      return !(focused?.matches(':focus-visible')&&(slots.contains(focused)||arrows.includes(focused as HTMLButtonElement)));
+      return true;
   },()=>{delete lightbox.dataset.previewsHidden;},()=>{lightbox.dataset.previewsHidden='true';},signal);
   const clearPreviewTimer=previews.pause;
   const revealPreviews=previews.reveal;
@@ -78,7 +77,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     clearPreviewTimer();
   },{signal,passive:true});
   lightbox.addEventListener('pointermove',event=>{
-    if(!mobileViewer.matches&&(event.target as Element).closest('.image-viewer-track,.image-viewer-button,.image-viewer-slots'))revealPreviews();
+    // Hiding controls can change the hit target under a stationary cursor.
+    // Those zero-movement events must not restart the idle countdown.
+    if(!mobileViewer.matches&&(event.movementX!==0||event.movementY!==0)&&(event.target as Element).closest('.image-viewer-track,.image-viewer-button,.image-viewer-slots'))revealPreviews();
     if(previewInteracting&&previewGesture&&Math.hypot(event.clientX-previewGesture.x,event.clientY-previewGesture.y)>8)previewGesture.moved=true;
   },{signal,passive:true});
   const releasePreviews=()=>{
@@ -100,7 +101,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     }else revealPreviews();
   },{signal});
   lightbox.addEventListener('focusin',revealPreviews,{signal});
-  lightbox.addEventListener('focusout',revealPreviews,{signal});
+  lightbox.addEventListener('focusout',refreshPreviewLoading,{signal});
   // Recentring and inertial scrolling are animation output, not fresh input.
   // Check loading without extending the user's existing idle deadline.
   slots.addEventListener('scroll',refreshPreviewLoading,{signal,passive:true});

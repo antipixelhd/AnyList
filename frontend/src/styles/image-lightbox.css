@@ -113,8 +113,8 @@
     opacity:0; translate:0 8px; visibility:hidden; pointer-events:none;
     transition:opacity .14s ease,translate .14s ease,visibility .14s;
   }
-  .image-lightbox[data-image-gallery]:is(:not([data-previews-hidden]),:has(:focus-visible)) .image-viewer-slots { opacity:1; translate:0 0; visibility:visible; pointer-events:auto; }
-  .image-lightbox[data-image-gallery][data-previews-hidden]:not(:has(:focus-visible)) .image-viewer-button { opacity:0; visibility:hidden; pointer-events:none; }
+  .image-lightbox[data-image-gallery]:not([data-previews-hidden]) .image-viewer-slots { opacity:1; translate:0 0; visibility:visible; pointer-events:auto; }
+  .image-lightbox[data-image-gallery][data-previews-hidden] .image-viewer-button { opacity:0; visibility:hidden; pointer-events:none; }
   .image-lightbox[data-image-gallery] [data-image-viewer-status] { position:absolute; grid-area:auto; top:60px; bottom:auto; left:12px; right:12px; padding:8px; background:#080f18c9; border-radius:8px; }
   .image-lightbox[data-viewer-compact][data-viewer-previews-below=true] { height:fit-content; background:transparent; overflow:visible; grid-template-rows:var(--viewer-image-height) max-content; }
   .image-lightbox[data-viewer-compact][data-viewer-previews-below=true] .image-viewer-slots { position:relative; grid-row:2; bottom:auto; left:auto; right:auto; margin:12px auto 0; }
