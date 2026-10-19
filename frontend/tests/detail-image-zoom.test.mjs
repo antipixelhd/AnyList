@@ -26,7 +26,8 @@ function viewer(mobile=true,reduced=false){
 test('fit swipes follow the finger immediately and finish with a velocity-aware spring',()=>{
  const v=viewer();v.pointer('pointerdown',300,300);v.advance(20);v.pointer('pointermove',180,305);
  assert.equal(v.track.scrollLeft,120);assert.ok('viewerSwiping' in v.track.dataset);assert.deepEqual(v.selected,[]);
- v.pointer('pointerup',180,305);v.advance(80);assert.ok(v.track.scrollLeft>120&&v.track.scrollLeft<400);assert.deepEqual(v.selected,[]);
+ v.pointer('pointerup',180,305);assert.equal(v.track.scrollLeft,120);assert.deepEqual(v.selected,[1]);
+ v.advance(80);assert.ok(v.track.scrollLeft>120&&v.track.scrollLeft<400);assert.deepEqual(v.selected,[1]);
  v.settle();assert.equal(v.track.scrollLeft,400);assert.deepEqual(v.selected,[1]);assert.equal(v.track.dataset.viewerSwiping,undefined);
 });
 test('short drags and cancellation settle back without changing selection',()=>{
