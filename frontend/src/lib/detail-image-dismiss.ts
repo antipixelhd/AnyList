@@ -1,4 +1,4 @@
-/** Keep horizontal swipes native; own only a single-finger downward drag. */
+/** Own only a single-finger downward drag; relinquish it to paging or zoom. */
 export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLElement,signal:AbortSignal) {
   const mobile=matchMedia('(max-width:650px), (max-height:650px)');
   const reduced=matchMedia('(prefers-reduced-motion:reduce)');
@@ -83,7 +83,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
   // bfcache restore retains these listeners and variables, including stale
   // pointer IDs and pending settle timers, so reset without remounting images.
   const interrupt=()=>{reset();pointers.clear();ignoreClickUntil=0;};
-  dialog.addEventListener('viewerzoomstart',interrupt,{signal});
+  dialog.addEventListener('viewerinteractionstart',interrupt,{signal});
   window.addEventListener('blur',interrupt,{signal});
   window.addEventListener('pagehide',()=>{interrupt();unlock?.();},{signal});
   window.addEventListener('pageshow',()=>{interrupt();if(dialog.open)lockPage();else unlock?.();},{signal});

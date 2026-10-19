@@ -16,6 +16,7 @@ function gallery(reduced=false) {
     querySelector(selector){return this.children.find(child=>selector==='img'?child.tag==='img':child.className?.includes('image-viewer-slide-loading'));}
     addEventListener(name,callback){this.listeners.set(name,callback);}
     fire(name){this.listeners.get(name)?.();}
+    closest(){return null;}
     scrollTo(options){this.scrolled=options;this.scrollLeft=options.left;}
   }
   const controller=new AbortController(),selected=[],prepared=[],frames=[];
@@ -78,4 +79,12 @@ test('reduced motion, orientation changes and page teardown preserve selection s
   assert.equal(g.track.scrolled.behavior,'instant');
   g.track.clientWidth=844;g.resize();assert.equal(g.track.scrolled.left,844);
   g.controller.abort();assert.equal(g.observer().disconnected,true);
+});
+
+
+
+test('dragging warms exposed slides without committing a selection and zoom resizing never selects a neighbor',()=>{
+ const g=gallery();g.paint(['one','two','three']);g.track.dataset.viewerSwiping='';
+ g.track.scrollLeft=250;g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[]);assert.deepEqual(g.prepared,[0,1]);
+ g.track.closest=()=>({});delete g.track.dataset.viewerSwiping;g.track.scrollLeft=780;g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[]);assert.deepEqual(g.prepared,[0,1]);
 });

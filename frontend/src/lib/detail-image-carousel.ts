@@ -21,9 +21,11 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
     frame=requestAnimationFrame(()=>{
       frame=0;
       if(navigating||!track.clientWidth||!count)return;
+      if(track.closest('[data-viewer-zoom-frame]'))return;
       // Prepare the incoming image as soon as the gesture exposes it, before
       // it crosses the selection boundary. Programmatic jumps skip this.
       visibleDetailImageIndices(track.scrollLeft,track.clientWidth,count).forEach(prepare);
+      if('viewerSwiping' in track.dataset)return;
       const index=Math.max(0,Math.min(count-1,Math.round(track.scrollLeft/track.clientWidth)));
       if(index!==current){current=index;select(index);}
     });
@@ -44,7 +46,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
       let slide=existing.get(identity);
       if(!slide){
         slide=document.createElement('div');slide.className='image-viewer-slide';slide.dataset.imageKey=identity;
-        const image=document.createElement('img');image.draggable=false;image.alt=alt;image.style.visibility='hidden';
+        const image=document.createElement('img');image.draggable=false;image.alt=alt;image.dataset.motionFade='';image.style.visibility='hidden';
         const loading=document.createElement('div');loading.className='image-viewer-slide-loading detail-image-skeleton';
         loading.setAttribute('aria-label','Loading image');loading.setAttribute('role','status');
         slide.append(image,loading);

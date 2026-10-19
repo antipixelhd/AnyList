@@ -112,3 +112,9 @@ test('an interrupted gesture after focus loss cannot poison later single-finger 
   v.pointer('pointerdown',100,100,2);v.pointer('pointermove',100,310,2);v.release(false,2);v.finish();
   assert.equal(v.dialog.open,false);
 });
+
+test('paging or pinch ownership cancels a pending dismissal and leaves the next drag usable',()=>{
+ const v=viewer();v.prepare();v.pointer('pointerdown',100,100);v.pointer('pointermove',100,250);
+ v.dialog.fire('viewerinteractionstart');v.release();v.finish();assert.equal(v.dialog.open,true);assert.equal(v.dialog.style.translate,undefined);
+ v.pointer('pointerdown',100,100,2);v.pointer('pointermove',100,350,2);v.release(false,2);v.finish();assert.equal(v.dialog.open,false);
+});

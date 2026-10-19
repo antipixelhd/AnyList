@@ -1,4 +1,4 @@
-import {showDialog,reveal} from './ui-motion';
+import {showDialog,reveal,cancelUiMotion} from './ui-motion';
 import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer';
 import {detailBackground,type DetailLoadState} from './detail-background';
@@ -106,7 +106,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
   const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
-    direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true),()=>{previewInteracting=false;revealPreviews();});
+    index=>showImage(index),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
   const fitViewer=bindDetailViewerFrame(lightbox,signal);
   let followedSlot:string|undefined;
   const paintSlots=()=>{

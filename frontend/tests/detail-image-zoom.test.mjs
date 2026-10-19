@@ -4,80 +4,87 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 function viewer(mobile=true,reduced=false){
- const element=()=>({listeners:{},dataset:{},style:{setProperty(key,value){this[key]=value;},removeProperty(key){delete this[key];}},addEventListener(name,fn){this.listeners[name]=fn;},dispatchEvent(e){this.listeners[e.type]?.(e);},fire(type,e={}){const event={type,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...e};this.listeners[type]?.(event);return event;}});
- const dialog=element(),track=element(),window=element(),image=element(),controller=new AbortController();let now=1000,steps=[],frameTask;
- const animations=[];image.animate=(frames,options)=>{const animation={frames,options,cancel(){this.cancelled=true;}};animations.push(animation);return animation;};dialog.getBoundingClientRect=()=>({width:400,height:690});dialog.open=true;image.naturalWidth=780;track.clientWidth=400;track.getBoundingClientRect=()=>({left:0,top:0,width:400,height:600});track.setPointerCapture=()=>{};track.hasPointerCapture=()=>false;
- const context={window,Event,setTimeout:task=>(frameTask=task,1),clearTimeout(){frameTask=undefined;},performance:{now:()=>now},matchMedia:query=>({matches:query.includes("reduced-motion")?reduced:mobile,addEventListener(){}}),getComputedStyle:()=>({transform:"matrix(1.5,0,0,1.5,20,30)"}),DOMMatrixReadOnly:class {a=1.5;e=20;f=30;}};
- const source=readFileSync(new URL('../src/lib/detail-image-zoom.ts',import.meta.url),'utf8');
- runInNewContext(stripTypeScriptTypes(source.replace(/export /g,''))+';globalThis.bind=bindDetailImageZoom;globalThis.bounds=zoomBounds;',context);
- const reset=context.bind(dialog,track,controller.signal,()=>image,d=>steps.push(d),()=>{});
+ let now=1000,id=0;const frames=new Map();
+ const element=()=>({listeners:{},dataset:{},style:{setProperty(k,v){this[k]=v;},removeProperty(k){delete this[k];}},animations:[],addEventListener(n,f){this.listeners[n]=f;},dispatchEvent(e){this.listeners[e.type]?.(e);},fire(type,e={}){const ev={type,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...e};this.listeners[type]?.(ev);return ev;},animate(keyframes,options){const a={keyframes,options,cancel(){this.cancelled=true;}};this.animations.push(a);return a;}});
+ const dialog=element(),track=element(),window=element(),image=element(),controller=new AbortController(),selected=[];
+ dialog.open=true;image.naturalWidth=780;track.clientWidth=400;track.scrollLeft=0;track.children=[{},{},{}];
+ const rect=(h)=>({left:0,top:0,right:400,bottom:h,width:400,height:h});
+ track.getBoundingClientRect=()=>rect('viewerZoomFrame' in dialog.dataset?844:600);dialog.getBoundingClientRect=()=>rect('viewerZoomFrame' in dialog.dataset?844:690);
+ track.setPointerCapture=()=>{};track.hasPointerCapture=()=>false;
+ const context={window,Event,performance:{now:()=>now},requestAnimationFrame:f=>(frames.set(++id,f),id),cancelAnimationFrame:i=>frames.delete(i),matchMedia:q=>({matches:q.includes('reduced-motion')?reduced:mobile,addEventListener(){}}),getComputedStyle:e=>({transform:e.style.transform,clipPath:'inset(0px)'}),DOMMatrixReadOnly:class {constructor(){this.a=1.5;this.e=20;this.f=30;}}};
+ const swipe=readFileSync(new URL('../src/lib/detail-image-swipe.ts',import.meta.url),'utf8');const zoom=readFileSync(new URL('../src/lib/detail-image-zoom.ts',import.meta.url),'utf8');
+ runInNewContext(stripTypeScriptTypes((swipe+'\n'+zoom).replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.bind=bindDetailImageZoom;globalThis.bounds=zoomBounds;',context);
+ const reset=context.bind(dialog,track,controller.signal,()=>image,i=>selected.push(i),()=>{});
  const pointer=(type,x,y,id=1)=>(type==='pointerup'||type==='pointercancel'?window:track).fire(type,{pointerId:id,pointerType:'touch',clientX:x,clientY:y});
- return {finishFrame:()=>frameTask?.(),animations,dialog,track,window,image,steps,pointer,reset,controller,bounds:context.bounds,advance:ms=>now+=ms};
+ const advance=ms=>{now+=ms;const tasks=[...frames.values()];frames.clear();tasks.forEach(f=>f(now));};
+ const tap=()=>{pointer('pointerdown',200,300);pointer('pointerup',200,300);};
+ const pinch=()=>{pointer('pointerdown',100,300);pointer('pointerdown',300,300,2);};
+ const end=()=>{pointer('pointerup',400,300,2);pointer('pointerup',100,300);};
+ return {dialog,track,window,image,controller,selected,pointer,reset,advance,tap,pinch,end,bounds:context.bounds};
 }
-test('pinch anchors scale and single remaining finger pans without navigation',()=>{
- const v=viewer();v.pointer('pointerdown',100,300);v.pointer('pointerdown',300,300,2);
- assert.ok('viewerZoomed' in v.dialog.dataset);
- assert.equal(v.pointer('pointermove',400,300,2).stopped,true);
- assert.match(v.image.style.transform,/scale\(1.5\)/);
- v.pointer('pointerup',400,300,2);v.pointer('pointermove',120,320);
- assert.match(v.image.style.transform,/translate\(70px,20px\)/);
- v.pointer('pointerup',120,320);assert.deepEqual(v.steps,[]);
- assert.equal(v.track.fire('click').stopped,true);
+test('fit swipes follow the finger immediately and finish with a bounded 160ms snap',()=>{
+ const v=viewer();v.pointer('pointerdown',300,300);v.advance(20);v.pointer('pointermove',180,305);
+ assert.equal(v.track.scrollLeft,120);assert.ok('viewerSwiping' in v.track.dataset);assert.deepEqual(v.selected,[]);
+ v.pointer('pointerup',180,305);v.advance(80);assert.ok(v.track.scrollLeft>120&&v.track.scrollLeft<400);assert.deepEqual(v.selected,[]);
+ v.advance(80);assert.equal(v.track.scrollLeft,400);assert.deepEqual(v.selected,[1]);assert.equal(v.track.dataset.viewerSwiping,undefined);
 });
-test('fit horizontal swipe navigates once and cancellation does not navigate',()=>{
- const v=viewer();v.pointer('pointerdown',300,300);v.pointer('pointermove',100,305);v.pointer('pointerup',100,305);
- assert.deepEqual(v.steps,[1]);v.pointer('pointerdown',300,300);v.pointer('pointercancel',100,300);assert.deepEqual(v.steps,[1]);
+test('short drags and cancellation settle back without changing selection',()=>{
+ const v=viewer();v.pointer('pointerdown',200,300);v.advance(300);v.pointer('pointermove',180,302);v.pointer('pointerup',180,302);v.advance(160);assert.equal(v.track.scrollLeft,0);assert.deepEqual(v.selected,[0]);
+ v.pointer('pointerdown',300,300);v.pointer('pointermove',100,300);v.pointer('pointercancel',100,300);v.advance(160);assert.equal(v.track.scrollLeft,0);
 });
-test('double tap zooms and resets; history and abort clear transforms',()=>{
- const v=viewer();const tap=()=>{v.pointer('pointerdown',200,300);v.pointer('pointerup',200,300);};
- tap();v.advance(150);tap();assert.match(v.image.style.transform,/scale\(2.5\)/);
- v.animations.at(-1).onfinish();v.advance(400);tap();v.advance(150);tap();assert.match(v.image.style.transform,/scale\(1\)/);
- tap();v.advance(150);tap();v.window.fire('pagehide');assert.equal(v.image.style.transform,undefined);assert.equal(v.dialog.dataset.viewerZoomed,undefined);
- v.controller.abort();assert.equal(v.dialog.dataset.viewerZoomed,undefined);
+test('pinching inward or resting two fingers at fit never expands, shrinks, or navigates',()=>{
+ const v=viewer();v.pinch();assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
+ for(const x of [280,220,240,290,300])v.pointer('pointermove',x,300,2);
+ assert.equal(v.dialog.dataset.viewerZoomed,undefined);assert.match(v.image.style.transform,/scale\(1\)/);assert.equal(v.dialog.animations.length,0);
+ v.end();assert.deepEqual(v.selected,[]);
 });
-test('bounds reject overscaling and panning outside image; desktop stays native',()=>{
- const v=viewer(false);const b=v.bounds(10,999,-999,400,600);assert.equal(b.scale,4);assert.equal(b.x,600);assert.equal(b.y,-900);
- v.pointer('pointerdown',100,300);v.pointer('pointerdown',300,300,2);v.pointer('pointermove',400,300,2);assert.equal(v.image.style.transform,undefined);
+test('zoom frame is latched across the boundary until all contacts lift, with one expansion',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.match(v.image.style.transform,/scale\(1.5\)/);
+ for(const x of [290,330,280,340,300])v.pointer('pointermove',x,300,2);
+ assert.equal(v.dialog.animations.length,1);assert.ok('viewerZoomed' in v.dialog.dataset);
+ v.pointer('pointerup',300,300,2);assert.equal(v.image.animations.length,0);assert.ok('viewerZoomFrame' in v.dialog.dataset);
+ v.pointer('pointerup',100,300);assert.equal(v.image.animations.length,1);v.image.animations.at(-1).onfinish();assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
 });
-
-test('single taps toggle zoom controls; panning hides them without toggling or navigating',()=>{
- const v=viewer();v.pointer('pointerdown',100,300);v.pointer('pointerdown',300,300,2);v.pointer('pointermove',400,300,2);v.pointer('pointerup',400,300,2);v.pointer('pointerup',100,300);
- const tap=()=>{v.advance(400);v.pointer('pointerdown',200,300);v.pointer('pointerup',200,300);};
- tap();assert.ok('viewerZoomControls' in v.dialog.dataset);assert.ok('viewerZoomed' in v.dialog.dataset);
- tap();assert.equal(v.dialog.dataset.viewerZoomControls,undefined);
- tap();assert.ok('viewerZoomControls' in v.dialog.dataset);
- v.pointer('pointerdown',200,300);v.pointer('pointermove',240,340);v.pointer('pointerup',240,340);
- assert.equal(v.dialog.dataset.viewerZoomControls,undefined);assert.deepEqual(v.steps,[]);
- tap();assert.ok('viewerZoomControls' in v.dialog.dataset);v.reset();assert.equal(v.dialog.dataset.viewerZoomControls,undefined);
+test('pinch takes over an interrupted swipe and pan never navigates or toggles controls',()=>{
+ const v=viewer();v.pointer('pointerdown',300,300);v.pointer('pointermove',240,300);assert.equal(v.track.scrollLeft,60);
+ v.pointer('pointerdown',340,300,2);assert.equal(v.track.scrollLeft,0);v.pointer('pointermove',400,300,2);v.end();
+ assert.deepEqual(v.selected,[]);assert.equal(v.track.dataset.viewerSwiping,undefined);
+ v.pointer('pointerdown',200,300);v.pointer('pointermove',240,340);v.pointer('pointerup',240,340);assert.deepEqual(v.selected,[]);assert.equal(v.dialog.dataset.viewerZoomControls,undefined);
 });
-
-
-test('double-tap animation eases both ways and a new touch continues from its displayed frame',()=>{
- const v=viewer();const tap=()=>{v.pointer('pointerdown',200,300);v.pointer('pointerup',200,300);};
- tap();v.advance(150);tap();const zoom=v.animations.at(-1);
- assert.equal(zoom.options.duration,240);assert.match(zoom.frames[0].transform,/scale\(1\)/);assert.match(zoom.frames[1].transform,/scale\(2.5\)/);
- v.pointer('pointerdown',200,300);assert.equal(zoom.cancelled,true);assert.match(v.image.style.transform,/translate\(20px,30px\) scale\(1.5\)/);
- v.pointer('pointercancel',200,300);v.advance(400);tap();v.advance(150);tap();
- assert.match(v.animations.at(-1).frames[1].transform,/scale\(1\)/);v.reset();assert.equal(v.animations.at(-1).cancelled,true);
+test('single taps toggle zoom controls and double taps animate back to fitted layout',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();
+ v.advance(400);v.tap();assert.ok('viewerZoomControls' in v.dialog.dataset);v.advance(400);v.tap();assert.equal(v.dialog.dataset.viewerZoomControls,undefined);
+ v.advance(150);v.tap();assert.equal(v.image.animations.at(-1).options.duration,200);v.image.animations.at(-1).onfinish();assert.equal(v.dialog.dataset.viewerZoomed,undefined);
 });
-test('reduced motion skips double-tap animation',()=>{
- const v=viewer(true,true);for(let i=0;i<2;i++){v.pointer('pointerdown',200,300);v.pointer('pointerup',200,300);v.advance(150);}
- assert.equal(v.animations.length,0);assert.match(v.image.style.transform,/scale\(2.5\)/);
+test('double-tap zoom can be interrupted from its displayed frame',()=>{
+ const v=viewer();v.tap();v.advance(150);v.tap();const a=v.image.animations.at(-1);assert.match(v.image.style.transform,/scale\(2.5\)/);
+ v.pointer('pointerdown',200,300);assert.equal(a.cancelled,true);v.pointer('pointermove',200,300);assert.match(v.image.style.transform,/scale\(1.5\)/);
+ v.controller.abort();assert.equal(v.image.style.transform,undefined);assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
+});
+test('reduced motion restores layout immediately and desktop remains untouched',()=>{
+ const v=viewer(true,true);v.tap();v.advance(150);v.tap();assert.equal(v.image.animations.length,0);v.advance(400);v.tap();v.advance(150);v.tap();assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);
+ const d=viewer(false);d.pinch();d.pointer('pointermove',400,300,2);assert.equal(d.image.style.transform,undefined);assert.equal(d.dialog.dataset.viewerZoomFrame,undefined);
+});
+test('history restores clean gesture state and bounds never allow zoom below fit',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.window.fire('pagehide');assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);assert.equal(v.image.style.transform,undefined);
+ const b=v.bounds(.5,100,100,400,220,400,844);assert.equal(b.scale,1);assert.equal(b.x,0);assert.equal(b.y,0);
 });
 
-
-
-test('zoom keeps fitted image dimensions while its viewport expands, then clears frame state on teardown',()=>{
- const v=viewer();v.pointer('pointerdown',100,300);v.pointer('pointerdown',300,300,2);
- assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.equal(v.dialog.style['--viewer-zoom-width'],'400px');assert.equal(v.dialog.style['--viewer-zoom-height'],'600px');assert.equal(v.dialog.style['--viewer-rest-height'],'690px');
- const bounds=v.bounds(2,900,900,400,220,400,844);assert.equal(bounds.x,200);assert.equal(bounds.y,0);
- v.reset();assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);assert.equal(v.dialog.style['--viewer-rest-height'],undefined);
+test('rapid swipes interrupt snapping, commit the nearest visible slide, and immediately follow the next drag',()=>{
+ const v=viewer();v.pointer('pointerdown',300,300);v.advance(20);v.pointer('pointermove',160,300);v.pointer('pointerup',160,300);v.advance(40);
+ v.pointer('pointerdown',300,300);assert.equal(v.track.scrollLeft,400);assert.deepEqual(v.selected,[1]);
+ v.pointer('pointermove',160,300);assert.equal(v.track.scrollLeft,540);v.pointer('pointerup',160,300);v.advance(160);assert.equal(v.track.scrollLeft,800);assert.deepEqual(v.selected,[1,2]);
 });
 
+test('interrupting return-to-fit keeps the zoom surface stable and invalidates the old completion',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',400,300,2);v.end();v.advance(400);v.tap();v.advance(150);v.tap();
+ const returning=v.image.animations.at(-1);v.pointer('pointerdown',200,300);assert.equal(returning.cancelled,true);
+ returning.onfinish();assert.ok('viewerZoomFrame' in v.dialog.dataset);v.pointer('pointermove',220,320);assert.match(v.image.style.transform,/scale\(1.5\)/);
+});
 
-test('return to fit restores the normal frame after settling and a new pinch cancels pending restoration',()=>{
- const v=viewer();v.pointer('pointerdown',100,300);v.pointer('pointerdown',300,300,2);v.pointer('pointerup',300,300,2);v.pointer('pointerup',100,300);
- assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.equal(v.dialog.dataset.viewerZoomed,undefined);
- v.pointer('pointerdown',100,300);v.pointer('pointerdown',300,300,2);v.finishFrame();assert.ok('viewerZoomFrame' in v.dialog.dataset);
- v.pointer('pointerup',300,300,2);v.pointer('pointerup',100,300);v.finishFrame();assert.equal(v.dialog.dataset.viewerZoomFrame,undefined);assert.equal(v.dialog.style['--viewer-zoom-width'],undefined);
+test('small-axis letterboxing preserves the pinch anchor instead of jumping to the new viewport center',()=>{
+ const v=viewer();v.pinch();v.pointer('pointermove',312,300,2);
+ assert.ok('viewerZoomFrame' in v.dialog.dataset);assert.match(v.image.style.transform,/translate\(6px,-104px\) scale\(1.06\)/);
+ const anchored=v.bounds(1.06,0,-45,390,219,390,844,true);assert.equal(anchored.y,-45);
+ const settled=v.bounds(1.06,0,-45,390,219,390,844);assert.equal(settled.y,0);
 });
