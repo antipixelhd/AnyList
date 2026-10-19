@@ -10,6 +10,12 @@ export function gallerySelectionBounds(x:number,y:number,width:number,height:num
   };
 }
 
+export function galleryBarBounds(firstLeft:number,lastRight:number,top:number,height:number,padding:number,scroll:number,viewportWidth:number) {
+  const left=Math.max(scroll,firstLeft-padding);
+  const right=Math.min(scroll+viewportWidth,lastRight+padding);
+  return {x:left,y:top-padding,width:Math.max(0,right-left),height:height+padding*2};
+}
+
 /** Same-winding shapes form one clipping region, so translucent fills never overlap. */
 function roundedRect(x:number,y:number,width:number,height:number,radius:number) {
   const right=x+width,bottom=y+height,r=Math.min(radius,width/2,height/2);
@@ -24,9 +30,10 @@ export function createGallerySelection(strip:HTMLElement,signal:AbortSignal) {
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   let selected:HTMLElement|undefined,placed=false;
   let target:ReturnType<typeof gallerySelectionBounds>|undefined;
-  let scroll=0,barY=0,barHeight=0,viewportWidth=0;
+  let scroll=0,firstLeft=0,lastRight=0,top=0,height=0,padding=0,viewportWidth=0;
   const paint=(bounds:ReturnType<typeof gallerySelectionBounds>)=>{
-    element.style.clipPath=`path("${roundedRect(scroll,barY,viewportWidth,barHeight,12)} ${roundedRect(bounds.x,bounds.y,bounds.width,bounds.height,9)}")`;
+    const bar=galleryBarBounds(firstLeft,lastRight,top,height,padding,scroll,viewportWidth);
+    element.style.clipPath=`path("${roundedRect(bar.x,bar.y,bar.width,bar.height,8)} ${roundedRect(bounds.x,bounds.y,bounds.width,bounds.height,9)}")`;
   };
   const motion=createGallerySpring({x:0,y:0,width:0,height:0},paint,signal,{stiffness:gallerySpatial.fast});
   const update=(button:HTMLElement|undefined,immediate=false)=>{
@@ -34,12 +41,12 @@ export function createGallerySelection(strip:HTMLElement,signal:AbortSignal) {
     selected=button;
     if(!selected||strip.hidden||!selected.offsetWidth){reset();return;}
     const style=getComputedStyle(strip);
-    const padding=parseFloat(style.getPropertyValue('--preview-selection-padding'))||0;
+    padding=parseFloat(style.getPropertyValue('--preview-selection-padding'))||0;
     const buttons=strip.querySelectorAll<HTMLElement>('button');
     const last=buttons[buttons.length-1];
     viewportWidth=strip.clientWidth;scroll=strip.scrollLeft;
-    barHeight=selected.offsetHeight+padding*2;
-    barY=selected.offsetTop-padding;
+    firstLeft=buttons[0].offsetLeft;lastRight=last.offsetLeft+last.offsetWidth;
+    top=selected.offsetTop;height=selected.offsetHeight;
     element.style.width=`${Math.max(viewportWidth,last.offsetLeft+last.offsetWidth+(parseFloat(style.paddingRight)||0))}px`;
     element.style.height=`${strip.clientHeight}px`;
     const next=gallerySelectionBounds(selected.offsetLeft,selected.offsetTop,selected.offsetWidth,selected.offsetHeight,

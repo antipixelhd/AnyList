@@ -14,12 +14,12 @@ function fixture() {
   ResizeObserver:class{disconnected=false;constructor(callback){observer=this;this.callback=callback;}observe(){}disconnect(){this.disconnected=true;}}};
  const spring=readFileSync(new URL('../src/lib/gallery-spring.ts',import.meta.url),'utf8');
  const selection=readFileSync(new URL('../src/lib/gallery-selection.ts',import.meta.url),'utf8').replace(/^import .*;\r?\n/,'');
- vm.runInNewContext(stripTypeScriptTypes((spring+'\n'+selection).replace(/export /g,''))+';globalThis.create=createGallerySelection;globalThis.bounds=gallerySelectionBounds;',context);
+ vm.runInNewContext(stripTypeScriptTypes((spring+'\n'+selection).replace(/export /g,''))+';globalThis.create=createGallerySelection;globalThis.bounds=gallerySelectionBounds;globalThis.barBounds=galleryBarBounds;',context);
  const handlers={};
- const strip={hidden:false,clientWidth:180,clientHeight:86,scrollLeft:0,querySelectorAll:()=>[button(124)],addEventListener:(event,callback)=>{handlers[event]=callback;},closest:()=>({addEventListener(){}})};
+ const strip={hidden:false,clientWidth:180,clientHeight:86,scrollLeft:0,querySelectorAll:()=>[button(16),button(124)],addEventListener:(event,callback)=>{handlers[event]=callback;},closest:()=>({addEventListener(){}})};
  const highlight=context.create(strip,controller.signal);
  const advance=ms=>{now+=ms;const work=[...frames.values()];frames.clear();work.forEach(f=>f(now));};
- return {highlight,element,media,frames,strip,handlers,advance,controller,bounds:context.bounds,resize:()=>observer.callback(),observer:()=>observer};
+ return {highlight,element,media,frames,strip,handlers,advance,controller,bounds:context.bounds,barBounds:context.barBounds,resize:()=>observer.callback(),observer:()=>observer};
 }
 const button=x=>({offsetLeft:x,offsetTop:12,offsetWidth:44,offsetHeight:62});
 const x=s=>Number([...s.element.style.clipPath.matchAll(/M ([-\d.]+)/g)][1][1]);
@@ -63,4 +63,23 @@ test('side gutters leave clearance for the rounded shape around both portrait an
   const right=16+width+16;
   assert.ok(right-(b.x+b.width)>=4);
  }
+});
+
+test('visible background uses the same padding at its first, last, top and bottom edges',()=>{
+ const s=fixture();
+ for(const [width,height] of [[44,62],[72,42]]){
+  const first=16,last=16+width+12;
+  const b=s.barBounds(first,last+width,12,height,4,0,500);
+  assert.equal(first-b.x,4);assert.equal(b.x+b.width-(last+width),4);
+  assert.equal(12-b.y,4);assert.equal(b.y+b.height-(12+height),4);
+ }
+});
+
+test('side gutters do not enlarge the painted background and scrolling clips only unseen content',()=>{
+ const s=fixture();
+ const a=s.barBounds(16,172,12,42,4,0,188);
+ const b=s.barBounds(24,180,12,42,4,0,204);
+ assert.equal(a.width,b.width);assert.equal(b.x-a.x,8);
+ const clipped=s.barBounds(16,500,12,42,4,100,180);
+ assert.equal(clipped.x,100);assert.equal(clipped.width,180);
 });
