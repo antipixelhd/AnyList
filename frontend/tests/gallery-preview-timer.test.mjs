@@ -87,7 +87,10 @@ test('hiding focus and stationary pointer changes do not reveal idle controls ag
   const pointerStart=source.indexOf("  window.addEventListener('pointermove'");
   const focusStart=source.indexOf("  lightbox.addEventListener('focusin'");
   const bindings=source.slice(pointerStart,source.indexOf('  const releasePreviews=',pointerStart))+source.slice(focusStart,source.indexOf('  // Recentring',focusStart));
-  vm.runInNewContext((await import('node:module')).stripTypeScriptTypes(bindings),{window,lightbox,track,pointerPosition:{x:10,y:10},mobileViewer:{matches:false},previewInteracting:false,previewGesture:undefined,revealPreviews:g.controls.reveal,refreshPreviewLoading:g.controls.refresh,signal:g.controller.signal});
+  const boundaryStart=source.indexOf('  const insideViewer=');
+  const boundary=source.slice(boundaryStart,source.indexOf("  slots.addEventListener('load'",boundaryStart));
+  lightbox.getBoundingClientRect=()=>({left:0,right:100,top:0,bottom:100});
+  vm.runInNewContext((await import('node:module')).stripTypeScriptTypes(boundary+bindings),{window,lightbox,track,pointerPosition:{x:10,y:10},mobileViewer:{matches:false},previewInteracting:false,previewGesture:undefined,revealPreviews:g.controls.reveal,refreshPreviewLoading:g.controls.refresh,signal:g.controller.signal});
   g.controls.reveal();g.tick(1500);assert.equal(g.state.hidden,true);
   handlers.focusout();
   const target={closest:()=>true};
@@ -95,6 +98,14 @@ test('hiding focus and stationary pointer changes do not reveal idle controls ag
   handlers.pointermove({target,clientX:10,clientY:10,movementX:50,movementY:0});
   g.tick(1500);assert.equal(g.state.hidden,true);
   handlers.pointermove({target,clientX:11,clientY:10,movementX:1,movementY:0});assert.equal(g.state.hidden,false);
+  g.tick(1000);
+  // Backdrop events still target the dialog; coordinates define the boundary.
+  handlers.pointermove({target:lightbox,clientX:150,clientY:10,movementX:139,movementY:0});
+  g.tick(500);assert.equal(g.state.hidden,true);
+  handlers.pointermove({target:lightbox,clientX:160,clientY:10,movementX:10,movementY:0});
+  assert.equal(g.state.hidden,true);
+  handlers.pointermove({target,clientX:99,clientY:10,movementX:-61,movementY:0});
+  assert.equal(g.state.hidden,false);
   g.tick(1500);assert.equal(g.state.hidden,true);
   handlers.focusin({target:track});assert.equal(g.state.hidden,true);
   handlers.focusin({target});assert.equal(g.state.hidden,false);

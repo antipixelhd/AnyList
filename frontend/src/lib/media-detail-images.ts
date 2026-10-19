@@ -75,9 +75,15 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const clearPreviewTimer=previews.pause;
   const revealPreviews=previews.reveal;
   function refreshPreviewLoading(){if(lightbox.open)previews.refresh();}
+  const insideViewer=(x:number,y:number)=>{
+    const bounds=lightbox.getBoundingClientRect();
+    return x>=bounds.left&&x<bounds.right&&y>=bounds.top&&y<bounds.bottom;
+  };
   slots.addEventListener('load',refreshPreviewLoading,{signal,capture:true});
   slots.addEventListener('error',refreshPreviewLoading,{signal,capture:true});
   lightbox.addEventListener('pointerdown',event=>{
+    // Modal backdrop events also target the dialog, despite being outside it.
+    if(!insideViewer(event.clientX,event.clientY))return;
     previewInteracting=true;
     previewGesture={x:event.clientX,y:event.clientY,moved:false};
     clearPreviewTimer();
@@ -87,13 +93,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     // absolute coordinates so a stationary pointer never extends the deadline.
     const moved=!pointerPosition||event.clientX!==pointerPosition.x||event.clientY!==pointerPosition.y;
     pointerPosition={x:event.clientX,y:event.clientY};
-    if(moved&&!mobileViewer.matches&&lightbox.open&&lightbox.contains(event.target as Node))revealPreviews();
+    if(moved&&!mobileViewer.matches&&lightbox.open&&insideViewer(event.clientX,event.clientY))revealPreviews();
     if(previewInteracting&&previewGesture&&Math.hypot(event.clientX-previewGesture.x,event.clientY-previewGesture.y)>8)previewGesture.moved=true;
   },{signal,passive:true});
   const releasePreviews=()=>{
     if(!previewInteracting)return;
     previewInteracting=false;
-    if(previewGesture?.moved)revealPreviews();else refreshPreviewLoading();
+    if(previewGesture?.moved&&(mobileViewer.matches||pointerPosition&&insideViewer(pointerPosition.x,pointerPosition.y)))revealPreviews();else refreshPreviewLoading();
   };
   window.addEventListener('pointerup',releasePreviews,{signal,passive:true});
   window.addEventListener('pointercancel',()=>{
