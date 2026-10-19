@@ -45,7 +45,8 @@ After review, enable publication and recreate the application container (a plain
 Compose restart does not reload container environment). No frontend rebuild or
 database migration is needed. Frontend configuration refreshes within five seconds.
 Six short text fields fit environment configuration better than a database or a
-CMS. Text is escaped by Astro; no administrator HTML or Markdown is executed.
+CMS. Text is escaped by Astro; HTTPS links in `[label](https://...)` form are
+supported without executing HTML or other Markdown features.
 These disclosures become public when enabled: keeping them out of Git does not
 make a published legal notice private. `/dev` is a preview namespace, not access control.
 
