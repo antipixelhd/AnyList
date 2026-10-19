@@ -1,5 +1,5 @@
 ---
-import { loginShareIdentity, loginSharePage, shareMetadata, sharePagePath, sharePath } from '../lib/share-preview';
+import { loginShareIdentity, loginSharePage, shareImagePath, shareMetadata, sharePagePath, sharePath } from '../lib/share-preview';
 const {title: pageTitle, description: suppliedDescription} = Astro.props;
 const loginPage = Astro.url.pathname === '/login' ? loginSharePage(Astro.url.searchParams.get('next')) : null;
 const loginIdentity = Astro.url.pathname === '/login' ? loginShareIdentity(Astro.url.searchParams.get('next')) : null;
@@ -11,7 +11,7 @@ const origin = process.env.SERVER_URL || Astro.url.origin;
 const destination = metadata && loginIdentity ? new URL(Astro.url.searchParams.get('next')!, origin) : null;
 const canonical = new URL(destination ? sharePagePath(destination.pathname, destination.search)
   : loginPage?.path || sharePagePath(Astro.url.pathname, Astro.url.search), origin).href;
-const image = new URL(path ? `/api/proxy/sharing/image?${new URLSearchParams({path})}` : '/share-preview.png', origin).href;
+const image = new URL(path ? shareImagePath(path) : '/share-preview.png', origin).href;
 const imageType = path ? 'image/jpeg' : 'image/png';
 ---
 {title && Astro.response.status === 200 && <>

@@ -14,6 +14,12 @@ const generalPages: Record<string, string> = {
   '/discover': 'Discover', '/search': 'Search',
 };
 
+/** Bump when rendering or preview delivery changes invalidate messenger images. */
+export const SHARE_IMAGE_REVISION = '2026-10-19-2';
+export function shareImagePath(path: string): string {
+  return `/api/proxy/sharing/image?${new URLSearchParams({path, v: SHARE_IMAGE_REVISION})}`;
+}
+
 export function generalSharePage(pathname: string, search = ''): {path: string; title: string} | null {
   const path = pathname.replace(/\/$/, '') || '/';
   if (!Object.hasOwn(generalPages, path)) return null;
@@ -60,7 +66,7 @@ export async function crawlerShareResponse(url: URL, userAgent: string, origin: 
   if (!metadata) return null;
   const escape = (value: string) => value.replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]!));
   const canonical = new URL(sharePagePath(url.pathname, url.search), origin).href;
-  const image = new URL(`/api/proxy/sharing/image?${new URLSearchParams({path})}`, origin).href;
+  const image = new URL(shareImagePath(path), origin).href;
   const tags: Record<string, string> = {'og:site_name':'AnyList', 'og:type':'website',
     'og:title':metadata.title, 'og:description':metadata.description, 'og:url':canonical,
     'og:image':image, 'og:image:type':'image/jpeg', 'og:image:width':'1200', 'og:image:height':'630',

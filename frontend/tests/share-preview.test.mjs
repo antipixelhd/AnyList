@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {crawlerShareResponse, generalSharePage, loginSharePage, loginShareIdentity, shareMetadata, shareLoginPath, sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
+import {SHARE_IMAGE_REVISION, shareImagePath, crawlerShareResponse, generalSharePage, loginSharePage, loginShareIdentity, shareMetadata, shareLoginPath, sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
 
 test('general previews retain public page labels through the login redirect', () => {
   for (const [path, title] of [['/', 'Welcome'], ['/home', 'Home'], ['/settings', 'Account'],
@@ -62,6 +62,7 @@ test('messaging crawlers get custom metadata directly without a login redirect',
     assert.ok(html.includes('property="og:title" content="A title &lt;script&gt; &amp; &quot;quoted&quot;"'));
     assert.ok(html.includes('/api/proxy/sharing/image?path='));
     assert.ok(html.includes('name="twitter:image"'));
+    assert.ok(html.includes(`v=${SHARE_IMAGE_REVISION}`));
     assert.ok(!html.includes('secret'));
     assert.ok(!html.includes('/login'));
   }
@@ -71,6 +72,12 @@ test('messaging crawlers get custom metadata directly without a login redirect',
   }
   assert.equal(await crawlerShareResponse(new URL('https://anylist.test/title/102'), 'Mozilla/5.0',
     'https://anylist.test', () => assert.fail('normal navigation must not fetch previews')), null);
+});
+
+test('share images change URL by revision without changing the underlying identity', () => {
+  const url = new URL(shareImagePath('/title/102'), 'https://anylist.test');
+  assert.equal(url.searchParams.get('path'), '/title/102');
+  assert.equal(url.searchParams.get('v'), SHARE_IMAGE_REVISION);
 });
 
 test('share identities discard profile sections and reject URLs and query credentials', () => {
