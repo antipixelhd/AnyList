@@ -101,7 +101,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   },{signal});
   lightbox.addEventListener('focusin',revealPreviews,{signal});
   lightbox.addEventListener('focusout',revealPreviews,{signal});
-  slots.addEventListener('scroll',revealPreviews,{signal,passive:true});
+  // Recentring and inertial scrolling are animation output, not fresh input.
+  // Check loading without extending the user's existing idle deadline.
+  slots.addEventListener('scroll',refreshPreviewLoading,{signal,passive:true});
+  slots.addEventListener('wheel',revealPreviews,{signal,passive:true});
   mobileViewer.addEventListener('change',revealPreviews,{signal});
   lightbox.addEventListener('close',()=>{previews.reset();previewInteracting=false;delete lightbox.dataset.previewsHidden;},{signal});
   window.addEventListener('pagehide',()=>{previews.reset();previewInteracting=false;previewGesture=undefined;},{signal});

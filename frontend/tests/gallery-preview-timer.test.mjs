@@ -49,3 +49,30 @@ test('readiness is checked again when the timer expires',t=>{
   assert.equal(g.state.hidden,false);
   g.state.ready=true;g.controls.refresh();g.tick(2000);assert.equal(g.state.hidden,true);
 });
+
+test('ready scroll and animation refreshes do not extend the idle deadline',t=>{
+  const g=gallery(t);g.state.ready=true;g.controls.reveal();
+  for(let i=0;i<3;i++){g.tick(500);g.controls.refresh();}
+  g.tick(499);g.controls.refresh();assert.equal(g.state.hidden,false);
+  g.tick(1);assert.equal(g.state.hidden,true);
+});
+
+test('fresh wheel, pointer or selection activity starts a full new idle interval',t=>{
+  const g=gallery(t);g.state.ready=true;g.controls.reveal();g.tick(700);
+  g.controls.reveal();g.tick(1999);assert.equal(g.state.hidden,false);
+  g.tick(1);assert.equal(g.state.hidden,true);
+});
+
+test('gallery scroll events preserve the deadline while real wheel events restart it',async t=>{
+  const {readFileSync}=await import('node:fs');
+  const vm=await import('node:vm');
+  const source=readFileSync(new URL('../src/lib/media-detail-images.ts',import.meta.url),'utf8');
+  const start=source.indexOf("  slots.addEventListener('scroll'");
+  const bindings=source.slice(start,source.indexOf("  mobileViewer.addEventListener('change'",start));
+  const g=gallery(t),handlers={};g.state.ready=true;
+  vm.runInNewContext(bindings,{slots:{addEventListener:(name,callback)=>{handlers[name]=callback;}},refreshPreviewLoading:g.controls.refresh,revealPreviews:g.controls.reveal,signal:g.controller.signal});
+  g.controls.reveal();g.tick(600);handlers.scroll();g.tick(1399);assert.equal(g.state.hidden,false);
+  g.tick(1);assert.equal(g.state.hidden,true);
+  g.controls.reveal();g.tick(1200);handlers.wheel();g.tick(1999);assert.equal(g.state.hidden,false);
+  g.tick(1);assert.equal(g.state.hidden,true);
+});
