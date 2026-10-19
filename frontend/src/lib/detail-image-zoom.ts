@@ -1,8 +1,8 @@
 type Point={x:number;y:number};
-export function zoomBounds(scale:number,x:number,y:number,width:number,height:number) {
+export function zoomBounds(scale:number,x:number,y:number,width:number,height:number,viewportWidth=width,viewportHeight=height) {
   scale=Math.max(1,Math.min(4,scale));
   const clamp=(value:number,limit:number)=>Math.max(-limit,Math.min(limit,value));
-  return {scale:Math.max(1,Math.min(4,scale)),x:clamp(x,width*(scale-1)/2),y:clamp(y,height*(scale-1)/2)};
+  return {scale,x:clamp(x,Math.max(0,(width*scale-viewportWidth)/2)),y:clamp(y,Math.max(0,(height*scale-viewportHeight)/2))};
 }
 
 /** Own phone image gestures before navigation/dismissal; never change page zoom. */
@@ -12,14 +12,32 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
   let animation:Animation|undefined;
   const points=new Map<number,Point>();
   let scale=1,x=0,y=0,target:HTMLImageElement|undefined;
+  let fitted:{width:number;height:number}|undefined;
+  let frameTimer:ReturnType<typeof setTimeout>|undefined;
+  const restoreFrame=()=>{
+    clearTimeout(frameTimer);frameTimer=undefined;fitted=undefined;
+    for(const property of ['--viewer-zoom-width','--viewer-zoom-height','--viewer-rest-height'])dialog.style.removeProperty(property);
+    delete dialog.dataset.viewerZoomFrame;
+  };
   let base={scale:1,x:0,y:0,distance:1,center:{x:0,y:0}};
   let origin:Point|undefined,moved=false,owned=false,ignoreUntil=0,lastTap=0,lastPoint:Point|undefined;
   const center=()=>{const rows=[...points.values()];return rows.length>1?{x:(rows[0].x+rows[1].x)/2,y:(rows[0].y+rows[1].y)/2}:rows[0];};
   const distance=()=>{const rows=[...points.values()];return rows.length>1?Math.hypot(rows[1].x-rows[0].x,rows[1].y-rows[0].y):1;};
   const paint=()=>{
+    clearTimeout(frameTimer);frameTimer=undefined;
+    if((scale>1.01||points.size>1)&&!fitted){
+      const rect=track.getBoundingClientRect();fitted={width:rect.width,height:rect.height};
+      dialog.style.setProperty('--viewer-zoom-width',`${rect.width}px`);
+      dialog.style.setProperty('--viewer-zoom-height',`${rect.height}px`);
+      dialog.style.setProperty('--viewer-rest-height',`${dialog.getBoundingClientRect().height}px`);
+      dialog.dataset.viewerZoomFrame='';
+    }
     if(target)target.style.transform=`translate(${x}px,${y}px) scale(${scale})`;
     if(scale>1.01||points.size>1)dialog.dataset.viewerZoomed='';else delete dialog.dataset.viewerZoomed;
     if(!('viewerZoomed' in dialog.dataset))delete dialog.dataset.viewerZoomControls;
+    if(fitted&&!('viewerZoomed' in dialog.dataset)&&!points.size){
+      if(reduced.matches)restoreFrame();else frameTimer=setTimeout(restoreFrame,240);
+    }
   };
   const rebase=()=>{base={scale,x,y,distance:distance(),center:center()||{x:0,y:0}};};
   const reset=()=>{
@@ -27,6 +45,7 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     if(target)target.style.removeProperty('transform');
     for(const id of points.keys())if(track.hasPointerCapture(id))track.releasePointerCapture(id);
     target=undefined;scale=1;x=0;y=0;points.clear();origin=undefined;owned=false;lastTap=0;
+    restoreFrame();
     delete dialog.dataset.viewerZoomed;delete dialog.dataset.viewerZoomControls;changed();
   };
   const consume=(event:PointerEvent)=>{event.preventDefault();event.stopImmediatePropagation();};
@@ -58,7 +77,8 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
     const ratio=next/base.scale;
     // Keep the image point under the pinch midpoint stationary while scaling.
     const bounds=zoomBounds(next,c.x-rect.left-rect.width/2-(base.center.x-rect.left-rect.width/2-base.x)*ratio,
-      c.y-rect.top-rect.height/2-(base.center.y-rect.top-rect.height/2-base.y)*ratio,rect.width,rect.height);
+      c.y-rect.top-rect.height/2-(base.center.y-rect.top-rect.height/2-base.y)*ratio,
+      fitted?.width||rect.width,fitted?.height||rect.height,rect.width,rect.height);
     scale=bounds.scale;x=bounds.x;y=bounds.y;paint();
   },{signal,capture:true,passive:false});
   const release=(event:PointerEvent)=>{
@@ -79,7 +99,8 @@ export function bindDetailImageZoom(dialog:HTMLDialogElement,track:HTMLElement,s
         animateFrom=target?.style.transform;
         if(scale>1.01){scale=1;x=0;y=0;}else{
           const rect=track.getBoundingClientRect();scale=2.5;
-          ({x,y}=zoomBounds(scale,(rect.left+rect.width/2-origin.x)*(scale-1),(rect.top+rect.height/2-origin.y)*(scale-1),rect.width,rect.height));
+          ({x,y}=zoomBounds(scale,(rect.left+rect.width/2-origin.x)*(scale-1),(rect.top+rect.height/2-origin.y)*(scale-1),
+            fitted?.width||rect.width,fitted?.height||rect.height,rect.width,rect.height));
         }
         ignoreUntil=now+450;lastTap=0;
       }else{
