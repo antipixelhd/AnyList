@@ -14,6 +14,7 @@ import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
 import {commitDetailHero} from './detail-hero';
 import {createGalleryPreviewTimer,galleryPreviewImagesSettled} from './gallery-preview-timer';
+import {createGallerySelection} from './gallery-selection';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
@@ -37,6 +38,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const galleryLimit=standalone&&!standalone.logo?5:10;
   let pending=!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
+  const selection=createGallerySelection(slots,signal);
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
   const announcement=lightbox.querySelector<HTMLElement>('[data-image-viewer-announcement]');
   let active:keyof typeof galleries='artwork',current=0;
@@ -115,7 +117,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const rows=galleries[active],count=viewerPending()?galleryLimit:rows.length;
     slots.hidden=!viewerPending()&&count<=1;
     if(slots.hidden){
-      slots.replaceChildren();followedSlot=undefined;refreshPreviewLoading();return;
+      selection.update(undefined);slots.replaceChildren();followedSlot=undefined;refreshPreviewLoading();return;
     }
     const existing=new Map([...slots.querySelectorAll<HTMLButtonElement>('button')].map(button=>[button.dataset.slotKey,button]));
     const buttons=Array.from({length:count},(_,index)=>{
@@ -135,9 +137,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       button.setAttribute('aria-label',`${active==='posters'?'Poster':'Artwork'} ${index+1}${rows[index]?'':': loading'}`);
       button.setAttribute('aria-current',String(current===index));loadThumbnail(button);return button;
     });
-    reconcileGalleryChildren(slots,buttons);
+    reconcileGalleryChildren(slots,[selection.element,...buttons]);
     refreshPreviewLoading();
     const selected=buttons[current];
+    selection.update(selected);
     if(selected&&selected.dataset.slotKey!==followedSlot){
       followedSlot=selected.dataset.slotKey;
       const bounds=slots.getBoundingClientRect(),buttonBounds=selected.getBoundingClientRect();
