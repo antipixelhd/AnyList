@@ -454,15 +454,32 @@
     gap:8px
   }
   .editor-hero-actions :is(.editor-favorite,.editor-library) {
+    --editor-action-color:var(--blue);
     width:44px;
     height:44px;
     flex:none;
     border-radius:5px;
-    background:#172435b3
+    background:var(--panel);
+    color:var(--editor-action-color)!important;
+    transition:background-color .16s ease,color .16s ease
   }
-  .editor-hero-actions .editor-library:focus-visible,.editor-favorite:has(input:focus-visible) {
+  .editor-hero-actions .editor-favorite {
+    --editor-action-color:#f05296
+  }
+  .editor-hero-actions :is(.editor-favorite,.editor-library) .ui-icon {
+    font-size:18px
+  }
+  .editor-hero-actions :is(.editor-favorite:hover,.editor-library:hover,.editor-library:focus-visible),
+  .editor-hero-actions .editor-favorite:has(input:focus-visible) {
     outline:none;
-    background:#31516b
+    background:color-mix(in srgb,var(--editor-action-color) 20%,var(--panel))
+  }
+  .editor-hero-actions :is(.editor-favorite:has(input:checked),.editor-library[aria-pressed=true]) {
+    background:var(--editor-action-color);
+    color:#ffffff!important
+  }
+  .editor-hero-actions :is(.editor-favorite:has(input:checked):hover,.editor-favorite:has(input:checked):has(input:focus-visible),.editor-library[aria-pressed=true]:is(:hover,:focus-visible)) {
+    background:color-mix(in srgb,var(--editor-action-color) 85%,white)
   }
   .editor-save {
     margin-left:auto;
@@ -493,6 +510,9 @@
     width:auto!important;
     margin:0!important
   }
+}
+@media(max-width:460px) and (prefers-reduced-motion:reduce) {
+  .editor-hero-actions :is(.editor-favorite,.editor-library) { transition:none }
 }
 .library-toggle {
   width:100%;
