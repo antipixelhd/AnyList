@@ -78,8 +78,20 @@ test('rapid targets share one spring and continue from the displayed position',(
   const g=gallery();g.paint(['one','two','three','four'],1,true,true);g.flush(40);
   const before=g.track.scrollLeft;g.paint(['one','two','three','four'],3,true,true);
   assert.equal(g.track.scrollLeft,before);g.flush(16);assert.ok(g.track.scrollLeft>before);
-  g.flush(500);assert.equal(g.track.scrollLeft,1170);assert.equal(g.track.dataset.viewerNavigating,undefined);
+  g.flush(800);assert.equal(g.track.scrollLeft,1170);assert.equal(g.track.dataset.viewerNavigating,undefined);
   assert.deepEqual(g.selected,[]);
+});
+
+test('portrait stage resizing preserves the transition rather than snapping to the new picture',()=>{
+  const g=gallery();g.paint(['primary','extra'],1,true,true);g.flush(100);
+  const fraction=g.track.scrollLeft/g.track.clientWidth;
+  g.track.clientWidth=500;g.resize();
+  assert.ok(Math.abs(g.track.scrollLeft/500-fraction)<1e-10);
+  assert.equal(g.track.dataset.viewerNavigating,'');
+  assert.ok(g.track.scrollLeft<500);
+  // A height-only resize must not interrupt paging either.
+  g.resize();assert.equal(g.track.dataset.viewerNavigating,'');
+  g.flush(800);assert.equal(g.track.scrollLeft,500);
 });
 
 test('normal navigation is slower than wheel navigation and switching speed preserves position',()=>{

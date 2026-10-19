@@ -1,6 +1,8 @@
 import {reconcileGalleryChildren} from './detail-gallery-dom';
 import {createGallerySpring,gallerySpatial} from './gallery-spring';
 
+const deliberateNavigationStiffness=300;
+
 /** Scroll-backed slides share decoded images; phone touch arbitration lives in detail-image-zoom. */
 export function visibleDetailImageIndices(left:number,width:number,count:number) {
   if(width<=0||count<=0)return [];
@@ -13,6 +15,7 @@ export function visibleDetailImageIndices(left:number,width:number,count:number)
 export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,select:(index:number)=>void,prepare:(index:number)=>void=()=>{}) {
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   let current=0,count=0,frame=0,navigating=false;
+  let width=track.clientWidth,stiffness=deliberateNavigationStiffness;
   const motion=createGallerySpring({left:track.scrollLeft},value=>track.scrollTo({left:value.left,behavior:'instant'}),signal,{
     stiffness:gallerySpatial.fast,precision:{left:.5},
     bounds:()=>({left:{min:0,max:Math.max(0,(count-1)*track.clientWidth)}}),
@@ -22,7 +25,8 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
     if(!motion.active)motion.snap({left:track.scrollLeft});
     navigating=animate&&!reduced.matches;
     if(navigating)track.dataset.viewerNavigating='';
-    motion.to({left:current*track.clientWidth},{immediate:!navigating,stiffness:fast?gallerySpatial.fast:gallerySpatial.default,done:clearNavigation});
+    stiffness=fast?gallerySpatial.fast:deliberateNavigationStiffness;
+    motion.to({left:current*track.clientWidth},{immediate:!navigating,stiffness,done:clearNavigation});
   };
   track.addEventListener('scroll',()=>{
     if(frame)return;
@@ -43,7 +47,18 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
   track.addEventListener('wheel',event=>{if(Math.abs(event.deltaX)>Math.abs(event.deltaY))interrupt();},{signal,passive:true});
   track.closest('dialog')?.addEventListener('close',interrupt,{signal});
   reduced.addEventListener('change',()=>{if(reduced.matches)motion.finish();},{signal});
-  const resize=new ResizeObserver(()=>{if(track.clientWidth)align();});
+  const resize=new ResizeObserver(()=>{
+    const nextWidth=track.clientWidth;
+    if(!nextWidth||nextWidth===width)return;
+    const ratio=width?nextWidth/width:1;width=nextWidth;
+    if(motion.active){
+      // Different portrait proportions can resize the stage mid-transition.
+      // Preserve the visible slide fraction and momentum instead of snapping.
+      const state=motion.read();
+      motion.snap({left:state.value.left*ratio});
+      motion.to({left:current*nextWidth},{stiffness,velocity:{left:state.velocity.left*ratio},done:clearNavigation});
+    }else align();
+  });
   resize.observe(track);
   signal.addEventListener('abort',()=>{resize.disconnect();cancelAnimationFrame(frame);},{once:true});
 
