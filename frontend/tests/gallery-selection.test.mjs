@@ -54,3 +54,13 @@ test('scrolling keeps the bar under its viewport while its raised area stays att
  assert.equal(shapes.length,2,'one clipping region combines the bar and raised area');
  assert.equal(Number(shapes[0][1]),20);assert.equal(x(s),before);assert.equal(s.frames.size,0);
 });
+
+test('side gutters leave clearance for the rounded shape around both portrait and wide previews',()=>{
+ const s=fixture();
+ for(const [width,height] of [[44,62],[72,42]]){
+  const b=s.bounds(16,12,width,height,1.17,4);
+  assert.ok(b.x>=4,'rounded enlarged preview keeps at least four pixels clear of the strip edge');
+  const right=16+width+16;
+  assert.ok(right-(b.x+b.width)>=4);
+ }
+});
