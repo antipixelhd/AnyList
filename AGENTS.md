@@ -1,6 +1,6 @@
 # Working rules
 
-Commit changes for completed features, tests, verifications etc, leave specific smaller edits requested by the user open until the user confirms them
+Commit changes for completed features, tests, verifications etc, leave specific smaller edits requested by the user open until the user confirms them. Always commit bug fixes
 
 if you make changes to the database apply the migration before ending the turn
 
