@@ -18,11 +18,11 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
     bounds:()=>({left:{min:0,max:Math.max(0,(count-1)*track.clientWidth)}}),
   });
   const clearNavigation=()=>{navigating=false;delete track.dataset.viewerNavigating;};
-  const align=(animate=false)=>{
+  const align=(animate=false,fast=false)=>{
     if(!motion.active)motion.snap({left:track.scrollLeft});
     navigating=animate&&!reduced.matches;
     if(navigating)track.dataset.viewerNavigating='';
-    motion.to({left:current*track.clientWidth},{immediate:!navigating,done:clearNavigation});
+    motion.to({left:current*track.clientWidth},{immediate:!navigating,stiffness:fast?gallerySpatial.fast:gallerySpatial.default,done:clearNavigation});
   };
   track.addEventListener('scroll',()=>{
     if(frame)return;
@@ -47,7 +47,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
   resize.observe(track);
   signal.addEventListener('abort',()=>{resize.disconnect();cancelAnimationFrame(frame);},{once:true});
 
-  const render=(rows:string[],key:(url:string)=>string,total:number,index:number,alt:string,scroll=true,animate=false)=>{
+  const render=(rows:string[],key:(url:string)=>string,total:number,index:number,alt:string,scroll=true,animate=false,fast=false)=>{
     current=index;count=total;
     const existing=new Map([...track.children].map(slide=>[(slide as HTMLElement).dataset.imageKey,slide as HTMLElement]));
     const slides=Array.from({length:Math.max(1,total)},(_,position)=>{
@@ -66,7 +66,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
       return slide;
     });
     reconcileGalleryChildren(track,slides);
-    if(scroll)align(animate);
+    if(scroll)align(animate,fast);
     const selected=slides[index]||slides[0];
     return {image:selected.querySelector<HTMLImageElement>('img')!,skeleton:selected.querySelector<HTMLElement>('.image-viewer-slide-loading')!};
   };

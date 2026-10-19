@@ -8,7 +8,8 @@ type Numbers=Record<string,number>;
 type Bounds<T>=Partial<Record<keyof T,{min:number;max:number}>>;
 type SpringOptions<T>={stiffness?:number;precision?:Partial<T>;bounds?:Bounds<T>|(()=>Bounds<T>)};
 export function createGallerySpring<T extends Numbers>(initial:T,paint:(value:T)=>void,signal:AbortSignal,options:SpringOptions<T>={}) {
-  const keys=Object.keys(initial) as (keyof T)[],omega=Math.sqrt(options.stiffness||gallerySpatial.default);
+  const keys=Object.keys(initial) as (keyof T)[];
+  let omega=Math.sqrt(options.stiffness||gallerySpatial.default);
   let value={...initial},goal={...initial},velocity=Object.fromEntries(keys.map(key=>[key,0])) as T;
   let frame=0,active=false,time=performance.now(),dragTime:number|undefined,complete:(()=>void)|undefined;
   const zero=()=>{for(const key of keys)velocity[key]=0 as T[keyof T];};
@@ -54,10 +55,11 @@ export function createGallerySpring<T extends Numbers>(initial:T,paint:(value:T)
     for(const key of keys)velocity[key]=(elapsed>0&&elapsed<=.1?(value[key]-previous[key])/elapsed:0) as T[keyof T];
     constrain();dragTime=now;time=now;paint({...value});
   };
-  const to=(next:T,settings:{velocity?:Partial<T>;gesture?:boolean;immediate?:boolean;done?:()=>void}={})=>{
+  const to=(next:T,settings:{velocity?:Partial<T>;gesture?:boolean;immediate?:boolean;stiffness?:number;done?:()=>void}={})=>{
     if(signal.aborted)return;
     if(!active&&performance.now()-time>100)zero();
     advance(performance.now());cancelAnimationFrame(frame);frame=0;
+    if(settings.stiffness!==undefined)omega=Math.sqrt(settings.stiffness);
     if(settings.gesture&&(dragTime===undefined||performance.now()-dragTime>100))zero();
     for(const key of keys)if(settings.velocity?.[key]!==undefined)velocity[key]=settings.velocity[key]!;
     goal={...next};constrain();complete=settings.done;dragTime=undefined;time=performance.now();

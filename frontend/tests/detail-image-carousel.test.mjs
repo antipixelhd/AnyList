@@ -27,7 +27,7 @@ function gallery(reduced=false) {
   const source=readFileSync(new URL('../src/lib/gallery-spring.ts',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../src/lib/detail-image-carousel.ts',import.meta.url),'utf8');
   runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.create=createDetailImageCarousel;',context);
   const track=new Element(),render=context.create(track,controller.signal,index=>selected.push(index),index=>prepared.push(index));
-  const paint=(rows,index=0,scroll=true,animate=false,total=rows.length)=>render(rows,url=>url,total,index,'Artwork',scroll,animate);
+  const paint=(rows,index=0,scroll=true,animate=false,total=rows.length,fast=false)=>render(rows,url=>url,total,index,'Artwork',scroll,animate,fast);
   return {track,paint,selected,prepared,controller,resize:()=>observer.callback(),observer:()=>observer,flush:(ms=16)=>{now+=ms;frames.splice(0).forEach(callback=>callback(now));}};
 }
 
@@ -70,7 +70,7 @@ test('native swipe selection follows scroll position without forcing the row bac
 test('animated navigation ignores intermediate positions, but direct gestures can interrupt it',()=>{
   const g=gallery();g.paint(['one','two','three'],2,true,true);
   assert.equal(g.track.dataset.viewerNavigating,'');
-  g.track.fire('scroll');g.flush(50);assert.deepEqual(g.selected,[]);
+  g.track.fire('scroll');g.flush(70);assert.deepEqual(g.selected,[]);
   g.track.fire('pointerdown');g.track.fire('scroll');g.flush();assert.deepEqual(g.selected,[1]);
 });
 
@@ -80,6 +80,16 @@ test('rapid targets share one spring and continue from the displayed position',(
   assert.equal(g.track.scrollLeft,before);g.flush(16);assert.ok(g.track.scrollLeft>before);
   g.flush(500);assert.equal(g.track.scrollLeft,1170);assert.equal(g.track.dataset.viewerNavigating,undefined);
   assert.deepEqual(g.selected,[]);
+});
+
+test('normal navigation is slower than wheel navigation and switching speed preserves position',()=>{
+  const normal=gallery(),wheel=gallery(),rows=['one','two','three'];
+  normal.paint(rows,1,true,true);wheel.paint(rows,1,true,true,rows.length,true);
+  normal.flush(100);wheel.flush(100);
+  assert.ok(wheel.track.scrollLeft>normal.track.scrollLeft);
+  const before=wheel.track.scrollLeft;
+  wheel.paint(rows,2,true,true);assert.equal(wheel.track.scrollLeft,before);
+  wheel.flush(600);assert.equal(wheel.track.scrollLeft,780);
 });
 
 test('reduced motion, orientation changes and page teardown preserve selection safely',()=>{

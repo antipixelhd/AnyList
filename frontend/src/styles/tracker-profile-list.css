@@ -578,7 +578,7 @@
   opacity:0;
   transition:none
 }
-.grid-view .entry-row:not([data-editor-deselected]):is(:hover,:focus-within) .entry-thumbnail .row-menu,
+.grid-view .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail .row-menu,
 .grid-view .entry-thumbnail .row-menu:focus-visible {
   opacity:1
 }

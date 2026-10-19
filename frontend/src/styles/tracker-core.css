@@ -270,7 +270,7 @@ button:disabled {
   position:relative;
   min-height:74px
 }
-.entry-row:hover,.entry-row:focus-within {
+.entry-row:hover,.entry-row:has(:focus-visible) {
   background:#1c3043
 }
 .entry-title {
@@ -309,7 +309,7 @@ button:disabled {
   opacity:0;
   transition:none
 }
-.entry-row:hover .row-menu,.entry-row:focus-within .row-menu {
+.entry-row:hover .row-menu,.entry-row:has(:focus-visible) .row-menu {
   opacity:1
 }
 .row-favorite {

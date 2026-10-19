@@ -51,7 +51,7 @@
   min-height:17.25px;
   height:17.25px
 }
-#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):hover .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):focus-within .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-progress .progress-increment:focus-visible {
+#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):hover .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):has(:focus-visible) .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-progress .progress-increment:focus-visible {
   position:static
 }
 #entry-groups:not(.grid-view) .entry-title {

@@ -140,7 +140,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
     }
   };
-  const showImage=(index:number,animate=false,scroll=true,preserveZoom=false)=>{
+  const showImage=(index:number,animate=false,scroll=true,preserveZoom=false,fast=false)=>{
     if(!preserveZoom){if(scroll)resetZoom();else resetZoom.preserveInteraction();}
     const rows=galleries[active];
     const count=viewerPending()?10:rows.length;
@@ -150,7 +150,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${viewerPending()?'':` of ${count}`}`:'No images available';
-    const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
+    const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate,fast);
     if(!preserveZoom)fitViewer(image,viewerGroup());
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=count<2;});
     paintSlots();
@@ -365,7 +365,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     if(info.imagesAvailable&&artworkPanel&&!artworkPanel.hidden)void loadImages();
   }
   bindImageViewerDismissal(lightbox,signal);
-  bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true));
+  bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true,true,false,true));
   lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}},{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep),true),{signal}));
   return loadImages;
