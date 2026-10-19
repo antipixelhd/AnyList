@@ -58,6 +58,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const mobileViewer=matchMedia('(max-width:650px), (max-height:650px)');
   let previewInteracting=false;
   let previewGesture:{x:number;y:number;moved:boolean}|undefined;
+  let pointerPosition:{x:number;y:number}|undefined;
+  track.tabIndex=-1;
   const previews=createGalleryPreviewTimer(()=>{
       if(!lightbox.open||previewInteracting||'viewerZoomed' in lightbox.dataset||viewerPending())return false;
       // Source-free offscreen thumbnails stay lazy and must not block forever.
@@ -65,7 +67,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       const selected=carousel.slide(current);
       if(selected&&!selected.skeleton.hidden)return false;
       return true;
-  },()=>{delete lightbox.dataset.previewsHidden;},()=>{lightbox.dataset.previewsHidden='true';},signal);
+  },()=>{delete lightbox.dataset.previewsHidden;},()=>{
+    // Keep keyboard navigation inside the modal when its focused controls hide.
+    if(lightbox.contains(document.activeElement))track.focus({preventScroll:true});
+    lightbox.dataset.previewsHidden='true';
+  },signal);
   const clearPreviewTimer=previews.pause;
   const revealPreviews=previews.reveal;
   function refreshPreviewLoading(){if(lightbox.open)previews.refresh();}
@@ -76,16 +82,18 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     previewGesture={x:event.clientX,y:event.clientY,moved:false};
     clearPreviewTimer();
   },{signal,passive:true});
-  lightbox.addEventListener('pointermove',event=>{
-    // Hiding controls can change the hit target under a stationary cursor.
-    // Those zero-movement events must not restart the idle countdown.
-    if(!mobileViewer.matches&&(event.movementX!==0||event.movementY!==0)&&(event.target as Element).closest('.image-viewer-track,.image-viewer-button,.image-viewer-slots'))revealPreviews();
+  window.addEventListener('pointermove',event=>{
+    // Layout/visibility changes can repeat the last movement delta. Compare
+    // absolute coordinates so a stationary pointer never extends the deadline.
+    const moved=!pointerPosition||event.clientX!==pointerPosition.x||event.clientY!==pointerPosition.y;
+    pointerPosition={x:event.clientX,y:event.clientY};
+    if(moved&&!mobileViewer.matches&&lightbox.open&&lightbox.contains(event.target as Node))revealPreviews();
     if(previewInteracting&&previewGesture&&Math.hypot(event.clientX-previewGesture.x,event.clientY-previewGesture.y)>8)previewGesture.moved=true;
   },{signal,passive:true});
   const releasePreviews=()=>{
     if(!previewInteracting)return;
     previewInteracting=false;
-    if(previewGesture?.moved)revealPreviews();
+    if(previewGesture?.moved)revealPreviews();else refreshPreviewLoading();
   };
   window.addEventListener('pointerup',releasePreviews,{signal,passive:true});
   window.addEventListener('pointercancel',()=>{
@@ -100,7 +108,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       else previews.hide();
     }else revealPreviews();
   },{signal});
-  lightbox.addEventListener('focusin',revealPreviews,{signal});
+  lightbox.addEventListener('focusin',event=>{if(event.target!==track)revealPreviews();},{signal});
   lightbox.addEventListener('focusout',refreshPreviewLoading,{signal});
   // Recentring and inertial scrolling are animation output, not fresh input.
   // Check loading without extending the user's existing idle deadline.
@@ -378,7 +386,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   }
   bindImageViewerDismissal(lightbox,signal);
   bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true,true,false,true));
-  lightbox.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}},{signal});
+  lightbox.addEventListener('keydown',event=>{
+    if(event.key==='Tab')revealPreviews();
+    if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}
+  },{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep),true),{signal}));
   return loadImages;
 }

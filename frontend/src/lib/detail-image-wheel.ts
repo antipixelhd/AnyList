@@ -2,9 +2,12 @@
 export function bindDetailImageWheel(dialog:HTMLDialogElement,track:HTMLElement,signal:AbortSignal,step:(direction:number)=>void) {
   let delta=0,last=0;
   const clear=()=>{delta=last=0;};
-  track.addEventListener('wheel',event=>{
+  dialog.addEventListener('wheel',event=>{
     // Preserve browser zoom and native horizontal touchpad gestures.
     if(!dialog.open||signal.aborted||event.ctrlKey||event.metaKey||Math.abs(event.deltaX)>Math.abs(event.deltaY)||!event.deltaY)return;
+    // Preview-strip scrolling stays native; the rest of the modal navigates
+    // consistently even when a fading control changes the pointer hit target.
+    if((event.target as Element)?.closest('[data-image-viewer-slots]'))return;
     event.preventDefault();
     const now=performance.now(),direction=-Math.sign(event.deltaY);
     if(now-last>200||Math.sign(delta)!==direction)delta=0;

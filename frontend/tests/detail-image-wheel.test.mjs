@@ -36,3 +36,12 @@ test('browser zoom and horizontal gestures stay native; close and navigation lea
   v.wheel(-120);v.wheel(-120);v.close();v.advance();assert.deepEqual(v.steps,[1,1]);
   const other=viewer();other.wheel(-120);other.wheel(-120);other.controller.abort();other.advance();assert.deepEqual(other.steps,[1,1]);
 });
+
+test('wheel navigation survives modal/control targets and preserves preview scrolling',()=>{
+  const v=viewer();
+  v.wheel(-120,{target:{closest:()=>null}});
+  v.wheel(-120,{target:{closest:()=>null}});
+  assert.deepEqual(v.steps,[1,1]);
+  assert.equal(v.wheel(-120,{target:{closest:()=>({})}}).prevented,undefined);
+  assert.deepEqual(v.steps,[1,1]);
+});
