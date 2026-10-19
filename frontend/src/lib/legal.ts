@@ -1,8 +1,8 @@
 export interface LegalConfig {
-  operator_name: string; operator_address: string; contact_email: string;
+  operator_name: string; operator_address: string; contact_email: string; privacy_email: string;
   hosting_details: string; retention_details: string; transfer_details: string;
 }
-export const emptyLegalConfig: LegalConfig = {operator_name:'', operator_address:'', contact_email:'', hosting_details:'', retention_details:'', transfer_details:''};
+export const emptyLegalConfig: LegalConfig = {operator_name:'', operator_address:'', contact_email:'', privacy_email:'', hosting_details:'', retention_details:'', transfer_details:''};
 export type LegalPublication = LegalConfig & {enabled: boolean};
 let cached: Promise<LegalPublication> | undefined;
 let expires = 0;
@@ -18,6 +18,7 @@ export function legalConfig(): Promise<LegalPublication> {
       if (!response.ok) return empty;
       const data = await response.json();
       const config = Object.fromEntries(Object.keys(emptyLegalConfig).map(key => [key, typeof data[key] === 'string' ? data[key] : ''])) as unknown as LegalConfig;
+      config.privacy_email ||= config.contact_email;
       return data.enabled === true && !legalDraft(config) ? {...config, enabled:true} : empty;
     } catch { return empty; }
   })();

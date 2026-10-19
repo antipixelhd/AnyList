@@ -1,0 +1,19 @@
+# Merge these logging blocks into the private production Compose services.
+# Configure the receiver first. This is not a standalone application definition.
+services:
+  app:
+    logging:
+      driver: syslog
+      options:
+        syslog-address: unixgram:///var/spool/rsyslog/anylist/docker.sock
+        syslog-format: rfc5424micro
+        tag: anylist-application
+        cache-disabled: "true"
+  database:
+    logging:
+      driver: syslog
+      options:
+        syslog-address: unixgram:///var/spool/rsyslog/anylist/docker.sock
+        syslog-format: rfc5424micro
+        tag: anylist-database
+        cache-disabled: "true"

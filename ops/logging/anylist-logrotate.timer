@@ -1,0 +1,10 @@
+[Unit]
+Description=Enforce AnyList's 30-day log retention
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

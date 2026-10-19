@@ -26,11 +26,15 @@ test('publication fails closed, filters fields and shares concurrent disclosure 
   const published = await legalConfig();
   assert.equal(published.enabled, true);
   assert.equal(published.operator_name, 'Example');
+  assert.equal(published.privacy_email, 'legal@example.test');
+  now += 6000;
+  data = {...data, privacy_email:'privacy@example.test'};
+  assert.equal((await legalConfig()).privacy_email, 'privacy@example.test');
   assert.equal('secret_key' in published, false);
 });
 
 test('missing operator or operational facts keep the notice in draft state', () => {
-  const values = {operator_name:'Example', operator_address:'Example Street', contact_email:'contact@example.test',hosting_details:'Host',retention_details:'Retention',transfer_details:'Transfers'};
+  const values = {operator_name:'Example', operator_address:'Example Street', contact_email:'contact@example.test',hosting_details:'Host',retention_details:'Retention',transfer_details:'Transfers',privacy_email:'privacy@example.test'};
   assert.equal(legalDraft(values),false);
   for(const key of Object.keys(values)) assert.equal(legalDraft({...values,[key]:' '}),true,key);
 });

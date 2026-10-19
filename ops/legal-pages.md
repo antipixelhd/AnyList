@@ -30,6 +30,7 @@ Keep `LEGAL_PAGES_ENABLED=false` while reviewing the disclosures. Fill:
 - `LEGAL_OPERATOR_NAME`: actual person or legal entity responsible.
 - `LEGAL_OPERATOR_ADDRESS`: address for service; quoted multiline text is supported.
 - `LEGAL_CONTACT_EMAIL`: monitored public contact address.
+- `LEGAL_PRIVACY_EMAIL`: optional separate privacy address; falls back to the contact address.
 - `LEGAL_HOSTING_DETAILS`: actual host, location, CDN/security, mail and SSO providers,
   their roles, and deployment-specific processing or browser storage.
 - `LEGAL_RETENTION_DETAILS`: log, backup and post-deletion retention periods or
@@ -61,6 +62,13 @@ invented for this installation. The publication check detects missing fields, no
 legal adequacy. Automatic embeds and preference storage still need a function-specific
 consent assessment before release; merely publishing a notice does not resolve this.
 
-References reviewed: GDPR Article 13 (https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng/),
-TDDDG section 25 (https://www.gesetze-im-internet.de/ttdsg/__25.html),
-DDG section 5 (https://www.gesetze-im-internet.de/ddg/__5.html).
+The live VPS uses `/opt/anylist/.env.production` through the application's Compose
+`env_file`. Store installation-specific legal values there, keeping publication off
+while facts are being reviewed. Values have been supplied privately, outside this
+repository. They are picked up when the application container is next recreated;
+an ordinary restart does not reload Docker's environment. Public `/dev` pages keep
+using empty placeholders rather than exposing those values.
+
+Review container log rotation, temporary deployment dump cleanup, preview backup
+retention and sign-on destinations on the actual host. Keep audit findings and real
+provider details in private operations records rather than tracked templates.

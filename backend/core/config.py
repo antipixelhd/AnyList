@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     legal_operator_name: str = ""
     legal_operator_address: str = ""
     legal_contact_email: str = ""
+    legal_privacy_email: str = ""
     legal_hosting_details: str = ""
     legal_retention_details: str = ""
     legal_transfer_details: str = ""
