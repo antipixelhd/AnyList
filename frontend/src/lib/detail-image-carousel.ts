@@ -1,6 +1,6 @@
 import {reconcileGalleryChildren} from './detail-gallery-dom';
 
-/** Native scrolling keeps touch movement, momentum and pinch zoom in the browser. */
+/** Scroll-backed slides share decoded images; phone touch arbitration lives in detail-image-zoom. */
 export function visibleDetailImageIndices(left:number,width:number,count:number) {
   if(width<=0||count<=0)return [];
   const start=Math.max(0,Math.min((count-1)*width,left));

@@ -43,6 +43,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
     gesture={id:event.pointerId,x:event.clientX,y:event.clientY,distance:0,samples:[{y:event.clientY,time:performance.now()}]};
   },{signal,passive:true});
   track.addEventListener('pointermove',event=>{
+    if('viewerZoomed' in dialog.dataset){reset();return;}
     if(!gesture||gesture.id!==event.pointerId||pointers.size!==1)return;
     const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;
     const now=performance.now();
@@ -82,6 +83,7 @@ export function bindDetailImageDragDismiss(dialog:HTMLDialogElement,track:HTMLEl
   // bfcache restore retains these listeners and variables, including stale
   // pointer IDs and pending settle timers, so reset without remounting images.
   const interrupt=()=>{reset();pointers.clear();ignoreClickUntil=0;};
+  dialog.addEventListener('viewerzoomstart',interrupt,{signal});
   window.addEventListener('blur',interrupt,{signal});
   window.addEventListener('pagehide',()=>{interrupt();unlock?.();},{signal});
   window.addEventListener('pageshow',()=>{interrupt();if(dialog.open)lockPage();else unlock?.();},{signal});

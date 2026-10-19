@@ -7,6 +7,7 @@ import {reconcileGalleryChildren,createGalleryThumbnailWatcher,createGalleryImag
 import {createDetailImageCarousel} from './detail-image-carousel';
 import {bindDetailImageWheel} from './detail-image-wheel';
 import {bindDetailImageDragDismiss} from './detail-image-dismiss';
+import {bindDetailImageZoom} from './detail-image-zoom';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
@@ -55,7 +56,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   let previewInteracting=false;
   let previewGesture:{x:number;y:number;moved:boolean}|undefined;
   const previews=createGalleryPreviewTimer(()=>{
-      if(!lightbox.open||previewInteracting||viewerPending())return false;
+      if(!lightbox.open||previewInteracting||'viewerZoomed' in lightbox.dataset||viewerPending())return false;
       // Source-free offscreen thumbnails stay lazy and must not block forever.
       if(!galleryPreviewImagesSettled(slots.querySelectorAll<HTMLImageElement>('img')))return false;
       const selected=carousel.slide(current);
@@ -104,6 +105,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   window.addEventListener('pageshow',()=>{previewInteracting=false;previewGesture=undefined;if(lightbox.open)revealPreviews();},{signal});
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
+  const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
+    direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true),()=>{previewInteracting=false;revealPreviews();});
   const fitViewer=bindDetailViewerFrame(lightbox,signal);
   let followedSlot:string|undefined;
   const paintSlots=()=>{
@@ -134,6 +137,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     }
   };
   const showImage=(index:number,animate=false,scroll=true)=>{
+    resetZoom();
     const rows=galleries[active];
     const count=viewerPending()?10:rows.length;
     const previous=current;
