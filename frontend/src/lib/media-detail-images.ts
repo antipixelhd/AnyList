@@ -106,7 +106,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
   const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
   const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
-    index=>showImage(index),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
+    (index,preserveScroll=false,preserveZoom=false)=>showImage(index,false,!preserveScroll,preserveZoom),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
   const fitViewer=bindDetailViewerFrame(lightbox,signal);
   let followedSlot:string|undefined;
   const paintSlots=()=>{
@@ -140,8 +140,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
         behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
     }
   };
-  const showImage=(index:number,animate=false,scroll=true)=>{
-    resetZoom();
+  const showImage=(index:number,animate=false,scroll=true,preserveZoom=false)=>{
+    if(!preserveZoom){if(scroll)resetZoom();else resetZoom.preserveInteraction();}
     const rows=galleries[active];
     const count=viewerPending()?10:rows.length;
     const previous=current;
@@ -151,7 +151,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal) 
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${viewerPending()?'':` of ${count}`}`:'No images available';
     const {image,skeleton}=carousel(rows,url=>`${group}:${imageKey(url)}`,count,current,alt,scroll,animate);
-    fitViewer(image,viewerGroup());
+    if(!preserveZoom)fitViewer(image,viewerGroup());
     arrows.forEach(arrow=>{arrow.hidden=count<2;arrow.disabled=count<2;});
     paintSlots();
     if(!rows[current]){

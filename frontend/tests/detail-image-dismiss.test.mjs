@@ -8,7 +8,8 @@ function viewer(mobile=true) {
   const style=()=>({getPropertyValue(key){return this[key]||'';},getPropertyPriority(){return '';},setProperty(key,value){this[key]=value;},removeProperty(key){delete this[key];}});
   const element=()=>({style:style(),dataset:{},listeners:{},addEventListener(name,callback){this.listeners[name]=callback;},fire(name,event={}){this.listeners[name]?.({type:name,...event});}});
   const dialog=element(),track=element(),window=element(),controller=new AbortController();
-  let timer,now=0;
+  let now=0,id=0;const frames=new Map();
+  const advance=ms=>{now+=ms;const work=[...frames.values()];frames.clear();work.forEach(f=>f(now));};
   Object.assign(dialog,{open:true,clientHeight:844,hasAttribute:()=>false,close(){this.open=false;this.fire('close');}});
   track.setPointerCapture=()=>{};
   Object.assign(window,{innerHeight:844,scrollX:0,scrollY:520,scrollTo(options){this.restored=options;}});
@@ -16,13 +17,13 @@ function viewer(mobile=true) {
   document.body.style.position='relative';
   const viewport=element();viewport.matches=mobile;
   const context={window,document,performance:{now:()=>now},matchMedia:query=>query.includes('650')?viewport:{matches:false,addEventListener(){}},
-    setTimeout:callback=>(timer=callback,1),clearTimeout:()=>{timer=undefined;}};
-  const source=readFileSync(new URL('../src/lib/detail-image-dismiss.ts',import.meta.url),'utf8');
-  runInNewContext(stripTypeScriptTypes(source.replace(/export /g,''))+';globalThis.bind=bindDetailImageDragDismiss;',context);
+    requestAnimationFrame:f=>(frames.set(++id,f),id),cancelAnimationFrame:i=>frames.delete(i)};
+  const source=readFileSync(new URL('../src/lib/gallery-spring.ts',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../src/lib/detail-image-dismiss.ts',import.meta.url),'utf8');
+  runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.bind=bindDetailImageDragDismiss;',context);
   const prepare=context.bind(dialog,track,controller.signal);
   const pointer=(name,x,y,id=1)=>track.fire(name,{pointerId:id,clientX:x,clientY:y,preventDefault(){this.prevented=true;}});
   const release=(cancel=false,id=1)=>window.fire(cancel?'pointercancel':'pointerup',{pointerId:id});
-  return {dialog,track,window,document,controller,prepare,pointer,release,resize:mobile=>{viewport.matches=mobile;viewport.fire('change');},advance:ms=>{now+=ms;},finish:()=>timer?.()};
+  return {dialog,track,window,document,controller,prepare,pointer,release,resize:mobile=>{viewport.matches=mobile;viewport.fire('change');},advance,finish:()=>advance(1000)};
 }
 
 test('mobile locks the background and restores the exact scroll and previous styles on close',()=>{
@@ -34,7 +35,7 @@ test('mobile locks the background and restores the exact scroll and previous sty
 test('short downward drags return, long drags close only after release and animation',()=>{
   const v=viewer();v.prepare();v.pointer('pointerdown',100,100);v.pointer('pointermove',102,160);
   assert.equal(v.dialog.style.translate,'0 60px');assert.equal(v.dialog.open,true);
-  v.release();assert.equal(v.dialog.style.translate,'0 0');v.finish();assert.equal(v.dialog.open,true);
+  v.release();assert.equal(v.dialog.style.translate,'0 60px');v.finish();assert.equal(v.dialog.open,true);
   v.pointer('pointerdown',100,100);v.pointer('pointermove',100,310);
   assert.equal(v.dialog.open,true);v.release();assert.equal(v.dialog.open,true);v.finish();assert.equal(v.dialog.open,false);
 });
@@ -117,4 +118,10 @@ test('paging or pinch ownership cancels a pending dismissal and leaves the next 
  const v=viewer();v.prepare();v.pointer('pointerdown',100,100);v.pointer('pointermove',100,250);
  v.dialog.fire('viewerinteractionstart');v.release();v.finish();assert.equal(v.dialog.open,true);assert.equal(v.dialog.style.translate,undefined);
  v.pointer('pointerdown',100,100,2);v.pointer('pointermove',100,350,2);v.release(false,2);v.finish();assert.equal(v.dialog.open,false);
+});
+
+test('grabbing an in-flight dismissal keeps its current position and cancels its old close callback',()=>{
+ const v=viewer();v.prepare();v.pointer('pointerdown',100,100);v.advance(60);v.pointer('pointermove',100,300);v.release();v.advance(40);
+ const shown=v.dialog.style.translate;v.pointer('pointerdown',100,300,2);assert.equal(v.dialog.style.translate,shown);v.advance(1000);assert.equal(v.dialog.open,true);
+ v.pointer('pointermove',100,200,2);v.release(true,2);v.finish();assert.equal(v.dialog.open,true);assert.equal(v.dialog.style.translate,undefined);
 });
