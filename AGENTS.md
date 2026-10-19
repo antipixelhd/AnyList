@@ -11,6 +11,10 @@ Disable native touch tap highlights globally; preserve intentional control state
 
 Dont prefer bandade fixes but prefer concrete systems that fix the problem or implement the features
 
+For icon hover states do not use a "square box", keep it clean and only have the icon colored
+Dont use outlines/borders for a selection/focus state
+For mobile/touch do not use a square/rectangular click feedback for buttons
+
 ## Architecture direction
 
 - Prioritize the next interaction: metadata, user state, primary poster and background first; detail portraits and character art next; optional galleries on demand.

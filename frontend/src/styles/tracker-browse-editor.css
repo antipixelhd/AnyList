@@ -253,11 +253,6 @@
   font-size:var(--type-meta-size);
   color:var(--muted)
 }
-.editor-status-trigger:focus-visible {
-  border-color:var(--blue);
-  outline:none;
-  background:color-mix(in srgb,var(--blue) 11%,var(--panel))
-}
 .editor-status-options {
   position:absolute;
   z-index:10;
@@ -318,14 +313,14 @@
   background:#ffffff12;
   color:var(--bright)
 }
-.editor-score-field>label {
+:is(.editor-score-field,.editor-number-field)>label {
   font-size:var(--type-label-size);
   color:var(--muted)
 }
-.editor-score-field>.score-stepper {
+:is(.editor-score-field,.editor-number-field)>.score-stepper {
   margin-top:6px
 }
-.editor-score-field .score-stepper input {
+:is(.editor-score-field,.editor-number-field) .score-stepper input {
   width:100%;
   min-height:42px;
   margin:0;
@@ -335,10 +330,6 @@
   color:var(--text);
   font-size:var(--type-control-size);
   padding:8px 30px 8px 12px
-}
-.editor-score-field .score-stepper input:focus {
-  border-color:var(--blue);
-  box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 11%,transparent)
 }
 .score-stepper {
   position:relative;
@@ -373,8 +364,12 @@
   line-height:1
 }
 .score-stepper-controls button:hover,.score-stepper-controls button:focus-visible {
+  outline:none;
   background:#244058;
   color:var(--bright)
+}
+.editor .score-stepper-controls button:is(:hover,:focus-visible) {
+  background:transparent
 }
 .score-stepper-controls .ui-icon {
   font-size:9px
@@ -861,4 +856,12 @@
   .profile-overview {
     gap:34px
   }
+}
+
+/* Editor fields keep the same surface while being edited or expanded. */
+.tracker .editor :is(input:not([type=checkbox]),textarea,select,.editor-status-trigger):is(:focus,:focus-visible,[aria-expanded=true]) {
+  outline:none;
+  border-color:transparent;
+  box-shadow:none;
+  background:#0d1926;
 }

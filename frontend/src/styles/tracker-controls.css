@@ -357,15 +357,11 @@
   border-radius:4px;
   min-height:44px;
   color:var(--text);
-  transition:border-color .15s,box-shadow .15s
+  box-shadow:none
 }
 .editor label textarea {
   min-height:54px;
   resize:vertical
-}
-.editor label input:focus,.editor label select:focus,.editor label textarea:focus {
-  border-color:var(--blue);
-  box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 11%,transparent)
 }
 .editor .hint {
   display:block;

@@ -1,0 +1,17 @@
+---
+const {id, name, label} = Astro.props;
+---
+<div class="calendar-input" data-calendar-input>
+  <input id={id} type="text" data-date-display autocomplete="off" aria-label={label}/>
+  <input name={name} type="date" data-date-iso tabindex="-1" aria-hidden="true"/>
+  <button type="button" data-date-picker aria-label={`Choose ${label.toLowerCase()}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="1"/><path d="M8 3v4m8-4v4M4 10h16M8 14h2m4 0h2m-8 3h2m4 0h2"/></svg></button>
+</div>
+<style>
+  .calendar-input { position:relative; margin-top:6px; }
+  [data-date-display] { width:100%; min-height:42px; padding:8px 38px 8px 12px; margin:0; border:1px solid transparent; border-radius:4px; background:#0d1926; color:var(--text); font-size:var(--type-control-size); }
+  [data-date-display]:focus { outline:none; box-shadow:none; }
+  [data-date-display][aria-invalid=true] { background:#342030; }
+  [data-date-iso] { position:absolute; left:0; bottom:0; width:1px; height:1px; min-height:0; margin:0; padding:0; border:0; opacity:0; pointer-events:none; }
+  [data-date-picker] { position:absolute; right:4px; top:4px; bottom:4px; display:grid; place-items:center; width:30px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--muted); cursor:pointer; }
+  [data-date-picker]:hover,[data-date-picker]:focus-visible { outline:none; background:#244058; color:var(--bright); }
+</style>
