@@ -371,6 +371,7 @@ def normalize_tvdb(raw, kind="series"):
 
 
 def normalize_igdb(raw):
+    from core.game_types import igdb_game_class, platform_group
     doc = document(
         entity(
             "game",
@@ -379,6 +380,10 @@ def normalize_igdb(raw):
             description=raw.get("summary"),
             artwork=raw.get("cover"),
             attributes={
+                "game_class": igdb_game_class(raw),
+                "game_type": raw.get("game_type"),
+                "platforms": [{"id": str(p['id']), "name": p.get('name'), "group": platform_group(p)}
+                              for p in raw.get('platforms') or [] if isinstance(p, dict) and p.get('id')],
                 "release_date": date(raw.get("first_release_date")),
                 "genres": raw.get("genres"),
                 "artwork": [image(a) for a in raw.get("artworks") or []],
@@ -462,10 +467,13 @@ def normalize_igdb(raw):
                     "igdb.game",
                     parent if isinstance(parent, dict) else {"id": parent},
                     artwork=parent.get('cover') if isinstance(parent, dict) else None,
-                    attributes={'release_date':date(parent.get('first_release_date'))} if isinstance(parent, dict) else {},
+                    attributes={'release_date':date(parent.get('first_release_date')),
+                                **({'game_class': igdb_game_class(parent)} if parent.get('game_type') is not None else {})} if isinstance(parent, dict) else {},
                 )
                 if parent
-                else entity("game", "igdb.game", r, artwork=r.get('cover'), attributes={'release_date':date(r.get('first_release_date'))})
+                else entity("game", "igdb.game", r, artwork=r.get('cover'), attributes={
+                    'release_date':date(r.get('first_release_date')),
+                    **({'game_class': igdb_game_class(r)} if r.get('game_type') is not None else {})})
             )
             if parent:
                 target["identities"].append(identity("igdb.game", r["id"]))
@@ -487,6 +495,7 @@ def normalize_igdb(raw):
     parent = raw.get("parent_game")
     relation = {
         "DLC Add-on": "dlc",
+        "DLC": "dlc",
         "Expansion": "expansion",
         "Standalone Expansion": "standalone_expansion",
         "Remake": "remake",
@@ -495,7 +504,8 @@ def normalize_igdb(raw):
     }.get((raw.get("game_type") or {}).get("type"))
     if isinstance(parent, dict) and relation:
         doc["relationships"].append(
-            {"target": entity("game", "igdb.game", parent), "relation": relation}
+            {"target": entity("game", "igdb.game", parent, attributes={
+                'game_class': igdb_game_class(parent)} if parent.get('game_type') is not None else {}), "relation": relation}
         )
     doc["coverage"] = raw.get("_coverage", {})
     return doc

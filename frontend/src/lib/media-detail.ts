@@ -232,7 +232,7 @@ export function mountMediaDetail() {
   };
   document.addEventListener('anylist:editor-state', event => {
     const state = (event as CustomEvent<EditorTitle>).detail;
-    if (state.id===info.id) paint(state);
+    if (state.type===info.type&&state.id===info.id) paint(state);
   }, {signal});
   if (title) paint(title);
   favorite?.addEventListener('click',()=>{
@@ -304,7 +304,7 @@ export function mountMediaDetail() {
   };
   document.addEventListener('anylist:editor-committed',event=>{
     const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
-    if(saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
+    if(saved.type!==info.type||saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
     void refreshSeasonState().catch(()=>{if(!signal.aborted)showToast('Reload to see your updated episode state.','error');});
   },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{

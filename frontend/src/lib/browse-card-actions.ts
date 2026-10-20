@@ -10,7 +10,7 @@ export type BrowseItem = {
 };
 const labels: Record<string, string> = {watching:'Watching',completed:'Completed',planning:'Planning',paused:'Paused',dropped:'Dropped'};
 export const sameBrowseTitle = (a: BrowseItem, b: Pick<EditorTitle, 'id' | 'tmdb_id' | 'type'>) =>
-  !!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id && a.type === b.type);
+  a.type === b.type && (!!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id));
 
 export function paintBrowseCardState(card: HTMLElement, item: BrowseItem) {
   card.dataset.state = item.list_status || '';

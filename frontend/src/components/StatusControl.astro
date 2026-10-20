@@ -52,7 +52,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
   }));
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent).detail;
-    if(title.id!==Number(control.dataset.media))return;
+    if(title.type==='game'||title.id!==Number(control.dataset.media))return;
     control.querySelector('[data-status-label]')!.textContent=statuses.find(([s])=>s===title.entry?.status)?.[1]||'Add to list';
     options.querySelectorAll<HTMLElement>('[data-quick-status]').forEach(button=>button.setAttribute('aria-current',String(button.dataset.quickStatus===title.entry?.status)));
   },{signal:pageListeners.signal});

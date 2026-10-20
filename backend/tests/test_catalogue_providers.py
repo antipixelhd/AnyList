@@ -23,6 +23,29 @@ def fixture(name):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_game_classification_and_pc_platform_group_are_source_scoped(self):
+        from core.game_types import capabilities
+        raw = {'id': 240009, 'name': 'Expansion', 'game_type': {'id': 2, 'type': 'Expansion'},
+               'parent_game': {'id': 119133, 'name': 'Base', 'game_type': {'id': 0, 'type': 'Main Game'}},
+               'platforms': [{'id': 6, 'name': 'PC (Microsoft Windows)'}, {'id': 14, 'name': 'Mac'},
+                             {'id': 3, 'name': 'Linux', 'platform_family': {'name': 'Linux'}},
+                             {'id': 167, 'name': 'PlayStation 5', 'platform_family': {'name': 'PlayStation'}}]}
+        doc = normalize.normalize_igdb(raw)
+        attrs = doc['work']['attributes']
+        self.assertFalse(capabilities(attrs).independent)
+        self.assertTrue(capabilities(attrs).expansion_page)
+        self.assertEqual([p['group'] for p in attrs['platforms']], ['PC', 'PC', 'PC', 'PlayStation'])
+        self.assertEqual(doc['relationships'][0]['relation'], 'expansion')
+        self.assertEqual(doc['relationships'][0]['target']['attributes']['game_class'], 'game')
+        for source_id, source_name in ((13, 'Pack / Addon'), (14, 'Update'), (999, 'Future unknown type')):
+            raw['game_type'] = {'id': source_id, 'type': source_name}
+            caps = capabilities(normalize.normalize_igdb(raw)['work']['attributes'])
+            self.assertFalse(caps.searchable)
+            self.assertFalse(caps.playable_child)
+        raw['game_type'] = {'id': 1, 'type': 'DLC'}
+        doc = normalize.normalize_igdb(raw)
+        self.assertEqual(doc['relationships'][0]['relation'], 'dlc')
+
     def test_game_cross_reference_and_separate_character_art(self):
         doc = normalize.normalize_igdb(fixture("igdb"))
         self.assertIn(

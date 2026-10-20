@@ -13,6 +13,83 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
 
+const gameState = (id=7, extra={}) => ({subject:{kind:'game',catalogue_id:id},title:'Game',image_url:'/game.jpg',
+  game_class:'game',listed:false,status:null,revision:null,favorite:false,...extra});
+const gameTitle = state => ({id:state.subject.catalogue_id,subject:state.subject,type:'game',title:state.title,
+  poster:state.image_url,game_class:state.game_class,base_work_id:state.base_work_id,game_state:state,
+  entry:state.listed?state:null,favorite:state.favorite});
+
+test('game catalogue ids cannot collide with legacy Media ids across reads writes or artwork',async()=>{
+  const calls=[];
+  const store=new EditorStore(async(path,options)=>{
+    calls.push([path,options]);
+    if(path==='games/works/7')return gameState();
+    if(path==='games/entries/7')return gameState(7,{listed:true,status:'playing',revision:1});
+    throw new Error('Unexpected request '+path);
+  });
+  const movie=store.seed({...draft(),id:7,entry:{status:'watching',progress:4}});
+  const game=await store.loadSubject({kind:'game',catalogue_id:7});
+  assert.equal(store.find(7),movie);
+  assert.equal(await store.load(7),movie);
+  assert.equal(store.findSubject({kind:'game',catalogue_id:7}),game);
+  store.updateArtwork(7,{poster:'/movie-choice.jpg'});
+  assert.equal(game.poster,'/game.jpg');
+  store.updateSubjectArtwork({kind:'game',catalogue_id:7},{poster:'/game-choice.jpg'});
+  assert.equal(movie.poster,'/movie-choice.jpg');
+  await store.write(game,{status:'playing'});
+  assert.equal(game.entry.status,'playing');
+  assert.equal(movie.entry.status,'watching');
+  assert.equal(movie.entry.progress,4);
+  store.acceptSaved({id:7,status:'completed'});
+  assert.equal(game.entry.status,'playing');
+  assert.equal(movie.entry.status,'completed');
+  assert.deepEqual(calls.map(([path])=>path),['games/works/7','games/entries/7']);
+});
+
+test('queued game writes use committed revisions and preserve completed status during hours updates',async()=>{
+  const pending=deferred();const calls=[];
+  const store=new EditorStore(async(path,options)=>{
+    const body=JSON.parse(options.body);calls.push({path,body});
+    if(calls.length===1)return pending.promise;
+    return gameState(7,{listed:true,status:'completed',revision:3,total_seconds:7200,completion_seconds:3600});
+  });
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'completed',revision:1,total_seconds:3600,completion_seconds:3600})));
+  const score=store.write(title,{score:9});
+  const hours=store.write(title,{total_seconds:7200});
+  assert.equal(title.entry.status,'completed');
+  assert.equal(title.entry.completion_seconds,3600);
+  await turn();pending.resolve(gameState(7,{listed:true,status:'completed',revision:2,total_seconds:3600,completion_seconds:3600,score:9}));
+  await Promise.all([score,hours]);
+  assert.deepEqual(calls.map(c=>c.body.revision),[1,2]);
+  assert.ok(calls.every(c=>c.path==='games/entries/7'));
+  assert.equal(title.entry.total_seconds,7200);
+});
+
+test('unlisted expansion editor uses retained revision without creating an independent entry',async()=>{
+  const calls=[];const store=new EditorStore(async(path,options)=>{
+    calls.push({path,body:JSON.parse(options.body)});
+    return gameState(8,{game_class:'expansion',base_work_id:7,listed:true,status:'completed',score:8,revision:5});
+  });
+  const title=store.seed(gameTitle(gameState(8,{game_class:'expansion',base_work_id:7,status:'completed',score:8,revision:4})));
+  assert.equal(title.entry,null);
+  await store.write(title,{score:8});
+  assert.equal(calls[0].path,'games/children/8');
+  assert.equal(calls[0].body.revision,4);
+  assert.equal(title.entry.listed,true);
+});
+
+test('game favorite actions do not create list membership and never use the streaming library',async()=>{
+  const calls=[];const store=new EditorStore(async(path,options)=>{
+    calls.push({path,method:options.method});return gameState(7,{favorite:true});
+  });
+  const title=store.seed(gameTitle(gameState()));
+  await store.write(title,{favorite:true});
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+  assert.deepEqual(calls,[{path:'games/favorites/7',method:'PUT'}]);
+  await assert.rejects(store.writeLibrary(title,true));
+  assert.equal(calls.length,1);
+});
+
 test('predicted metadata preserves pending list edits and existing artwork',async()=>{
   const pending=deferred();const store=new EditorStore(()=>pending.promise);
   const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0},favorite:true});

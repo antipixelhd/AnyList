@@ -223,7 +223,7 @@ document.addEventListener('astro:page-load', () => {
   });
   document.addEventListener('anylist:editor-state', event => {
     const title = (event as CustomEvent<EditorTitle>).detail;
-    if (dialog.open && currentTitle && (title === currentTitle || title.id && title.id === currentTitle.id)) {
+    if (dialog.open && currentTitle && title.type===currentTitle.type && (title === currentTitle || title.id && title.id === currentTitle.id)) {
       libraryDesired = title.editor_library?.desired === true;
       renderLibraryButton();
     }

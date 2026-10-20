@@ -94,6 +94,9 @@ async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get
 class PreferencePatch(BaseModel):
     auto_confirm: bool | None = None
     combine_lists: bool | None = None
+    show_movies_series: bool | None = None
+    show_games: bool | None = None
+    show_game_achievements: bool | None = None
     default_sort: Literal['title', 'score', 'progress', 'updated'] | None = None
     low_priority_notifications: bool | None = None
     low_priority_retention_days: int | None = Field(None, ge=1, le=90)
@@ -115,6 +118,9 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
         'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
         'auto_confirm': bool(row and row.auto_confirm),
         'combine_lists': True if row is None else row.combine_lists,
+        'show_movies_series': True if row is None else row.show_movies_series,
+        'show_games': True if row is None else row.show_games,
+        'show_game_achievements': True if row is None else row.show_game_achievements,
         'default_sort': 'title' if row is None else row.default_sort,
         'low_priority_notifications': True if row is None else row.low_priority_notifications,
         'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
