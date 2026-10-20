@@ -31,7 +31,8 @@ html.appbar-nav-transition-cursor {
     font-family: var(--font-navigation);
     font-size: var(--type-nav-size);
     font-weight: var(--type-nav-weight);
-    letter-spacing: .01em;
+    line-height: 1.15;
+    letter-spacing: normal;
   }
 
   .tracker .appbar-nav > a {
@@ -50,7 +51,7 @@ html.appbar-nav-transition-cursor {
 
   .tracker .account-nav .quick-search-trigger {
     display: grid;
-    color: #b2c8dc;
+    color: #a0b1c5;
     font-size: 17px;
   }
 

@@ -3,7 +3,7 @@
   --bright:var(--white);
   --type-nav-size:14px;
   --type-nav-weight:600;
-  color:rgb(229, 231, 234);
+  color:#a0b1c5;
   position:sticky;
   top:0;
   z-index:60;
@@ -60,10 +60,11 @@
   place-items:center;
   overflow:hidden;
   background:linear-gradient(135deg,#28516d,#1b3349);
-  border:2px solid transparent;
+  border:0;
+  outline:none;
   color:var(--bright);
   font-weight:var(--type-stat-weight);
-  transition:border-color .15s ease,transform .15s ease
+  transition:filter .15s ease,transform .15s ease
 }
 .profile-action img {
   width:100%;
@@ -71,7 +72,7 @@
   object-fit:cover
 }
 .profile-action:hover,.profile-action:focus-visible {
-  border-color:var(--blue);
+  filter:brightness(1.12);
   color:var(--bright)
 }
 .profile-action:hover {
@@ -84,7 +85,7 @@
   display:grid;
   place-items:center;
   border-radius:50%;
-  color:#9db1c9;
+  color:#a0b1c5;
   transition:background-color .15s,color .15s
 }
 .appbar-icon-link:hover,.appbar-icon-link:focus-visible,.appbar-icon-link.active {
