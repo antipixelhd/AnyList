@@ -25,6 +25,32 @@ def event(when=None, plays=1, **values):
 
 
 class StatisticsFactsTests(unittest.TestCase):
+    def test_planning_excludes_history_and_progress_until_status_changes(self):
+        movie = media(1, 'movie', runtime=100, tmdb_data={'genres': ['Drama']})
+        series = media(2, 'series', tmdb_id=10, tmdb_data={'genres': ['Drama']})
+        show = Row(id=7, tmdb_id=10, tvdb_id=None, first_air_date=None, tmdb_data={})
+        episode = media(3, 'episode', show_id=7, runtime=40)
+        entries = [(entry(1, 8, progress=1), movie), (entry(2, 6, progress=5), series)]
+        events = [(event(datetime(2026, 1, 1), plays=2), movie), (event(), episode)]
+        baseline = self.build(entries, events, [show])
+        for status in ('planning', 'paused', 'dropped', 'watching', 'completed'):
+            for current, _ in entries:
+                current.status = status
+            result = self.build(entries, events, [show])
+            for scope in ('all', 'movie', 'series'):
+                with self.subTest(status=status, scope=scope):
+                    data = result[scope]
+                    if status == 'planning':
+                        for name in ('listed_titles', 'watched_titles', 'episode_plays', 'distinct_episodes', 'watch_minutes', 'rated_titles', 'planned_minutes'):
+                            self.assertEqual(data['totals'][name], 0)
+                        self.assertIsNone(data['totals']['mean_score'])
+                        for name in ('genres', 'actors', 'studios', 'staff', 'countries', 'release_years', 'watch_years'):
+                            self.assertEqual(data[name], [])
+                        self.assertFalse(any(row['titles'] for row in data['statuses']))
+                    else:
+                        self.assertEqual(data['totals'], baseline[scope]['totals'])
+                        self.assertEqual(data['genres'], baseline[scope]['genres'])
+
     def test_score_bars_round_to_nearest_half_point_with_midpoints_up_and_keep_exact_aggregates(self):
         scores=[.5,7.24,7.25,7.74,7.75,10]
         movies=[media(i,'movie',runtime=90) for i in range(1,len(scores)+1)]
@@ -56,12 +82,12 @@ class StatisticsFactsTests(unittest.TestCase):
                              (event(datetime(2024, 1, 1), date_inferred=True), ep2), (event(), special), (event(), ep1)],
                             [show], episodes=[ep1, ep2, special], links={2: 100}, show_links={7: 100}, entities={100: root})
         data = result["all"]
-        self.assertEqual(data["totals"]["listed_titles"], 3)
+        self.assertEqual(data["totals"]["listed_titles"], 2)
         self.assertEqual(data["totals"]["watched_titles"], 2)
         self.assertEqual(data["totals"]["episode_plays"], 5)
         self.assertEqual(data["totals"]["distinct_episodes"], 3)
         self.assertEqual(data["totals"]["watch_minutes"], 470)
-        self.assertEqual(data["totals"]["planned_minutes"], 60)
+        self.assertEqual(data["totals"]["planned_minutes"], 0)
         self.assertAlmostEqual(data["totals"]["mean_score"], 23 / 3)
         self.assertAlmostEqual(data["totals"]["standard_deviation"], 1 / 3)
         self.assertEqual(data["scores"][14]["titles"], 1)  # Nearest half-point to season mean 7.333...
@@ -115,7 +141,7 @@ class StatisticsFactsTests(unittest.TestCase):
         result = self.build([(entry(1, 8), hidden)], [(event(), hidden)], show_anime=False)["all"]
         self.assertEqual(result["totals"]["watched_titles"], 0)
 
-    def test_planning_uses_complete_regular_catalogue_and_unique_completed_membership(self):
+    def test_planning_is_excluded_with_complete_or_partial_catalogue(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [11, 12, 13], "tracking_catalogue_refreshed_at": "2026-01-01"})
         show = Row(id=7, tmdb_id=10, tvdb_id=None, first_air_date=None, tmdb_data={})
         completed = media(11, "episode", show_id=7, tmdb_id=11, season_number=1, runtime=20, release_date="2020-01-01")
@@ -124,24 +150,24 @@ class StatisticsFactsTests(unittest.TestCase):
         special = media(14, "episode", show_id=7, tmdb_id=14, season_number=0, runtime=50, release_date="2020-01-01")
         inputs = ([(entry(1, status="planning", progress=1), series)], [(event(plays=3), completed)], [show])
         data = self.build(*inputs, episodes=[completed, remaining, unaired, special])["all"]
-        self.assertEqual(data["totals"]["planned_minutes"], 30)
+        self.assertEqual(data["totals"]["planned_minutes"], 0)
         self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
         data = self.build(*inputs, episodes=[completed, unaired])["all"]
-        self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
+        self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
 
-    def test_progress_without_known_episode_membership_has_unknown_planned_time(self):
+    def test_planning_progress_without_episode_membership_is_excluded(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [], "tracking_catalogue_refreshed_at": "2026-01-01"})
         data = self.build([(entry(1, status="planning", progress=4), series)], [])["all"]
-        self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
+        self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
 
-    def test_unknown_release_dates_do_not_claim_complete_planned_workload(self):
+    def test_planning_with_unknown_release_dates_is_excluded(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [11, 12], "tracking_catalogue_refreshed_at": "2026-01-01"})
         show = Row(id=7, tmdb_id=10, tvdb_id=None, first_air_date=None, tmdb_data={})
         known = media(11, "episode", show_id=7, tmdb_id=11, season_number=1, runtime=30, release_date="2020-01-01")
         unknown = media(12, "episode", show_id=7, tmdb_id=12, season_number=1, runtime=40)
         data = self.build([(entry(1, status="planning"), series)], [], [show], episodes=[known, unknown])["all"]
-        self.assertEqual(data["totals"]["planned_minutes"], 30)
-        self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
+        self.assertEqual(data["totals"]["planned_minutes"], 0)
+        self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
 
     def test_only_recorded_completion_years_are_returned_with_unrated_means_absent(self):
         movie = media(1, "movie", runtime=50)
@@ -183,18 +209,18 @@ class StatisticsFactsTests(unittest.TestCase):
         self.assertIsNone(regular_total({"number_of_episodes": 12}))
         self.assertEqual(regular_total({"seasons": [{"season_number": 0, "episode_count": 8}, {"season_number": 1, "episode_count": 12}]}), 12)
 
-    def test_verified_episode_aliases_count_distinct_once_and_do_not_inflate_planning(self):
+    def test_verified_episode_aliases_count_distinct_once(self):
         series = media(1,'series',tmdb_id=10,tmdb_data={'tracking_episode_ids':[11,12], 'tracking_catalogue_refreshed_at':'2026-01-01'})
         show = Row(id=7,tmdb_id=10,tvdb_id=None,first_air_date=None,tmdb_data={})
         one = media(11,'episode',show_id=7,tmdb_id=11,season_number=1,runtime=20,release_date='2020-01-01')
         alias = media(21,'episode',show_id=7,tmdb_id=11,season_number=1,runtime=20,release_date='2020-01-01')
         remaining = media(12,'episode',show_id=7,tmdb_id=12,season_number=1,runtime=30,release_date='2020-01-01')
         other = media(22,'episode',show_id=7,tmdb_id=12,season_number=1,runtime=30,release_date='2020-01-01')
-        data = self.build([(entry(1,status='planning'),series)], [(event(),one),(event(),alias)], [show], episodes=[one,alias,remaining,other])['all']
+        data = self.build([(entry(1,status='watching'),series)], [(event(),one),(event(),alias)], [show], episodes=[one,alias,remaining,other])['all']
         self.assertEqual(data['totals']['distinct_episodes'],1)
         self.assertEqual(data['totals']['episode_plays'],2)
         self.assertEqual(data['totals']['watch_minutes'],40)
-        self.assertEqual(data['totals']['planned_minutes'],30)
+        self.assertEqual(data['totals']['planned_minutes'],0)
 
     def test_episode_position_does_not_join_unverified_provider_identities(self):
         show = Row(id=7,tmdb_id=10,tvdb_id=None,first_air_date=None,tmdb_data={})

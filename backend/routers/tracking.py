@@ -1170,6 +1170,15 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
     if media_type != "all": query = query.where(Media.media_type == MediaType(media_type))
     entries = (await db.execute(query)).all()
     if not await anime_is_visible(db): entries = [row for row in entries if not tracking_projection.is_anime(row[1])]
+    planning = [media for entry, media in entries if entry.status == "planning"]
+    excluded_movies = {media.id for media in planning if media.media_type == MediaType.movie}
+    excluded_shows = set()
+    if planning:
+        excluded_shows = set((await db.scalars(select(Show.id).where(or_(
+            Show.tmdb_id.in_([media.tmdb_id for media in planning if media.media_type == MediaType.series and media.tmdb_id]),
+            Show.tvdb_id.in_([media.tvdb_id for media in planning if media.media_type == MediaType.series and media.tvdb_id]),
+        )))).all())
+    entries = [(entry, media) for entry, media in entries if entry.status != "planning"]
     statuses = {status.value: 0 for status in TrackingStatus}
     scores, genres = [], {}
     for entry, media in entries:
@@ -1181,6 +1190,9 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
     events = (await db.execute(select(WatchEvent, Media).join(Media, Media.id == WatchEvent.media_id).where(
         WatchEvent.user_id == user.id, WatchEvent.completed.is_(True),
         Media.media_type.in_([MediaType.movie, MediaType.episode])))).all()
+    events = [(event, media) for event, media in events
+              if not (media.media_type == MediaType.movie and media.id in excluded_movies)
+              and not (media.media_type == MediaType.episode and media.show_id in excluded_shows)]
     if media_type == "movie": events = [row for row in events if row[1].media_type == MediaType.movie]
     elif media_type == "series": events = [row for row in events if row[1].media_type == MediaType.episode]
     if year is not None: events = [row for row in events if row[0].watched_at and row[0].watched_at.year == year]

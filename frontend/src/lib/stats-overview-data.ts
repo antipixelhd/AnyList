@@ -73,13 +73,10 @@ export function displayNumber(value: number | null, decimals = 0): string {
 export function headlineValues(data: Overview): { label: string; value: string; detail: string }[] {
   const { totals: t, coverage: c } = data;
   const watchUnavailable = t.watched_titles > 0 && !(c.runtime_known_plays + c.runtime_estimated_plays);
-  const plannedUnknown = c.planned_unknown_titles > 0;
-  const plannedValue = plannedUnknown && !t.planned_minutes ? '—' : `${plannedUnknown ? '≥ ' : ''}${displayNumber(t.planned_days, 2)}`;
   return [
     { label: 'Total titles', value: displayNumber(t.listed_titles), detail: 'Current movie and series list entries' },
     { label: data.media_type === 'movie' ? 'Movies watched' : 'Episodes watched', value: displayNumber(data.media_type === 'movie' ? t.watched_titles : t.episode_plays), detail: data.media_type === 'movie' ? 'Distinct movies with completed watch evidence' : `${displayNumber(t.distinct_episodes)} distinct episodes; includes recorded repeats and specials` },
     { label: 'Days watched', value: watchUnavailable ? '—' : `${c.runtime_missing_plays > 0 ? '≥ ' : ''}${displayNumber(t.watch_days, 2)}`, detail: `${displayNumber(t.watch_minutes / 60, 1)} estimated hours; missing runtimes are excluded` },
-    { label: 'Days planned', value: plannedValue, detail: 'Remaining released regular workload in Planning; missing catalogue/runtime is unavailable' },
     { label: 'Mean score', value: displayNumber(t.mean_score, 2), detail: `${displayNumber(t.rated_titles)} rated watched titles, on a 0–10 scale` },
     { label: 'Standard deviation', value: displayNumber(t.standard_deviation, 2), detail: 'Population deviation of current scores, once per watched title' },
   ];

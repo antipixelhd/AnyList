@@ -9,6 +9,7 @@ test('incomplete runtime is a lower bound and unavailable means remain absent', 
   assert.equal(values[2].value, '≥ 1.00');
   assert.equal(values[3].value, '—');
   assert.equal(values[4].value, '—');
+  assert.equal(values.some(row => row.label === 'Days planned'), false);
   assert.equal(metricValue({ minutes: 120, mean_score: null }, 'hours'), 2);
   assert.equal(metricValue({ mean_score: null }, 'mean_score'), null);
 });

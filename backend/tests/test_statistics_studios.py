@@ -40,7 +40,7 @@ class StudioTests(unittest.TestCase):
         self.assertLessEqual(len(groups), 54)
         self.assertTrue({str(i) for i in range(83, 101)} <= {r["key"] for r in groups})
 
-    def test_planning_is_included_and_history_only_is_excluded_from_cards(self):
+    def test_planning_and_history_only_are_excluded_from_cards(self):
         planned = fixtures.media(1, "movie", title="Planning")
         watched = fixtures.media(2, "movie", title="History", runtime=90)
         facts, coverage = fixtures.title_facts([(fixtures.entry(1, 10, status="planning"), planned)], [(fixtures.event(plays=2), watched)],
@@ -48,8 +48,7 @@ class StudioTests(unittest.TestCase):
         for row in facts:
             row["studios"] = [{"key": "catalogue:1", "label": "Studio"}]
         data = fixtures.build_overviews(facts, coverage)
-        self.assertEqual((data["all"]["studios"][0]["titles"], data["all"]["studios"][0]["minutes"]), (1, 0))
-        self.assertEqual(data["all"]["studios"][0]["mean_score"], 10)
+        self.assertEqual(data["all"]["studios"], [])
         self.assertEqual(data["series"]["studios"], [])
 
     def test_company_logo_and_country_are_projected_without_networks_becoming_producers(self):

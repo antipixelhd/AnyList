@@ -365,7 +365,8 @@ def completion_years(values):
 
 
 def aggregate_scope(facts, coverage, scope):
-    titles = [t for t in facts if scope == "all" or t["kind"] == scope]
+    # Planning is an exclusion from every statistics cohort, even with history.
+    titles = [t for t in facts if t["status"] != "planning" and (scope == "all" or t["kind"] == scope)]
     listed = [t for t in titles if t["listed"]]
     watched = [t for t in titles if t["plays"]]
     rated = [t["score"] for t in watched if t["score"] is not None]

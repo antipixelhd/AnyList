@@ -1187,6 +1187,38 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(year['activity'], [{'month': '2026-01', 'movies': 0, 'episodes': 1},
                                             {'month': datetime.now().strftime('%Y-%m'), 'movies': 0, 'episodes': 1}])
 
+    async def test_planning_excludes_existing_movie_and_episode_history_from_summary(self):
+        self.movie.runtime = 100
+        self.show.tmdb_id = 98766
+        canonical_show = Show(title='Fixture Show', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical_show)
+        await self.db.flush()
+        episode = Media(title='Episode', media_type=MediaType.episode, show_id=canonical_show.id, runtime=40)
+        self.db.add(episode)
+        entries = [TrackedEntry(user_id=self.owner.id, media_id=media.id, status='planning', progress=1,
+                                rating_mode='manual', manual_score=8, season_scores={})
+                   for media in (self.movie, self.show)]
+        self.db.add_all(entries)
+        await self.db.flush()
+        self.db.add_all([WatchEvent(user_id=self.owner.id, media_id=media.id, completed=True,
+                                   watched_at=datetime(2026, 1, 1), play_count=2)
+                         for media in (self.movie, episode)])
+        await self.db.commit()
+        for status in ('planning', 'paused', 'dropped'):
+            for current in entries:
+                current.status = status
+            await self.db.commit()
+            data = (await self.client.get(f'/tracking/profile/{self.owner.username}/stats/summary')).json()
+            with self.subTest(status=status):
+                excluded = status == 'planning'
+                self.assertEqual(data['current']['total'], 0 if excluded else 2)
+                self.assertEqual(data['viewing']['unique_titles'], 0 if excluded else 2)
+                self.assertEqual(data['viewing']['estimated_watch_minutes'], 0 if excluded else 280)
+                self.assertEqual(data['scores']['rated'], 0 if excluded else 2)
+                if excluded:
+                    self.assertEqual(data['activity'], [])
+                    self.assertEqual(data['genres'], [])
+
     async def test_private_profile_denied_even_to_an_admin_viewer(self):
         self.owner.is_admin=True
         res=await self.client.get(f'/tracking/profile/{self.friend.username}/movie')

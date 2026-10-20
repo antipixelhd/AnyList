@@ -38,15 +38,15 @@ class ActorTests(unittest.TestCase):
     def test_same_name_different_persons_remain_separate(self):
         self.assertEqual(len(actor_groups([title(1, actors=[actor(), actor(key="catalogue:2")])])), 2)
 
-    def test_only_listed_titles_contribute_including_planned_titles(self):
+    def test_planning_and_history_only_titles_are_excluded_from_cards(self):
         film = fixtures.media(1, "movie", title="Planned", tmdb_id=1)
         other = fixtures.media(2, "movie", title="History only", tmdb_id=2)
         facts, coverage = fixtures.title_facts([(fixtures.entry(1, 9, status="planning"), film)], [(fixtures.event(), other)],
             [], [film, other], [], {}, {}, {}, {}, show_anime=True)
         for fact in facts:
             fact["actors"] = [actor()]
-        data = fixtures.build_overviews(facts, coverage)["all"]["actors"][0]
-        self.assertEqual((data["titles"], data["minutes"], data["mean_score"]), (1, 0, 9))
+        data = fixtures.build_overviews(facts, coverage)["all"]["actors"]
+        self.assertEqual(data, [])
 
     def test_role_image_is_separate_from_person_portrait_and_identity_verified(self):
         doc = normalize_tvdb({"id": 1, "name": "Show", "characters": [{"id": 8, "peopleId": 9, "personName": "Actor", "type": 3,
