@@ -151,9 +151,6 @@ document.addEventListener('astro:page-load', () => {
     row.addEventListener('focusout',()=>{
       if (!hoveredRow && previewRow === row) hidePreview();
     },options);
-    row.addEventListener('pointerdown',event=>{
-      if ((event.target as Element).closest('[data-edit-entry]')) hidePreview();
-    },options);
     row.addEventListener('click',hidePreview,options);
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape'){previewDismissed=true;hidePreview();}},{signal:pageListeners.signal});
