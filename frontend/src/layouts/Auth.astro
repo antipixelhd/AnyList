@@ -2,13 +2,14 @@
 import Base from './Base.astro';
 import AuthHero from '../components/AuthHero.astro';
 import BrandMark from '../components/BrandMark.astro';
+import InstallPrompt from '../components/InstallPrompt.astro';
 import '../styles/auth.css';
 
 interface Props { title: string; showNav?: boolean }
 const { title, showNav = false } = Astro.props;
 ---
 
-<Base title={title} hideNav={true} fullBleed={true}>
+<Base title={title} hideNav={true} fullBleed={true} inlineInstallPrompt={true}>
   <div class="anylist-auth">
     <header class="auth-topbar">
       <a href="/login" class="auth-brand" aria-label="AnyList sign in"><BrandMark size={32}/><span>AnyList</span></a>
@@ -17,7 +18,7 @@ const { title, showNav = false } = Astro.props;
     <div class="auth-main">
       <div class="auth-layout">
         <AuthHero showBrand={false}/>
-        <div class="auth-form-column"><slot /></div>
+        <div class="auth-form-column"><slot /><InstallPrompt inline /></div>
       </div>
     </div>
   </div>
