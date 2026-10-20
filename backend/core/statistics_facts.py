@@ -365,12 +365,13 @@ def completion_years(values):
 
 
 def aggregate_scope(facts, coverage, scope):
-    # Planning is an exclusion from every statistics cohort, even with history.
-    titles = [t for t in facts if t["status"] != "planning" and (scope == "all" or t["kind"] == scope)]
+    scoped = [t for t in facts if scope == "all" or t["kind"] == scope]
+    # Planning only contributes to the dedicated remaining-workload metric.
+    titles = [t for t in scoped if t["status"] != "planning"]
     listed = [t for t in titles if t["listed"]]
     watched = [t for t in titles if t["plays"]]
     rated = [t["score"] for t in watched if t["score"] is not None]
-    planned = [t for t in listed if t["status"] == "planning"]
+    planned = [t for t in scoped if t["listed"] and t["status"] == "planning"]
     average = sum(rated) / len(rated) if rated else None
     score_groups = defaultdict(list)
     for title in watched:

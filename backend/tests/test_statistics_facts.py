@@ -41,7 +41,7 @@ class StatisticsFactsTests(unittest.TestCase):
                 with self.subTest(status=status, scope=scope):
                     data = result[scope]
                     if status == 'planning':
-                        for name in ('listed_titles', 'watched_titles', 'episode_plays', 'distinct_episodes', 'watch_minutes', 'rated_titles', 'planned_minutes'):
+                        for name in ('listed_titles', 'watched_titles', 'episode_plays', 'distinct_episodes', 'watch_minutes', 'rated_titles'):
                             self.assertEqual(data['totals'][name], 0)
                         self.assertIsNone(data['totals']['mean_score'])
                         for name in ('genres', 'actors', 'studios', 'staff', 'countries', 'release_years', 'watch_years'):
@@ -87,7 +87,7 @@ class StatisticsFactsTests(unittest.TestCase):
         self.assertEqual(data["totals"]["episode_plays"], 5)
         self.assertEqual(data["totals"]["distinct_episodes"], 3)
         self.assertEqual(data["totals"]["watch_minutes"], 470)
-        self.assertEqual(data["totals"]["planned_minutes"], 0)
+        self.assertEqual(data["totals"]["planned_minutes"], 60)
         self.assertAlmostEqual(data["totals"]["mean_score"], 23 / 3)
         self.assertAlmostEqual(data["totals"]["standard_deviation"], 1 / 3)
         self.assertEqual(data["scores"][14]["titles"], 1)  # Nearest half-point to season mean 7.333...
@@ -141,7 +141,7 @@ class StatisticsFactsTests(unittest.TestCase):
         result = self.build([(entry(1, 8), hidden)], [(event(), hidden)], show_anime=False)["all"]
         self.assertEqual(result["totals"]["watched_titles"], 0)
 
-    def test_planning_is_excluded_with_complete_or_partial_catalogue(self):
+    def test_planned_workload_uses_complete_or_partial_catalogue(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [11, 12, 13], "tracking_catalogue_refreshed_at": "2026-01-01"})
         show = Row(id=7, tmdb_id=10, tvdb_id=None, first_air_date=None, tmdb_data={})
         completed = media(11, "episode", show_id=7, tmdb_id=11, season_number=1, runtime=20, release_date="2020-01-01")
@@ -150,24 +150,24 @@ class StatisticsFactsTests(unittest.TestCase):
         special = media(14, "episode", show_id=7, tmdb_id=14, season_number=0, runtime=50, release_date="2020-01-01")
         inputs = ([(entry(1, status="planning", progress=1), series)], [(event(plays=3), completed)], [show])
         data = self.build(*inputs, episodes=[completed, remaining, unaired, special])["all"]
-        self.assertEqual(data["totals"]["planned_minutes"], 0)
+        self.assertEqual(data["totals"]["planned_minutes"], 30)
         self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
         data = self.build(*inputs, episodes=[completed, unaired])["all"]
-        self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
+        self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
 
-    def test_planning_progress_without_episode_membership_is_excluded(self):
+    def test_planned_progress_without_episode_membership_is_unknown(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [], "tracking_catalogue_refreshed_at": "2026-01-01"})
         data = self.build([(entry(1, status="planning", progress=4), series)], [])["all"]
-        self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
+        self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
 
-    def test_planning_with_unknown_release_dates_is_excluded(self):
+    def test_planned_workload_with_unknown_release_dates_is_partial(self):
         series = media(1, "series", tmdb_id=10, tmdb_data={"tracking_episode_ids": [11, 12], "tracking_catalogue_refreshed_at": "2026-01-01"})
         show = Row(id=7, tmdb_id=10, tvdb_id=None, first_air_date=None, tmdb_data={})
         known = media(11, "episode", show_id=7, tmdb_id=11, season_number=1, runtime=30, release_date="2020-01-01")
         unknown = media(12, "episode", show_id=7, tmdb_id=12, season_number=1, runtime=40)
         data = self.build([(entry(1, status="planning"), series)], [], [show], episodes=[known, unknown])["all"]
-        self.assertEqual(data["totals"]["planned_minutes"], 0)
-        self.assertEqual(data["coverage"]["planned_unknown_titles"], 0)
+        self.assertEqual(data["totals"]["planned_minutes"], 30)
+        self.assertEqual(data["coverage"]["planned_unknown_titles"], 1)
 
     def test_only_recorded_completion_years_are_returned_with_unrated_means_absent(self):
         movie = media(1, "movie", runtime=50)
