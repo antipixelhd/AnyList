@@ -51,8 +51,10 @@ def decode_cursor(value, scope):
         raise ProviderError('invalid_cursor') from None
 
 
-async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='', min_metacritic=0):
+async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='', min_metacritic=0,timeline=False):
     if category not in CATEGORIES or not 0<=min_metacritic<=100 or min_metacritic and category!='trending':
+        raise ProviderError('invalid_request')
+    if timeline and category!='newest':
         raise ProviderError('invalid_request')
     try:
         for value in (start,end):
@@ -84,7 +86,7 @@ async def filters(sources, *, category, genres='', platforms='', start=None, end
             values = selected_devices or ({device['id'] for device in group['devices']} if group['id'] in chosen else set())
             identifiers.update(int(value.split(':')[1]) for value in values)
     return {'category':category,'genres':chosen_genres,'platforms':sorted(identifiers),
-        'start':start,'end':end,'q':q.strip(),'min_metacritic':min_metacritic}
+        'start':start,'end':end,'q':q.strip(),'min_metacritic':min_metacritic,'timeline':timeline}
 
 
 def matches(row, query):
@@ -100,9 +102,12 @@ class GameBrowse:
     def __init__(self, sources=None):
         self.sources = sources or GameBrowseSources()
 
-    async def frame(self, query, position):
+    async def frame(self, query, position, snapshot):
         source = self.sources
         category = query['category']
+        if query['timeline'] and query['q']:
+            return await source.timeline_search(snapshot=snapshot,offset=position[0],q=query['q'],
+                genres=[int(value.split(':')[1]) for value in query['genres']],platforms=query['platforms'],start=query['start'],end=query['end'])
         if query['q'] or category in {'newest','popular'}:
             return await source.catalogue_feed(category if category in {'newest','popular'} else 'popular',
                 offset=position[0],genres=[int(value.split(':')[1]) for value in query['genres']],
@@ -129,14 +134,14 @@ class GameBrowse:
         async def load():
             state = copy.deepcopy(previous['continuation']) if previous else dict(
                 position=[1,0] if query['category']=='score' and not query['q'] else [0,0],
-                buffer=[],seen=[],exhausted=False,partial=False,limited=False,source_at=None,source=None,stale=False,fetched_at=None)
+                buffer=[],seen=[],exhausted=False,partial=False,limited=False,source_at=None,source=None,stale=False,fetched_at=None,window=int(time.time()//7200))
             seen = set(state['seen'])
             rows,frames,examined,scores = [],0,0,{}
             while len(rows)<limit:
                 if not state['buffer']:
                     if state['exhausted'] or frames>=2:
                         break
-                    result = await self.frame(query,state['position'])
+                    result = await self.frame(query,state['position'],state['window'])
                     frames+=1
                     data = result['data']
                     observed = data.get('source_at')
@@ -151,6 +156,7 @@ class GameBrowse:
                     state['source']='IGDB daily Steam top sellers' if query['category']=='sellers' and not query['q'] else data['source']
                     state['fetched_at']=result.get('fetched_at')
                     state['partial'] |= bool(data.get('partial'))
+                    state['limited'] |= bool(data.get('coverage_limited'))
                     state['stale'] |= bool(result.get('stale'))
                     state['buffer']=[row for row in data['rows'] if matches(row,query)]
                     state['exhausted']=not bool(data.get('has_more',False))

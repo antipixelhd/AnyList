@@ -3,6 +3,7 @@ import Icon from "./Icon.astro";
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { formatDateTime, requestDateLocale } from '../lib/date-time';
 import { contributorMediaLabel } from '../lib/contributor-page-data';
+import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,expansionCard} from '../lib/browse-card-data';
 const {
   item = { title: "", type: "movie" },
   signedIn = false,
@@ -15,22 +16,14 @@ const image = responsiveArtwork(item.poster, {
   route:'direct',
 });
 const state = item.list_status;
-const labels: Record<string, string> = {
-  watching: "Watching",
-  completed: "Completed",
-  planning: "Planning",
-  paused: "Paused",
-  dropped: "Dropped",
-};
-const href = item.id
-  ? `/title/${item.id}`
-  : item.tmdb_id ? `/discover-title?type=${item.type}&id=${item.tmdb_id}` : item.href || undefined;
+const game=item.type==='game';
+const href=browseCardHref(item);
 ---
 
 <article
   class="browse-card"
   data-browse-card
-  data-key={item.release_event || `${item.type}:${item.tmdb_id || item.id}`}
+  data-key={browseCardKey(item)}
   data-state={state || undefined}
   data-work-key={item.key || undefined}
 >
@@ -57,16 +50,16 @@ const href = item.id
     <span
       class="browse-list-state"
       data-list-state
-      title={labels[state] || ""}
-      aria-label={labels[state]}
+      title={browseStatusLabel(state,game)}
+      aria-label={browseStatusLabel(state,game)}
       hidden={!state}
     >
-      {["watching", "completed", "planning", "paused", "dropped"].map(
+      {["watching", "playing", "completed", "planning", "paused", "dropped"].map(
         (value) => (
           <span data-state-icon={value} hidden={state !== value}>
             <Icon
               name={
-                value === "watching"
+                value === "watching" || value === "playing"
                   ? "play"
                   : value === "completed"
                     ? "check"
@@ -81,7 +74,7 @@ const href = item.id
         ),
       )}
     </span>
-    {signedIn && (template || item.id || item.tmdb_id) && (
+    {signedIn && (template || item.id || item.tmdb_id || item.igdb_id) && (
       <div class="browse-actions" data-motion-static>
         <button
           type="button"
@@ -92,14 +85,14 @@ const href = item.id
           <span data-editor-icon="add" hidden={!!state}><Icon name="plus" /></span>
           <span data-editor-icon="edit" hidden={!state}><Icon name="edit" /></span>
         </button>
-        <div class="browse-extra-actions">
-          <button type="button" data-browse-action="watch" hidden={state === 'watching'} aria-label={`Set ${item.title} to Watching`} data-tooltip="Set to Watching"><Icon name="play" /></button>
+        <div class="browse-extra-actions" hidden={expansionCard(item)}>
+          <button type="button" data-browse-action="watch" hidden={state === (game?'playing':'watching')} aria-label={`${browseActionLabel('watch',game)} ${item.title}`} data-tooltip={browseActionLabel('watch',game)}><Icon name="play" /></button>
           <button
             type="button"
             data-browse-action="plan"
             hidden={!!state}
-            aria-label={`Plan to watch ${item.title}`}
-            data-tooltip="Plan to Watch"
+            aria-label={`${browseActionLabel('plan',game)} ${item.title}`}
+            data-tooltip={browseActionLabel('plan',game)}
           >
             <Icon name="clock" />
           </button>

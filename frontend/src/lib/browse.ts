@@ -8,7 +8,7 @@ import {
   browseRequestParams,
   sectionHref,
 } from "./browse-view";
-import { applyResponsiveArtwork } from "./responsive-artwork";
+import {createBrowseCard} from "./browse-card-render";
 import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
@@ -20,7 +20,8 @@ import { createBrowseOverride } from './browse-override';
 import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
-import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
+import { cancelUiMotion } from "./ui-motion";
+import {initializeBrowseMenus} from "./browse-menus";
 
 type Item = BrowseItem & {search_rank?: number};
 type Payload = {
@@ -61,8 +62,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
   const paintRanges = initializeBrowseRanges(form, signal);
-  const advancedFilters = find<HTMLDetailsElement>(".browse-more");
-  const advancedPanel = find<HTMLElement>(".browse-secondary-filters");
+  initializeBrowseMenus(form,signal);
   const skeleton = find<HTMLElement>("[data-browse-skeleton]");
   const region = find<HTMLElement>("[data-browse-region]");
   const loadingView = createBrowseLoading(region, skeleton);
@@ -142,6 +142,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     values.delete('unfiltered');
     values.delete("media_type");
     if (field("type").value === "series") values.set("type", "series");
+    else if(root.dataset.browseScreenEnabled==='false')values.set("type","movie");
     if (values.get("sort") === "all") values.delete("sort");
     if (values.get("min_score") === "0") values.delete("min_score");
     history.replaceState(
@@ -156,6 +157,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if(link.dataset.browseLayout===field('view').value)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
     });
     root.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
+      if(link.dataset.browseType==='game')return;
       const target=new URLSearchParams(values);target.delete('genres');target.delete('status');target.delete('cinema');
       if(link.dataset.browseType==='series')target.set('type','series');else target.delete('type');
       link.href=`${location.pathname}${target.size?'?'+target:''}`;
@@ -213,48 +215,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     for (const item of results) {
       if (deduplicate && seen.has(key(item))) continue;
       if (deduplicate) seen.add(key(item));
-      const card = template.content.firstElementChild!.cloneNode(
-        true,
-      ) as HTMLElement;
-      card.dataset.key = key(item);
-      const href = item.id
-        ? `/title/${item.id}`
-        : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
-      card
-        .querySelectorAll<HTMLAnchorElement>("a")
-        .forEach((a) => (a.href = href));
-      card.querySelector("h2")!.textContent = item.title;
-      card
-        .querySelector(".browse-poster-link")!
-        .setAttribute("aria-label", item.title);
-      const img = card.querySelector<HTMLImageElement>("[data-poster]")!;
-      img.hidden = !item.poster;
-      if (item.poster)
-        applyResponsiveArtwork(img, item.poster, {
-          size: "w342",
-          sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
-          route:'auto',
-        });
-      prepareBrowsePoster(img, signal, readyPosters);
-      const placeholder = card.querySelector<HTMLElement>(
-        ".browse-placeholder",
-      )!;
-      placeholder.hidden = !!item.poster;
-      placeholder.textContent = item.title.slice(0, 1);
-      card.querySelector("[data-year]")!.textContent = item.year || "";
-      if (item.release_event) card.querySelector<HTMLElement>('[data-year]')!.title = item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date';
-      card
-        .querySelectorAll<HTMLButtonElement>("[data-browse-action]")
-        .forEach((button) => {
-          const label =
-            button.dataset.browseAction === "edit"
-              ? "Open list editor for"
-              : button.dataset.browseAction === "plan"
-                ? "Plan to watch"
-                : button.dataset.browseAction === "watch" ? "Set to Watching" : "Rate and complete";
-          button.setAttribute("aria-label", `${label} ${item.title}`);
-        });
-      paintState(card, item);
+      const card=createBrowseCard(item,template,signal,readyPosters);
       items.set(card, item);
       cards.push(card);
       if ('entry' in item) editorStore.seed(item as EditorTitle);
@@ -389,28 +350,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       !!grid.childElementCount ||
       !error.hidden;
   };
-  const closeMenus = (except?: HTMLDetailsElement) =>
-    form
-      .querySelectorAll<HTMLDetailsElement>("[data-filter-menu]")
-      .forEach((menu) => {
-        if (menu === except || !menu.open) return;
-        void closeFilter(menu);
-      });
-  async function closeFilter(menu: HTMLDetailsElement, restoreFocus = false) {
-    const panel = menu.querySelector<HTMLElement>(".browse-options")!;
-    await hideMenu(panel);
-    if (panel.hidden) menu.open = false;
-    if (restoreFocus) menu.querySelector<HTMLElement>("summary")?.focus();
-  }
-  async function closeAdvancedFilters(restoreFocus = false) {
-    if (!advancedFilters.open || advancedPanel.inert) return;
-    advancedPanel.inert = true;
-    if (await dismiss(advancedPanel)) {
-      advancedFilters.open = false;
-      advancedPanel.inert = false;
-      if (restoreFocus) advancedFilters.querySelector<HTMLElement>("summary")?.focus();
-    }
-  }
   async function load(append = false, debounce = 0) {
     if (
       signal.aborted ||
@@ -688,6 +627,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       link.addEventListener(
         "click",
         (event) => {
+          if(link.dataset.browseType==='game'||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
           event.preventDefault();
           if (field("type").value === link.dataset.browseType) return;
           field("type").value = link.dataset.browseType!;
@@ -730,55 +670,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       .forEach((input) => (input.checked = false));
     syncGenres();
   }
-  for (const menu of form.querySelectorAll<HTMLDetailsElement>(
-    "[data-filter-menu]",
-  )) {
-    menu.querySelector("summary")!.addEventListener(
-      "click",
-      (event) => {
-        event.preventDefault();
-        const panel = menu.querySelector<HTMLElement>(".browse-options")!;
-        if (menu.open && !panel.inert) void closeFilter(menu);
-        else {
-          closeMenus(menu);
-          menu.open = true;
-          showMenu(panel);
-        }
-      },
-      { signal },
-    );
-  }
-  document.addEventListener(
-    "click",
-    (event) => {
-      if (!(event.target as Element).closest("[data-filter-menu]"))
-        closeMenus();
-      // Inline phone filters behave like the list-page section, not a popover.
-      if (!form.hasAttribute('data-mobile-filters') && !advancedFilters.contains(event.target as Node) &&
-          !(event.target as Element).closest(".browse-select-options"))
-        void closeAdvancedFilters();
-    },
-    { signal },
-  );
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !(event.target as Element).closest('[role="listbox"]'))
-      void closeAdvancedFilters(true);
-  }, { signal });
-  form.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Escape") {
-        const menu = (event.target as Element).closest<HTMLDetailsElement>(
-          "[data-filter-menu]",
-        );
-        if (menu?.open) {
-          event.stopPropagation();
-          void closeFilter(menu, true);
-        }
-      }
-    },
-    { signal },
-  );
   root
     .querySelectorAll("[data-browse-clear]")
     .forEach((button) => button.addEventListener("click", clear, { signal }));

@@ -80,8 +80,16 @@ export class EditorStore {
   // Bare ids are the legacy Media adapter. Games always use a typed subject.
   find(id: number) { return [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game' && !r.stale)?.title; }
   findSubject(subject:WorkSubject) {
-    return [...this.records.values()].find(r=>!r.stale&&r.title.type===subject.kind&&r.title.id===
+    return [...this.records.values()].find(r=>(!r.stale||r.pending.length>0)&&r.title.type===subject.kind&&r.title.id===
       (subject.kind==='game'?subject.catalogue_id:subject.media_id))?.title;
+  }
+  hasPendingSubject(subject:WorkSubject){
+    const record=subject.kind==='game'?this.records.get(`game:${subject.catalogue_id}`):[...this.records.values()].find(r=>r.title.type===subject.kind&&r.title.id===subject.media_id);
+    return !!record?.pending.length;
+  }
+  invalidateSubject(subject:WorkSubject){
+    const record=subject.kind==='game'?this.records.get(`game:${subject.catalogue_id}`):[...this.records.values()].find(r=>r.title.type===subject.kind&&r.title.id===subject.media_id);
+    if(record&&!record.pending.length&&!record.libraryPending.length)record.stale=true;
   }
   async loadSubject(subject:WorkSubject) {
     if(subject.kind!=='game') {

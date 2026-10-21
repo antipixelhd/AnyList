@@ -60,6 +60,40 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         self.api=sources.GameBrowseSources()
         self.api.cache=ImmediateCache()
 
+    async def test_timeline_search_finalizes_canonical_dates_before_exposing_pages_and_reuses_the_snapshot(self):
+        from core.game_source_cache import GameSourceCache
+        class Memory(ImmediateCache):
+            def __init__(self):self.data={}
+            async def get(self,provider,kind,key,loader,**kwargs):
+                if key not in self.data:self.data[key]=await loader()
+                return {'data':self.data[key],'stale':False}
+            async def peek(self,provider,kind,key,**kwargs):return self.data[key]
+        self.api.cache=Memory()
+        rows=[{'igdb_id':i,'release_date':f'{2000+i%20}-01-01','source_rank':i} for i in range(1,111)]
+        # The second raw relevance frame includes a duplicate resolved edition,
+        # a newer game, and unknown dates that must sort last.
+        self.api.catalogue_feed=AsyncMock(side_effect=[{'data':{'rows':rows[:80],'has_more':True,'next_offset':100}},
+            {'data':{'rows':rows[80:]+[rows[0],{'igdb_id':999,'release_date':None,'source_rank':999}],'has_more':False,'next_offset':132}}])
+        first=await self.api.timeline_search(snapshot=1,q='game')
+        second=await self.api.timeline_search(snapshot=1,q='game',offset=100)
+        combined=first['data']['rows']+second['data']['rows']
+        self.assertEqual(len(combined),111);self.assertEqual(len({r['igdb_id'] for r in combined}),111)
+        self.assertEqual([r['release_date'] or '' for r in combined],sorted([r['release_date'] or '' for r in combined],reverse=True))
+        self.assertEqual(combined[-1]['igdb_id'],999);self.assertFalse(second['data']['has_more'])
+        self.assertEqual(self.api.catalogue_feed.await_count,2)
+        self.assertFalse(first['data']['coverage_limited'])
+        # The production cache namespace must fit the real snapshot schema.
+        GameSourceCache.query('igdb','game_timeline_windows','fixture')
+
+    async def test_timeline_search_marks_a_capped_query_window_as_partial_not_exhaustive(self):
+        self.api.catalogue_feed=AsyncMock(return_value={'data':{'rows':[],'has_more':True,'next_offset':100}})
+        async def feed(*args,**kwargs):return {'data':{'rows':[],'has_more':True,'next_offset':kwargs['offset']+100}}
+        self.api.catalogue_feed.side_effect=feed
+        result=await self.api.timeline_search(snapshot=1,q='broad')
+        self.assertEqual(self.api.catalogue_feed.await_count,10)
+        self.assertTrue(result['data']['coverage_limited']);self.assertTrue(result['data']['partial'])
+        self.assertFalse(result['data']['has_more'])
+
     async def test_critic_filter_uses_verified_slug_bridges_and_rejects_conflicts_wrong_ids_and_years(self):
         rows=[{'igdb_id':i,'igdb_slug':f'game-{i}','year':'2024' if i!=40 else None} for i in [10,20,30,40,50,60]]
         raw=[binding(f'rawg-{i}',slug=f'game-{i}',identifier=str(999 if i==20 else i)) for i in [10,20,30,40,50,60]]

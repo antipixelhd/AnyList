@@ -1,0 +1,19 @@
+---
+import Icon from './Icon.astro';
+import {gamePlatformSelection,type GamePlatformGroup} from '../lib/game-browse-data';
+const {groups=[] as GamePlatformGroup[],value=''}=Astro.props;
+const selected=value.split(','),logical=gamePlatformSelection(selected,groups);
+---
+<div class="browse-filter browse-tag-picker">
+  <span id="browse-platforms-label">Platforms</span>
+  <details class="browse-filter-menu" data-filter-menu>
+    <summary aria-labelledby="browse-platforms-label browse-platforms-value"><span id="browse-platforms-value">{logical.length===1?logical[0].name:logical.length?`${logical.length} selected`:'Any'}</span><Icon name="chevron-down"/></summary>
+    <div class="browse-options" data-game-platform-options>
+      {groups.map((group:GamePlatformGroup)=><label data-game-platform-family><input type="checkbox" name="platform" value={group.id} checked={selected.includes(group.id)}/><span>{group.name}</span></label>)}
+      <details data-game-device-picker><summary class="button-quiet"><span data-game-device-label>Choose devices</span><Icon name="chevron-down"/></summary><input type="search" data-game-device-search placeholder="Find device…" aria-label="Find device" autocomplete="off"/>
+        <div data-game-device-list></div><button type="button" class="button-quiet" data-game-devices-more hidden>Load more</button>
+      </details>
+    </div>
+  </details>
+  <input type="hidden" name="platforms" value={value}/>
+</div>

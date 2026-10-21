@@ -79,6 +79,7 @@ async def browse_games(db: DB, viewer: Viewer,
         platforms: Annotated[str, Query(max_length=5000)] = '',
         start: str | None = None, end: str | None = None,
         q: Annotated[str, Query(max_length=100)] = '',
+        timeline: bool = False,
         min_metacritic: Annotated[int, Query(ge=0,le=100)] = 0,
         limit: Annotated[int, Query(ge=1,le=48)] = 24,
         cursor: Annotated[str | None, Query(max_length=512)] = None) -> dict:
@@ -92,7 +93,7 @@ async def browse_games(db: DB, viewer: Viewer,
     service = game_browse.GameBrowse()
     try:
         query = await game_browse.filters(service.sources, category=category,genres=genres,platforms=platforms,
-            start=start,end=end,q=q,min_metacritic=min_metacritic)
+            start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline)
         page = await service.page(query,limit=limit,cursor=cursor)
         return await game_browse.project(db,viewer_id,page)
     except ProviderError as cause:

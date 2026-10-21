@@ -257,6 +257,41 @@ class GameBrowseSources:
         self.require_source_time(result['data'].get('source_at'), 86400)
         return result
 
+    async def timeline_search(self, *, snapshot, offset=0, genres=(), platforms=(), start=None, end=None, q=''):
+        """Finalize a bounded canonical search window before chronological paging."""
+        if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
+            raise ProviderError('invalid_request')
+        key=hashlib.sha256(json.dumps([snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        async def load():
+            rows,seen,more=[],set(),True
+            position=0
+            for _ in range(10):
+                result=await self.catalogue_feed('newest',offset=position,genres=genres,platforms=platforms,start=start,end=end,q=q)
+                data=result['data']
+                for value in data['rows']:
+                    if value['igdb_id'] not in seen:
+                        seen.add(value['igdb_id']);rows.append(value)
+                more=bool(data['has_more'])
+                if not more:break
+                following=data['next_offset']
+                if following<=position:raise ProviderError('bad_response')
+                position=following
+                if position>=1000:break
+            rows.sort(key=lambda row:(row.get('release_date') or '',-row['igdb_id']),reverse=True)
+            return {'rows':[{**row,'search_rank':row.get('source_rank'),'source_rank':index} for index,row in enumerate(rows,1)],
+                'partial':more,'observed_at':datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
+        if offset:
+            # A continuation must use its finalized window. Eviction cannot
+            # silently reconstruct a different order beneath existing pages.
+            data=await self.cache.peek('igdb','game_timeline_windows',key,max_age=timedelta(hours=4))
+        else:
+            data=(await self.cache.get('igdb','game_timeline_windows',key,load,
+                ttl=timedelta(hours=4),max_stale=timedelta(hours=4)))['data']
+        rows=data['rows'][offset:offset+100]
+        return {'data':{'rows':rows,'has_more':offset+len(rows)<len(data['rows']),'next_offset':offset+len(rows),
+            'source':'IGDB search by release date','partial':data['partial'],'coverage_limited':data['partial']},
+            'stale':False,'fetched_at':data['observed_at']}
+
     async def steam_games(self, appids):
         sources = await self.reference('external_game_sources', 'id,name')
         ids = [row['id'] for row in sources['data']['rows'] if row.get('name') == 'Steam']

@@ -1,24 +1,35 @@
 ---
 import { api } from "../lib/api";
 import Tracker from "../layouts/Tracker.astro";
+import BrowseMediaTypes from "../components/BrowseMediaTypes.astro";
+import {viewerMediaPreferences} from "../lib/viewer-media-preferences";
 import { formatDate, requestDateLocale } from '../lib/date-time';
 import { STREAMING_REGION_COOKIE, streamingCountry, streamingRegionPreference } from '../lib/streaming-region';
 import BrowseCard from "../components/BrowseCard.astro";
-import BrowseSkeleton from "../components/BrowseSkeleton.astro";
+import BrowseLoadingSkeletons from "../components/BrowseLoadingSkeletons.astro";
 import BrowseSelect from "../components/BrowseSelect.astro";
 import Icon from "../components/Icon.astro";
 import {timelineGroups} from '../lib/browse-timeline-data';
 import { tracker } from "../lib/tracker";
 import "../styles/browse.css";
-import { releaseYearBounds, releaseYearLabel } from "../lib/browse-ranges";
+import BrowseSearchField from "../components/BrowseSearchField.astro";
+import BrowseGenreFilter from "../components/BrowseGenreFilter.astro";
+import BrowseYearRange from "../components/BrowseYearRange.astro";
 import {
   isCategoryView,
-  genreSelectionLabel,
   browseRequestParams,
   sectionHref,
   browseLayout,
 } from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
+const domains=await viewerMediaPreferences(Astro.locals);
+const explicitType=params.get('type')||params.get('media_type');
+if(explicitType==='game'||!explicitType&&!domains.show_movies_series&&domains.show_games){
+  params.delete('type');params.delete('media_type');
+  return Astro.redirect(`/browse/games${params.size?'?'+params:''}`);
+}
+if(!explicitType&&!domains.show_movies_series&&!domains.show_games)return Astro.redirect('/settings/lists');
+
 params.delete("streaming");
 params.delete("unfiltered");
 params.delete("include_rereleases");
@@ -96,7 +107,6 @@ if (!regions.some(([id]) => id === region)) regions.push([region, new Intl.Displ
 const signedIn = !!Astro.locals.user;
 const firstYear = Math.min(1900, Number(params.get("start")?.slice(0, 4)) || 1900, Number(params.get("end")?.slice(0, 4)) || 1900);
 const lastYear = Math.max(new Date().getFullYear() + 3, Number(params.get("start")?.slice(0, 4)) || 0, Number(params.get("end")?.slice(0, 4)) || 0);
-const years = releaseYearBounds(params.get("start") || "", params.get("end") || "", firstYear, lastYear);
 const minScore = Math.max(0, Math.min(10, Number(params.get("min_score") ?? 0) || 0));
 const hasSort = !categories;
 const resultsSort = hasSort ? browseRequestParams(params).get('sort') : 'all';
@@ -138,29 +148,14 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
 
 <Tracker title="Browse">
 
-  <div class="page-width browse-page" data-browse-page data-browse-view={view} data-browse-sorted={hasSort ? '' : undefined} data-browse-chips={initialChips.length ? '' : undefined}>
+  <div class="page-width browse-page" data-browse-page data-browse-screen-enabled={String(domains.show_movies_series)} data-browse-view={view} data-browse-sorted={hasSort ? '' : undefined} data-browse-chips={initialChips.length ? '' : undefined}>
     <script is:inline data-astro-rerun>
       document.currentScript.parentElement.dataset.browseScripted = "";
     </script>
     <header class="browse-header">
       <h1>Browse</h1>
       <div class="browse-header-controls">
-      <nav aria-label="Media type" class="browse-types">
-        <a
-          href={typeHref('movie')}
-          data-browse-type="movie"
-          aria-current={type === "movie" ? "page" : undefined}
-        >
-          Movies
-        </a>
-        <a
-          href={typeHref('series')}
-          data-browse-type="series"
-          aria-current={type === "series" ? "page" : undefined}
-        >
-          Series
-        </a>
-      </nav>
+      <BrowseMediaTypes active={type} movieHref={typeHref('movie')} seriesHref={typeHref('series')} showMovies={domains.show_movies_series} showGames={domains.show_games}/>
       <nav class="browse-view-switch" aria-label="Browse layout">
         <a href={viewHref('grid')} data-browse-layout="grid" aria-current={view==='grid'?'page':undefined}><Icon name="grid"/><span>Grid</span></a>
         <a href={viewHref('timeline')} data-browse-layout="timeline" aria-current={view==='timeline'?'page':undefined}><Icon name="calendar"/><span>Timeline</span></a>
@@ -175,25 +170,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
     >
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="view" value={view} />
-      <div class="browse-search-row">
-        <label class="browse-search">
-          <span>Search</span>
-          <div>
-            <Icon name="search" />
-            <input
-              type="search"
-              name="q"
-              value={params.get("q") || ""}
-              placeholder="Search titles…"
-              autocomplete="off"
-              aria-label="Search titles"
-            />
-            <button type="button" class="browse-search-clear" data-browse-search-clear aria-label="Clear search" hidden={!params.get("q")}>
-              <Icon name="close" />
-            </button>
-          </div>
-        </label>
-      </div>
+      <BrowseSearchField query={params.get("q")||""}/>
       <label class="browse-cinema-toggle" data-browse-cinema data-cinema-label={cinemaLabel} hidden={type!=='movie'} title={cinemaLabel}>
         <input type="checkbox" name="cinema" value="1" checked={params.has('cinema')} aria-label={`Has cinema release · ${cinemaScope}`}/>
         <Icon name="film"/>
@@ -207,36 +184,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
             ))}
           </BrowseSelect>
         </label>
-        <div class="browse-filter">
-          <span id="browse-genres-label">Genres</span>
-          <details class="browse-filter-menu" data-filter-menu>
-            <summary aria-labelledby="browse-genres-label browse-genres-value">
-              <span id="browse-genres-value">
-                {genreSelectionLabel(params.get('genres') || '', facets.genres)}
-              </span>
-              <Icon name="chevron-down" />
-            </summary>
-            <div class="browse-options" data-genre-options>
-              {facets.genres.map((genre: any) => (
-                <label>
-                  <input
-                    type="checkbox"
-                    name="genre"
-                    value={genre.id}
-                    checked={selectedGenres.includes(String(genre.id))}
-                  />
-                  <span>{genre.name}</span>
-                </label>
-              ))}
-            </div>
-          </details>
-          <input
-            type="hidden"
-            name="genres"
-            value={params.get("genres") || ""}
-          />
-        </div>
-
+        <BrowseGenreFilter genres={facets.genres} value={params.get('genres')||''}/>
         <label class="browse-filter">
           <span>Airing status</span>
           <BrowseSelect name="status" valueLabel={statusOptions.find(([id]) => id === params.get('status'))?.[1] || 'Any'}>
@@ -277,17 +225,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
                 ))}
               </select>
             </label>
-            <div class="browse-range" data-year-range data-range-collapsed={years.lower === years.upper ? '' : undefined} style={`--range-start:${(years.lower - firstYear) / (lastYear - firstYear) * 100}%;--range-end:${(years.upper - firstYear) / (lastYear - firstYear) * 100}%`}>
-              <div class="browse-range-heading"><span id="browse-year-label">Year range</span><output>{releaseYearLabel(params.get('start') || '',params.get('end') || '',firstYear,lastYear)}</output></div>
-              <div class="browse-range-track">
-                <input type="range" min={firstYear} max={lastYear} value={years.lower} data-range-lower aria-label="Earliest release year" />
-                <input type="range" min={firstYear} max={lastYear} value={years.upper} data-range-upper aria-label="Latest release year" />
-              </div>
-              <div class="browse-year-dates">
-                <label><span>Released after</span><input type="date" name="start" value={params.get("start") || ""} /></label>
-                <label><span>Released before</span><input type="date" name="end" value={params.get("end") || ""} /></label>
-              </div>
-            </div>
+            <BrowseYearRange start={params.get('start')||''} end={params.get('end')||''} {firstYear} {lastYear}/>
             <div class="browse-range" data-score-range style={`--range-start:0%;--range-end:${minScore / scoreLimit * 100}%`}>
               <div class="browse-range-heading"><label for="browse-min-score">Minimum TMDB score</label><output for="browse-min-score">{minScore.toLocaleString()}</output></div>
               <div class="browse-range-track">
@@ -371,39 +309,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
           <BrowseCard item={item} signedIn={signedIn} />
         ))}
       </div>
-      <div
-        class="browse-loading-view"
-        data-browse-skeleton
-        hidden
-        aria-hidden="true"
-      >
-        <div class="browse-grid browse-skeletons" data-skeleton-grid>
-          {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
-        </div>
-        <div class="browse-timeline" data-skeleton-timeline hidden>
-          <section class="browse-timeline-year">
-            <h2 class="browse-timeline-year-label"><span class="skeleton-block" style="width:2.4ch;height:1lh"></span></h2>
-            <div class="browse-timeline-months">
-              <section class="browse-timeline-month">
-                <h3><span class="skeleton-block" style="width:8ch;height:1lh"></span></h3>
-                <div class="browse-grid browse-skeletons">
-                  {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
-                </div>
-              </section>
-            </div>
-          </section>
-        </div>
-        <div class="browse-sections" data-skeleton-sections hidden>
-          {["Trending now", "Newest", "All-time popular", "Highest rated"].map(title => (
-            <section class="browse-category">
-              <header><h2>{title}</h2><span class="browse-skeleton-view-all">View all</span></header>
-              <div class="browse-grid browse-skeletons">
-                {Array.from({ length: 6 }, () => <BrowseSkeleton />)}
-              </div>
-            </section>
-          ))}
-        </div>
-      </div>
+      <BrowseLoadingSkeletons/>
       <div
         class="empty-state"
         data-browse-empty
@@ -456,7 +362,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
     session?.abort();
     session = new AbortController();
     const root = document.querySelector<HTMLElement>("[data-browse-page]");
-    if (root) initializeBrowse(root, session.signal);
+    if (root&&!root.hasAttribute("data-game-browse")) initializeBrowse(root, session.signal);
   });
   document.addEventListener("astro:before-swap", () => session?.abort());
 </script>

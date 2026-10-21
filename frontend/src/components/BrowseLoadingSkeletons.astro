@@ -1,0 +1,37 @@
+---
+import BrowseSkeleton from './BrowseSkeleton.astro';
+const {sectionTitles=['Trending now','Newest','All-time popular','Highest rated']}=Astro.props as {sectionTitles?:string[]};
+---
+      <div
+        class="browse-loading-view"
+        data-browse-skeleton
+        hidden
+        aria-hidden="true"
+      >
+        <div class="browse-grid browse-skeletons" data-skeleton-grid>
+          {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
+        </div>
+        <div class="browse-timeline" data-skeleton-timeline hidden>
+          <section class="browse-timeline-year">
+            <h2 class="browse-timeline-year-label"><span class="skeleton-block" style="width:2.4ch;height:1lh"></span></h2>
+            <div class="browse-timeline-months">
+              <section class="browse-timeline-month">
+                <h3><span class="skeleton-block" style="width:8ch;height:1lh"></span></h3>
+                <div class="browse-grid browse-skeletons">
+                  {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+        <div class="browse-sections" data-skeleton-sections hidden>
+          {sectionTitles.map(title => (
+            <section class="browse-category">
+              <header><h2>{title}</h2><span class="browse-skeleton-view-all">View all</span></header>
+              <div class="browse-grid browse-skeletons">
+                {Array.from({ length: 6 }, () => <BrowseSkeleton />)}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>

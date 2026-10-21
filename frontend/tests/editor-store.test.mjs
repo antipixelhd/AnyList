@@ -359,3 +359,26 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
     assert.equal(title.poster,'/new-poster.jpg');assert.equal(title.favorite,true);
   }finally{globalThis.Image=previous;}
 });
+
+test('typed browse invalidation preserves pending game writes and reloads complete state afterward',async()=>{
+  const pending=deferred();let reads=0;
+  const store=new EditorStore(async(_path,options)=>{
+    if(options?.method==='PATCH')return await pending.promise;
+    reads++;return gameState(7,{listed:true,status:'playing',revision:3,notes:'Fresh private note'});
+  });
+  store.scope('viewer');
+  const game=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',revision:1,notes:'Old private note'})));
+  const movie=store.seed({id:7,type:'movie',title:'Other domain',entry:{status:'watching'}});
+  store.invalidateSubject(game.subject);
+  const write=store.write(game,{score:9});
+  assert.equal(store.hasPendingSubject(game.subject),true);
+  store.invalidateSubject(game.subject);
+  assert.equal(store.findSubject(game.subject),game);
+  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',revision:2,score:9,notes:'Old private note'}));await write;
+  assert.equal(store.hasPendingSubject(game.subject),false);
+  store.invalidateSubject(game.subject);
+  assert.equal(store.findSubject(game.subject),undefined);
+  const fresh=await store.loadSubject(game.subject);
+  assert.equal(fresh.entry.notes,'Fresh private note');assert.equal(reads,1);
+  assert.equal(store.find(7),movie);
+});

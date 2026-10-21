@@ -10,5 +10,6 @@ export async function resolveGameId(igdbId:number,signal:AbortSignal,fetcher:typ
   const data=await response.json().catch(()=>null);
   if(!response.ok||!Number.isSafeInteger(data?.id)||data.id<=0)
     throw new Error(typeof data?.detail==='string'?data.detail:'Could not load game details. Please try again.');
+  if(!signal.aborted&&typeof document!=='undefined')document.dispatchEvent(new CustomEvent('anylist:game-resolved',{detail:{igdb_id:igdbId,id:data.id}}));
   return data.id as number;
 }

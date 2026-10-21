@@ -43,7 +43,7 @@ from models.catalogue import (
 from models.games import GameActivity, GameEntry, GameFavorite
 from models.users import UserSettings
 from routers.games import router as games_router
-from sqlalchemy import delete, event, select
+from sqlalchemy import delete, event, or_, select
 from test_statistics_pg import StatisticsDatabaseTests
 
 
@@ -236,9 +236,12 @@ async def main(args):
                 offset=int(re.search(r'offset (\d+)',query).group(1))
                 return [{'game_id':8000000+i,'value':1000-i,'calculated_at':int(time.time())} for i in range(offset,min(offset+100,300))]
             if endpoint=='games':
-                ids=map(int,re.search(r'id=\(([\d,]+)\)',query).group(1).split(','))
+                searching=query.startswith('search ')
+                if searching:
+                    offset=int(re.search(r'offset (\d+)',query).group(1));ids=range(8000000+offset,8000000+min(offset+100,300))
+                else:ids=map(int,re.search(r'id=\(([\d,]+)\)',query).group(1).split(','))
                 return [{'id':identifier,'slug':f'benchmark-game-{identifier-8000000}',
-                    'name':f'Benchmark game {identifier-8000000:05}','game_type':{'id':0},'first_release_date':1704067200,
+                    'name':f'Benchmark game {identifier-8000000:05}','game_type':{'id':0},'first_release_date':1704067200+((identifier%20)*86400 if searching else 0),
                     'genres':[{'id':5 if identifier%2==0 else 9,'name':'Role-playing (RPG)' if identifier%2==0 else 'Adventure'}],
                     'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}] if identifier%3 else [{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]}
                     for identifier in ids]
@@ -252,6 +255,7 @@ async def main(args):
             ('game_browse_preview','games/browse',{'limit':6}),
             ('game_browse_grid','games/browse',{'limit':24}),
             ('game_browse_pages','games/browse',{'limit':24}),
+            ('game_browse_timeline','games/browse',{'limit':24,'category':'newest','timeline':'true','q':'Benchmark'}),
             ('game_browse_genre_platform','games/browse',{'limit':24,'genres':'igdb.genre:5','platforms':'pc'}),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             ('game_list_page_two', f'games/users/{viewer.username}/list', {'limit': 50, 'offset': 50}),
@@ -334,7 +338,7 @@ async def main(args):
                     reset()
                     if label.startswith('game_browse'):
                         async with fixture.Session() as db:
-                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.like('game_browse%')))
+                            await db.execute(delete(MetadataSnapshot).where(or_(MetadataSnapshot.kind.like('game_browse%'),MetadataSnapshot.kind=='game_timeline_windows')))
                             await db.commit()
                     if path == 'quick-search/contributors':
                         async with fixture.Session() as db:
@@ -345,12 +349,15 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
-                        if label=='game_browse_pages':
+                        if label in {'game_browse_pages','game_browse_timeline'}:
                             first=await request(path,params)
                             second=await request(path,{**params,'cursor':first['cursor']})
                             ids=[row['igdb_id'] for row in first['results']+second['results']]
                             if len(ids)!=48 or len(set(ids))!=48:
                                 raise RuntimeError('Games continuation lost or repeated candidates')
+                            if label=='game_browse_timeline':
+                                dates=[row.get('release_date') or '' for row in first['results']+second['results']]
+                                if dates!=sorted(dates,reverse=True):raise RuntimeError('Timeline dates were not finalized before paging')
                             return {**second,'results':first['results']+second['results']}
                         if path:
                             return await request(path, params)

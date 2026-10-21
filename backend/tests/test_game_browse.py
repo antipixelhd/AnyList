@@ -85,6 +85,15 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['partial']);self.assertTrue(result['stale']);self.assertFalse(result['has_more'])
         self.assertTrue(all('list_status' not in row for row in result['rows']))
 
+    async def test_timeline_query_uses_its_finalized_source_and_binds_the_cursor_scope(self):
+        query=await browse.filters(self.sources,category='newest',q='game',timeline=True)
+        self.sources.timeline_search.return_value={'data':{'rows':[row(2),row(1)],'has_more':False,'source':'IGDB search by release date'},'stale':False}
+        first=await self.service.page(query,limit=1)
+        second=await self.service.page(query,limit=1,cursor=first['cursor'])
+        self.assertEqual([first['rows'][0]['igdb_id'],second['rows'][0]['igdb_id']],[2,1])
+        self.assertEqual(self.sources.timeline_search.await_count,1)
+        with self.assertRaises(ProviderError):await self.service.page({**query,'timeline':False},limit=1,cursor=first['cursor'])
+
     async def test_critic_provider_failure_is_retryable_instead_of_an_empty_negative_page(self):
         self.sources.attention.return_value={'data':{'rows':[row(1)],'has_more':False,'source':'IGDB Visits'},'stale':False}
         self.sources.critic_scores.side_effect=ProviderError('unavailable')

@@ -1,0 +1,36 @@
+---
+import Icon from './Icon.astro';
+import {genreSelectionLabel} from '../lib/browse-view';
+const {genres=[],value=''}=Astro.props;
+const selectedGenres=value.split(',');
+---
+        <div class="browse-filter">
+          <span id="browse-genres-label">Genres</span>
+          <details class="browse-filter-menu" data-filter-menu>
+            <summary aria-labelledby="browse-genres-label browse-genres-value">
+              <span id="browse-genres-value">
+                {genreSelectionLabel(value, genres)}
+              </span>
+              <Icon name="chevron-down" />
+            </summary>
+            <div class="browse-options" data-genre-options>
+              {genres.map((genre: any) => (
+                <label>
+                  <input
+                    type="checkbox"
+                    name="genre"
+                    value={genre.id}
+                    checked={selectedGenres.includes(String(genre.id))}
+                  />
+                  <span>{genre.name}</span>
+                </label>
+              ))}
+            </div>
+          </details>
+          <input
+            type="hidden"
+            name="genres"
+            value={value}
+          />
+        </div>
+

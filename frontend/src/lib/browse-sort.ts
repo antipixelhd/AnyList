@@ -2,7 +2,8 @@ import { reveal } from './ui-motion.ts';
 import { hasBrowseFilters } from './browse-view.ts';
 
 /** One sort value, with a discovery control and a compact results control. */
-export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, changed: () => void, animate = reveal) {
+export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, changed: () => void, animate = reveal,
+  options:{defaultFilteredSort?:string;hasFilters?:typeof hasBrowseFilters}={}) {
   const primary = root.querySelector<HTMLSelectElement>('[data-browse-sort]')!;
   const results = root.querySelector<HTMLSelectElement>('[data-browse-results-sort]')!;
   const primaryControl = root.querySelector<HTMLElement>('[data-browse-primary-sort]')!;
@@ -24,7 +25,7 @@ export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, cha
     root.toggleAttribute('data-browse-sorted', sorted);
     primaryControl.hidden = sorted;
     resultsControl.hidden = !sorted || timeline;
-    results.value = sorted && primary.value === 'all' ? 'popular' : primary.value;
+    results.value = sorted && primary.value === 'all' ? options.defaultFilteredSort||'popular' : primary.value;
     for (const select of [primary, results]) {
       select.disabled = searching || timeline;
       for (const option of select.options) {
@@ -49,6 +50,6 @@ export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, cha
   if (form) for (const [name, value] of new FormData(form)) {
     if (typeof value === 'string') initialValues.set(name, value);
   }
-  sync(!!initialValues.get('q')?.trim(), false, hasBrowseFilters(initialValues));
+  sync(!!initialValues.get('q')?.trim(), false, (options.hasFilters||hasBrowseFilters)(initialValues));
   return sync;
 }
