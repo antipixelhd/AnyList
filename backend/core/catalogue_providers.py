@@ -47,6 +47,8 @@ INTERVALS = {
     "tmdb": 0.3,
     "tvdb": 0.5,
     "tvmaze": 0.5,
+    "steam": 0.5,
+    "wikidata": 1.0,
 }
 SUPPORT = {
     "tmdb": {"movie", "series"},
@@ -78,6 +80,7 @@ class _PrivateRequests(logging.Filter):
                 "id.twitch.tv",
                 "api.hardcover.app",
                 "api.themoviedb.org",
+                "query.wikidata.org",
             )
         )
 

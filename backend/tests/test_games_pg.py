@@ -14,7 +14,7 @@ import httpx
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -23,7 +23,7 @@ from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_tracking_write_user
 from models import Base, GlobalSettings, User, UserProfileData, Follow
 from models.base import PrivacyLevel
-from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship
+from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship, MetadataSnapshot
 from models.games import GameAchievement, GameChildState, GameEntry, GameFavorite, GameActivity
 from routers.games import router
 from routers.tracking import router as preferences_router
@@ -114,6 +114,49 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.patch(f'/tracking/games/entries/{work_id or self.base}', json=body)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    async def test_public_game_source_cache_coalesces_and_preserves_bounded_last_good_with_durable_retry(self):
+        from core import game_source_cache
+        from core.catalogue_providers import ProviderError
+        cache=game_source_cache.GameSourceCache(self.Session)
+        loader=AsyncMock(return_value={'rows':[]})
+        results=await asyncio.gather(*(cache.get('steam','game_browse_ranks','fixture',loader) for _ in range(3)))
+        self.assertEqual(loader.await_count,1)
+        self.assertEqual(results[0]['data'],{'rows':[]})
+        self.assertFalse(results[0]['stale'])
+        async with self.Session() as db:
+            row=await db.scalar(cache.query('steam','game_browse_ranks','fixture'))
+            row.expires_at=datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(seconds=1)
+            await db.commit()
+        failed=AsyncMock(side_effect=ProviderError('unavailable'))
+        prior=await cache.get('steam','game_browse_ranks','fixture',failed)
+        self.assertTrue(prior['stale']);self.assertEqual(prior['data'],{'rows':[]})
+        await asyncio.gather(*list(game_source_cache._flights.values()),return_exceptions=True)
+        again=await cache.get('steam','game_browse_ranks','fixture',failed)
+        self.assertEqual(again['error'],'unavailable');self.assertEqual(failed.await_count,1)
+        async with self.Session() as db:
+            row=await db.scalar(cache.query('steam','game_browse_ranks','fixture'))
+            self.assertEqual(row.attempts,1)
+            self.assertEqual(row.payload,{'rows':[]})
+            row.fetched_at=datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(days=10)
+            db.add(MetadataSnapshot(provider='steam',kind='game_browse_ranks',external_id=f'{game_source_cache.SCHEMA_VERSION}:held',
+                lease_token='another-worker',lease_until=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(minutes=1)))
+            await db.commit()
+        with self.assertRaisesRegex(ProviderError,'retry_pending'):
+            await cache.get('steam','game_browse_ranks','fixture',failed)
+        with self.assertRaisesRegex(ProviderError,'refreshing'):
+            await cache.get('steam','game_browse_ranks','held',failed)
+        self.assertEqual(failed.await_count,1)
+        limited=game_source_cache.GameSourceCache(self.Session,max_records=2)
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='steam',kind='legacy_metadata',external_id='retained'))
+            await db.commit()
+        for index in range(4):
+            await limited.get('steam','game_cache_capacity',str(index),loader)
+        async with self.Session() as db:
+            self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
+                MetadataSnapshot.provider=='steam',MetadataSnapshot.kind=='game_cache_capacity')),2)
+            self.assertIsNotNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='legacy_metadata')))
 
     async def test_game_search_maps_identities_without_creating_entries_and_resolution_rechecks_type(self):
         from core import game_discovery, catalogue
