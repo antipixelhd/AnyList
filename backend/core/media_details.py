@@ -1,5 +1,6 @@
 """Read existing catalogue metadata for the shared media detail composition."""
 import re
+from fastapi import HTTPException
 from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import load_only
@@ -157,12 +158,34 @@ async def work_details(db, work, *, extras=True):
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
-async def catalogue_title(db, work):
+async def catalogue_title(db, work, viewer_id=None):
     details = await work_details(db, work)
     attrs = work.attributes or {}
     editions = []
     releases = []
     prices = []
+    personal = {}
+    if work.kind == 'game':
+        from core.game_types import capabilities
+        from core import game_tracking
+        caps = capabilities(work.attributes)
+        state = (await game_tracking.states(db, viewer_id, [work.id]))[0] if viewer_id else None
+        base = None
+        if caps.playable_child:
+            try:
+                base_id = await game_tracking.base_work_id(db, work)
+                base = await db.get(CatalogueEntity, base_id)
+                if state:
+                    state.base_work_id = base_id
+            except HTTPException:
+                pass  # Preserve metadata pages while an uncertain base is resolved.
+        personal = {'subject': {'kind': 'game', 'catalogue_id': work.id}, 'game_class': caps.game_class,
+            'base_work_id': base.id if base else None,
+            'base_game': {'id': base.id, 'title': base.name, 'image_url': image(base.image_url)} if base else None,
+            'game_state': state.model_dump(mode='json') if state else None,
+            'entry': state.model_dump(mode='json') if state and state.listed else None,
+            'favorite': bool(state and state.favorite),
+            'tracking_available': caps.independent or (caps.expansion_page and base is not None)}
     if work.kind == 'book':
         rows = (await db.execute(select(BookEdition, CatalogueEntity).join(CatalogueEntity,
             CatalogueEntity.id == BookEdition.entity_id).where(BookEdition.work_id == work.id)
@@ -172,9 +195,16 @@ async def catalogue_title(db, work):
             'pages': edition.pages} for edition, entity in rows]
         details['posters'] = unique_images([*details['posters'], *(row['image'] for row in editions)])
     if work.kind == 'game':
-        releases = [{'platform': release.platform_name, 'region': release.region, 'release_date': release.release_date}
-            for release in await db.scalars(select(GameRelease).where(GameRelease.work_id == work.id)
-                .order_by(GameRelease.release_date.desc().nullslast(), GameRelease.entity_id).limit(100))]
+        release_rows = await db.scalars(select(GameRelease).where(GameRelease.work_id == work.id,
+            GameRelease.platform_namespace == 'igdb.platform')
+            .order_by(GameRelease.release_date.asc().nullslast(), GameRelease.entity_id))
+        seen_platforms = set()
+        for release in release_rows:
+            platform = 'PC' if release.platform_id in {'3','6','14'} else release.platform_name
+            if not platform or platform in seen_platforms:
+                continue
+            seen_platforms.add(platform)
+            releases.append({'platform': platform, 'region': release.region, 'release_date': release.release_date})
         prices = [{'steam_app_id': row.steam_app_id, 'country': row.country, 'current': row.current,
             'historical_low': row.historical_low, 'historical_low_at': row.historical_low_at,
             'url': public_url(row.url), 'fetched_at': row.fetched_at}
@@ -194,4 +224,4 @@ async def catalogue_title(db, work):
             if isinstance(value, str) or (isinstance(value, dict) and value.get('name'))],
         'countries': attrs.get('countries') or [], 'pages': attrs.get('pages'),
         'editions': editions, 'releases': releases, 'prices': prices, 'entry': None, 'tracking_available': False,
-        'friends': [], 'friends_average': None, 'seasons': []}
+        'friends': [], 'friends_average': None, 'seasons': [], **personal}

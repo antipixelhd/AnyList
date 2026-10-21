@@ -2,6 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {responsiveArtwork,artworkIdentity,ARTWORK_WIDTHS} from '../src/lib/responsive-artwork.ts';
 
+test('IGDB artwork uses public fit buckets and shares one identity across detail and editor sizes',()=>{
+  const path='https://images.igdb.com/igdb/image/upload/t_thumb/co7sly.jpg';
+  const cover=responsiveArtwork(path,{size:'w500',route:'proxy'}).src;
+  const hero=responsiveArtwork(path,{size:'original'}).src;
+  assert.equal(cover,'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/co7sly.jpg');
+  assert.equal(hero,'https://images.igdb.com/igdb/image/upload/t_1080p/co7sly.jpg');
+  assert.equal(artworkIdentity(path),artworkIdentity(cover));
+  assert.equal(artworkIdentity(hero),artworkIdentity(path));
+  assert.equal(responsiveArtwork('//images.igdb.com/igdb/image/upload/t_thumb/co7sly.jpg',{size:'w185'}).src,
+    'https://images.igdb.com/igdb/image/upload/t_cover_small_2x/co7sly.jpg');
+});
+
 test('automatic routing keeps public images on their CDN even when disk caching is enabled',()=>{
   const previous=globalThis.document;
   try {

@@ -39,6 +39,7 @@ class GamePatch(ChildPatch):
     achievement_count: int | None = Field(None, strict=True, ge=0, le=2147483647)
     achievement_percentage: float | None = Field(None, ge=0, le=100, allow_inf_nan=False)
     unlocked_ids: list[Annotated[int, Field(strict=True, gt=0)]] | None = Field(None, max_length=20000)
+    unlock_updates: dict[Annotated[int, Field(gt=0)], bool] | None = Field(None, max_length=20000)
     expected_achievement_total: int | None = Field(None, strict=True, ge=0)
     confirm_simplified: bool = False
 

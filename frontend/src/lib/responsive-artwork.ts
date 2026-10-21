@@ -29,7 +29,7 @@ export interface ResponsiveArtworkAttributes {
 }
 
 interface ParsedArtwork {
-  kind: "tmdb" | "tvdb" | "other";
+  kind: "tmdb" | "tvdb" | "igdb" | "other";
   suffix?: string;
   raw: string;
 }
@@ -43,6 +43,7 @@ function suffixWithQuery(pathname: string, search = "", hash = "") {
 }
 
 function parseArtwork(path: string): ParsedArtwork {
+  if(path.startsWith('//images.igdb.com/'))return parseArtwork(`https:${path}`);
   // The frontend's backend image route contains the TMDB size bucket in the
   // path.  Rating-poster URLs deliberately do not match this expression, so
   // they remain one source URL.
@@ -96,6 +97,10 @@ function parseArtwork(path: string): ParsedArtwork {
           suffix: suffixWithQuery(url.pathname, url.search, url.hash),
           raw: path,
         };
+      }
+      if(url.hostname.toLowerCase()==='images.igdb.com'){
+        const match=/^\/igdb\/image\/upload\/t_[^/]+(\/[^/]+)$/.exec(url.pathname);
+        if(match)return {kind:'igdb',suffix:suffixWithQuery(match[1],url.search,url.hash),raw:path};
       }
     } catch {
       // Keep malformed or unsupported absolute URLs as-is below.
@@ -151,6 +156,11 @@ export function responsiveArtwork(
 
   const parsed = parseArtwork(path);
   const route=options.route==='proxy'?'proxy':'direct';
+  if(parsed.kind==='igdb'){
+    const width=widthFromSize(options.size||'w500');
+    const bucket=options.size==='original'?'1080p':width!=null&&width<=185?'cover_small_2x':width!=null&&width<=500?'cover_big_2x':'720p';
+    return {src:`https://images.igdb.com/igdb/image/upload/t_${bucket}${parsed.suffix}`};
+  }
   if (parsed.kind === "tvdb") {
     return {src:route==='proxy'?`${PROXY_PREFIX}tvdb${parsed.suffix??''}`:`https://${TVDB_HOST}${parsed.suffix??''}`};
   }

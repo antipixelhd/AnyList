@@ -61,6 +61,7 @@ export class EditorStore {
   seed(title: EditorTitle) {
     const existing = this.record(title);
     if (existing) {
+      if(existing.title===title)return existing.title;
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
         Object.assign(existing.title, title);
         existing.committed = title.entry;
@@ -158,6 +159,22 @@ export class EditorStore {
         : {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
           season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null};
       entry = {...(entry || defaults), ...operation.patch};
+      if(record.title.type==='game'&&'achievement_mode' in operation.patch){
+        const achievements={...(entry.achievements||record.title.game_state?.achievements||{})};
+        const mode=operation.patch.achievement_mode;achievements.mode=mode;
+        if(mode==='percentage'){
+          achievements.count=null;achievements.percentage=operation.patch.achievement_percentage;
+        }else if(mode==='count'){
+          achievements.count=operation.patch.achievement_count;
+          achievements.percentage=achievements.total?achievements.count/achievements.total*100:0;
+        }else if(mode==='targeted'){
+          const delta=Object.values(operation.patch.unlock_updates||{}).reduce<number>((sum,value)=>sum+(value?1:-1),0);
+          achievements.exact_count=Math.max(0,(achievements.exact_count||0)+delta);
+          achievements.count=achievements.exact_count;
+          achievements.percentage=achievements.total?achievements.count/achievements.total*100:0;
+        }else if(mode==null){achievements.count=achievements.percentage=null;}
+        entry.achievements=achievements;
+      }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
       if (entry.status !== previous && entry.status === (record.title.type==='game'?'playing':'watching') && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
@@ -192,6 +209,13 @@ export class EditorStore {
         record.stale = false;
         succeeded=true;
         return saved;
+      } catch(cause) {
+        if(record.title.type==='game'&&(cause as any).status===409){
+          record.stale=true;
+          const base=(cause as any).detail?.base_work_id;
+          if(base)for(const other of this.records.values())if(other.title.type==='game'&&other.title.id===base)other.stale=true;
+        }
+        throw cause;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);
@@ -218,6 +242,9 @@ export class EditorStore {
           const revision=record.committed?.revision??record.title.game_state?.revision;
           const saved=await this.request(`games/${child?'children':'entries'}/${id}?confirmed=true&revision=${revision}`,{method:'DELETE'});
           record.title.game_state=child?saved:{...record.title.game_state,listed:false,status:null,revision:null};
+          if(!child)for(const other of this.records.values()){
+            if(other.title.type==='game'&&other.title.base_work_id===id)other.stale=true;
+          }
         } else await this.request(`entry/${id}?confirmed=true`, {method:'DELETE'});
         record.committed = null;
         record.favoriteCommitted = false;

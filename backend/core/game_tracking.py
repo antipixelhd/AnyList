@@ -136,12 +136,12 @@ def apply_common(row, patch, previous_status):
 
 async def apply_achievements(db, entity, row, patch):
     fields = patch.model_fields_set
-    progress_fields = {'achievement_mode', 'achievement_count', 'achievement_percentage', 'unlocked_ids'}
+    progress_fields = {'achievement_mode', 'achievement_count', 'achievement_percentage', 'unlocked_ids', 'unlock_updates'}
     if not fields & progress_fields:
         return
     mode = patch.achievement_mode if 'achievement_mode' in fields else row.achievement_mode
     if mode is None:
-        if fields & {'achievement_count', 'achievement_percentage', 'unlocked_ids'}:
+        if fields & {'achievement_count', 'achievement_percentage', 'unlocked_ids', 'unlock_updates'}:
             raise HTTPException(422, 'Choose an achievement tracking mode')
         row.achievement_mode = row.achievement_count = row.achievement_percentage = None
         return  # Exact evidence survives clearing aggregate input and mode changes.
@@ -157,6 +157,8 @@ async def apply_achievements(db, entity, row, patch):
         if fields & {'achievement_count', 'achievement_percentage'}:
             raise HTTPException(409, {'code': 'confirm_simplified_tracking'})
         if patch.unlocked_ids is not None:
+            if patch.unlock_updates is not None:
+                raise HTTPException(422, 'Choose achievement replacements or individual updates')
             selected = set(patch.unlocked_ids)
             valid = set((await db.scalars(select(GameAchievement.id).where(
                 GameAchievement.work_id == entity.id, GameAchievement.id.in_(selected)))).all())
@@ -170,16 +172,30 @@ async def apply_achievements(db, entity, row, patch):
                 GameAchievementUnlock.user_id == row.user_id, GameAchievementUnlock.work_id == entity.id))).all())
             db.add_all([GameAchievementUnlock(user_id=row.user_id, work_id=entity.id, achievement_id=i)
                         for i in selected - existing])
+        elif patch.unlock_updates is not None:
+            updates = patch.unlock_updates
+            valid = set((await db.scalars(select(GameAchievement.id).where(
+                GameAchievement.work_id == entity.id, GameAchievement.id.in_(updates)))).all())
+            if valid != set(updates):
+                raise HTTPException(422, 'Achievements must belong to this game')
+            await db.execute(delete(GameAchievementUnlock).where(
+                GameAchievementUnlock.user_id == row.user_id, GameAchievementUnlock.work_id == entity.id,
+                GameAchievementUnlock.source == 'manual', GameAchievementUnlock.achievement_id.in_([
+                    identifier for identifier, selected in updates.items() if not selected])))
+            existing = set((await db.scalars(select(GameAchievementUnlock.achievement_id).where(
+                GameAchievementUnlock.user_id == row.user_id, GameAchievementUnlock.work_id == entity.id))).all())
+            db.add_all([GameAchievementUnlock(user_id=row.user_id, work_id=entity.id, achievement_id=i)
+                       for i, selected in updates.items() if selected and i not in existing])
         row.achievement_count = row.achievement_percentage = None
     elif mode == 'count':
-        if patch.unlocked_ids is not None or 'achievement_percentage' in fields:
+        if patch.unlocked_ids is not None or patch.unlock_updates is not None or 'achievement_percentage' in fields:
             raise HTTPException(422, 'Count tracking accepts only a count')
         count = patch.achievement_count if 'achievement_count' in fields else row.achievement_count
         if count is None or count > total:
             raise HTTPException(422, 'Choose an unlocked count within the known total')
         row.achievement_count, row.achievement_percentage = count, None
     else:
-        if patch.unlocked_ids is not None or 'achievement_count' in fields:
+        if patch.unlocked_ids is not None or patch.unlock_updates is not None or 'achievement_count' in fields:
             raise HTTPException(422, 'Percentage tracking accepts only a percentage')
         percentage = patch.achievement_percentage if 'achievement_percentage' in fields else row.achievement_percentage
         if percentage is None:

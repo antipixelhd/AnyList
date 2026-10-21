@@ -15,7 +15,7 @@ const generalPages: Record<string, string> = {
 };
 
 /** Bump when rendering or preview delivery changes invalidate messenger images. */
-export const SHARE_IMAGE_REVISION = '2026-10-19-2';
+export const SHARE_IMAGE_REVISION = '2026-10-21-games';
 export function shareImagePath(path: string): string {
   return `/api/proxy/sharing/image?${new URLSearchParams({path, v: SHARE_IMAGE_REVISION})}`;
 }
@@ -86,9 +86,9 @@ export function loginSharePage(next: string | null): {path: string; title: strin
 export function sharePath(pathname: string): string | null {
   let path: string;
   try { path = decodeURIComponent(pathname).replace(/\/$/, ''); } catch { return null; }
-  const profile = /^\/user\/([^/?#\\]{1,100})(?:\/(?:movies|series|list|social|stats|favorites|library))?$/.exec(path);
+  const profile = /^\/user\/([^/?#\\]{1,100})(?:\/(?:movies|series|games|list|social|stats|favorites|library))?$/.exec(path);
   if (profile) return `/user/${encodeURIComponent(profile[1])}`;
-  if (/^\/title\/[1-9][0-9]{0,9}$/.test(path)) return path;
+  if (/^\/(?:title|games)\/[1-9][0-9]{0,9}$/.test(path)) return path;
   if (/^\/(actors|person|studio)\/(?:(?:catalogue|tmdb):)?[1-9][0-9]{0,9}$/.test(path)) return path;
   return null;
 }

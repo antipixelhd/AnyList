@@ -23,7 +23,7 @@ test('login previews never disclose arbitrary paths or replace dedicated cards',
 });
 
 test('detail identities survive login for title, actor, crew, studio and profile cards', async () => {
-  for (const path of ['/title/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats']) {
+  for (const path of ['/title/102', '/games/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats', '/user/alex/games']) {
     const redirect = new URL(shareLoginPath(path, '?token=secret'), 'https://anylist.test');
     const identity = loginShareIdentity(redirect.searchParams.get('next'));
     assert.equal(identity, sharePath(path));
@@ -52,7 +52,7 @@ test('private, missing and failed metadata cannot populate a login card', async 
 });
 
 test('messaging crawlers get custom metadata directly without a login redirect', async () => {
-  for (const path of ['/title/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats']) {
+  for (const path of ['/title/102', '/games/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats', '/user/alex/games']) {
     const response = await crawlerShareResponse(new URL(`${path}?token=secret`, 'https://anylist.test'),
       'Mozilla/5.0 (compatible; Discordbot/2.0)', 'https://anylist.test', async () =>
         Response.json({title: 'A title <script> & "quoted"', description: 'Movie · 2026'}));

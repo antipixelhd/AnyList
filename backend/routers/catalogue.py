@@ -18,7 +18,7 @@ from core.catalogue_providers import (
 )
 from core.limiter import limiter
 from db import get_db, AsyncSessionLocal
-from dependencies import get_current_user, require_admin
+from dependencies import get_current_user, get_optional_user, require_admin
 from models.users import User
 from models.catalogue import (
     CatalogueEntity,
@@ -39,6 +39,7 @@ from core.screen_characters import character_detail
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
 DB = Annotated[AsyncSession, Depends(get_db)]
 Caller = Annotated[User, Depends(get_current_user)]
+OptionalCaller = Annotated[User | None, Depends(get_optional_user)]
 Admin = Annotated[User, Depends(require_admin)]
 Provider = Literal["tmdb", "tvdb", "igdb", "hardcover", "rawg", "openlibrary"]
 WorkKind = Literal["movie", "series", "game", "book"]
@@ -260,12 +261,14 @@ async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, cur
 
 
 @router.get("/entities/{entity_id}/details")
-async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: Caller) -> dict:
+async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller) -> dict:
     from core.media_details import catalogue_title
+    from core.tracking_access import catalog_access
+    await catalog_access(db, current_user)
     work = await db.get(CatalogueEntity, entity_id)
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
-    return await catalogue_title(db, work)
+    return await catalogue_title(db, work, current_user.id if current_user else None)
 
 
 @router.get("/entities/{entity_id}/{section}")

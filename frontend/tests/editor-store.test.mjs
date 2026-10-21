@@ -65,6 +65,20 @@ test('queued game writes use committed revisions and preserve completed status d
   assert.equal(title.entry.total_seconds,7200);
 });
 
+test('game achievement summaries update optimistically, preserve zero and roll back failed writes',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const original={mode:'percentage',percentage:40,count:null,total:null,exact_count:7};
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'completed',revision:1,achievements:original})));
+  const write=store.write(title,{achievement_mode:'percentage',achievement_percentage:0});
+  assert.equal(title.entry.achievements.percentage,0);
+  assert.equal(title.entry.achievements.exact_count,7);
+  assert.equal(original.percentage,40);
+  await turn();pending.reject(new Error('Retry save'));
+  await assert.rejects(write,/Retry save/);
+  assert.equal(title.entry.achievements.percentage,40);
+  assert.equal(title.entry.achievements.mode,'percentage');
+});
+
 test('unlisted expansion editor uses retained revision without creating an independent entry',async()=>{
   const calls=[];const store=new EditorStore(async(path,options)=>{
     calls.push({path,body:JSON.parse(options.body)});
@@ -76,6 +90,19 @@ test('unlisted expansion editor uses retained revision without creating an indep
   assert.equal(calls[0].path,'games/children/8');
   assert.equal(calls[0].body.revision,4);
   assert.equal(title.entry.listed,true);
+});
+
+test('targeted achievement optimism uses exact evidence instead of the previous simplified count',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const original={mode:'count',count:8,percentage:80,total:10,exact_count:2};
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',revision:1,achievements:original})));
+  const write=store.write(title,{achievement_mode:'targeted',unlock_updates:{13:true},expected_achievement_total:10});
+  assert.equal(title.entry.achievements.count,3);
+  assert.equal(title.entry.achievements.percentage,30);
+  assert.equal(original.count,8);
+  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',revision:2,achievements:{...original,mode:'targeted',count:3,exact_count:3,percentage:30}}));
+  await write;
+  assert.equal(title.entry.achievements.count,3);
 });
 
 test('game favorite actions do not create list membership and never use the streaming library',async()=>{

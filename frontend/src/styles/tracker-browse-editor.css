@@ -1,4 +1,44 @@
 /* Browse keeps the search compact while the default view leads with trending titles. */
+[data-game-only][hidden],.editor [hidden]{display:none!important}
+.editor[data-editor-domain=game] [data-game-main]:has([name=game_total_hours]){grid-column:3;grid-row:1}
+.editor[data-editor-domain=game] [data-game-main]:has([name=game_replays]){grid-column:3;grid-row:2}
+.game-achievement-editor,.game-achievement-controls{display:grid;gap:12px}
+.game-field-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:28px}
+.editor .game-field-heading label{margin:0}
+.editor .game-value-button{padding:4px 0;min-height:28px;background:transparent;color:var(--blue);border:0;font:inherit;cursor:pointer;transition:color .15s}
+.editor .game-value-button:hover,.editor .game-value-button:focus-visible{color:var(--bright)}
+.game-first-completion{display:grid;align-content:start;gap:6px}
+.game-achievement-controls{position:relative}
+.game-achievement-value{display:flex;justify-content:flex-end;min-height:32px}
+.editor .game-achievement-value input{width:110px;min-height:32px;padding:4px 8px;text-align:right}
+.game-achievement-controls:has([data-game-achievement-mode-field]:not([hidden])) .game-achievement-value{position:absolute;top:4px;right:0}
+.game-achievement-controls [data-game-achievement-mode-field]{padding-right:125px}
+.editor input.game-achievement-slider{width:100%;height:28px;min-height:28px;padding:0;background:transparent;cursor:pointer;accent-color:var(--blue);appearance:none;outline:none}
+.editor input.game-achievement-slider:focus,.editor input.game-achievement-slider:hover{background:transparent;box-shadow:none}
+.editor input.game-achievement-slider::-webkit-slider-runnable-track{height:5px;border-radius:4px;background:linear-gradient(to right,var(--blue) var(--game-progress,0%),var(--field-hover,var(--muted)) var(--game-progress,0%))}
+.editor input.game-achievement-slider::-webkit-slider-thumb{appearance:none;width:18px;height:18px;margin-top:-6.5px;border-radius:50%;background:var(--blue);transition:box-shadow .15s}
+.editor input.game-achievement-slider:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 5px color-mix(in srgb,var(--blue) 24%,transparent)}
+.editor input.game-achievement-slider::-moz-range-track{height:5px;border-radius:4px;background:var(--muted)}
+.editor input.game-achievement-slider::-moz-range-progress{height:5px;background:var(--blue)}
+.editor input.game-achievement-slider::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:var(--blue)}
+.editor input.game-achievement-slider:focus-visible::-moz-range-thumb{box-shadow:0 0 0 5px color-mix(in srgb,var(--blue) 24%,transparent)}
+.game-achievement-guidance{margin:0 0 12px;color:var(--muted)}
+.game-achievement-options{display:grid;gap:8px;max-height:320px;overflow:auto}
+.editor .game-achievement-option{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px;background:var(--field);border-radius:4px;cursor:pointer}
+.editor .game-achievement-option input{width:18px;height:18px;min-height:0;margin:0;padding:0;accent-color:var(--blue);flex:none}
+.game-achievement-option img{width:40px;height:40px;border-radius:3px;flex:none}
+.game-achievement-option>span{display:grid;gap:3px;flex:1}
+.game-achievement-option strong{font-weight:500;color:var(--text)}
+.game-achievement-option small{font-size:var(--type-caption-size);color:var(--muted)}
+.game-base-link{display:flex;align-items:center;gap:14px;margin:0 0 24px;padding:14px 0;color:var(--muted)}
+.game-base-link strong{flex:1;color:var(--bright);font-weight:500}
+.game-base-link:hover{color:var(--blue)}
+.game-tracking-progress{display:grid;gap:8px;margin-top:16px;color:var(--muted);font-size:var(--type-label-size)}
+.game-tracking-progress p{display:flex;justify-content:space-between;gap:16px;margin:0}
+.game-tracking-progress strong{font-weight:500;color:var(--text)}
+.editor [data-game-only] input::-webkit-outer-spin-button,.editor [data-game-only] input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.editor [data-game-only] input[type=number]{-moz-appearance:textfield}
+@media(max-width:650px){.editor[data-editor-domain=game] .editor-fields>*{grid-column:auto!important;grid-row:auto!important}.game-achievement-editor{grid-template-columns:1fr}.game-achievement-option small{max-width:64px;text-align:right}.game-base-link{flex-wrap:wrap}}
 .browse-heading h1 {
   margin:.32rem 0 .4rem
 }

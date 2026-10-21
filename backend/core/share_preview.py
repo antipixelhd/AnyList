@@ -27,10 +27,10 @@ MAX_BYTES = 16 * 1024 * 1024
 def target(path):
     """Accept identities, never arbitrary upstream URLs or viewer query state."""
     path = unquote(path)
-    if match := re.fullmatch(r'/(title)/([1-9][0-9]{0,9})/?', path):
+    if match := re.fullmatch(r'/(title|games)/([1-9][0-9]{0,9})/?', path):
         if int(match[2]) <= 2147483647:
             return match[1], match[2]
-    if match := re.fullmatch(r'/user/([^/?#\\]{1,100})(?:/(?:movies|series|list|social|stats|favorites|library))?/?', path):
+    if match := re.fullmatch(r'/user/([^/?#\\]{1,100})(?:/(?:movies|series|games|list|social|stats|favorites|library))?/?', path):
         return 'profile', match[1]
     if match := re.fullmatch(r'/(actors|person|studio)/((?:catalogue|tmdb):[1-9][0-9]{0,9}|[1-9][0-9]{0,9})/?', path):
         key = match[2] if ':' in match[2] else 'tmdb:' + match[2]
@@ -52,7 +52,7 @@ def age(birthday, deathday=None):
 
 def media_card(data):
     kind = data['type']
-    metadata = [dict(movie='Movie', series='Series', game='Game', book='Book').get(kind), data.get('year')]
+    metadata = ['Expansion' if kind == 'game' and data.get('game_class') == 'expansion' else dict(movie='Movie', series='Series', game='Game', book='Book').get(kind), data.get('year')]
     if kind == 'movie' and data.get('runtime'):
         minutes = int(data['runtime'])
         metadata.append(f'{minutes // 60}h {minutes % 60}m' if minutes >= 60 else f'{minutes}m')
@@ -69,6 +69,16 @@ def media_card(data):
                 subtitle=', '.join(dict.fromkeys(creators))[:180], genres=data.get('genres', []),
                 stats=[{'value':f'{float(score):.1f}', 'label':'IMDb'}] if score is not None else [],
                 primary=data.get('poster'), background=data.get('backdrop'))
+
+
+def game_preview_artwork(url, *, landscape=False):
+    if not isinstance(url, str):
+        return url
+    parsed = urlsplit(url)
+    if parsed.hostname != 'images.igdb.com' or parsed.scheme != 'https':
+        return url
+    bucket = '1080p' if landscape else 'cover_big_2x'
+    return re.sub(r'/t_[^/]+/', f'/t_{bucket}/', url, count=1)
 
 
 def profile_card(user, overview):
@@ -119,6 +129,28 @@ async def card_data(db, path):
         from core.media_details import screen_work, work_details
         details = await work_details(db, await screen_work(db, media), extras=False)
         card = media_card({**tracking_projection.media_data(media), **details})
+    elif kind == 'games':
+        from models.catalogue import CatalogueEntity
+        from core.game_types import capabilities
+        from core.media_details import work_details
+        from core.catalogue_normalize import image
+        from core.game_tracking import base_work_id
+        work = await db.get(CatalogueEntity, int(key))
+        if not work or work.kind != 'game' or not capabilities(work.attributes).searchable:
+            raise HTTPException(404, 'Game not found')
+        attrs = work.attributes or {}
+        details = await work_details(db, work, extras=False)
+        card = media_card({**details, 'type': 'game', 'game_class': attrs.get('game_class'),
+            'title': work.name, 'year': str(attrs.get('release_date') or '')[:4],
+            'poster': game_preview_artwork(image(work.image_url)),
+            'backdrop': game_preview_artwork(next(iter(details.get('artwork') or []), None), landscape=True),
+            'genres': [g if isinstance(g, str) else g['name'] for g in attrs.get('genres') or []
+                       if isinstance(g, str) or isinstance(g, dict) and g.get('name')]})
+        if capabilities(attrs).expansion_page:
+            try:
+                await base_work_id(db, work)
+            except HTTPException:
+                raise HTTPException(404, 'Verified base game not found') from None
     else:
         from core.contributor_details import contributor_page
         async with asyncio.timeout(6):

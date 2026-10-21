@@ -26,6 +26,8 @@ from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelati
 from models.games import GameAchievement, GameChildState, GameEntry
 from routers.games import router
 from routers.tracking import router as preferences_router
+from routers.catalogue import router as catalogue_router
+from routers.profile import router as profile_router
 from schemas_games import ChildPatch, GamePatch
 
 URL = os.getenv('GAMES_TEST_DATABASE_URL')
@@ -80,6 +82,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         app = FastAPI()
         app.include_router(router)
         app.include_router(preferences_router, prefix='/tracking')
+        app.include_router(catalogue_router)
+        app.include_router(profile_router, prefix='/profile')
 
         async def database():
             async with self.Session() as db:
@@ -229,6 +233,75 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         unchanged = (await self.client.get(f'/tracking/games/works/{self.base}')).json()
         self.assertEqual(unchanged['revision'], row['revision'])
         self.assertIsNone(unchanged['achievements']['mode'])
+
+    async def test_incremental_achievement_updates_preserve_unloaded_evidence(self):
+        row = await self.save(achievement_mode='targeted', expected_achievement_total=3,
+                              unlocked_ids=self.achievement_ids[:2])
+        row = await self.save(revision=row['revision'], achievement_mode='targeted', expected_achievement_total=3,
+                              unlock_updates={str(self.achievement_ids[2]): True})
+        self.assertEqual(row['achievements']['exact_count'], 3)
+        row = await self.save(revision=row['revision'], achievement_mode='targeted', expected_achievement_total=3,
+                              unlock_updates={str(self.achievement_ids[0]): False})
+        self.assertEqual(row['achievements']['exact_count'], 2)
+        page = (await self.client.get(f'/tracking/games/works/{self.base}/achievements?limit=1&offset=1')).json()
+        self.assertTrue(page['results'][0]['unlocked'])
+
+    async def test_game_details_include_only_current_viewers_tracking_and_verified_base_link(self):
+        from core.media_details import catalogue_title
+        await self.save(notes='Owner only', status='playing')
+        async with self.Session() as db:
+            entity = await db.get(CatalogueEntity, self.base)
+            own = await catalogue_title(db, entity, self.user.id)
+            other = await catalogue_title(db, entity, self.other.id)
+            child = await catalogue_title(db, await db.get(CatalogueEntity, self.child), self.user.id)
+        self.assertEqual(own['entry']['notes'], 'Owner only')
+        self.assertIsNone(other['entry'])
+        self.assertEqual(own['subject'], {'kind': 'game', 'catalogue_id': self.base})
+        self.assertEqual(child['base_game']['id'], self.base)
+        self.assertIsNone(child['entry'])
+
+    async def test_game_and_expansion_share_cards_are_anonymous_and_recheck_access(self):
+        from core.share_preview import card_data, description
+        await self.save(notes='Never in a preview', score=9)
+        async with self.Session() as db:
+            base, _ = await card_data(db, f'/games/{self.base}')
+            child, _ = await card_data(db, f'/games/{self.child}')
+            self.assertEqual(base['title'], 'Elden fixture')
+            self.assertEqual(child['title'], 'Expansion fixture')
+            self.assertIn('Expansion', description(child))
+            self.assertNotIn('Base game:', description(child))
+            self.assertNotIn('Never in a preview', str(base))
+            with self.assertRaises(HTTPException) as excluded:
+                await card_data(db, f'/games/{self.pack}')
+            self.assertEqual(excluded.exception.status_code, 404)
+            global_settings = await db.get(GlobalSettings, 1)
+            global_settings.enable_logged_out_navigation = False
+            await db.commit()
+            with self.assertRaises(HTTPException) as denied:
+                await card_data(db, f'/games/{self.base}')
+            self.assertEqual(denied.exception.status_code, 401)
+
+    async def test_anonymous_game_details_follow_navigation_policy_without_private_state(self):
+        await self.save(notes='Private game note', status='playing')
+        self.viewer = None
+        access = await self.client.get('/profile/public-access-status')
+        self.assertEqual(access.status_code, 200, access.text)
+        self.assertTrue(access.json()['enable_logged_out_navigation'])
+        response = await self.client.get(f'/catalogue/entities/{self.base}/details')
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertIsNone(data['entry'])
+        self.assertIsNone(data['game_state'])
+        self.assertNotIn('Private game note', response.text)
+        denied = await self.client.patch(f'/tracking/games/entries/{self.base}', json={'status': 'completed'})
+        self.assertEqual(denied.status_code, 401)
+        async with self.Session() as db:
+            settings = await db.get(GlobalSettings, 1)
+            settings.enable_logged_out_navigation = False
+            await db.commit()
+        denied = await self.client.get(f'/catalogue/entities/{self.base}/details')
+        self.assertEqual(denied.status_code, 401)
+        self.assertFalse((await self.client.get('/profile/public-access-status')).json()['enable_logged_out_navigation'])
 
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):
         row = await self.save(notes='Private note', status='playing')

@@ -12,6 +12,7 @@ import {detailWorkArtwork} from './detail-artwork';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
 import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
+import {gameProgress} from './game-progress';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -87,7 +88,7 @@ export function mountMediaDetail() {
     });
     related.start();
   }
-  let title = editorStore.find(info.id);
+  let title = info.type==='game'?editorStore.findSubject({kind:'game',catalogue_id:info.id}):editorStore.find(info.id);
   const synopsis = root.querySelector<HTMLElement>('[data-detail-synopsis]');
   if (synopsis) mountContributorBiography(synopsis,signal);
   root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{
@@ -196,6 +197,15 @@ export function mountMediaDetail() {
   note?.addEventListener('input',()=>{noteDirty=true;},{signal});
   const paint = (state: EditorTitle) => {
     title = state;
+    const progress=root.querySelector<HTMLElement>('[data-game-progress]');
+    if(progress&&state.type==='game'){
+      const {hours,achievement}=gameProgress(state.entry);
+      const show=progress.dataset.showAchievements!=='false';
+      for(const [selector,value] of [['[data-game-hours]',hours],['[data-game-achievements]',show?achievement:null]]){
+        const row=progress.querySelector<HTMLElement>(selector!)!;row.hidden=!value;row.querySelector('strong')!.textContent=value||'';
+      }
+      progress.hidden=!hours&&(!show||!achievement);
+    }
     const catalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
     const watching=state.entry?.status==='watching';
     const current=currentDetailSeason(catalogue,watching);
@@ -221,7 +231,7 @@ export function mountMediaDetail() {
     root.querySelectorAll<HTMLElement>('[data-season-score]').forEach(score=>score.textContent=String(state.entry?.season_scores?.[score.dataset.seasonScore!] || '—'));
     const average=root.querySelector<HTMLInputElement>('[data-season-average]');
     if(average)average.checked=state.entry?.rating_mode==='average';
-    const rating = root.querySelector<HTMLElement>('[data-quick-rate-id]');
+    const rating = root.querySelector<HTMLElement>('[data-quick-rate-id],[data-quick-rate-game]');
     if (rating) {
       const score = state.entry?.score || null;
       rating.dataset.quickRateScore=score==null?'':String(score);
@@ -235,6 +245,18 @@ export function mountMediaDetail() {
     if (state.type===info.type&&state.id===info.id) paint(state);
   }, {signal});
   if (title) paint(title);
+  root.querySelector<HTMLButtonElement>('[data-quick-rate-game]')?.addEventListener('click',event=>{
+    if(!title)return;
+    const editing=title;
+    if(editing.game_class==='expansion'){
+      document.dispatchEvent(new CustomEvent('anylist:open-editor',{detail:{subject:editing.subject,opener:event.currentTarget,title:editing}}));return;
+    }
+    (window as any).anyListQuickRate?.({title:editing.title,poster:editing.poster,score:editing.entry?.score,
+      ratingMode:'manual',onScore:async(score:number|null)=>{
+        const saved=await editorStore.write(editing,{score});
+        document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
+      }});
+  },{signal});
   favorite?.addEventListener('click',()=>{
     if (!title) return;
     const desired=!(title.favorite ?? title.entry?.favorite);

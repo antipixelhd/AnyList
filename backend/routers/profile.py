@@ -40,19 +40,15 @@ router = APIRouter()
 @router.get("/public-access-status")
 async def get_public_access_status(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user_or_api_key),
 ):
-    """Global feature flags for authenticated page renders
-    about, regardless of login state. Originally just anon-nav access status
-    (read by the frontend's auth middleware to decide whether an anonymous
-    request to a gated page should be let through) - now also carries other
-    admin toggles like disable_comments (#301) that hide UI for every
-    visitor, not just anonymous ones."""
+    """Public display flags used before authenticating anonymous navigation.
+
+    This response contains no provider credentials or private account data.
+    Each destination still checks its own access and privacy policy.
+    """
     result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = result.scalar_one_or_none()
     return {
-        # Requires a global TMDB key even if the toggle is on, in case the key
-        # was removed after the admin enabled it.
         "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation),
         "disable_comments": bool(gs and gs.disable_comments),
         "image_cache_enabled": bool(gs and gs.image_cache_enabled),

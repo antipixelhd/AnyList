@@ -37,6 +37,7 @@ const PUBLIC_RECENTLY_WATCHED_PAGE_RE = /^\/recently-watched-(?:movies|shows)\/\
 const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|discover|discover-title)?|trending\/(?:movies|shows))\/?$/;
 const PUBLIC_CATALOG_IMPORT_RE = /^\/api\/proxy\/tracking\/catalog\/(?:movie|series)\/[1-9][0-9]*\/?$/;
 const PUBLIC_PERSON_IMAGES_RE = /^\/api\/proxy\/tracking\/contributors\/(?:actor|staff)\/(?:catalogue|tmdb)(?:%3[Aa]|:)[1-9][0-9]*\/images\/?$/;
+const PUBLIC_GAME_DETAIL_RE = /^\/(?:games\/[1-9][0-9]*|api\/proxy\/catalogue\/entities\/[1-9][0-9]*\/details)\/?$/;
 // Movie/episode and show/season/episode detail pages (TMDB- and TVDB-numbered
 // variants), gated the same way as PUBLIC_EXPLORE_PAGE_RE above.
 const PUBLIC_MEDIA_DETAIL_PAGE_RE =
@@ -122,8 +123,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
     (hasApiKey || hasProxyBearer || isStaticAsset || publicLegalPage(pathname) || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
 
   // Anonymous access to any of these read-only pages is allowed only when the
-  // admin has enabled logged-out navigation (Admin Settings) and a global
-  // TMDB key is set. Profile/list pages still enforce their own privacy
+  // admin has enabled logged-out navigation (Admin Settings).
+  // Profile/list pages still enforce their own privacy
   // (public/private) server side - this only decides whether a
   // logged-out visitor gets past the gate at all. Fails closed (redirects to
   // login) if the check errors.
@@ -139,6 +140,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       (context.request.method === 'POST' && PUBLIC_CATALOG_IMPORT_RE.test(pathname)) ||
       PUBLIC_MEDIA_DETAIL_PAGE_RE.test(pathname) ||
       (context.request.method === 'GET' && PUBLIC_PERSON_IMAGES_RE.test(pathname)) ||
+      (['GET','HEAD'].includes(context.request.method) && PUBLIC_GAME_DETAIL_RE.test(pathname)) ||
       PUBLIC_RECOMMENDATIONS_PARTIAL_RE.test(pathname) ||
       PUBLIC_PERSON_CREDITS_PARTIAL_RE.test(pathname) ||
       PUBLIC_MEDIA_ROWS_PROXY_RE.test(pathname);
