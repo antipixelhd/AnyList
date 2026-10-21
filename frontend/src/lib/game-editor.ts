@@ -1,11 +1,13 @@
 import type {EditorTitle} from './editor-store';
 import {gameTimePatch,hoursInput} from './game-editor-data';
 import {localToday} from './date-time';
+import {setupEditorSelect} from './editor-select';
 
 /** Game progress controls mounted inside the existing shared tracking form. */
 export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,signal:AbortSignal,confirm:(message:string)=>Promise<boolean>) {
   const input=(name:string)=>form.elements.namedItem(name) as HTMLInputElement;
   const mode=form.elements.namedItem('game_achievement_mode') as HTMLSelectElement;
+  const modeControl=setupEditorSelect(mode.closest<HTMLElement>('[data-editor-select]')!,signal);
   const total=input('game_total_hours'),first=input('game_first_hours'),replays=input('game_replays');
   const count=input('game_achievement_count'),percentage=input('game_achievement_percentage');
   const slider=dialog.querySelector<HTMLInputElement>('[data-game-achievement-slider]')!;
@@ -89,7 +91,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     add.hidden=!!selected;remove.hidden=!selected;
     dialog.querySelector<HTMLElement>('[data-game-achievement-mode-field]')!.hidden=mode.options.length<=2;
     // The hidden select must remain readable even while the optional panel is collapsed.
-    mode.disabled=child;
+    mode.disabled=child;modeControl.sync();
     number.hidden=true;valueButton.hidden=false;
     setVisible('[data-game-targeted]',selected==='targeted');
     if(selected==='targeted'){
@@ -114,7 +116,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     const active=generation;
     const desired=mode.value;
     if(shownMode==='targeted'&&desired&&desired!=='targeted') {
-      mode.value=shownMode;
+      mode.value=shownMode;modeControl.sync();
       if(!await confirm('Switch to simplified tracking? Your saved individual achievements will be kept.')||signal.aborted||active!==generation)return;
       confirmed=true;mode.value=desired;
     }
@@ -183,7 +185,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
         totalTouched=touchedTotal;firstTouched=touchedFirst;confirmed=simplifiedConfirmed;renderMode();renderFirst();
       };
     },
-    reset(){generation++;controller?.abort();title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
+    reset(){modeControl.close();generation++;controller?.abort();title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
     populate(next:EditorTitle) {
       this.reset();title=next;current=next.game_state||next.entry||{};
       child=['expansion','dlc'].includes(next.game_class||'');totalTouched=false;firstTouched=false;confirmed=false;
@@ -199,7 +201,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       const known=summary().total!=null;
       if(!known||initialMode==='percentage')mode.add(new Option('Percentage','percentage'));
       if(known)mode.add(new Option('Count','count'));
-      if(summary().definitions_available||initialMode==='targeted')mode.add(new Option('Individual achievements','targeted'));
+      if(summary().definitions_available||initialMode==='targeted')mode.add(new Option('Individual','targeted'));
       mode.value=initialMode;
       count.value=summary().count==null?'':String(summary().count);
       percentage.value=summary().percentage==null?'':String(summary().percentage);
