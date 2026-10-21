@@ -328,6 +328,7 @@ IGDB_FIELDS = (
         )
         for projection in ("name", "cover.url", "first_release_date", "game_type.type", "version_parent.name", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
+    + ',ports.platforms.name,ports.platforms.platform_family.name'
 )
 
 
@@ -454,11 +455,12 @@ class CatalogueProviders:
 
             return await search(self.http, query, page, limit)
         if provider == "igdb":
+            from core.game_types import search_candidate, candidate_fields
+            fields=candidate_fields('id,name,cover.url,first_release_date,game_type.type')
             rows = await self.igdb(
                 "games",
-                f"search {json.dumps(query)}; fields id,name,cover.url,first_release_date,game_type.type,parent_game.game_type.type,version_parent.name,version_parent.cover.url,version_parent.first_release_date,version_parent.game_type.type,version_parent.version_parent,version_parent.parent_game.game_type.type; limit {limit}; offset {(page - 1) * limit};",
+                f"search {json.dumps(query)}; fields {fields}; limit {limit}; offset {(page - 1) * limit};",
             )
-            from core.game_types import search_candidate
             results = {}
             for row in rows:
                 if candidate := search_candidate(row):

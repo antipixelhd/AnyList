@@ -126,11 +126,13 @@ class GameBrowse:
         if cursor:
             parent,expires = decode_cursor(cursor,scope)
             previous = await self.sources.cache.peek('igdb','game_browse_pages',parent,max_age=PAGE_AGE)
+            if previous.get('projection')!=2:
+                raise ProviderError('cursor_expired')
             if previous.get('expires')!=expires or previous.get('scope')!=scope or not previous.get('has_more'):
                 raise ProviderError('invalid_cursor')
             key = digest([scope,parent])
         else:
-            key = digest([scope,int(time.time()//7200)])
+            key = digest([2,scope,int(time.time()//7200)])
         async def load():
             state = copy.deepcopy(previous['continuation']) if previous else dict(
                 position=[1,0] if query['category']=='score' and not query['q'] else [0,0],
@@ -192,7 +194,7 @@ class GameBrowse:
                 rows.append(value)
             state['seen']=sorted(seen)
             expires = previous['expires'] if previous else int(time.time()+7200)
-            return dict(scope=scope,expires=expires,rows=rows,continuation=state,
+            return dict(projection=2,scope=scope,expires=expires,rows=rows,continuation=state,
                 has_more=bool(state['buffer']) or not state['exhausted'],partial=state['partial'] or state['limited'],
                 coverage_limited=state['limited'],stale=state['stale'],source=state['source'],source_at=state['source_at'],fetched_at=state['fetched_at'])
         public = (await self.sources.cache.get('igdb','game_browse_pages',key,load,ttl=PAGE_AGE,max_stale=PAGE_AGE))['data']

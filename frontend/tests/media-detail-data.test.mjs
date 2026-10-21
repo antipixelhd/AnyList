@@ -10,6 +10,11 @@ const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
 runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
 
+test('game platform facts include known availability without requiring a dated release',()=>{
+  const media=api.prepareDetail({type:'game',platforms:['PC','PlayStation'],releases:[{platform:'PC'},{platform:'Xbox'}]});
+  assert.equal(api.detailFacts(media).find(row=>row.label==='Platforms').value,'PC, PlayStation, Xbox');
+});
+
 test('release labels distinguish future calendar dates without guessing partial dates',()=>{
   for(const [release,label] of [['2026-10-20','Releases'],['2026-10-19','Released'],['2026-10-18','Released'],['2027','Releases'],['2026-11','Releases'],['2026-10','Released']]) {
     assert.equal(api.detailFacts(api.prepareDetail({type:'movie',release_date:release}),'2026-10-19')[0].label,label);

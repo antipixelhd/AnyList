@@ -371,7 +371,7 @@ def normalize_tvdb(raw, kind="series"):
 
 
 def normalize_igdb(raw):
-    from core.game_types import igdb_game_class, platform_group
+    from core.game_types import igdb_game_class, platform_group, game_platforms
     doc = document(
         entity(
             "game",
@@ -383,7 +383,7 @@ def normalize_igdb(raw):
                 "game_class": igdb_game_class(raw),
                 "game_type": raw.get("game_type"),
                 "platforms": [{"id": str(p['id']), "name": p.get('name'), "group": platform_group(p)}
-                              for p in raw.get('platforms') or [] if isinstance(p, dict) and p.get('id')],
+                              for p in game_platforms(raw)],
                 "release_date": date(raw.get("first_release_date")),
                 "genres": raw.get("genres"),
                 "artwork": [image(a) for a in raw.get("artworks") or []],

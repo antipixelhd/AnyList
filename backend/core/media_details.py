@@ -223,5 +223,7 @@ async def catalogue_title(db, work, viewer_id=None):
         'genres': [value if isinstance(value, str) else value.get('name') for value in attrs.get('genres') or []
             if isinstance(value, str) or (isinstance(value, dict) and value.get('name'))],
         'countries': attrs.get('countries') or [], 'pages': attrs.get('pages'),
+        'platforms': list(dict.fromkeys('PC' if row.get('group')=='PC' or str(row.get('id')) in {'3','6','14'}
+            else row.get('name') for row in attrs.get('platforms') or [] if isinstance(row,dict) and row.get('name'))) if work.kind=='game' else [],
         'editions': editions, 'releases': releases, 'prices': prices, 'entry': None, 'tracking_available': False,
         'friends': [], 'friends_average': None, 'seasons': [], **personal}

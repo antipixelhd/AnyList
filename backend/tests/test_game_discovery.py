@@ -82,3 +82,15 @@ class GameDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         rows = await api.search('igdb', 'game', 'Erdtree')
         self.assertEqual([row['external_id'] for row in rows], ['240009'])
         self.assertIn('version_parent.parent_game.game_type.type', api.igdb.call_args.args[1])
+
+    async def test_provider_search_folds_verified_ports_into_original_without_name_matching(self):
+        api=CatalogueProviders();api.validate=lambda *args:None
+        base={'id':1960,'name':'Original','game_type':{'id':0}}
+        port={'id':201090,'name':'Different localized title','game_type':{'id':11},'parent_game':base}
+        remake={'id':100,'name':'Original','game_type':{'id':8},'parent_game':base}
+        api.igdb=AsyncMock(return_value=[port,base,{'id':999,'version_parent':port},remake,
+            {**port,'id':998,'parent_game':1960}])
+        rows=await api.search('igdb','game','Original')
+        self.assertEqual([r['external_id'] for r in rows],['1960','100'])
+        self.assertEqual(rows[0]['name'],'Original')
+        self.assertEqual(api.igdb.await_count,1)

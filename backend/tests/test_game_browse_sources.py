@@ -17,6 +17,18 @@ def binding(key, item='Q1', slug='game', identifier='10'):
 
 
 class SourceProjectionsTests(unittest.TestCase):
+    def test_ports_share_original_identity_and_platforms_but_remasters_remain_separate(self):
+        port={'id':201090,'name':'The New Nightmare','game_type':{'id':11},'platforms':[{'id':22,'name':'Game Boy Color'}]}
+        base={'id':1960,'name':'The New Nightmare','game_type':{'id':0},'ports':[port],
+              'platforms':[{'id':7,'name':'PlayStation'}]}
+        resolved={**port,'parent_game':base}
+        self.assertEqual(sources.card(resolved)['igdb_id'],1960)
+        self.assertEqual(sources.card({'id':9,'version_parent':resolved})['igdb_id'],1960)
+        self.assertEqual(sources.card(resolved)['platform_ids'],['igdb.platform:7','igdb.platform:22'])
+        self.assertEqual(sources.card({**resolved,'id':10,'game_type':{'id':9}})['igdb_id'],10)
+        for parent in (None,1960,{}, {**base,'id':201090}, {**base,'game_type':{'id':13}}):
+            self.assertIsNone(sources.card({**port,'parent_game':parent}))
+
     def test_pc_has_one_ui_platform_and_namespaced_filter_identities(self):
         raw = {'id':1,'name':'Game','game_type':{'id':0}, 'platforms':[
             {'id':6,'name':'PC (Microsoft Windows)'},{'id':14,'name':'Mac'},{'id':3,'name':'Linux'},

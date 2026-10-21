@@ -49,12 +49,46 @@ def capabilities(attributes: dict | None) -> GameCapabilities:
                             kind in INDEPENDENT or kind == 'expansion', kind == 'expansion')
 
 
+def candidate_fields(fields: str) -> str:
+    """Project authoritative edition/port parents without per-result fan-out."""
+    fields += ',version_parent,parent_game.game_type.type'
+    return ','.join(prefix+field for prefix in ('','version_parent.','parent_game.','version_parent.parent_game.')
+                    for field in fields.split(','))
+
+
+def canonical_game(raw: dict) -> dict | None:
+    work,seen = raw,set()
+    for _ in range(4):
+        if not isinstance(work,dict):
+            return None
+        identifier=work.get('id')
+        if isinstance(identifier,bool) or not isinstance(identifier,int) or identifier<=0 or identifier in seen:
+            return None
+        seen.add(identifier)
+        if work.get('version_parent') is not None:
+            work=work['version_parent']
+        elif igdb_game_class(work)=='port':
+            work=work.get('parent_game')
+        else:
+            return work
+    return None
+
+
+def game_platforms(raw: dict) -> list[dict]:
+    """A port contributes availability to its original work, never another list row."""
+    rows=list(raw.get('platforms') or [])
+    for port in raw.get('ports') or []:
+        if isinstance(port,dict) and igdb_game_class(port)=='port':
+            rows.extend(port.get('platforms') or [])
+    return list({row['id']:row for row in rows if isinstance(row,dict) and isinstance(row.get('id'),int)
+                 and not isinstance(row['id'],bool) and row['id']>0}.values())
+
+
 def search_candidate(raw: dict) -> dict | None:
-    """Resolve an edition before eligibility; never promote an unknown add-on."""
+    """Resolve verified edition/port identity before evaluating eligibility."""
     from core.catalogue_normalize import date, image
-    parent = raw.get('version_parent')
-    work = raw if parent is None else parent
-    if not isinstance(work, dict) or work.get('version_parent') is not None:
+    work=canonical_game(raw)
+    if work is None:
         return None
     identifier = work.get('id')
     if isinstance(identifier, bool) or not isinstance(identifier, int) or identifier <= 0 or not work.get('name'):

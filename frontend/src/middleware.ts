@@ -6,6 +6,7 @@ import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
 import { legalConfig } from './lib/legal';
 import { publicLegalPage } from './lib/legal-routes';
+import {anonymousGameDiscoveryRoute} from './lib/game-public-routes';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -138,6 +139,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
       PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||
       PUBLIC_EXPLORE_PAGE_RE.test(pathname) ||
+      anonymousGameDiscoveryRoute(context.request.method,pathname) ||
       (context.request.method === 'POST' && PUBLIC_CATALOG_IMPORT_RE.test(pathname)) ||
       PUBLIC_MEDIA_DETAIL_PAGE_RE.test(pathname) ||
       (context.request.method === 'GET' && PUBLIC_PERSON_IMAGES_RE.test(pathname)) ||

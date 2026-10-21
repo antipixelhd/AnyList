@@ -8,7 +8,7 @@ export function safeReturnPath(value: unknown, fallback = '/'): string {
 export function requiresSameOrigin(method: string, pathname: string, hasSession: boolean, hasBearerAuth: boolean): boolean {
   if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return false;
   // Catalog imports also mutate shared metadata when browsing anonymously.
-  if (!hasBearerAuth && /^\/api\/proxy\/tracking\/catalog\/(?:movie|series)\/[1-9][0-9]*\/?$/.test(pathname)) return true;
+  if (!hasBearerAuth && /^\/api\/proxy\/tracking\/(?:catalog\/(?:movie|series)|games\/resolve)\/[1-9][0-9]*\/?$/.test(pathname)) return true;
   return !pathname.startsWith('/api/proxy/') || (hasSession && !hasBearerAuth);
 }
 

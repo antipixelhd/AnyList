@@ -76,6 +76,15 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first['rows'],[]);self.assertTrue(first['has_more']);self.assertIsNotNone(first['cursor'])
         self.assertEqual(self.sources.attention.await_count,2)
 
+    async def test_old_projection_cursor_expires_instead_of_replaying_old_port_identities(self):
+        self.sources.attention.return_value={'data':{'rows':[row(1),row(2)],'has_more':False,
+            'source':'IGDB Visits'},'stale':False}
+        first=await self.service.page(self.query,limit=1)
+        key,_=browse.decode_cursor(first['cursor'],browse.digest(['v1',self.query,1]))
+        self.sources.cache.rows[key].pop('projection')
+        with self.assertRaisesRegex(ProviderError,'cursor_expired'):
+            await self.service.page(self.query,limit=1,cursor=first['cursor'])
+
     async def test_critic_unknown_is_excluded_with_partial_coverage_and_exact_zero_is_preserved(self):
         self.sources.attention.return_value={'data':{'rows':[row(i) for i in range(1,6)],'has_more':False,
             'source':'IGDB Visits'},'stale':True}

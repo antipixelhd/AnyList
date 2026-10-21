@@ -42,10 +42,12 @@ async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_lengt
 
 
 @router.post('/resolve/{igdb_id}')
-async def resolve_game(igdb_id: WorkId, db: DB, viewer: Reader) -> dict:
+async def resolve_game(igdb_id: WorkId, db: DB, viewer: Viewer) -> dict:
     from core import catalogue
     from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
     from db import AsyncSessionLocal
+    await catalog_access(db, viewer)
+    await db.close()
     try:
         result = await catalogue.refresh_metadata(db, CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal)),
             'igdb', 'game', str(igdb_id))

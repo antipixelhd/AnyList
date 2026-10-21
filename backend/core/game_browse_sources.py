@@ -10,12 +10,12 @@ from urllib.parse import urlparse
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
 from core.config import settings
 from core.game_source_cache import GameSourceCache
-from core.game_types import INDEPENDENT, platform_group, search_candidate
+from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms
 from db import AsyncSessionLocal
 
 _slots = asyncio.Semaphore(2)
-BASE_FIELDS = 'id,slug,name,cover.url,first_release_date,game_type.type,genres.name,platforms.name,platforms.platform_family.name,rating_count'
-CARD_FIELDS = BASE_FIELDS+',parent_game.game_type.type,version_parent.parent_game.game_type.type,version_parent.version_parent,version_parent.'+',version_parent.'.join(BASE_FIELDS.split(','))
+BASE_FIELDS = 'id,slug,name,cover.url,first_release_date,game_type.type,genres.name,platforms.name,platforms.platform_family.name,rating_count,ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name'
+CARD_FIELDS = candidate_fields(BASE_FIELDS)
 SLUG = re.compile(r'[a-z0-9][a-z0-9_-]{0,199}\Z')
 
 
@@ -27,10 +27,9 @@ def card(raw, *, expansions=False):
     candidate = search_candidate(raw)
     if not candidate or candidate['game_class'] not in INDEPENDENT and not (expansions and candidate['game_class'] == 'expansion'):
         return None
-    parent = raw.get('version_parent')
-    work = raw if parent is None else parent
+    work = canonical_game(raw)
     platforms, seen = [], set()
-    available = [p for p in work.get('platforms') or [] if positive(p.get('id'))]
+    available = [p for p in game_platforms(work) if positive(p.get('id'))]
     for platform in available:
         group = platform_group(platform)
         identifier = 'pc' if group == 'PC' else f'igdb.platform:{platform["id"]}'
@@ -209,7 +208,8 @@ class GameBrowseSources:
         if genres:
             conditions.append('genres=('+','.join(map(str, sorted(set(genres))))+')')
         if platforms:
-            conditions.append('platforms=('+','.join(map(str, sorted(set(platforms))))+')')
+            choices='('+','.join(map(str, sorted(set(platforms))))+')'
+            conditions.append(f'(platforms={choices} | ports.platforms={choices})')
         if sort == 'popular':
             conditions.append('rating_count>0')
         if sort == 'newest':
@@ -219,7 +219,7 @@ class GameBrowseSources:
         if last:
             stamp = datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
             conditions.append(f'first_release_date<{int(stamp.timestamp())}')
-        key = hashlib.sha256(json.dumps([sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps(['ports-v2',sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             # Search resolves editions first, then filters canonical metadata.
             # Non-search queries push globally supported filters to IGDB.
@@ -261,7 +261,7 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps([snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['ports-v2',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True
             position=0
@@ -443,7 +443,7 @@ class GameBrowseSources:
                 rows.append({**value, 'source_rank':position['rank'], 'steam_app_id':position['appid']})
             return {'rows':rows, 'source':ranking['data']['source'], 'source_at':observed,
                 'universe':'Steam top 100', 'partial':unresolved > 0 or len(native) >= 500}
-        result = await self.cache.get('steam', 'game_browse_cards', str(observed), load,
+        result = await self.cache.get('steam', 'game_browse_cards', f'ports-v2:{observed}', load,
             ttl=timedelta(hours=4), max_stale=timedelta(hours=24))
         result['stale'] = result['stale'] or ranking['stale']
         self.require_source_time(result['data']['source_at'], 86400)
@@ -465,7 +465,7 @@ class GameBrowseSources:
                 rows.append({**value, 'source_rank':index})
             return {'rows':rows, 'source':ranking['data']['source'], 'source_at':observed,
                 'has_more':ranking['data']['has_more'], 'next_offset':offset+len(positions)}
-        result = await self.cache.get('igdb', 'game_browse_cards', f'{"sellers" if sellers else "attention"}:{observed}:{offset}', load)
+        result = await self.cache.get('igdb', 'game_browse_cards', f'ports-v2:{"sellers" if sellers else "attention"}:{observed}:{offset}', load)
         result['stale'] = result['stale'] or ranking['stale']
         self.require_source_time(observed, 3*86400, empty=not ranking['data']['rows'])
         return result
@@ -515,7 +515,7 @@ class GameBrowseSources:
                 'has_more':next_start < len(ranking['data']['rows']) or ranking['data']['has_more'],
                 'next_page':page if next_start < len(ranking['data']['rows']) else page+1,
                 'next_start':next_start if next_start < len(ranking['data']['rows']) else 0}
-        result = await self.cache.get('rawg', 'game_browse_cards', f'{page}:{start}:{digest}', load,
+        result = await self.cache.get('rawg', 'game_browse_cards', f'ports-v2:{page}:{start}:{digest}', load,
             ttl=timedelta(days=1), max_stale=timedelta(days=7))
         result['stale'] = result['stale'] or ranking['stale']
         return result

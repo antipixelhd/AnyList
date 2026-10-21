@@ -23,6 +23,14 @@ def fixture(name):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_game_platform_availability_includes_verified_ports_without_copying_remakes(self):
+        raw={'id':1960,'name':'Original','game_type':{'id':0},'platforms':[{'id':7,'name':'PlayStation'}],
+             'ports':[{'id':266501,'game_type':{'id':11},'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}]},
+                      {'id':99,'game_type':{'id':8},'platforms':[{'id':167,'name':'PlayStation 5'}]}]}
+        result=normalize.normalize_igdb(raw)
+        self.assertEqual([p['id'] for p in result['work']['attributes']['platforms']],['7','6'])
+        self.assertEqual(result['work']['identities'],[normalize.identity('igdb.game',1960)])
+
     def test_game_search_resolves_editions_before_filtering_addons(self):
         from core.game_types import search_candidate
         base = {'id': 119133, 'name': 'Elden Ring', 'game_type': {'id': 0}}

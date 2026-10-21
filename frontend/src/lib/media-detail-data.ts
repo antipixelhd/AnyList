@@ -35,6 +35,7 @@ export type DetailMedia = EditorTitle & {
   artwork_thumbnails?:Record<string,string>;
   scores_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
+  platforms?:string[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
   tmdb_score?: number | null; imdb_score?: number | null; rt_critic_score?: number | null; rt_audience_score?: number | null;
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
@@ -170,7 +171,7 @@ export function detailFacts(media: DetailMedia, today = localToday()) {
     }
   }
   if (media.type === 'book') add('Pages',media.pages);
-  if (media.type === 'game') add('Platforms',[...new Set(media.releases.map(release => release.platform).filter(Boolean))].join(', '));
+  if (media.type === 'game') add('Platforms',[...new Set([...(media.platforms||[]),...media.releases.map(release => release.platform)].filter(Boolean))].join(', '));
   return facts;
 }
 export function relationLabel(relation: string, reverse = false) {

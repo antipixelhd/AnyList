@@ -229,7 +229,15 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.client.post('/tracking/games/resolve/902')).status_code, 503)
         self.assertEqual((await self.client.get('/tracking/games/search?q=%20%20')).status_code, 422)
         self.viewer = None
-        self.assertEqual((await self.client.post('/tracking/games/resolve/900')).status_code, 401)
+        with patch.object(catalogue,'refresh_metadata',AsyncMock(return_value={'entity_id':self.base})) as refresh:
+            self.assertEqual((await self.client.post('/tracking/games/resolve/900')).json(),{'id':self.base})
+            async with self.Session() as db:
+                self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),0)
+                global_settings=await db.get(GlobalSettings,1)
+                global_settings.enable_logged_out_navigation=False
+                await db.commit()
+            self.assertEqual((await self.client.post('/tracking/games/resolve/900')).status_code,401)
+            self.assertEqual(refresh.await_count,1)
 
     async def test_completion_snapshot_cumulative_time_replays_and_unknown_dates(self):
         row = await self.save(status='completed', total_seconds=36000, replay_count=3)
@@ -369,7 +377,10 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.save(notes='Owner only', status='playing')
         async with self.Session() as db:
             entity = await db.get(CatalogueEntity, self.base)
+            entity.attributes={**entity.attributes,'platforms':[{'id':'6','name':'Windows'},{'id':'14','name':'Mac'},
+                {'id':'3','name':'Linux'},{'id':'7','name':'PlayStation'}]}
             own = await catalogue_title(db, entity, self.user.id)
+            self.assertEqual(own['platforms'],['PC','PlayStation'])
             other = await catalogue_title(db, entity, self.other.id)
             child = await catalogue_title(db, await db.get(CatalogueEntity, self.child), self.user.id)
         self.assertEqual(own['entry']['notes'], 'Owner only')
