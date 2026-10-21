@@ -68,6 +68,8 @@ def achievement_summary(entity, row=None, exact_count=0):
 
 
 def present(entity, row=None, *, owner=True, favorite=False, exact_count=0):
+    attrs = entity.attributes or {}
+    year = str(attrs.get('release_date') or '')[:4]
     independent = isinstance(row, GameEntry)
     listed = bool(row and (independent or row.base_entry_id is not None))
     # A retained child is an owner-only editor prefill, never public list state.
@@ -77,6 +79,8 @@ def present(entity, row=None, *, owner=True, favorite=False, exact_count=0):
         and row.completion_seconds is not None
         and (row.total_seconds is None or row.total_seconds >= row.completion_seconds))
     return GameEntryOut(subject=GameSubject(catalogue_id=entity.id), title=entity.name,
+        year=year if len(year) == 4 and year.isdigit() else None,
+        genres=[genre for genre in attrs.get('genres') or [] if isinstance(genre, str)],
         image_url=entity.image_url, game_class=capabilities(entity.attributes).game_class,
         base_work_id=row.base_work_id if isinstance(row, GameChildState) else None,
         listed=listed, status=row.status if row else None, score=row.score if row else None,

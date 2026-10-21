@@ -1,0 +1,13 @@
+---
+import {responsiveArtwork} from '../lib/responsive-artwork';
+import {gameProgress} from '../lib/game-progress';
+import {scoreLabel} from '../lib/tracker';
+import Icon from './Icon.astro';
+const {entry,showAchievements=true}=Astro.props;
+const id=entry.subject.catalogue_id,image=responsiveArtwork(entry.image_url,{size:'w185',sizes:'85px',route:'direct'}),progress=gameProgress(entry);
+---
+<article class="progress-card game-progress-card" data-game-playing-card={id}>
+  <a class="progress-card-poster" href={`/games/${id}`} aria-label={`View ${entry.title}`}>{image&&<img {...image} alt="" loading="lazy"/>}</a>
+  <button class="progress-card-quick-action" type="button" data-edit-game={id} aria-label={`Edit ${entry.title}`}><Icon name="edit"/></button>
+  <div class="progress-card-details" aria-label={`${entry.title} progress`}><strong class="progress-card-behind">Playing</strong><a class="progress-card-title" href={`/games/${id}`}>{entry.title}</a><span class="progress-card-progress-label">{[progress.hours,showAchievements?progress.achievement:null,entry.score?`${scoreLabel(entry.score)} / 10`:null].filter(Boolean).join(' · ')}</span></div>
+</article>

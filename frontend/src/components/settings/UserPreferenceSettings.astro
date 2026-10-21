@@ -3,6 +3,7 @@ import RatingPosterSettings from "./RatingPosterSettings.astro";
 import StatisticsRefresh from "./StatisticsRefresh.astro";
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
+import {viewerMediaPreferences} from '../../lib/viewer-media-preferences';
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
 import '../../styles/profile-color-settings.css';
 
@@ -17,7 +18,7 @@ const settings = Astro.locals.settings;
 const [profileData, me, trackingPrefs] = await Promise.all([
   api.profile.get(token!).catch(() => null),
   api.auth.me(token!),
-  tracker('preferences', token!).catch(() => ({ combine_lists: true, default_sort: 'title' })),
+  viewerMediaPreferences(Astro.locals),
 ]);
 
 const prefs: UserPreferences = {
@@ -205,6 +206,12 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       </div>
       )}
       {category === "lists" && <div class="settings-stack">
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Media</h2></div>
+        <label class="setting-switch-row" for="show-movies-series"><span><strong>Movies & Series</strong></span><input id="show-movies-series" type="checkbox" checked={trackingPrefs.show_movies_series}/></label>
+        <label class="setting-switch-row" for="show-games"><span><strong>Games</strong></span><input id="show-games" type="checkbox" checked={trackingPrefs.show_games}/></label>
+        <p class="settings-note">Controls your navigation and discovery. Saved entries, direct links and other users’ profiles remain available.</p>
+      </section>
       <!-- List presentation -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -214,6 +221,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
           <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
         </label>
+        <label class="setting-switch-row" for="show-game-achievements"><span><strong>Show game achievements</strong></span><input id="show-game-achievements" type="checkbox" checked={trackingPrefs.show_game_achievements}/></label>
         <div class="settings-inline-grid settings-single-column">
           <label>Default list sorting
             <select id="default-list-sort">
@@ -697,6 +705,11 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     });
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
+    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements']]){
+      const control=document.getElementById(id) as HTMLInputElement|null;if(!control)continue;
+      control.dataset.savedValue=String(control.checked);
+      control.addEventListener('change',()=>saveTrackingPreferences({[field]:control.checked},control,field));
+    }
     function publishCombinePreference(value: boolean) {
       document.dispatchEvent(new CustomEvent('anylist:combine-lists-changed', { detail: { combineLists: value } }));
     }
@@ -706,6 +719,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
       const statusKey = field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
+      if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:requestedValue==='true'}}));
       setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
         try {
@@ -727,6 +741,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             if (control instanceof HTMLInputElement && control.type === 'checkbox') control.checked = savedValue === 'true';
             else control.value = savedValue;
             if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
+            if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:savedValue==='true'}}));
             setStatus(statusKey, error instanceof Error ? error.message : 'Could not update your preferences.', 'error');
           }
         }

@@ -2,11 +2,13 @@
 import Icon from './Icon.astro';
 interface Props {
   rewatchCount?: number;
+  replayCount?: number;
   notes?: string | null;
   newSeasons?: number;
 }
-const {rewatchCount = 0, notes, newSeasons = 0} = Astro.props;
-const rewatchLabel = `${rewatchCount} ${rewatchCount === 1 ? 'rewatch' : 'rewatches'}`;
+const {rewatchCount:screenRewatches = 0, replayCount, notes, newSeasons = 0} = Astro.props;
+const rewatchCount=replayCount??screenRewatches;
+const rewatchLabel = `${rewatchCount} ${replayCount!=null?(rewatchCount===1?'replay':'replays'):(rewatchCount === 1 ? 'rewatch' : 'rewatches')}`;
 const hasNote = Boolean(notes?.trim());
 ---
 {(newSeasons > 0 || rewatchCount > 0 || hasNote) && <span class="entry-annotations">

@@ -33,7 +33,9 @@ from core import chronological_discovery, contributor_evidence, contributor_sear
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
-from models.catalogue import ContributorEvidence
+from models.catalogue import CatalogueEntity, ContributorEvidence
+from models.games import GameEntry
+from routers.games import router as games_router
 from models.users import UserSettings
 from sqlalchemy import delete, event, select
 from test_statistics_pg import StatisticsDatabaseTests
@@ -86,7 +88,17 @@ async def main(args):
                 db.add(Media(title=f'Benchmark title {900000 + index}', media_type=MediaType.movie,
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
+            for index in range(args.local_titles):
+                game = CatalogueEntity(kind='game', name=f'Benchmark game {index:05}', attributes={
+                    'game_class': 'game', 'release_date': f'{2000 + index % 26}-01-01',
+                    'genres': ['Adventure' if index % 2 else 'Role-playing (RPG)']})
+                db.add(game)
+                await db.flush()
+                db.add(GameEntry(user_id=viewer.id, work_id=game.id,
+                    status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
+                    total_seconds=index * 3600, score=8 if index % 3 else None))
             await db.commit()
+        fixture.app.include_router(games_router)
         fixture.app.dependency_overrides[get_current_user] = lambda: viewer
         fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: viewer
 
@@ -172,7 +184,12 @@ async def main(args):
                 elif isinstance(items, dict):
                     items = [item for section in items.values() for item in section]
                 row['rows'] = len(items)
-                row['result_identity'] = hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest()
+                # Fixture insertion timestamps are intentionally fresh each run;
+                # compare game membership/order/progress without those clocks.
+                identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith('game_list') else items
+                row['result_identity'] = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
+                row['payload_bytes'] = len(json.dumps(result).encode())
+                row['total'] = result.get('total')
                 row['has_more'] = result.get('has_more')
                 row['pending'] = result.get('verification_pending')
             samples.append(row)
@@ -188,6 +205,10 @@ async def main(args):
         event.listen(fixture.engine.sync_engine, 'after_cursor_execute', sql_end)
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
+            ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
+            ('game_list_page_two', f'games/users/{viewer.username}/list', {'limit': 50, 'offset': 50}),
+            ('game_list_genre_year', f'games/users/{viewer.username}/list', {'genre': 'Role-playing (RPG)', 'year': '2024', 'limit': 2}),
+            ('game_list_status', f'games/users/{viewer.username}/list', {'status': 'playing', 'sort': 'score', 'limit': 50}),
             ('movie_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'movie'}),
             ('movie_typo', 'catalog', {'q': 'benchnark titl', 'media_type': 'movie'}),
             ('series_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'series'}),

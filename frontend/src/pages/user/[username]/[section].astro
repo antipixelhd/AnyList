@@ -84,6 +84,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
 </Tracker>
 <script>
 import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
+import {mountListCoverPreview} from '../../../lib/list-cover-preview';
 import {compactListProgress} from '../../../lib/tracker';
 import {placeDropdown} from '../../../lib/dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from '../../../lib/ui-motion';
@@ -92,18 +93,13 @@ document.addEventListener('astro:before-swap',()=>pageListeners?.abort());
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
   pageListeners = new AbortController();
-  if (!document.querySelector('#entry-groups')) return;
-  const preview = document.querySelector<HTMLElement>('#cover-preview');
-  const previewImage = preview?.querySelector<HTMLImageElement>('img');
+  if (!document.querySelector('#entry-groups')||document.querySelector('[data-game-list]')) return;
   const compactImageOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'auto' as const};
   const updateEntryImages=() => document.querySelectorAll<HTMLElement>('.entry-thumbnail').forEach(thumbnail => {
     const image=thumbnail.querySelector<HTMLImageElement>('.entry-cover');
     const source=thumbnail.dataset.artworkPath;
     if(image && source) applyResponsiveArtwork(image,source,compactImageOptions);
   });
-  let previewDismissed = false;
-  let hoveredRow: HTMLElement | null = null;
-  let previewRow: HTMLElement | null = null;
   function syncAvailability(row: HTMLElement, updated: any) {
     const indicator = row.querySelector<HTMLElement>('.entry-availability');
     if (!indicator) return;
@@ -112,50 +108,7 @@ document.addEventListener('astro:page-load', () => {
     indicator.title = label;
     indicator.setAttribute('aria-label', label);
   }
-  function hidePreview() {
-    previewRow = null;
-    if (preview) preview.hidden = true;
-  }
-  function showPreview(row: HTMLElement) {
-    if (document.querySelector<HTMLDialogElement>('#tracking-editor')?.open) {
-      hidePreview();
-      return;
-    }
-    const thumbnail = row.querySelector<HTMLElement>('.entry-thumbnail');
-    const source = thumbnail?.dataset.previewSrc;
-    if (!preview || !previewImage || !source || previewDismissed || !matchMedia('(hover:hover) and (min-width:901px)').matches) {
-      hidePreview();
-      return;
-    }
-    const rect = thumbnail!.getBoundingClientRect();
-    const width = 174, height = 248, gap = 18;
-    applyResponsiveArtwork(previewImage,source,{size:'w500',sizes:'174px',route:'auto'});
-    preview.style.left = `${Math.max(8, Math.min(innerWidth-width-8, rect.left-width-gap >= 8 ? rect.left-width-gap : rect.right+gap))}px`;
-    preview.style.top = `${Math.max(8, Math.min(innerHeight-height-8, rect.top-(height-rect.height)/2))}px`;
-    preview.hidden = false;
-    previewRow = row;
-  }
-  document.querySelectorAll<HTMLElement>('.entry-row').forEach(row => {
-    const options = {signal:pageListeners.signal};
-    row.addEventListener('pointerenter',()=>{hoveredRow=row;previewDismissed=false;showPreview(row);},options);
-    row.addEventListener('pointerleave',()=>{
-      if (hoveredRow === row) hoveredRow = null;
-      if (previewRow === row) hidePreview();
-      if (!document.querySelector<HTMLDialogElement>('#tracking-editor')?.open) delete row.dataset.editorDeselected;
-    },options);
-    row.addEventListener('focusin',event=>{
-      if (hoveredRow || (event.target as Element).closest('[data-edit-entry]')) return;
-      previewDismissed=false;
-      showPreview(row);
-    },options);
-    row.addEventListener('focusout',()=>{
-      if (!hoveredRow && previewRow === row) hidePreview();
-    },options);
-    row.addEventListener('click',hidePreview,options);
-  });
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'){previewDismissed=true;hidePreview();}},{signal:pageListeners.signal});
-  window.addEventListener('scroll',hidePreview,{capture:true,signal:pageListeners.signal});
-  window.addEventListener('resize',hidePreview,{signal:pageListeners.signal});
+  const {hide:hidePreview}=mountListCoverPreview(pageListeners.signal);
   const groups = document.querySelector('#entry-groups');
   let refreshList = () => {};
   document.querySelectorAll<HTMLButtonElement>('[data-progress-increment]').forEach(button=>button.addEventListener('click',async()=>{

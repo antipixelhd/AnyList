@@ -57,6 +57,8 @@ class AchievementSummary(BaseModel):
 class GameEntryOut(BaseModel):
     subject: GameSubject
     title: str
+    year: str | None = None
+    genres: list[str] = Field(default_factory=list)
     image_url: str | None = None
     game_class: str
     base_work_id: int | None = None
@@ -78,11 +80,33 @@ class GameEntryOut(BaseModel):
     achievements: AchievementSummary = Field(default_factory=AchievementSummary)
 
 
+class GameListProfile(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    profile_color: str = '#3db4f2'
+    background_url: str | None = None
+    has_avatar: bool = False
+    owner: bool = False
+    following: bool = False
+    follows_you: bool = False
+    combine_lists: bool = True
+
+
+class GamePlayingOut(BaseModel):
+    results: list[GameEntryOut]
+    total: int
+
+
 class GameListOut(BaseModel):
     results: list[GameEntryOut]
     total: int
     offset: int
     limit: int
+    profile: GameListProfile
+    status_counts: dict[GameStatus, int] = Field(default_factory=dict)
+    genres: list[str] = Field(default_factory=list)
+    years: list[str] = Field(default_factory=list)
 
 
 class FavoritePatch(BaseModel):

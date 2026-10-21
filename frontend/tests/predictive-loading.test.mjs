@@ -49,7 +49,7 @@ test('manifest exposes only two primary images for the current identity',()=>{
 
 test('only same-origin title and contributor pages can be predicted',()=>{
   const origin='https://anylist.test';
-  for(const path of ['/title/1','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12'])assert.equal(predictivePage(new URL(path,origin),origin),true);
+  for(const path of ['/title/1','/games/7','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12'])assert.equal(predictivePage(new URL(path,origin),origin),true);
   for(const path of ['/logout','/discover-title?id=7','/title/0','/title/1#gallery','https://other.test/title/1'])assert.equal(predictivePage(new URL(path,origin),origin),false);
 });
 

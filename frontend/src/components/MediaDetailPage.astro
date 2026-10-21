@@ -3,6 +3,7 @@ import LocalDateTime from './LocalDateTime.astro';
 import Tracker from '../layouts/Tracker.astro';
 import StatusControl from './StatusControl.astro';
 import GameProgress from './GameProgress.astro';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import Icon from './Icon.astro';
 import ImageLightbox from './ImageLightbox.astro';
 import MediaDetailSeasons from './MediaDetailSeasons.astro';
@@ -30,7 +31,7 @@ const removeSpecials=signedIn&&title?.type==='series'
 const screenTitle=!!title&&['movie','series'].includes(title.type);
 const gameTitle=title?.type==='game';
 const gameChild=gameTitle&&['expansion','dlc'].includes(title?.game_class||'');
-const showGameAchievements=!gameTitle||!signedIn||(await tracker('preferences',Astro.locals.token).catch(()=>null))?.show_game_achievements!==false;
+const showGameAchievements=!gameTitle||!signedIn||(await viewerMediaPreferences(Astro.locals)).show_game_achievements;
 const trackable=title&&(screenTitle||gameTitle)&&title.tracking_available!==false;
 const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:650px) 108px, (max-width:900px) 170px, (max-width:1100px) 190px, 210px',route:'direct'});
 const backdrop=responsiveArtwork(title?.backdrop,{size:'original',route:'direct'});

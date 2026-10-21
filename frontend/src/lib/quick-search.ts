@@ -22,6 +22,7 @@ export function mountQuickSearch() {
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
   const mobile=matchMedia('(max-width:650px)');
   const combined=()=>dialog.dataset.combined==='yes';
+  const showMoviesSeries=()=>dialog.dataset.showMoviesSeries!=='false';
   const tabs: ReadonlyArray<{kind:SearchSection;label:string}> = [
     {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'actor',label:'Actors'},
     {kind:'staff',label:'Crew'}, {kind:'studio',label:'Studios'},
@@ -51,7 +52,7 @@ export function mountQuickSearch() {
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
   const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
-  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined());
+  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined(),showMoviesSeries());
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
   function updateTabs(available=availableTabs()) {
     activeTab=resolvedQuickSearchTab(activeTab,available);
@@ -185,7 +186,7 @@ export function mountQuickSearch() {
     const query = input?.value.trim() || '';
     controller?.abort();
     clearTimeout(progressTimer);progress?.classList.remove('visible');
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2?2:0;
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2&&showMoviesSeries()?2:0;
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     if (query.length < 2) {
@@ -202,7 +203,7 @@ export function mountQuickSearch() {
     clearTimeout(progressTimer);
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
-      const requests=quickSearchRequests(query);pending=requests.length;
+      const requests=quickSearchRequests(query,undefined,showMoviesSeries());pending=requests.length;
       const settleTitles = createQuickTitleBatch<SearchResult>();
       updateTabs();
       await Promise.all(requests.map(async request=>{
@@ -276,12 +277,16 @@ export function mountQuickSearch() {
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); },{signal:pageListeners.signal});
   input?.addEventListener('input', () => {
     clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=input.value.trim().length>=2?2:0;
+    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=input.value.trim().length>=2&&showMoviesSeries()?2:0;
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
     updateTabs();
     timer = window.setTimeout(search, 60);
+  },{signal:pageListeners.signal});
+  document.addEventListener('anylist:quick-search-policy-changed',()=>{
+    controller?.abort();latest={movie:[],series:[]};mediaPending=0;
+    if(dialog.open)void search();else updateTabs();
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
     const direction=Number(button.dataset.searchTabStep);

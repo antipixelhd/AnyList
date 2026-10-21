@@ -308,7 +308,7 @@ document.addEventListener('astro:page-load', () => {
     loadController = controller;
     const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
     if (cached) {
-      const image = button.closest('.browse-card, .entry-row, .quick-search-result')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
+      const image = button.closest('.browse-card, .entry-row, .quick-search-result, .game-progress-card')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
       const posterSource=image?.currentSrc||image?.src;
       const heroSource=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
       editorStore.warmArtwork(cached,
@@ -366,7 +366,8 @@ document.addEventListener('astro:page-load', () => {
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     const button=event.currentTarget as HTMLButtonElement;
     const editing = currentTitle;
-    if(!current||!editing||!await confirmEntryAction('Are you sure you want to delete this list entry?'))return;
+    const message=editing?.type==='game'&&!['expansion','dlc'].includes(editing.game_class||'')?'Remove this game and its listed expansions? Saved expansion details will be kept.':'Are you sure you want to delete this list entry?';
+    if(!current||!editing||!await confirmEntryAction(message))return;
     if(sessionSignal.aborted || currentTitle !== editing || !dialog.open)return;
     button.disabled=true;
     try{const id=await editorStore.remove(editing);if(sessionSignal.aborted)return;finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){if(sessionSignal.aborted)return;error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}

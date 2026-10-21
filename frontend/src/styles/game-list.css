@@ -1,0 +1,20 @@
+.game-list-shell .status-filters a{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:4px;color:var(--muted);text-decoration:none;transition:background .15s,color .15s}
+.game-list-shell .status-filters a:hover,.game-list-shell .status-filters a:focus-visible{color:var(--text);background:var(--field)}
+.game-list-shell .status-filters a.selected{color:var(--blue);background:var(--panel)}
+.game-list-shell .filter-control{display:grid;gap:8px;margin-bottom:18px}
+.game-list-shell .game-list-reset{display:block;padding:14px 0;text-align:center;color:var(--muted)}
+.game-list-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0;color:var(--muted)}
+.game-list-shell #entry-groups:not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr) minmax(100px,1.4fr)}
+.game-list-shell[data-show-achievements=false] #entry-groups:not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr)}
+.game-list-shell .game-list-achievements{text-align:center;color:var(--text-data);font-size:var(--type-row-size)}
+.game-list-shell [hidden]{display:none!important}
+.game-list-shell .row-menu:focus-visible{outline:none;background:var(--blue);color:var(--bright)}
+@media(max-width:650px){
+  .game-list-shell #entry-groups:not(.grid-view) :is(.entry-head,.entry-row),.game-list-shell[data-show-achievements=false] #entry-groups:not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:44px minmax(0,3fr) minmax(44px,1fr)}
+  .game-list-shell #entry-groups:not(.grid-view) .entry-row{grid-template-areas:"cover title score" "cover progress score";grid-template-rows:minmax(22px,auto) minmax(22px,auto)}
+  .game-list-shell #entry-groups:not(.grid-view) .game-hours{grid-area:progress;justify-content:flex-start;padding:0;color:var(--muted)}
+  .game-list-shell .game-list-achievements{grid-column:2;grid-row:3;text-align:left;color:var(--muted)}
+  .game-list-shell .game-list-achievements[data-known=false]{display:none}
+  .game-list-shell .game-list-achievements:not(:empty)::before{content:'Achievements ';font-size:var(--type-caption-size)}
+  .game-list-shell .game-hours-column,.game-list-shell .game-achievements-column{display:none}
+}

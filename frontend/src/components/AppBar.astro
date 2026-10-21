@@ -7,21 +7,24 @@ import MobileNavigation from './MobileNavigation.astro';
 import {appMobileNavigation} from '../lib/mobile-navigation';
 import {tracker} from '../lib/tracker';
 import {api} from '../lib/api';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {domainListLinks} from '../lib/media-domains';
 import '../styles/app-bar.css';
 
 const {user, token} = Astro.locals;
 const {initiallyHidden = false} = Astro.props;
 const pathname = Astro.url.pathname;
-const fadesAtTop = pathname.startsWith('/user/') || pathname.startsWith('/title/') || pathname.startsWith('/media/');
+const fadesAtTop = pathname.startsWith('/user/') || pathname.startsWith('/title/') || pathname.startsWith('/media/') || pathname.startsWith('/games/');
 const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
 let combineLists = true;
+const domains=await viewerMediaPreferences(Astro.locals);
 let quietNotifications = 0;
 let attentionNotifications = 0;
 let avatarUrl: string | null = null;
 
 if (user) {
   const [preferenceResult, notificationResult, profileResult] = await Promise.allSettled([
-    tracker('preferences', token),
+    Promise.resolve(domains),
     tracker('recent-events', token),
     api.profile.get(token!),
   ]);
@@ -41,26 +44,21 @@ const notificationLabel = notificationTotal
   ? `Notifications: ${attentionNotifications} need attention, ${quietNotifications} other`
   : 'Notifications: none unread';
 const active = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
-const listItems = combineLists
-  ? [{href: `${profile}/list`, label: 'Movie/Series List', icon: 'list', active: pathname.includes('/list')}]
-  : [
-      {href: `${profile}/movies`, label: 'Movie List', icon: 'list', active: pathname.includes('/movies')},
-      {href: `${profile}/series`, label: 'Series List', icon: 'list', active: pathname.includes('/series')},
-    ];
+const listItems=user?domainListLinks(profile,domains).map(item=>({...item,active:pathname===item.href})):[];
 const primaryItems = [
   {href: '/home', label: 'Home', icon: 'home', active: active('/home')},
   ...listItems,
   {href: '/browse', label: 'Browse', icon: 'browse', active: active('/browse')},
 ];
 const settingsRoute = pathname.startsWith('/settings/') || ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
-const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists});
+const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists,showGames:domains.show_games,showMoviesSeries:domains.show_movies_series});
 ---
 <header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>
     </a>
-    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} transition:persist="desktop-main-nav">
+    <nav class="appbar-nav" aria-label="Main navigation" data-desktop-main-nav data-profile-base={profile} data-media-domains={JSON.stringify(domains)} transition:persist="desktop-main-nav">
       {primaryItems.map(item => <a href={item.href} aria-current={item.active?'page':undefined}>{item.label}</a>)}
     </nav>
     <div class="account-nav">
@@ -82,8 +80,8 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     </div>
   </div>
 </header>
-<MobileNavigation {...mobileNavigation} quiet={quietNotifications} attention={attentionNotifications} notificationLabel={notificationLabel}/>
-{user && <QuickSearch combineLists={combineLists} hideTrigger/>}
+<MobileNavigation {...mobileNavigation} mediaDomains={domains} quiet={quietNotifications} attention={attentionNotifications} notificationLabel={notificationLabel}/>
+{user && <QuickSearch combineLists={combineLists} showMoviesSeries={domains.show_movies_series} hideTrigger/>}
 {user && <TrackingEditor />}
 {user && <script>
   import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
@@ -115,6 +113,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
 </script>}
 <script>
   import {pageScrollPosition} from '../lib/page-scroll-position';
+  import {mediaDomains,domainListLinks,type MediaDomains} from '../lib/media-domains';
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
   let cursorTransitionActive = false;
@@ -266,19 +265,17 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     }, { signal: appbarListeners.signal });
     window.addEventListener('resize', () => syncTopFade(pageY()), { passive: true, signal: appbarListeners.signal });
   }
-  document.addEventListener('anylist:combine-lists-changed', rawEvent => {
-    const combined = (rawEvent as CustomEvent<{combineLists: boolean}>).detail.combineLists;
+  const updateDomainNavigation=(change:Partial<MediaDomains>)=>{
     for (const nav of document.querySelectorAll<HTMLElement>('[data-desktop-main-nav]')) {
       const base = nav.dataset.profileBase;
       if (!base) continue;
-      const listIcon = nav.querySelector<HTMLElement>(`a[href="${base}/list"] .ui-icon, a[href="${base}/movies"] .ui-icon, a[href="${base}/series"] .ui-icon`)?.cloneNode(true);
-      nav.querySelectorAll<HTMLAnchorElement>(`a[href="${base}/list"], a[href="${base}/movies"], a[href="${base}/series"]`).forEach(link => link.remove());
+      const preferences=mediaDomains({...JSON.parse(nav.dataset.mediaDomains||'{}'),...change});
+      nav.dataset.mediaDomains=JSON.stringify(preferences);
+      nav.querySelectorAll<HTMLAnchorElement>(`a[href="${base}/list"], a[href="${base}/movies"], a[href="${base}/series"], a[href="${base}/games"]`).forEach(link => link.remove());
       const browse = nav.querySelector<HTMLAnchorElement>('a[href="/browse"]');
-      const items = combined ? [['list', 'Movie/Series List']] : [['movies', 'Movie List'], ['series', 'Series List']];
-      for (const [path, label] of items) {
+      for (const {href,label} of domainListLinks(base,preferences)) {
         const link = document.createElement('a');
-        link.href = `${base}/${path}`;
-        if (listIcon) link.append(listIcon.cloneNode(true));
+        link.href = href;
         link.append(label);
         if (location.pathname === link.pathname) {
           link.setAttribute('aria-current', 'page');
@@ -288,9 +285,11 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     }
     const quickSearch = document.querySelector<HTMLElement>('[data-quick-search]');
     if (quickSearch) {
-      quickSearch.dataset.combined = combined ? 'yes' : 'no';
-      quickSearch.querySelector('.quick-search-results')?.classList.toggle('combined', combined);
+      if(change.combine_lists!=null){quickSearch.dataset.combined = change.combine_lists ? 'yes' : 'no';quickSearch.querySelector('.quick-search-results')?.classList.toggle('combined', change.combine_lists);}
+      if(change.show_movies_series!=null){quickSearch.dataset.showMoviesSeries=String(change.show_movies_series);document.dispatchEvent(new Event('anylist:quick-search-policy-changed'));}
     }
-  }, { signal: appbarListeners.signal });
+  };
+  document.addEventListener('anylist:combine-lists-changed',event=>updateDomainNavigation({combine_lists:(event as CustomEvent).detail.combineLists}),{signal:appbarListeners.signal});
+  document.addEventListener('anylist:media-domains-changed',event=>updateDomainNavigation((event as CustomEvent).detail),{signal:appbarListeners.signal});
   });
 </script>

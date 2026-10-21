@@ -303,6 +303,62 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertFalse((await self.client.get('/profile/public-access-status')).json()['enable_logged_out_navigation'])
 
+    async def test_game_list_pages_filter_the_whole_collection_and_exclude_retained_expansions(self):
+        await self.save(status='completed', score=9)
+        child = await self.client.patch(f'/tracking/games/children/{self.child}', json={'status': 'paused', 'score': 8})
+        self.assertEqual(child.status_code, 200, child.text)
+        async with self.Session() as db:
+            for index in range(65):
+                game = CatalogueEntity(kind='game', name=f'Library {index:03}', attributes={
+                    'game_class': 'game', 'release_date': '2020-01-01', 'genres': ['Adventure']})
+                db.add(game)
+                await db.flush()
+                db.add(GameEntry(user_id=self.user.id, work_id=game.id, status='playing', total_seconds=index * 3600))
+            late = CatalogueEntity(kind='game', name='Zulu % game', attributes={
+                'game_class': 'game', 'release_date': '2024-01-01', 'genres': ['Role-playing (RPG)']})
+            db.add(late)
+            await db.flush()
+            db.add(GameEntry(user_id=self.user.id, work_id=late.id, status='planning'))
+            await db.commit()
+            late_id = late.id
+        first = (await self.client.get('/tracking/games/users/player/list?limit=50')).json()
+        second = (await self.client.get('/tracking/games/users/player/list?limit=50&offset=50')).json()
+        self.assertEqual(first['total'], 68)
+        self.assertEqual(len(first['results']), 50)
+        self.assertEqual(len(second['results']), 18)
+        self.assertFalse({r['subject']['catalogue_id'] for r in first['results']} & {r['subject']['catalogue_id'] for r in second['results']})
+        self.assertEqual(first['status_counts']['paused'], 1)
+        self.assertEqual(first['status_counts']['playing'], 65)
+        self.assertEqual(first['years'], ['2024', '2020'])
+        self.assertEqual(first['genres'], ['Adventure', 'Role-playing (RPG)'])
+        self.assertTrue(first['profile']['owner'])
+        filtered = (await self.client.get('/tracking/games/users/player/list', params={
+            'q': '%', 'genre': 'Role-playing (RPG)', 'year': '2024', 'status': 'planning', 'limit': 1})).json()
+        self.assertEqual(filtered['total'], 1)
+        self.assertEqual(filtered['results'][0]['subject']['catalogue_id'], late_id)
+        self.assertEqual(filtered['results'][0]['year'], '2024')
+        self.assertEqual((await self.client.get('/tracking/games/users/player/list?year=bad')).status_code, 422)
+        async with self.Session() as db:
+            base = await db.scalar(select(GameEntry).where(GameEntry.user_id == self.user.id, GameEntry.work_id == self.base))
+            revision = base.revision
+        await self.client.delete(f'/tracking/games/entries/{self.base}?confirmed=true&revision={revision}')
+        after = (await self.client.get('/tracking/games/users/player/list')).json()
+        self.assertEqual(after['total'], 66)
+        self.assertNotIn('paused', after['status_counts'])
+
+    async def test_currently_playing_shelf_is_bounded_and_owner_scoped(self):
+        await self.save(status='playing', total_seconds=3600)
+        child = await self.client.patch(f'/tracking/games/children/{self.child}', json={'status': 'playing'})
+        self.assertEqual(child.status_code, 200)
+        shelf = await self.client.get('/tracking/games/playing?limit=1')
+        self.assertEqual(shelf.status_code, 200, shelf.text)
+        self.assertEqual(shelf.json()['total'], 1)
+        self.assertEqual(shelf.json()['results'][0]['subject']['catalogue_id'], self.base)
+        self.viewer = self.other
+        self.assertEqual((await self.client.get('/tracking/games/playing')).json(), {'results': [], 'total': 0})
+        self.viewer = None
+        self.assertEqual((await self.client.get('/tracking/games/playing')).status_code, 401)
+
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):
         row = await self.save(notes='Private note', status='playing')
         prefs = await self.client.patch('/tracking/preferences', json={'show_games': False, 'show_movies_series': False})

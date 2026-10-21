@@ -37,7 +37,7 @@
   const cacheable = (url: URL) => url.origin === location.origin && (
     ['/home','/browse','/recent-events','/connections'].includes(url.pathname)
     || predictivePage(url,location.origin)
-    || /^\/user\/[^/]+(?:\/(?:movies|series|list|library|social|stats))?$/.test(url.pathname)
+    || /^\/user\/[^/]+(?:\/(?:movies|series|list|games|library|social|stats))?$/.test(url.pathname)
   );
   const keyFor = (url: URL, user = currentUser()) => `${user}:${url.pathname}${url.search}`;
   const state: NavigationState = window.__anyListNavigation ||= {

@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
+test('movie/series opt-out rejects title fan-out and title tabs together, retaining shared people search',()=>{
+  const requests=quickSearchRequests('Troy',undefined,false);
+  assert.equal(requests.length,2);assert.ok(requests.every(request=>request.kind==='contributors'));
+  const counts={all:1,movie:1,series:0,actor:2,staff:1,studio:0};
+  assert.deepEqual(availableQuickSearchTabs(counts,false,false,true,false),['actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(counts,true,false,true,false),['actor','staff']);
+});
+
 test('warm titles reuse private dialog cache until expiry, invalidation or unmount',async()=>{
   let calls=0, now=0;
   const lifetime=new AbortController(), query=new AbortController();

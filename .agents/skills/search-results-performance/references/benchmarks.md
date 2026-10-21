@@ -18,6 +18,7 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 | Dates, timeline, country release evidence | `movie_newest`, `movie_upcoming`, `series_upcoming`, `timeline_text`, `cinema_rereleases`, `details_then_timeline` |
 | Contributor discovery/eligibility | `actor`, `crew`, `studio`, `negative_studio`, `people_combined`, `all_contributors` |
 | Pagination/refill/options/failure | `page_two`, `sparse_viewport`, `filter_options`, `provider_failure` |
+| Personal Games lists | `game_list`, `game_list_page_two`, `game_list_genre_year`, `game_list_status` (catalogue-rooted game entries, bounded page, full-collection facets/status counts; no provider requests) |
 
 Repeat `--case` for several cases. Group selectors are alternatives: `--filters-only`, `--contributors-only`, `--edge-cases-only`, `--stress-only`. Read the case list before combining a selector with `--case`, because named cases must belong to that selection.
 
@@ -57,6 +58,7 @@ Each case resets relevant in-process caches; contributor cases also reset durabl
 ## What the output establishes
 
 - JSON records `ms`, `db_ms`, read/write statement counts, SQL signatures (`sql_patterns` plus `sql:...` counts), provider endpoint counts, result identities, row counts, pagination and pending state. Missing counters mean zero.
+- The harness also records response `payload_bytes` and `total`. Game list identities exclude fixture insertion timestamps and the newly projected year/genres; dedicated API tests verify those descriptive fields. Game cases seed `local_titles` actual game entries across five statuses, two genres and 26 release years. Their list membership/order/progress fingerprint remains comparable while response metadata grows. They do not establish expansion constraint behavior or UI performance; use the game PostgreSQL and browser checks for those.
 - Compare matching case/profile/stage. Compare result fingerprints and flags for optimizations; document deliberate relevance/behavior changes separately. A fingerprint covers returned content/order, not whether a synthetic fixture represents user intent well.
 - Compare SQL counts **and payload cost**. Large-credit stress exposed roughly 400 ms of repeated DB transfer with just four reads. Query-count parity alone does not establish performance parity.
 - Healthy warm cases should reuse provider evidence. The forced-outage fixture can still record one immediate failing provider invocation per poll; failures are not cached as successful empty results. Negative studios should stay omitted without repeating provider discovery until expiry.

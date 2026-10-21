@@ -17,7 +17,7 @@ export function predictionManifest(html:string,user:string) {
 }
 
 export function predictivePage(url:URL,origin:string) {
-  return url.origin===origin&&!url.hash&&(/^\/title\/[1-9]\d*$/.test(url.pathname)||
+  return url.origin===origin&&!url.hash&&(/^\/(?:title|games)\/[1-9]\d*$/.test(url.pathname)||
     /^\/(actors|person|studio)\/(catalogue|tmdb)(:|%3A)[1-9]\d*$/i.test(url.pathname));
 }
 

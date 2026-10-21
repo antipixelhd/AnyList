@@ -53,8 +53,8 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
     },
   };
 }
-export function quickSearchRequests(query:string,region?:string): SearchRequest[] {
-  const requests:SearchRequest[] = (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,...(region?{region}:{})})}`}));
+export function quickSearchRequests(query:string,region?:string,showMoviesSeries=true): SearchRequest[] {
+  const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,...(region?{region}:{})})}`}));
   for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
   return requests;
 }
@@ -86,8 +86,8 @@ export function visibleQuickSearchSections(mobile:boolean, selected:SearchSectio
 function quickSearchTabOrder(combined:boolean):SearchSection[] {
   return [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
 }
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true):SearchSection[] {
-  const order=quickSearchTabOrder(combined);
+export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true,showMoviesSeries=true):SearchSection[] {
+  const order=quickSearchTabOrder(combined).filter(section=>showMoviesSeries||!['all','movie','series'].includes(section));
   return searching?order.filter(kind=>counts[kind]>0||(['all','movie','series'].includes(kind)&&mediaPending)):order;
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
