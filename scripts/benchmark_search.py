@@ -35,8 +35,11 @@ from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
 from models.catalogue import (
+    CatalogueCredit,
     CatalogueEntity,
     CatalogueIdentity,
+    CharacterAppearance,
+    CharacterPerformance,
     ContributorEvidence,
     MetadataSnapshot,
 )
@@ -94,12 +97,14 @@ async def main(args):
                 db.add(Media(title=f'Benchmark title {900000 + index}', media_type=MediaType.movie,
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
+            first_game=None
             for index in range(args.local_titles):
                 game = CatalogueEntity(kind='game', name=f'Benchmark game {index:05}', attributes={
                     'game_class': 'game', 'release_date': f'{2000 + index % 26}-01-01',
                     'genres': ['Adventure' if index % 2 else 'Role-playing (RPG)']})
                 db.add(game)
                 await db.flush()
+                if first_game is None:first_game=game
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
@@ -111,8 +116,26 @@ async def main(args):
                     observed = datetime(2026, 10, 20, 12,tzinfo=timezone.utc).replace(tzinfo=None)+timedelta(seconds=index)
                     db.add(GameActivity(user_id=viewer.id, work_id=game.id, status='playing', created_at=observed,
                         payload={'window_started_at': observed.isoformat(), 'status_changed': True}))
+            if not args.case or 'game_credits' in args.case:
+                if first_game is None:
+                    first_game=CatalogueEntity(kind='game',name='Credit benchmark',attributes={'game_class':'game'})
+                    db.add(first_game);await db.flush()
+                people=[CatalogueEntity(kind='person',name=f'Fixture game actor {i}') for i in range(30)]
+                characters=[CatalogueEntity(kind='character',name=f'Fixture character {i}') for i in range(100)]
+                db.add_all(people+characters);await db.flush()
+                credits=[CatalogueCredit(work_id=first_game.id,contributor_id=person.id,provider='wikidata',
+                    source_key=f'fixture-{i}',role='voice_actor',role_label='Voice actor',
+                    attributes={'languages':['en'],'statement':{'evidence':'fixture '*1024}}) for i,person in enumerate(people)]
+                appearances=[CharacterAppearance(work_id=first_game.id,character_id=character.id,provider='igdb') for character in characters]
+                db.add_all(credits+appearances);await db.flush()
+                db.add_all([CharacterPerformance(work_id=first_game.id,credit_id=credits[i//3].id,
+                    appearance_id=appearances[i].id,language='en',source='wikidata') for i in range(90)])
+                game_credits_id=first_game.id
             await db.commit()
         fixture.app.include_router(games_router)
+        if not args.case or 'game_credits' in args.case:
+            from routers.catalogue import router as catalogue_router
+            fixture.app.include_router(catalogue_router,prefix='/tracking')
         fixture.app.dependency_overrides[get_current_user] = lambda: viewer
         fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: viewer
 
@@ -193,6 +216,7 @@ async def main(args):
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
             if isinstance(result, dict):
                 items = result.get('results', [])
+                if label=='game_credits':items=result['people']+result['game_characters']
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
                 elif isinstance(items, dict):
@@ -251,6 +275,8 @@ async def main(args):
         event.listen(fixture.engine.sync_engine, 'after_cursor_execute', sql_end)
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
+            ('game_credits',f'catalogue/entities/{game_credits_id}/details',{})] if not args.case or 'game_credits' in args.case else []
+        cases += [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_browse_preview','games/browse',{'limit':6}),
             ('game_browse_grid','games/browse',{'limit':24}),
@@ -349,6 +375,13 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_credits':
+                            result=await request(path,params)
+                            actors=[person for person in result['people'] if person['kind']=='actor']
+                            if len(actors)!=30 or len(result['game_characters'])!=100 or sum(len(person.get('performances',[])) for person in actors)!=90:
+                                raise RuntimeError('Game credit projection lost cast, independent characters or performance associations')
+                            if 'statement' in json.dumps(result):raise RuntimeError('Raw source credit evidence leaked into the detail payload')
+                            return result
                         if label in {'game_browse_pages','game_browse_timeline'}:
                             first=await request(path,params)
                             second=await request(path,{**params,'cursor':first['cursor']})

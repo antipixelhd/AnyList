@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 
 from models.catalogue import (
@@ -56,6 +56,10 @@ def validate_identity(namespace, external_id, kind=None):
 
         if not re.fullmatch(r"tt[0-9]+", external_id):
             raise IdentityConflict("Invalid IMDb title identifier")
+    if namespace in ('imdb.person','wikidata.item'):
+        import re
+        if not re.fullmatch(r'nm[0-9]+' if namespace=='imdb.person' else r'Q[1-9][0-9]*',external_id):
+            raise IdentityConflict('Invalid contributor or Wikidata identifier')
     if namespace.startswith("isbn."):
         from .catalogue_normalize import isbn
 
@@ -126,6 +130,8 @@ def source_rank(kind, source):
         return 100
     if source == "rawg":
         return 20
+    if source == 'wikidata':
+        return 30
     if source == "openlibrary":
         return 60
     return 80
@@ -146,7 +152,15 @@ def preferred_person_portrait(row, value, source):
             and 'image_url' not in (row.protected_fields or []))
 
 
+def older_wikidata(row,values,source):
+    incoming=(values.get('attributes') or {}).get('wikidata_revision')
+    current=(row.attributes or {}).get('wikidata_revision')
+    return source=='wikidata' and all(isinstance(value,int) and not isinstance(value,bool) for value in (incoming,current)) and incoming<current
+
+
 def merge_fields(row, values, source):
+    if older_wikidata(row,values,source):
+        return
     sources = dict(row.field_sources or {})
     protected = set(row.protected_fields or [])
     for field in ("name", "description", "image_url"):
@@ -274,7 +288,7 @@ async def upsert(db, model, values, keys, preserve_missing=False):
     await db.execute(statement)
     return (
         await db.execute(
-            select(model).where(*(getattr(model, k) == values[k] for k in keys))
+            select(model).where(*(getattr(model, k) == values[k] for k in keys)).execution_options(populate_existing=True)
         )
     ).scalar_one()
 
@@ -312,6 +326,8 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
                     {"edition_cross_references": evidence},
                 )
     work = await upsert_entity(db, doc["work"], provider)
+    if older_wikidata(work,doc['work'],provider):
+        return work
     if work.kind not in ("movie", "series", "game", "book", "person"):
         raise IdentityConflict("Invalid catalogue work kind")
     from core.catalogue_batch import DocumentEntities, write_credits
@@ -332,6 +348,12 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         })
     await db.flush()
     changed = await write_credits(db, credit_rows)
+    retired=doc.get('retired_credit_keys') or []
+    if retired:
+        await db.execute(update(CatalogueCredit).where(CatalogueCredit.work_id==work.id,
+            CatalogueCredit.provider==provider,CatalogueCredit.source_key.in_(retired))
+            .values(attributes=CatalogueCredit.attributes.op('||')({'source_active':False}))
+            .execution_options(synchronize_session=False))
     # A complete authoritative screen-credit response replaces obsolete rows.
     # Partial payloads and other providers retain their last successful credits.
     if provider == "tmdb" and work.kind in ("movie", "series") and doc.get("coverage", {}).get("credits_complete"):
@@ -346,11 +368,12 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         if missing:
             from core.screen_characters import project_characters
             await project_characters(db, work.id)
+    appearances={}
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
         if character.kind != "character":
             raise IdentityConflict("Appearance requires a fictional character")
-        await upsert(
+        appearance=await upsert(
             db,
             CharacterAppearance,
             {
@@ -362,6 +385,45 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
             ["work_id", "character_id", "provider"],
             preserve_missing=True,
         )
+        for item in c['character']['identities']:
+            appearances[(item['namespace'],str(item['external_id']))]=appearance.id
+    performances=doc.get('performances') or []
+    complete_keys=set(doc.get('performance_keys_complete') or [])
+    if performances or complete_keys:
+        keys=complete_keys|{p['credit_key'] for p in performances}
+        credits={row.source_key:row for row in await db.scalars(select(CatalogueCredit).where(
+            CatalogueCredit.work_id==work.id,CatalogueCredit.provider==provider,
+            CatalogueCredit.source_key.in_(keys)))}
+        incoming={str(credit['source_key'])[:200]:credit for credit in doc['credits']}
+        if not complete_keys<=set(credits) or not complete_keys<=set(incoming):
+            raise IdentityConflict('Complete performance evidence requires a credit from this work and source')
+        rows=[]
+        for performance in performances:
+            credit=credits.get(performance['credit_key'])
+            character=performance['character_identity']
+            appearance_id=appearances.get((character['namespace'],str(character['external_id'])))
+            language=performance.get('language','')
+            if not credit or credit.role not in ('actor','voice_actor','narrator') or not appearance_id or not isinstance(language,str) or len(language)>80:
+                raise IdentityConflict('Performance requires a performer and character from this work and source')
+            rows.append({'work_id':work.id,'credit_id':credit.id,'appearance_id':appearance_id,'language':language,'source':provider})
+        # Repeated source statements are idempotent. Composite database FKs and
+        # the existing performer trigger independently enforce the work boundary.
+        unique={(row['credit_id'],row['appearance_id'],row['language']):row for row in rows}
+        if complete_keys:
+            obsolete=delete(CharacterPerformance).where(CharacterPerformance.work_id==work.id,
+                CharacterPerformance.source==provider,CharacterPerformance.credit_id.in_([credits[key].id for key in complete_keys]))
+            if unique:obsolete=obsolete.where(tuple_(CharacterPerformance.credit_id,CharacterPerformance.appearance_id,
+                CharacterPerformance.language).not_in(list(unique)))
+            await db.execute(obsolete.execution_options(synchronize_session=False))
+            for key in complete_keys:
+                # These fields describe a fully retrieved source statement;
+                # removing its qualifier must not retain an obsolete label.
+                credits[key].character_label=incoming[key].get('character_label')
+                credits[key].position=incoming[key].get('position')
+        rows=list(unique.values())
+        for offset in range(0,len(rows),200):
+            await db.execute(insert(CharacterPerformance).values(rows[offset:offset+200])
+                .on_conflict_do_nothing(index_elements=['credit_id','appearance_id','language']))
     for e in doc["editions"]:
         if work.kind != "book":
             raise IdentityConflict("Edition requires a book work")
@@ -499,6 +561,7 @@ async def link_performance(db, credit_id, appearance_id, language=""):
             "credit_id": credit.id,
             "appearance_id": appearance.id,
             "language": language,
+            'source':'reviewed',
         },
         ["credit_id", "appearance_id", "language"],
     )

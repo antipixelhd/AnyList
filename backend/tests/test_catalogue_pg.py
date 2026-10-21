@@ -93,6 +93,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt048_principal_credits").upgrade()
                 importlib.import_module("migrations.versions.mt049_verified_company_aliases").upgrade()
                 importlib.import_module("migrations.versions.mt050_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt060_wikidata_credit_identities").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -103,6 +104,149 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.admin.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA "{self.schema}" CASCADE'))
         await self.admin.dispose()
+
+    async def test_verified_game_credit_identity_and_performance_are_idempotent_and_domain_scoped(self):
+        from core.game_credit_sources import project
+        from test_game_credit_sources import actor, claim, game, item, snak, voice
+        from models.catalogue import ScreenCharacter
+        raw=game();raw['claims']['P725']=[voice(qualifiers={'P453':[snak('Q300')],'P407':[snak('Q1860')]})]
+        doc=project(raw,{'Q200':actor(),'Q300':item('Q300','Character'),
+            'Q1860':item('Q1860','English',{'P424':[claim('en')]})},10,'game')
+        async with self.Session() as db:
+            film=await catalogue.ingest_document(db,normalize_tmdb({'id':42,'title':'Film',
+                'credits':{'cast':[{'id':123,'name':'Existing actor','character':'Film character'}]}},'movie'),'tmdb')
+            original=await catalogue.ingest_document(db,normalize_igdb({'id':10,'name':'Original game',
+                'game_type':{'id':0}}),'igdb')
+            work=await catalogue.ingest_document(db,doc,'wikidata')
+            await catalogue.ingest_document(db,doc,'wikidata')
+            self.assertEqual(work.id,original.id);self.assertEqual(work.name,'Original game')
+            person=await catalogue.resolve_identity(db,'tmdb.person','123')
+            self.assertEqual((await catalogue.resolve_identity(db,'wikidata.item','Q200')).entity_id,person.entity_id)
+            self.assertEqual((await catalogue.resolve_identity(db,'imdb.person','nm123')).entity_id,person.entity_id)
+            self.assertEqual((await db.get(CatalogueEntity,person.entity_id)).name,'Existing actor')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit)),2)
+            performance=await db.scalar(select(CharacterPerformance))
+            self.assertEqual((performance.work_id,performance.language,performance.source),(work.id,'en','wikidata'))
+            credit=await db.get(CatalogueCredit,performance.credit_id)
+            self.assertIsNone(credit.screen_character_id);self.assertEqual(credit.role,'voice_actor')
+            self.assertNotEqual(credit.work_id,film.id)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(ScreenCharacter)),1)
+            await db.commit()
+            bad=deepcopy(doc);bad['performances'][0]['character_identity']['external_id']='Q999'
+            with self.assertRaises(catalogue.IdentityConflict):
+                async with db.begin_nested():await catalogue.ingest_document(db,bad,'wikidata')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CharacterPerformance)),1)
+
+    async def test_game_performance_refresh_replaces_only_its_automatic_links(self):
+        from core.game_credit_sources import project
+        from test_game_credit_sources import actor, game, item, snak, voice
+        raw=game();raw['claims']['P725']=[voice(qualifiers={'P453':[snak('Q300')]})]
+        items={'Q200':actor(),'Q300':item('Q300','First'),'Q301':item('Q301','Second')}
+        async with self.Session() as db:
+            doc=project(raw,items,10,'game');await catalogue.ingest_document(db,doc,'wikidata')
+            first=await db.scalar(select(CharacterPerformance));first_id=first.id
+            await catalogue.ingest_document(db,doc,'wikidata')
+            self.assertEqual((await db.scalar(select(CharacterPerformance))).id,first_id)
+            raw['claims']['P725'][0]['qualifiers']['P453']=[snak('Q301')]
+            await catalogue.ingest_document(db,project(raw,items,10,'game'),'wikidata')
+            second=await db.scalar(select(CharacterPerformance))
+            self.assertNotEqual(second.appearance_id,first.appearance_id)
+            await catalogue.link_performance(db,second.credit_id,second.appearance_id)
+            self.assertEqual((await db.get(CharacterPerformance,second.id)).source,'reviewed')
+            raw['claims']['P725'][0]['qualifiers']['P453']=[snak('Q300')]
+            await catalogue.ingest_document(db,project(raw,items,10,'game'),'wikidata')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CharacterPerformance)),2)
+            raw['claims']['P725'][0]['qualifiers']={}
+            await catalogue.ingest_document(db,project(raw,items,10,'game'),'wikidata')
+            rows=list(await db.scalars(select(CharacterPerformance)))
+            self.assertEqual([(row.id,row.source) for row in rows],[(second.id,'reviewed')])
+            self.assertIsNone((await db.get(CatalogueCredit,second.credit_id)).character_label)
+
+    async def test_game_cast_projection_uses_its_character_graph_and_retires_explicitly_deprecated_claims(self):
+        from core.game_credit_sources import project
+        from core.media_details import work_details
+        from test_game_credit_sources import actor, claim, game, item, snak, voice
+        raw=game();raw['claims']['P725']=[voice(qualifiers={'P453':[snak('Q300')]})]
+        raw['claims']['P674']=[claim('Q301')]
+        items={'Q200':actor(),'Q300':item('Q300','Voiced'),'Q301':item('Q301','Silent')}
+        async with self.Session() as db:
+            film=await catalogue.ingest_document(db,normalize_tmdb({'id':42,'title':'Film',
+                'credits':{'cast':[{'id':123,'name':'Actor','character':'Unrelated film role'}]}},'movie'),'tmdb')
+            film_credit=await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id==film.id))
+            film_credit.character_image_url='https://example.test/film-character.jpg'
+            work=await catalogue.ingest_document(db,project(raw,items,10,'game'),'wikidata')
+            data=await work_details(db,work)
+            cast=[person for person in data['people'] if person['kind']=='actor']
+            self.assertEqual(len(cast),1);self.assertEqual(cast[0]['characters'],['Voiced'])
+            self.assertEqual(cast[0]['character_images'],[])
+            self.assertEqual(cast[0]['performances'][0]['language'],'')
+            silent=next(row for row in data['game_characters'] if row['name']=='Silent')
+            self.assertEqual(silent['performers'],[])
+            character_id=(await catalogue.resolve_identity(db,'wikidata.item','Q300')).entity_id
+            character=await db.get(CatalogueEntity,character_id)
+            character.image_url='https://example.test/reviewed-game-character.jpg'
+            await db.flush()
+            data=await work_details(db,work)
+            self.assertEqual(data['people'][0]['character_image'],character.image_url)
+            raw['claims']['P725'][0]['rank']='deprecated'
+            stale=deepcopy(project({**raw,'claims':{**raw['claims'],'P725':[voice(qualifiers={'P453':[snak('Q300')]})]}},items,10,'game'))
+            raw['lastrevid']+=1
+            await catalogue.ingest_document(db,project(raw,items,10,'game'),'wikidata')
+            await catalogue.ingest_document(db,stale,'wikidata')
+            data=await work_details(db,work)
+            self.assertEqual(data['people'],[])
+            self.assertTrue(all(not row['performers'] for row in data['game_characters']))
+            # Source evidence and manual associations remain stored, not erased.
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CharacterPerformance)),1)
+
+    async def test_wikidata_person_bridge_keeps_credit_history_and_rejects_conflicting_native_ids(self):
+        from core.game_credit_sources import record
+        from test_game_credit_sources import actor, item
+        async with self.Session() as db:
+            alias=await catalogue.upsert_entity(db,record(item('Q200','Game actor'),'person'),'wikidata')
+            film=await catalogue.ingest_document(db,normalize_tmdb({'id':42,'title':'Film',
+                'credits':{'cast':[{'id':123,'name':'Film actor','character':'Role'}]}},'movie'),'tmdb')
+            native=(await catalogue.resolve_identity(db,'tmdb.person','123')).entity_id
+            merged=await catalogue.upsert_entity(db,record(actor(),'person'),'wikidata')
+            self.assertEqual(merged.id,native);self.assertEqual(alias.canonical_person_id,native)
+            self.assertEqual((await catalogue.resolve_identity(db,'wikidata.item','Q200')).entity_id,native)
+            self.assertEqual((await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id==film.id))).contributor_id,native)
+            conflict=await catalogue.upsert_entity(db,{'kind':'person','name':'Other',
+                'identities':[{'namespace':'wikidata.item','external_id':'Q201'},
+                    {'namespace':'tmdb.person','external_id':'999'}]},'wikidata')
+            values=record(actor('Q201'),'person')
+            # Explicitly contradictory same-provider IDs are not repaired by name.
+            values['identities']=[{'namespace':'wikidata.item','external_id':'Q201'},
+                {'namespace':'tmdb.person','external_id':'123'}]
+            with self.assertRaises(catalogue.IdentityConflict):
+                async with db.begin_nested():await catalogue.upsert_entity(db,values,'wikidata')
+            self.assertEqual((await catalogue.resolve_identity(db,'tmdb.person','999')).entity_id,conflict.id)
+
+    async def test_wikidata_identity_migration_preserves_database_kind_and_identifier_checks(self):
+        from models.catalogue import CatalogueIdentity
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='Person');work=CatalogueEntity(kind='game',name='Game')
+            db.add_all([person,work]);await db.flush()
+            for entity_id,namespace,native in ((person.id,'wikidata.item','Q0'),(person.id,'wikidata.item','q10'),
+                (work.id,'imdb.person','nm10'),(person.id,'imdb.person','bad')):
+                with self.assertRaises(IntegrityError):
+                    async with db.begin_nested():
+                        db.add(CatalogueIdentity(entity_id=entity_id,namespace=namespace,external_id=native,source='test'))
+                        await db.flush()
+            await catalogue.bind_identity(db,person.id,'wikidata.item','Q10','wikidata')
+            await catalogue.bind_identity(db,work.id,'wikidata.item','Q20','wikidata')
+            await db.commit()
+
+    async def test_wikidata_identity_migration_empty_downgrade_and_reupgrade(self):
+        migration=importlib.import_module('migrations.versions.mt060_wikidata_credit_identities')
+        def run(conn,operation):
+            with Operations.context(MigrationContext.configure(conn)):operation()
+        async with self.engine.begin() as conn:
+            await conn.run_sync(lambda conn:run(conn,migration.downgrade))
+            await conn.run_sync(lambda conn:run(conn,migration.upgrade))
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='Person');db.add(person);await db.flush()
+            await catalogue.bind_identity(db,person.id,'wikidata.item','Q10','wikidata');await db.commit()
 
     async def test_character_fallback_from_unlisted_sequel_preserves_actor_and_title_priority(self):
         from core.statistics_actors import load_actors, actor_groups

@@ -47,17 +47,21 @@ async def screen_work(db, media):
 async def work_details(db, work, *, extras=True):
     if work is None:
         return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
-    credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
-        CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id,
-            or_(CatalogueEntity.kind == 'organization', principal_clause(CatalogueCredit, work.kind))
-            if work.kind in ('movie', 'series') else True)
-        .options(load_only(CatalogueCredit.id, CatalogueCredit.work_id, CatalogueCredit.contributor_id,
-            CatalogueCredit.provider, CatalogueCredit.role, CatalogueCredit.role_label, CatalogueCredit.position,
-            CatalogueCredit.character_label, CatalogueCredit.character_image_url, CatalogueCredit.screen_character_id,
-            CatalogueCredit.attributes),
-            load_only(CatalogueEntity.id, CatalogueEntity.kind, CatalogueEntity.name, CatalogueEntity.image_url,
-                CatalogueEntity.canonical_person_id, CatalogueEntity.canonical_company_id))
-        .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id))).all()
+    if work.kind=='game':
+        from core.game_credit_projection import displayed_credits
+        credits=await displayed_credits(db,work.id)
+    else:
+        credits = (await db.execute(select(CatalogueCredit, CatalogueEntity).join(CatalogueEntity,
+            CatalogueEntity.id == CatalogueCredit.contributor_id).where(CatalogueCredit.work_id == work.id,
+                or_(CatalogueEntity.kind == 'organization', principal_clause(CatalogueCredit, work.kind))
+                if work.kind in ('movie', 'series') else True)
+            .options(load_only(CatalogueCredit.id, CatalogueCredit.work_id, CatalogueCredit.contributor_id,
+                CatalogueCredit.provider, CatalogueCredit.role, CatalogueCredit.role_label, CatalogueCredit.position,
+                CatalogueCredit.character_label, CatalogueCredit.character_image_url, CatalogueCredit.screen_character_id,
+                CatalogueCredit.attributes),
+                load_only(CatalogueEntity.id, CatalogueEntity.kind, CatalogueEntity.name, CatalogueEntity.image_url,
+                    CatalogueEntity.canonical_person_id, CatalogueEntity.canonical_company_id))
+            .order_by(CatalogueCredit.position.is_(None), CatalogueCredit.position, CatalogueCredit.id))).all()
     people = {}
     organizations = {}
     billing = {}
@@ -65,6 +69,10 @@ async def work_details(db, work, *, extras=True):
     alternative_images = {}
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
+    game_performances,game_characters={},[]
+    if work.kind=='game':
+        from core.game_credit_projection import character_projection
+        game_performances,game_characters=await character_projection(db,work.id,[(credit,canonical[person.id]) for credit,person in credits])
     studio_ids = {canonical[person.id].id for c, person in credits if c.role == 'producer'}
     from core.screen_cast import complete_cast_works, preferred_cast
     if work.kind in ('movie', 'series'):
@@ -73,7 +81,7 @@ async def work_details(db, work, *, extras=True):
         credits = select_credits(credits, work.kind)
     image_roles, art_counts = [], {}
     for credit, person in credits:
-        if credit.role == 'actor' and art_counts.get(person.id, 0) < 8:
+        if work.kind in ('movie','series') and credit.role == 'actor' and art_counts.get(person.id, 0) < 8:
             image_roles.append(credit)
             art_counts[person.id] = art_counts.get(person.id, 0) + 1
     images = await character_images(db, {credit.screen_character_id for credit in image_roles
@@ -81,7 +89,7 @@ async def work_details(db, work, *, extras=True):
     image_role_ids = {credit.id for credit in image_roles}
     for credit, contributor in credits:
         contributor = canonical.get(contributor.id, contributor)
-        actor = credit.role == 'actor'
+        actor = credit.role == 'actor' or work.kind=='game' and credit.role in ('voice_actor','narrator')
         kind = 'studio' if contributor.kind == 'organization' else 'actor' if actor else 'staff'
         group = organizations if kind == 'studio' else people
         key = (contributor.id, kind)
@@ -110,7 +118,17 @@ async def work_details(db, work, *, extras=True):
             row['episode_count'] = max(row.get('episode_count', 0), count)
             if label(credit) in ('producer', 'executive producer'):
                 row['producer_episode_count'] = max(row.get('producer_episode_count', 0), count)
-        if credit.character_label and len(row['characters']) < 8 and credit.character_label not in row['characters']:
+        if work.kind=='game' and actor:
+            performances=game_performances.get(credit.id,[])
+            role=(credit.attributes or {}).get('game_role') or {}
+            names=[value['name'] for value in performances]+role.get('text_characters',[]) if performances else role.get('characters') or ([credit.character_label] if credit.character_label else [])
+            for name in names:
+                if name and name not in row['characters']:row['characters'].append(name)
+            row.setdefault('performances',[]).extend(performances)
+            for lang in (credit.attributes or {}).get('languages') or ['']:
+                if lang not in row.setdefault('languages',[]):row['languages'].append(lang)
+            local_images.setdefault(key,[]).extend(value['image'] for value in performances if value['image'])
+        elif credit.character_label and len(row['characters']) < 8 and credit.character_label not in row['characters']:
             row['characters'].append(credit.character_label)
         if actor and credit.id in image_role_ids:
             local_images.setdefault(key, []).extend([url] if (url := image(credit.character_image_url)) else [])
@@ -152,6 +170,7 @@ async def work_details(db, work, *, extras=True):
     from core.media_related import catalogue_related
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
+        **({'game_characters':game_characters} if work.kind=='game' else {}),
         'posters': unique_images(posters), 'artwork': unique_images(artwork), **related,
         **(movie_financials(attrs, *({'budget': row.budget, 'revenue': row.revenue}
             for row in snapshots if row.provider == 'tmdb')) if work.kind == 'movie' else {}),

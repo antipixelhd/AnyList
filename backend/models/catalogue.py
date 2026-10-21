@@ -298,6 +298,7 @@ class CharacterPerformance(Base):
     work_id: Mapped[int] = mapped_column(Integer, nullable=False)
     credit_id: Mapped[int] = mapped_column(Integer, nullable=False)
     appearance_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default='reviewed', server_default='reviewed')
     language: Mapped[str] = mapped_column(
         String(80), nullable=False, default="", server_default=""
     )

@@ -26,6 +26,8 @@ NAMESPACE_KINDS = {
     "tvdb.series": {"series"},
     "tvdb.movie": {"movie"},
     "imdb.title": {"movie", "series"},
+    "imdb.person": {"person"},
+    "wikidata.item": {"game", "person", "organization", "character"},
     "tmdb.person": {"person"},
     "tvdb.person": {"person"},
     "tmdb.company": {"organization"},

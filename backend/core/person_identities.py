@@ -1,4 +1,4 @@
-"""Bridge contributors only through authoritative TVDB-to-TMDB identifiers."""
+"""Bridge contributors only through explicit authoritative provider identifiers."""
 from sqlalchemy import select, update
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 
@@ -24,11 +24,32 @@ async def canonical_people(db, people, *, lightweight=False):
 
 
 async def reconcile_person_identities(db, identities, source):
+    if source=='wikidata':
+        await reconcile_wikidata_person(db,identities)
+        return
     await reconcile_contributor_identities(db, identities, source, 'person', 'person', 'canonical_person_id')
 
 
 async def reconcile_company_identities(db, identities, source):
     await reconcile_contributor_identities(db, identities, source, 'organization', 'company', 'canonical_company_id')
+
+
+async def reconcile_wikidata_person(db,identities):
+    from core import catalogue
+    pairs={item['namespace']:str(item['external_id']) for item in identities}
+    if len(pairs)!=len(identities) or 'wikidata.item' not in pairs or not set(pairs)<={'wikidata.item','tmdb.person','imdb.person'}:
+        return
+    for namespace,native in pairs.items():catalogue.validate_identity(namespace,native,'person')
+    await catalogue.write_lock(db)
+    from sqlalchemy import tuple_
+    mappings=list((await db.execute(select(CatalogueIdentity,CatalogueEntity).join(
+        CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(
+            tuple_(CatalogueIdentity.namespace,CatalogueIdentity.external_id).in_(list(pairs.items()))))).all())
+    roots={identity.namespace:person for identity,person in mappings}
+    root=next((roots[namespace] for namespace in ('tmdb.person','imdb.person','wikidata.item') if namespace in roots),None)
+    if root is None:return
+    for alias in {person.id:person for _,person in mappings}.values():
+        if alias.id!=root.id:await merge_contributor_alias(db,alias,root,'wikidata','person','canonical_person_id')
 
 
 async def reconcile_contributor_identities(db, identities, source, kind, namespace_kind, alias_field):
@@ -51,6 +72,11 @@ async def reconcile_contributor_identities(db, identities, source, kind, namespa
         return
     alias = await db.get(CatalogueEntity, tvdb.entity_id)
     root = await db.get(CatalogueEntity, tmdb.entity_id)
+    await merge_contributor_alias(db,alias,root,source,kind,alias_field)
+
+
+async def merge_contributor_alias(db,alias,root,source,kind,alias_field):
+    from core import catalogue
     if alias.kind != kind or root.kind != kind or getattr(alias, alias_field) or getattr(root, alias_field):
         raise catalogue.IdentityConflict('Contributor bridge has an invalid root')
     identifiers = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id.in_((alias.id, root.id)))))
@@ -71,8 +97,8 @@ async def reconcile_contributor_identities(db, identities, source, kind, namespa
             root.protected_fields = sorted(set(root.protected_fields or []) | {field})
     values = {field: getattr(alias, field) for field in ('description', 'image_url') if not catalogue.has_value(getattr(root, field))}
     values['attributes'] = {key: value for key, value in (alias.attributes or {}).items() if not catalogue.has_value((root.attributes or {}).get(key))}
-    catalogue.merge_fields(root, values, 'tvdb')
-    if kind == 'organization' and 'attributes.also_known_as' not in (root.protected_fields or []):
+    catalogue.merge_fields(root, values, source)
+    if (kind == 'organization' or source=='wikidata') and 'attributes.also_known_as' not in (root.protected_fields or []):
         root.attributes = {**(root.attributes or {}), 'also_known_as': sorted(set(
             [alias.name, *(alias.attributes or {}).get('also_known_as', []),
              *(root.attributes or {}).get('also_known_as', [])]))}
