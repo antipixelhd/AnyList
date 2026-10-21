@@ -3,6 +3,7 @@ import ProgressCard from "../components/ProgressCard.astro";
 import GameProgressCard from '../components/GameProgressCard.astro';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {gameListEditorTitle} from '../lib/game-list-data';
+import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
 import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
@@ -15,14 +16,17 @@ if(!Astro.locals.user)return Astro.redirect(shareLoginPath('/home'));
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 const imageRoute='direct';
 const domains=await viewerMediaPreferences(Astro.locals);
-const [activityResult,listResult,upcomingResult,gamesResult]=await Promise.allSettled([
-  tracker('activity',Astro.locals.token),
+const [activityResult,listResult,upcomingResult,gamesResult,gameActivityResult]=await Promise.allSettled([
+  domains.show_movies_series?tracker('activity',Astro.locals.token):Promise.resolve({results:[]}),
   domains.show_movies_series?tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token):Promise.resolve({entries:[]}),
   domains.show_movies_series?tracker('upcoming-seasons',Astro.locals.token):Promise.resolve({results:[]}),
   domains.show_games?tracker('games/playing?limit=12',Astro.locals.token):Promise.resolve({results:[],total:0}),
+  domains.show_games?tracker('games/activity',Astro.locals.token):Promise.resolve({results:[]}),
 ]);
-if(activityResult.status==='fulfilled')activities=activityResult.value.results.filter((activity:any)=>activity.media?.type==='game'?domains.show_games:domains.show_movies_series);
-else error=activityResult.reason.message;
+activities=mergeActivityFeeds([activityResult.status==='fulfilled'?activityResult.value.results:[],gameActivityResult.status==='fulfilled'?gameActivityResult.value.results:[]]).map(activityPresentation);
+const activitySources=[...(domains.show_movies_series?[activityResult]:[]),...(domains.show_games?[gameActivityResult]:[])];
+const activityFailures=activitySources.filter(result=>result.status==='rejected').length;
+if(activitySources.length&&activityFailures===activitySources.length)error='Activity is temporarily unavailable.';
 if(listResult.status==='fulfilled'){
   const watching=listResult.value.entries.filter((entry:any)=>entry.status==='watching');
   seriesInProgress=watching.filter((entry:any)=>entry.type==='series');
@@ -66,10 +70,12 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
     </section></section>}
     {domains.show_games&&<section class="home-playing-games" data-playing-games data-playing-revisions={gamesResult.status==='fulfilled'?JSON.stringify([playingGamesTotal,playingGames.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]):undefined}><div class="section-heading"><h2>Currently playing games</h2>{playingGamesTotal>0&&<a href={`${profile}/games?status=playing`}>View all</a>}</div>{gamesResult.status==='rejected'?<p class="series-progress-empty" role="status">Games are temporarily unavailable.</p>:playingGames.length?<div class="series-progress-grid">{playingGames.map((entry:any)=><GameProgressCard entry={entry} showAchievements={domains.show_game_achievements}/>)}</div>:<p class="series-progress-empty">Games you mark as Playing will appear here.</p>}</section>}
   </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-show-movies-series={String(domains.show_movies_series)} data-show-games={String(domains.show_games)}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
+  <p class="section-empty" role="status" data-activity-refresh-status hidden={!activityFailures||!!error}>Some activity is temporarily unavailable.</p>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
   </section></div>
 </div>
 {playingGames.length>0&&<script id="list-editor-entries" type="application/json" set:html={JSON.stringify(playingGames.map(gameListEditorTitle)).replaceAll('<','\\u003c')}/>}
+<script id="home-activity-data" type="application/json" set:html={JSON.stringify(activities).replaceAll('<','\\u003c')}/>
 <template id="activity-card-template"><article class="visual-event following-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
   <div class="event-body"><div class="event-meta"><time data-relative-time></time></div>
@@ -273,6 +279,7 @@ document.addEventListener('astro:page-load', () => {
 </script>
 <script>
 import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
+import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 
@@ -285,6 +292,8 @@ document.addEventListener('astro:page-load',()=>{
   const template=document.querySelector<HTMLTemplateElement>('#activity-card-template');
   const emptyTemplate=document.querySelector<HTMLTemplateElement>('#activity-empty-template');
   if(!feed||!template)return;
+  const seeded=JSON.parse(document.querySelector('#home-activity-data')?.textContent||'[]');
+  let movieActivity=seeded.filter((row:any)=>row.media.type!=='game'),gameActivity=seeded.filter((row:any)=>row.media.type==='game');
 
   const updateTimes=()=>document.querySelectorAll<HTMLTimeElement>('[data-relative-time]').forEach(time=>{
     if(!time.dateTime)return;
@@ -343,8 +352,17 @@ document.addEventListener('astro:page-load',()=>{
   const refresh=async(signal:AbortSignal)=>{
     updateTimes();
     try{
-      const response=await fetch('/api/proxy/tracking/activity',{cache:'no-store',signal});
-      if(response.ok)reconcile(((await response.json()).results||[]).filter((activity:any)=>activity.media?.type==='game'?feed.dataset.showGames!=='false':feed.dataset.showMoviesSeries!=='false'));
+      const read=async(path:string)=>{const response=await fetch(path,{cache:'no-store',signal});if(!response.ok)throw new Error('Activity unavailable');return (await response.json()).results.map(activityPresentation);};
+      const results=await Promise.allSettled([
+        feed.dataset.showMoviesSeries!=='false'?read('/api/proxy/tracking/activity'):Promise.resolve([]),
+        feed.dataset.showGames!=='false'?read('/api/proxy/tracking/games/activity'):Promise.resolve([]),
+      ]);
+      if(signal.aborted)return;
+      if(results[0].status==='fulfilled')movieActivity=results[0].value;
+      if(results[1].status==='fulfilled')gameActivity=results[1].value;
+      const enabled=[feed.dataset.showMoviesSeries!=='false',feed.dataset.showGames!=='false'];
+      const notice=feed.querySelector<HTMLElement>('[data-activity-refresh-status]');if(notice)notice.hidden=!results.some((result,index)=>enabled[index]&&result.status==='rejected');
+      if(results.some((result,index)=>enabled[index]&&result.status==='fulfilled'))reconcile(mergeActivityFeeds([movieActivity,gameActivity]));
     }catch(error){if(!signal.aborted)console.debug('Activity refresh deferred.',error);}
   };
 

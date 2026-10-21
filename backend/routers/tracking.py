@@ -13,7 +13,7 @@ from sqlalchemy import select, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
-from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user, get_optional_user, get_optional_user_or_api_key
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
@@ -631,8 +631,15 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
     return {'state':event.state}
 
 
+@router.get('/people/{username}/header')
+async def person_header(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user_or_api_key)):
+    from core.tracking_access import profile_header
+    user, owner = await profile_access(db, username, viewer)
+    return await profile_header(db, user, owner, viewer)
+
+
 @router.get("/people/{username}")
-async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
     if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]

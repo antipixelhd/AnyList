@@ -19,6 +19,7 @@ import statistics
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
@@ -34,7 +35,7 @@ from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
 from models.catalogue import CatalogueEntity, ContributorEvidence
-from models.games import GameEntry
+from models.games import GameEntry, GameFavorite, GameActivity
 from routers.games import router as games_router
 from models.users import UserSettings
 from sqlalchemy import delete, event, select
@@ -97,6 +98,12 @@ async def main(args):
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
+                if args.case and any(name.startswith('game_favorites') for name in args.case):
+                    db.add(GameFavorite(user_id=viewer.id, work_id=game.id, position=index))
+                if args.case and any(name.startswith('game_activity') for name in args.case):
+                    observed = datetime(2026, 10, 20, 12)+timedelta(seconds=index)
+                    db.add(GameActivity(user_id=viewer.id, work_id=game.id, status='playing', created_at=observed,
+                        payload={'window_started_at': observed.isoformat(), 'status_changed': True}))
             await db.commit()
         fixture.app.include_router(games_router)
         fixture.app.dependency_overrides[get_current_user] = lambda: viewer
@@ -186,7 +193,7 @@ async def main(args):
                 row['rows'] = len(items)
                 # Fixture insertion timestamps are intentionally fresh each run;
                 # compare game membership/order/progress without those clocks.
-                identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith('game_list') else items
+                identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith(('game_list', 'game_favorites')) else items
                 row['result_identity'] = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
                 row['payload_bytes'] = len(json.dumps(result).encode())
                 row['total'] = result.get('total')
@@ -209,6 +216,9 @@ async def main(args):
             ('game_list_page_two', f'games/users/{viewer.username}/list', {'limit': 50, 'offset': 50}),
             ('game_list_genre_year', f'games/users/{viewer.username}/list', {'genre': 'Role-playing (RPG)', 'year': '2024', 'limit': 2}),
             ('game_list_status', f'games/users/{viewer.username}/list', {'status': 'playing', 'sort': 'score', 'limit': 50}),
+            ('game_favorites', f'games/users/{viewer.username}/favorites', {'limit': 50}),
+            ('game_favorites_page_two', f'games/users/{viewer.username}/favorites', {'limit': 50, 'offset': 50}),
+            ('game_activity_profile', f'games/users/{viewer.username}/activity', {'limit': 12}),
             ('movie_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'movie'}),
             ('movie_typo', 'catalog', {'q': 'benchnark titl', 'media_type': 'movie'}),
             ('series_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'series'}),
@@ -328,7 +338,6 @@ async def main(args):
                         # Expiry is an intentional refresh, not a repeated slow
                         # check within the same validity window.
                         async with fixture.Session() as db:
-                            from datetime import timedelta
                             for job in await db.scalars(select(ContributorEvidence)):
                                 job.expires_at = contributor_evidence.now() - timedelta(seconds=1)
                             await db.commit()

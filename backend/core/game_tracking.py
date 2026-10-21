@@ -6,7 +6,8 @@ while holding a tracking lock; reads and writes never infer missing progress.
 from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.orm import defer
 
 from core.game_types import capabilities
 from models import User
@@ -20,6 +21,37 @@ async def lock_owner(db, user_id):
     # Includes first insert, child save and base removal, so neither a missing
     # row nor a concurrent first addition can bypass the same-owner invariant.
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+
+
+async def set_favorite(db, user_id, work_id, desired):
+    """Caller holds the owner lock; a favorite does not create membership."""
+    row = await db.get(GameFavorite, (user_id, work_id))
+    if desired and row is None:
+        maximum = await db.scalar(select(func.max(GameFavorite.position)).where(GameFavorite.user_id == user_id))
+        db.add(GameFavorite(user_id=user_id, work_id=work_id, position=(maximum if maximum is not None else -1)+1))
+    elif not desired and row:
+        await db.delete(row)
+
+
+async def reorder_favorites(db, user_id, work_ids):
+    await lock_owner(db, user_id)
+    # Fill only legacy NULL ranks that a still-running pre-migration process
+    # could have inserted during rollout. Existing ordered positions stay put.
+    await db.execute(text('''WITH baseline AS (
+        SELECT coalesce(max(position),-1) AS last FROM game_favorites WHERE user_id=:user_id),
+        ranked AS (SELECT work_id,baseline.last+row_number() OVER(ORDER BY work_id) AS position
+        FROM game_favorites CROSS JOIN baseline WHERE user_id=:user_id AND position IS NULL)
+        UPDATE game_favorites f SET position=r.position FROM ranked r
+        WHERE f.user_id=:user_id AND f.work_id=r.work_id'''), {'user_id': user_id})
+    rows = list((await db.scalars(select(GameFavorite).where(
+        GameFavorite.user_id == user_id, GameFavorite.work_id.in_(work_ids)))).all())
+    if len(rows) != len(work_ids):
+        raise HTTPException(409, 'Favorites changed. Reload before arranging them again.')
+    slots = sorted(row.position for row in rows)
+    by_id = {row.work_id: row for row in rows}
+    for work_id, slot in zip(work_ids, slots):
+        by_id[work_id].position = slot
+    await db.commit()
 
 
 async def work(db, work_id):
@@ -103,8 +135,10 @@ async def states(db, user_id, work_ids, *, owner=True):
         return []
     entities = (await db.scalars(select(CatalogueEntity).where(
         CatalogueEntity.id.in_(ids), CatalogueEntity.kind == 'game'))).all()
-    entries = {r.work_id: r for r in (await db.scalars(select(GameEntry).where(
-        GameEntry.user_id == user_id, GameEntry.work_id.in_(ids)))).all()}
+    entry_query = select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id.in_(ids))
+    if not owner:
+        entry_query = entry_query.options(defer(GameEntry.notes, raiseload=True))
+    entries = {r.work_id: r for r in (await db.scalars(entry_query)).all()}
     children = {r.work_id: r for r in (await db.scalars(select(GameChildState).where(
         GameChildState.user_id == user_id, GameChildState.work_id.in_(ids)))).all()}
     favorites = set((await db.scalars(select(GameFavorite.work_id).where(
@@ -215,6 +249,9 @@ async def save_entry(db, user_id, work_id, patch):
         raise HTTPException(422, 'This work is not an independently trackable game')
     row = await db.scalar(select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id == work_id))
     require_revision(row, patch.revision)
+    from core import game_activity
+    progress_changed = bool(patch.model_fields_set & {'achievement_mode', 'achievement_count', 'achievement_percentage', 'unlocked_ids', 'unlock_updates'})
+    before = await game_activity.snapshot(db, entity, row, achievements=progress_changed)
     previous = row.status if row else None
     if row is None:
         row = GameEntry(user_id=user_id, work_id=work_id, status='planning', revision=0)
@@ -246,13 +283,8 @@ async def save_entry(db, user_id, work_id, patch):
     if 'favorite' in fields:
         if patch.favorite is None:
             raise HTTPException(422, 'favorite cannot be null')
-        favorite = await db.get(GameFavorite, (user_id, work_id))
-        if patch.favorite and favorite is None:
-            db.add(GameFavorite(user_id=user_id, work_id=work_id))
-        elif not patch.favorite and favorite:
-            await db.delete(favorite)
-    db.add(GameActivity(user_id=user_id, work_id=work_id, status=row.status, score=row.score,
-        payload={'revision': row.revision, 'changed': sorted(fields - {'revision', 'confirm_simplified', 'expected_achievement_total'})}))
+        await set_favorite(db, user_id, work_id, patch.favorite)
+    await game_activity.record(db, row, before, await game_activity.snapshot(db, entity, row, achievements=progress_changed))
     await db.commit()
     return (await states(db, user_id, [work_id]))[0]
 
@@ -269,6 +301,8 @@ async def save_child(db, user_id, work_id, patch, *, listed):
         raise HTTPException(409, {'code': 'base_game_required', 'base_work_id': base_id})
     row = await db.scalar(select(GameChildState).where(GameChildState.user_id == user_id, GameChildState.work_id == work_id))
     require_revision(row, patch.revision)
+    from core import game_activity
+    before = await game_activity.snapshot(db, entity, row)
     previous = row.status if row else None
     if row is None:
         row = GameChildState(user_id=user_id, work_id=work_id, base_work_id=base_id, status='planning', revision=0)
@@ -280,6 +314,8 @@ async def save_child(db, user_id, work_id, patch, *, listed):
     apply_common(row, patch, previous)
     row.revision += 1
     row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if listed:
+        await game_activity.record(db, row, before, await game_activity.snapshot(db, entity, row))
     await db.commit()
     return (await states(db, user_id, [work_id]))[0]
 

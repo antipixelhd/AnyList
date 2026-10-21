@@ -48,7 +48,7 @@ const sceneThumbnail=title?.artwork_preview?.thumbnail||title?.artwork_thumbnail
 const creators=detailCreators(people);
 const typeHref=title&&detailBrowseHref(title.type);
 const yearHref=title?.year&&detailBrowseHref(title.type,{year:title.year});
-const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(signedIn&&screenTitle?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(trackable||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
+const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(trackable||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
 const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab'))?.id||'overview';
 // Discover only the primary preview in the head, ahead of the large credit JSON.
 const initialArtwork=[poster,backdrop].filter(Boolean).map(image=>({...image,priority:'high'}));
@@ -107,7 +107,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
           </div>
         </div>
         {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn} removeSpecials={removeSpecials}/></section>}
-        {signedIn&&screenTitle&&<section class="lab-panel" id="detail-panel-social" role="tabpanel" aria-labelledby="detail-tab-social" data-detail-panel="social" hidden={initialTab!=='social'}><div data-detail-social><p class="section-empty">Loading social activity…</p></div></section>}
+        {signedIn&&trackable&&<section class="lab-panel" id="detail-panel-social" role="tabpanel" aria-labelledby="detail-tab-social" data-detail-panel="social" hidden={initialTab!=='social'}><div data-detail-social><p class="section-empty">Loading social activity…</p></div></section>}
         {(trackable||!!people.length)&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}><p class="detail-load-status" data-detail-people-status hidden></p>{credits&&<><MediaDetailCredits label="Cast" rows={credits.cast} id="cast" loading={screenTitle&&!credits.cast.length}/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}
         {(trackable||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><p class="section-empty" data-detail-artwork-status hidden></p><div class="lab-gallery" data-detail-artwork-grid>{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img data-gallery-src={detailSceneArtwork(url,null,'direct',title.artwork_thumbnails?.[url])?.src} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
       </div>

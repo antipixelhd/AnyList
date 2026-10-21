@@ -1,7 +1,9 @@
 ---
 import ActivityCard from './ActivityCard.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
-const {data,type}=Astro.props as {data:{people:any[];activities:any[]};type:'movie'|'series'};
+import {gameStatuses} from '../lib/game-editor-data';
+const {data,type}=Astro.props as {data:{people:any[];activities:any[]};type:'movie'|'series'|'game'};
+const choices=type==='game'?gameStatuses:statuses;
 ---
 <div class="media-social-grid">
   <section class="media-social-activity" aria-labelledby="media-social-activity-heading">
@@ -10,10 +12,10 @@ const {data,type}=Astro.props as {data:{people:any[];activities:any[]};type:'mov
   </section>
   <section class="media-social-people" aria-labelledby="media-social-people-heading">
     <h2 id="media-social-people-heading">People you follow</h2>
-    {data.people.length?<div class="media-social-list">{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='movie'?'movies':'series'}`}>
+    {data.people.length?<div class="media-social-list">{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='game'?'games':type==='movie'?'movies':'series'}`}>
       <span class="lab-friend-avatar" aria-hidden="true">{person.has_avatar?<img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>:(person.display_name||person.username).slice(0,1).toUpperCase()}</span>
       <strong class="media-social-person-name">{person.display_name||person.username}</strong>
-      <span class="media-social-person-status">{statuses.find(([id])=>id===person.status)?.[1]||person.status}</span>
+      <span class="media-social-person-status">{choices.find(([id])=>id===person.status)?.[1]||person.status}</span>
       <span class="media-social-score">{scoreLabel(person.score)} <small>/ 10</small></span>
     </a>)}</div>:<p class="section-empty">No one has added this title yet.</p>}
   </section>

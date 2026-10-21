@@ -38,7 +38,7 @@ const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|
 const PUBLIC_CATALOG_IMPORT_RE = /^\/api\/proxy\/tracking\/catalog\/(?:movie|series)\/[1-9][0-9]*\/?$/;
 const PUBLIC_PERSON_IMAGES_RE = /^\/api\/proxy\/tracking\/contributors\/(?:actor|staff)\/(?:catalogue|tmdb)(?:%3[Aa]|:)[1-9][0-9]*\/images\/?$/;
 const PUBLIC_GAME_DETAIL_RE = /^\/(?:games\/[1-9][0-9]*|api\/proxy\/catalogue\/entities\/[1-9][0-9]*\/details)\/?$/;
-const PUBLIC_GAME_LIST_RE = /^\/(?:user\/[^/]+\/games|api\/proxy\/tracking\/games\/users\/[^/]+\/list)\/?$/;
+const PUBLIC_GAME_LIST_RE = /^\/(?:user\/[^/]+\/(?:games|favorites)|api\/proxy\/tracking\/games\/users\/[^/]+\/(?:list|favorites)|api\/proxy\/tracking\/people\/[^/]+\/header)\/?$/;
 // Movie/episode and show/season/episode detail pages (TMDB- and TVDB-numbered
 // variants), gated the same way as PUBLIC_EXPLORE_PAGE_RE above.
 const PUBLIC_MEDIA_DETAIL_PAGE_RE =

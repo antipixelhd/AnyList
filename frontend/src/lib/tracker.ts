@@ -28,6 +28,8 @@ export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='a
 
 export const scoreLabel = (value: number | null) => value == null || value === 0 ? '—' : Number(value.toFixed(1)).toString();
 
+export const trackedWorkHref=(work:{id:number;type:string})=>`/${work.type==='game'?'games':'title'}/${work.id}`;
+
 export const compactListProgress = (entry: {type?: string; progress: number; released_episodes?: number | null}) =>
   `Progress ${entry.progress}/${entry.type === 'movie' ? 1 : entry.released_episodes ?? '?'}`;
 
@@ -49,6 +51,13 @@ export function activityRating(activity: any) {
 
 export function activityAction(activity: any) {
   const details = activity.payload || {};
+  if(activity.media?.type==='game'){
+    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',completed:'Completed',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status]||'Updated';
+    if(details.rating_changed)return activity.score==null?'Removed rating for':details.rating_first?'Rated':'Changed rating for';
+    if(details.hours_changed)return 'Updated playtime for';
+    if(details.achievements_changed)return 'Updated achievement progress for';
+    return details.added_to_list?'Added to list':'Updated';
+  }
   const finished = details.finished_seasons || [];
   if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';

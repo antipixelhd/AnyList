@@ -114,6 +114,18 @@ class FavoritePatch(BaseModel):
     favorite: bool
 
 
+class GameFavoriteOrder(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    work_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(min_length=1, max_length=200)
+
+    @field_validator('work_ids')
+    @classmethod
+    def unique_work_ids(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError('Each game must occur once')
+        return value
+
+
 class GameStateBatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     work_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(max_length=250)

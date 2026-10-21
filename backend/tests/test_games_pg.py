@@ -4,7 +4,7 @@ import importlib
 import os
 import unittest
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 os.environ.setdefault('SECRET_KEY', 'games-test-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
@@ -20,10 +20,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from core import game_tracking
 from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user, get_tracking_write_user
-from models import Base, GlobalSettings, User, UserProfileData
+from models import Base, GlobalSettings, User, UserProfileData, Follow
 from models.base import PrivacyLevel
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship
-from models.games import GameAchievement, GameChildState, GameEntry
+from models.games import GameAchievement, GameChildState, GameEntry, GameFavorite, GameActivity
 from routers.games import router
 from routers.tracking import router as preferences_router
 from routers.catalogue import router as catalogue_router
@@ -52,6 +52,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 conn.execute(text(f'ALTER TABLE tracking_preferences DROP COLUMN {name}'))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module('migrations.versions.mt058_games_tracking').upgrade()
+                importlib.import_module('migrations.versions.mt059_game_favorite_order').upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -359,6 +360,125 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.viewer = None
         self.assertEqual((await self.client.get('/tracking/games/playing')).status_code, 401)
 
+    async def test_favorites_without_membership_have_private_safe_pages_and_independent_order(self):
+        async with self.Session() as db:
+            extras = [CatalogueEntity(kind='game', name=f'Favorite {index}', attributes={'game_class': 'game'}) for index in range(3)]
+            db.add_all(extras)
+            await db.commit()
+            extra_ids = [game.id for game in extras]
+            db.add(GameFavorite(user_id=self.other.id, work_id=extra_ids[-1], position=0))
+            await db.commit()
+        identifiers = [self.base, self.unknown, *extra_ids[:2]]
+        for identifier in identifiers:
+            response = await self.client.put(f'/tracking/games/favorites/{identifier}', json={'favorite': True})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertFalse(response.json()['listed'])
+        self.assertEqual((await self.client.get('/tracking/games/users/player/list')).json()['total'], 0)
+        response = await self.client.put('/tracking/games/favorites/order', json={'work_ids': identifiers[:2][::-1]})
+        self.assertEqual(response.status_code, 200, response.text)
+        page = (await self.client.get('/tracking/games/users/player/favorites?limit=2')).json()
+        self.assertEqual(page['total'], 4)
+        self.assertEqual([row['subject']['catalogue_id'] for row in page['results']], identifiers[:2][::-1])
+        self.assertEqual([row['subject']['catalogue_id'] for row in (await self.client.get('/tracking/games/users/player/favorites?limit=2&offset=2')).json()['results']], identifiers[2:])
+        self.assertTrue(all(row['status'] is None and row['achievements']['mode'] is None for row in page['results']))
+        for payload, status in (([identifiers[0], identifiers[0]], 422), ([extra_ids[-1]], 409)):
+            response = await self.client.put('/tracking/games/favorites/order', json={'work_ids': payload})
+            self.assertEqual(response.status_code, status, response.text)
+        self.viewer = self.other
+        await self.client.patch('/tracking/preferences', json={'show_games': False})
+        public = await self.client.get('/tracking/games/users/player/favorites')
+        self.assertEqual(public.status_code, 200)
+        self.assertFalse(public.json()['profile']['owner'])
+        self.assertTrue(all(row['revision'] is None and row['notes'] is None for row in public.json()['results']))
+        self.viewer = None
+        self.assertEqual((await self.client.get('/tracking/people/player/header')).status_code, 200)
+        self.assertEqual((await self.client.get('/tracking/people/player')).status_code, 200)
+        self.assertEqual((await self.client.get('/tracking/games/users/player/favorites')).status_code, 200)
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user.id))
+            profile.privacy_level = PrivacyLevel.private
+            await db.commit()
+        self.assertEqual((await self.client.get('/tracking/games/users/player/favorites')).status_code, 403)
+        self.assertEqual((await self.client.get('/tracking/people/player/header')).status_code, 403)
+        keyed = await self.client.get('/tracking/games/users/player/favorites', headers={'X-Api-Key': self.user.api_key})
+        self.assertEqual(keyed.status_code, 200, keyed.text)
+        self.assertTrue(keyed.json()['profile']['owner'])
+
+    async def test_concurrent_favorites_and_legacy_position_backfill(self):
+        responses = await asyncio.gather(*(self.client.put(f'/tracking/games/favorites/{identifier}', json={'favorite': True}) for identifier in (self.base, self.unknown)))
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        async with self.Session() as db:
+            positions = list((await db.scalars(select(GameFavorite.position).where(GameFavorite.user_id == self.user.id))).all())
+            self.assertEqual(sorted(positions), [0, 1])
+        migration = importlib.import_module('migrations.versions.mt059_game_favorite_order')
+        def legacy_round_trip(conn):
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.downgrade()
+                migration.upgrade()
+        async with self.engine.begin() as conn:
+            await conn.run_sync(legacy_round_trip)
+        async with self.Session() as db:
+            rows = (await db.execute(select(GameFavorite.work_id, GameFavorite.position).where(GameFavorite.user_id == self.user.id).order_by(GameFavorite.position))).all()
+            self.assertEqual(rows, [(self.base, 0), (self.unknown, 1)])
+        swapped = await self.client.put('/tracking/games/favorites/order', json={'work_ids': [self.unknown, self.base]})
+        self.assertEqual(swapped.status_code, 200, swapped.text)
+
+    async def test_public_game_activity_omits_notes_and_preserves_fixed_windows_and_achievement_unknowns(self):
+        row = await self.save(status='playing', total_seconds=3600, notes='Never public notes',
+            achievement_mode='targeted', expected_achievement_total=3, unlocked_ids=self.achievement_ids[:1])
+        first = (await self.client.get('/tracking/games/users/player/activity')).json()['results']
+        self.assertEqual(len(first), 1)
+        self.assertTrue(first[0]['key'].startswith('game:'))
+        self.assertNotIn('Never public notes', str(first))
+        self.assertNotIn('changed', first[0]['payload'])
+        self.assertAlmostEqual(first[0]['payload']['achievement_percentage'], 100/3)
+        row = await self.save(revision=row['revision'], notes='Another private note')
+        unchanged = (await self.client.get('/tracking/games/users/player/activity')).json()['results']
+        self.assertEqual(unchanged, first)
+        async with self.Session() as db:
+            activity = await db.scalar(select(GameActivity).where(GameActivity.user_id == self.user.id))
+            activity.payload = {**activity.payload, 'window_started_at': (datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(hours=25)).isoformat()}
+            # A recent edit cannot extend a window whose first event is old.
+            activity.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            await db.commit()
+        row = await self.save(revision=row['revision'], total_seconds=7200)
+        current = (await self.client.get('/tracking/games/users/player/activity')).json()['results']
+        self.assertEqual(len(current), 2)
+        self.assertTrue(current[0]['payload']['hours_changed'])
+        self.assertFalse(current[0]['payload']['achievements_changed'])
+        self.assertIsNone(current[0]['payload'].get('achievement_percentage'))
+        async with self.Session() as db:
+            db.add_all([GameActivity(user_id=self.user.id, work_id=self.base, status='playing', payload={'changed': ['notes']}) for _ in range(70)])
+            await db.commit()
+        self.assertEqual(len((await self.client.get('/tracking/games/users/player/activity')).json()['results']), 2)
+
+    async def test_game_following_and_social_enforce_privacy_and_exclude_unlisted_children(self):
+        await self.save(status='completed', score=9)
+        child = await self.client.patch(f'/tracking/games/children/{self.child}', json={'status': 'completed', 'score': 8})
+        self.assertEqual(child.status_code, 200, child.text)
+        async with self.Session() as db:
+            db.add(Follow(follower_id=self.other.id, following_id=self.user.id))
+            await db.commit()
+        self.viewer = self.other
+        feed = (await self.client.get('/tracking/games/activity')).json()['results']
+        self.assertEqual({row['media']['id'] for row in feed}, {self.base, self.child})
+        social = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
+        self.assertEqual([person['username'] for person in social['people']], ['player'])
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user.id))
+            profile.privacy_level = PrivacyLevel.private
+            await db.commit()
+        self.assertEqual((await self.client.get('/tracking/games/activity')).json()['results'], [])
+        self.assertEqual((await self.client.get(f'/tracking/games/works/{self.base}/social')).json()['people'], [])
+        self.assertEqual((await self.client.get('/tracking/games/users/player/activity')).status_code, 403)
+        self.viewer = self.user
+        own = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
+        self.assertEqual(own['people'][0]['self'], True)
+        removed = await self.client.delete(f'/tracking/games/children/{self.child}?revision={child.json()["revision"]}')
+        self.assertEqual(removed.status_code, 200)
+        visible = (await self.client.get('/tracking/games/users/player/activity')).json()['results']
+        self.assertEqual([row['media']['id'] for row in visible], [self.base])
+
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):
         row = await self.save(notes='Private note', status='playing')
         prefs = await self.client.patch('/tracking/preferences', json={'show_games': False, 'show_movies_series': False})
@@ -422,10 +542,13 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_migration_round_trip(self):
         migration = importlib.import_module('migrations.versions.mt058_games_tracking')
+        favorites = importlib.import_module('migrations.versions.mt059_game_favorite_order')
         def round_trip(conn):
             with Operations.context(MigrationContext.configure(conn)):
+                favorites.downgrade()
                 migration.downgrade()
                 migration.upgrade()
+                favorites.upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(round_trip)
         self.assertEqual((await self.client.get('/tracking/preferences')).status_code, 200)

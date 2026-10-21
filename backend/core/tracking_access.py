@@ -7,6 +7,23 @@ from models import GlobalSettings, User
 from models.base import PrivacyLevel
 
 
+async def profile_header(db, user, owner, viewer):
+    """Focused shared header; neither personal entries nor provider payloads."""
+    from models.follows import Follow
+    from models.tracking import TrackingPreferences
+    combined, following, follows_you = (await db.execute(select(
+        select(TrackingPreferences.combine_lists).where(TrackingPreferences.user_id == user.id).scalar_subquery(),
+        select(Follow.id).where(Follow.follower_id == (viewer.id if viewer else -1), Follow.following_id == user.id).exists(),
+        select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == (viewer.id if viewer else -1)).exists(),
+    ))).one()
+    profile = user.profile
+    return dict(id=user.id, username=user.username, display_name=user.display_name or user.username,
+        bio=profile.bio if profile else None,
+        profile_color=profile.profile_color if profile else '#3db4f2',
+        background_url=profile.background_url if profile else None, has_avatar=bool(profile and profile.avatar_path),
+        owner=owner, following=following, follows_you=follows_you, combine_lists=combined is not False)
+
+
 async def catalog_access(db, viewer):
     if viewer:
         return

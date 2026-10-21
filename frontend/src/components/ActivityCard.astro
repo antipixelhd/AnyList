@@ -1,7 +1,7 @@
 ---
 import ActivityCover from './ActivityCover.astro';
 import Icon from './Icon.astro';
-import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
+import {activityAction,activityRating,activityTime,scoreLabel,trackedWorkHref} from '../lib/tracker';
 import '../styles/activity-card-rating.css';
 const {activity,showUser=false}=Astro.props;
 const time=activityTime(activity.created_at);
@@ -17,11 +17,11 @@ const rating=activityRating(activity);
     </div>
     {showUser ? <div class="event-content">
         <a class="event-user" href={profileHref}>{activity.display_name}</a>
-        <p class="event-action"><span>{activityAction(activity)}</span> <a href={`/title/${activity.media.id}`}>{activity.media.title}</a></p>
+        <p class="event-action"><span>{activityAction(activity)}</span> <a href={trackedWorkHref(activity.media)}>{activity.media.title}</a></p>
         <a class="event-avatar" href={profileHref} aria-label={`View ${activity.display_name}'s profile`}>
           {activity.has_avatar?<img src={`/api/proxy/profile/avatar/${activity.user_id}`} alt="" loading="lazy"/>:<span aria-hidden="true">{initial}</span>}
         </a>
-      </div> : <p class="event-action"><span>{activityAction(activity)}</span> <a href={`/title/${activity.media.id}`}>{activity.media.title}</a></p>}
+      </div> : <p class="event-action"><span>{activityAction(activity)}</span> <a href={trackedWorkHref(activity.media)}>{activity.media.title}</a></p>}
     {rating&&<div class="event-footer"><span class="score-pill" aria-label={rating.label}><Icon name="star"/> {rating.previous!=null&&<>{scoreLabel(rating.previous)}<span class="score-transition" aria-hidden="true">→</span></>}{scoreLabel(rating.current)}<small>/10</small></span></div>}
   </div>
 </article>

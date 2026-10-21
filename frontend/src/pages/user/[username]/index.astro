@@ -7,18 +7,33 @@ import ProfileOverviewLeft from '../../../components/ProfileOverviewLeft.astro';
 import {tracker} from '../../../lib/tracker';
 import type { ProfileStats } from '../../../lib/profile-stats-data';
 import '../../../styles/profile-overview.css';
+import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
+import {profileMediaDomains} from '../../../lib/media-domains';
+import {gameListEditorTitle} from '../../../lib/game-list-data';
+import {mergeActivityFeeds} from '../../../lib/activity-feed';
+const preferences=await viewerMediaPreferences(Astro.locals);
+const ownHint=Astro.locals.user?.username===Astro.params.username;
 let profile:any=null,error='';
-try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token);}catch(e){error=(e as Error).message;}
+try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}${ownHint&&!preferences.show_movies_series?'/header':''}`,Astro.locals.token);}catch(e){error=(e as Error).message;Astro.response.status=error==='This profile is private.'?403:error==='Not found.'?404:503;}
+const domains=profileMediaDomains(profile?.owner===true,preferences);
 let movieStats: ProfileStats | null = null, seriesStats: ProfileStats | null = null;
+let gameFavorites:any[]|null=null;
+let activities:any[]=[],gameActivityFailed=false;
 if (profile) {
-  [movieStats, seriesStats] = await Promise.all(['movie', 'series'].map(type =>
+  const summaries=domains.show_movies_series?Promise.all(['movie', 'series'].map(type =>
     tracker(`profile/${encodeURIComponent(Astro.params.username!)}/stats/summary?media_type=${type}`, Astro.locals.token).catch(() => null)
-  ));
+  )):Promise.resolve([null,null]);
+  const [screen,games,gameActivity]=await Promise.all([summaries,domains.show_games?tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/favorites?limit=8`,Astro.locals.token).catch(()=>null):Promise.resolve(null),domains.show_games?tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/activity?limit=12`,Astro.locals.token).catch(()=>null):Promise.resolve({results:[]})]);
+  [movieStats,seriesStats]=screen;
+  gameFavorites=games?games.results.map(gameListEditorTitle):null;
+  activities=mergeActivityFeeds([domains.show_movies_series?profile.recent_activity||[]:[],gameActivity?.results||[]],12);
+  gameActivityFailed=domains.show_games&&gameActivity==null;
 }
 ---
 <Tracker title={profile?.display_name||'Profile'} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview">
-  <ProfileOverviewLeft profile={profile} movieStats={movieStats} seriesStats={seriesStats}/>
+  <ProfileOverviewLeft profile={profile} movieStats={movieStats} seriesStats={seriesStats} {domains} {gameFavorites}/>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>
-    {profile.recent_activity.length?profile.recent_activity.map((a:any)=><ActivityCard activity={a}/>):<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
+    {gameActivityFailed&&<p class="section-empty" role="status">Game activity is temporarily unavailable.</p>}
+    {activities.length?activities.map((a:any)=><ActivityCard activity={a}/>):!gameActivityFailed&&<div class="empty-state"><span class="empty-symbol"><Icon name="play"/></span><h2>No recent activity</h2><p>Tracking updates and ratings will appear here.</p></div>}
   </section>
 </main></>:<main class="page-width"><p class="error-message" role="alert">{error}</p></main>}</Tracker>

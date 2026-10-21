@@ -7,9 +7,18 @@ import test from 'node:test';
 const trackerSource = readFileSync(new URL('../src/lib/tracker.ts', import.meta.url), 'utf8')
   .replace('"./responsive-artwork"', JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
   .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
-const {activityRating, activityAction} = await import(
+const {activityRating, activityAction,trackedWorkHref} = await import(
   `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(trackerSource)).toString('base64')}`
 );
+
+test('game activity uses game wording and typed work links even when ids overlap movies',()=>{
+  assert.equal(trackedWorkHref({id:7,type:'game'}),'/games/7');
+  assert.equal(trackedWorkHref({id:7,type:'movie'}),'/title/7');
+  assert.equal(activityAction({media:{type:'game'},status:'planning',payload:{status_changed:true}}),'Plans to play');
+  assert.equal(activityAction({media:{type:'game'},status:'completed',payload:{hours_changed:true}}),'Updated playtime for');
+  assert.equal(activityAction({media:{type:'game'},status:'playing',payload:{achievements_changed:true}}),'Updated achievement progress for');
+  assert.equal(activityAction({media:{type:'game'},score:null,payload:{rating_changed:true}}),'Removed rating for');
+});
 
 test('initial rating corrections show only the final score and Rated headline', () => {
   const activity = {score: 8, payload: {rating_changed: true, rating_first: true}, media: {type: 'movie'}};

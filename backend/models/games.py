@@ -47,8 +47,13 @@ class GameEntry(Base):
 
 class GameFavorite(Base):
     __tablename__ = 'game_favorites'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'position', name='uq_game_favorite_position', deferrable=True, initially='DEFERRED'),
+        CheckConstraint('position IS NULL OR position >= 0', name='ck_game_favorite_position'),
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
     work_id: Mapped[int] = mapped_column(ForeignKey('catalogue_entities.id', ondelete='RESTRICT'), primary_key=True)
+    position: Mapped[int | None] = mapped_column(Integer)
 
 
 class GameChildState(Base):

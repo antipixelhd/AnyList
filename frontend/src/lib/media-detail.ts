@@ -146,19 +146,26 @@ export function mountMediaDetail() {
   };
   let socialPending:Promise<void>|undefined;
   let socialLoaded=false;
+  let socialRevision=0;
   const loadSocial=()=>{
     const host=root.querySelector<HTMLElement>('[data-detail-social]');
     if(!host||socialLoaded||socialPending)return;
+    const revision=socialRevision;
     socialPending=(async()=>{
-      const response=await fetch(`/title/${info.id}/social`,{signal});
+      const response=await fetch(`/${info.type==='game'?'games':'title'}/${info.id}/social`,{signal});
       if(!response.ok)throw new Error('Unable to load social activity.');
       const html=new DOMParser().parseFromString(await response.text(),'text/html');
       const content=html.querySelector('.media-social-grid');
       if(!content)throw new Error('Unable to load social activity.');
-      if(signal.aborted)return;
+      if(signal.aborted||revision!==socialRevision)return;
       host.replaceChildren(document.importNode(content,true));socialLoaded=true;
-    })().catch(error=>{if(!signal.aborted)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
+    })().catch(error=>{if(!signal.aborted)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;if(!signal.aborted&&revision!==socialRevision&&root.querySelector('[data-detail-tab="social"][aria-selected="true"]'))loadSocial();});
   };
+  document.addEventListener('anylist:entry-saved',event=>{
+    const saved=(event as CustomEvent).detail;
+    if((saved.subject?.kind==='game')!==(info.type==='game')||(info.type==='game'?saved.subject?.catalogue_id:saved.id)!==info.id)return;
+    socialRevision++;socialLoaded=false;if(root.querySelector('[data-detail-tab="social"][aria-selected="true"]'))loadSocial();
+  },{signal});
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!,signal);

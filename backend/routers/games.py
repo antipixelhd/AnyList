@@ -7,22 +7,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import game_tracking as tracking
 from core.game_types import capabilities
-from core.tracking_access import profile_access
+from core.tracking_access import profile_access, profile_header
 from db import get_db
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models import User
 from models.catalogue import CatalogueEntity
 from models.games import GameAchievement, GameAchievementUnlock, GameChildState, GameEntry, GameFavorite
-from models.follows import Follow
-from models.tracking import TrackingPreferences
+from models import UserProfileData
+from models.base import PrivacyLevel
+from sqlalchemy import or_, and_
 from schemas_games import (AchievementOut, AchievementPage, ChildPatch, FavoritePatch,
-                           GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus)
+                           GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
 
 router = APIRouter(prefix='/tracking/games', tags=['games'])
 DB = Annotated[AsyncSession, Depends(get_db)]
 Reader = Annotated[User, Depends(get_current_user_or_api_key)]
 Writer = Annotated[User, Depends(get_current_user)]
-Viewer = Annotated[User | None, Depends(get_optional_user)]
+Viewer = Annotated[User | None, Depends(get_optional_user_or_api_key)]
 WorkId = Annotated[int, Path(gt=0)]
 
 
@@ -76,17 +77,19 @@ async def unlist_child(work_id: WorkId, db: DB, viewer: Writer,
     return (await tracking.states(db, viewer.id, [work_id]))[0]
 
 
+@router.put('/favorites/order')
+async def favorite_order(body: GameFavoriteOrder, db: DB, viewer: Writer) -> dict:
+    await tracking.reorder_favorites(db, viewer.id, body.work_ids)
+    return {'work_ids': body.work_ids}
+
+
 @router.put('/favorites/{work_id}')
 async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Writer) -> GameEntryOut:
     await tracking.lock_owner(db, viewer.id)
     entity = await tracking.work(db, work_id)
     if not capabilities(entity.attributes).independent:
         raise HTTPException(422, 'Only independently playable games can be favorites')
-    row = await db.get(GameFavorite, (viewer.id, work_id))
-    if body.favorite and row is None:
-        db.add(GameFavorite(user_id=viewer.id, work_id=work_id))
-    elif not body.favorite and row:
-        await db.delete(row)
+    await tracking.set_favorite(db, viewer.id, work_id, body.favorite)
     await db.commit()
     return (await tracking.states(db, viewer.id, [work_id]))[0]
 
@@ -151,18 +154,25 @@ async def user_list(username: str, db: DB, viewer: Viewer,
                 'updated': memberships.c.updated_at.desc()}[sort]
     ids = list((await db.scalars(query.order_by(ordering, memberships.c.work_id).offset(offset).limit(limit))).all())
     rows = {r.subject.catalogue_id: r for r in await tracking.states(db, user.id, ids, owner=owner)}
-    combined, following, follows_you = (await db.execute(select(
-        select(TrackingPreferences.combine_lists).where(TrackingPreferences.user_id == user.id).scalar_subquery(),
-        select(Follow.id).where(Follow.follower_id == (viewer.id if viewer else -1), Follow.following_id == user.id).exists(),
-        select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == (viewer.id if viewer else -1)).exists(),
-    ))).one()
-    profile = user.profile
     return GameListOut(results=[rows[i] for i in ids], total=total, offset=offset, limit=limit,
-        profile=GameListProfile(id=user.id, username=user.username, display_name=user.display_name or user.username,
-            profile_color=profile.profile_color if profile else '#3db4f2',
-            background_url=profile.background_url if profile else None, has_avatar=bool(profile and profile.avatar_path),
-            owner=owner, following=following, follows_you=follows_you, combine_lists=combined is not False),
+        profile=GameListProfile.model_validate(await profile_header(db, user, owner, viewer)),
         status_counts=status_counts, genres=genres, years=years)
+
+
+@router.get('/users/{username}/favorites')
+async def favorites(username: str, db: DB, viewer: Viewer,
+                    offset: Annotated[int, Query(ge=0)] = 0,
+                    limit: Annotated[int, Query(ge=1, le=200)] = 50) -> GameListOut:
+    user, owner = await profile_access(db, username, viewer)
+    query = select(GameFavorite.work_id).where(GameFavorite.user_id == user.id)
+    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    ids = list((await db.scalars(query.order_by(GameFavorite.position.asc().nullslast(), GameFavorite.work_id)
+        .offset(offset).limit(limit))).all())
+    # Favorite cards need no private editor notes or revision. Fetch the full
+    # viewer-scoped editor state on interaction rather than copying every note.
+    rows = {row.subject.catalogue_id: row for row in await tracking.states(db, user.id, ids, owner=False)}
+    return GameListOut(results=[rows[identifier] for identifier in ids], total=total, offset=offset, limit=limit,
+        profile=GameListProfile.model_validate(await profile_header(db, user, owner, viewer)))
 
 
 @router.get('/playing')
@@ -175,3 +185,27 @@ async def playing_games(db: DB, viewer: Reader,
     ids = list((await db.scalars(query.order_by(GameEntry.updated_at.desc(), GameEntry.work_id).limit(limit))).all())
     states = {state.subject.catalogue_id: state for state in await tracking.states(db, viewer.id, ids)}
     return GamePlayingOut(results=[states[identifier] for identifier in ids], total=total)
+
+
+@router.get('/activity')
+async def following_activity(db: DB, viewer: Reader) -> dict:
+    from core import game_activity
+    return {'results': await game_activity.rows(db, game_activity.following_ids(viewer.id), public_only=True)}
+
+
+@router.get('/users/{username}/activity')
+async def profile_activity(username: str, db: DB, viewer: Viewer,
+                           limit: Annotated[int, Query(ge=1, le=60)] = 12) -> dict:
+    from core import game_activity
+    user, _ = await profile_access(db, username, viewer)
+    return {'results': await game_activity.rows(db, [user.id], limit=limit)}
+
+
+@router.get('/works/{work_id}/social')
+async def game_social(work_id: WorkId, db: DB, viewer: Reader) -> dict:
+    from core import game_activity
+    await tracking.work(db, work_id)
+    people = await game_activity.social_people(db, viewer.id, work_id)
+    visible = select(User.id).outerjoin(UserProfileData, UserProfileData.user_id == User.id).where(or_(
+        User.id == viewer.id, and_(User.id.in_(game_activity.following_ids(viewer.id)), UserProfileData.privacy_level == PrivacyLevel.public)))
+    return {'people': people, 'activities': await game_activity.rows(db, visible, limit=30, work_id=work_id)}
