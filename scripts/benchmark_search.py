@@ -19,9 +19,9 @@ import statistics
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
 from collections import Counter
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -34,10 +34,15 @@ from core import chronological_discovery, contributor_evidence, contributor_sear
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
-from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorEvidence
-from models.games import GameEntry, GameFavorite, GameActivity
-from routers.games import router as games_router
+from models.catalogue import (
+    CatalogueEntity,
+    CatalogueIdentity,
+    ContributorEvidence,
+    MetadataSnapshot,
+)
+from models.games import GameActivity, GameEntry, GameFavorite
 from models.users import UserSettings
+from routers.games import router as games_router
 from sqlalchemy import delete, event, select
 from test_statistics_pg import StatisticsDatabaseTests
 
@@ -98,12 +103,12 @@ async def main(args):
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
-                if args.case and 'game_search' in args.case:
+                if not args.case or any(name=='game_search' or name.startswith('game_browse') for name in args.case):
                     db.add(CatalogueIdentity(entity_id=game.id, namespace='igdb.game', external_id=str(8000000+index), source='igdb'))
                 if args.case and any(name.startswith('game_favorites') for name in args.case):
                     db.add(GameFavorite(user_id=viewer.id, work_id=game.id, position=index))
                 if args.case and any(name.startswith('game_activity') for name in args.case):
-                    observed = datetime(2026, 10, 20, 12)+timedelta(seconds=index)
+                    observed = datetime(2026, 10, 20, 12,tzinfo=timezone.utc).replace(tzinfo=None)+timedelta(seconds=index)
                     db.add(GameActivity(user_id=viewer.id, work_id=game.id, status='playing', created_at=observed,
                         payload={'window_started_at': observed.isoformat(), 'status_changed': True}))
             await db.commit()
@@ -214,13 +219,40 @@ async def main(args):
             counters['provider_requests'] += 1
             counters['provider:igdb/search'] += 1
             await asyncio.sleep(args.provider_delay_ms / 1000)
-            return [dict(external_id=str(8000000+i),name=f'Benchmark game {i:05}',game_class='game') for i in range(50)]
+            return [{'external_id':str(8000000+i),'name':f'Benchmark game {i:05}','game_class':'game'} for i in range(50)]
 
+        from core import game_browse
+        from core.game_browse_sources import GameBrowseSources
+        game_sources = GameBrowseSources(fixture.Session)
+        async def game_provider(endpoint, query):
+            counters['provider_requests'] += 1
+            counters['provider:igdb/'+endpoint] += 1
+            await asyncio.sleep(args.provider_delay_ms / 1000)
+            if endpoint=='genres':return [{'id':5,'name':'Role-playing (RPG)'},{'id':9,'name':'Adventure'}]
+            if endpoint=='platforms':return [{'id':6,'name':'PC (Microsoft Windows)'},{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]
+            if endpoint=='external_game_sources':return [{'id':1,'name':'IGDB'}]
+            if endpoint=='popularity_types':return [{'id':1,'name':'Visits','external_popularity_source':1}]
+            if endpoint=='popularity_primitives':
+                offset=int(re.search(r'offset (\d+)',query).group(1))
+                return [{'game_id':8000000+i,'value':1000-i,'calculated_at':int(time.time())} for i in range(offset,min(offset+100,300))]
+            if endpoint=='games':
+                ids=map(int,re.search(r'id=\(([\d,]+)\)',query).group(1).split(','))
+                return [{'id':identifier,'slug':f'benchmark-game-{identifier-8000000}',
+                    'name':f'Benchmark game {identifier-8000000:05}','game_type':{'id':0},'first_release_date':1704067200,
+                    'genres':[{'id':5 if identifier%2==0 else 9,'name':'Role-playing (RPG)' if identifier%2==0 else 'Adventure'}],
+                    'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}] if identifier%3 else [{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]}
+                    for identifier in ids]
+            raise RuntimeError('Unexpected Games benchmark provider endpoint')
+        game_sources.igdb=game_provider
         event.listen(fixture.engine.sync_engine, 'before_cursor_execute', sql_start)
         event.listen(fixture.engine.sync_engine, 'after_cursor_execute', sql_end)
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
+            ('game_browse_preview','games/browse',{'limit':6}),
+            ('game_browse_grid','games/browse',{'limit':24}),
+            ('game_browse_pages','games/browse',{'limit':24}),
+            ('game_browse_genre_platform','games/browse',{'limit':24,'genres':'igdb.genre:5','platforms':'pc'}),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             ('game_list_page_two', f'games/users/{viewer.username}/list', {'limit': 50, 'offset': 50}),
             ('game_list_genre_year', f'games/users/{viewer.username}/list', {'genre': 'Role-playing (RPG)', 'year': '2024', 'limit': 2}),
@@ -282,6 +314,7 @@ async def main(args):
         with ExitStack() as stack:
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
             stack.enter_context(patch('core.game_discovery.candidates', side_effect=game_candidates))
+            stack.enter_context(patch.object(game_browse,'GameBrowseSources',return_value=game_sources))
             stack.enter_context(patch('core.mdblist_discovery.ranked_rows', AsyncMock(return_value=(feed, False))))
             if args.skip_contributor_relevance:
                 async def unverified_studios(db, viewer, rows, api_key):
@@ -299,6 +332,10 @@ async def main(args):
                 for label, path, values in cases:
                     current_case = label
                     reset()
+                    if label.startswith('game_browse'):
+                        async with fixture.Session() as db:
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.like('game_browse%')))
+                            await db.commit()
                     if path == 'quick-search/contributors':
                         async with fixture.Session() as db:
                             await db.execute(delete(ContributorEvidence))
@@ -308,6 +345,13 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_browse_pages':
+                            first=await request(path,params)
+                            second=await request(path,{**params,'cursor':first['cursor']})
+                            ids=[row['igdb_id'] for row in first['results']+second['results']]
+                            if len(ids)!=48 or len(set(ids))!=48:
+                                raise RuntimeError('Games continuation lost or repeated candidates')
+                            return {**second,'results':first['results']+second['results']}
                         if path:
                             return await request(path, params)
                         if label == 'combined_titles':

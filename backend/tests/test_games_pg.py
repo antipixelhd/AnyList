@@ -14,7 +14,7 @@ import httpx
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -29,7 +29,7 @@ from routers.games import router
 from routers.tracking import router as preferences_router
 from routers.catalogue import router as catalogue_router
 from routers.profile import router as profile_router
-from schemas_games import ChildPatch, GamePatch
+from schemas_games import ChildPatch
 
 URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
@@ -124,6 +124,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(loader.await_count,1)
         self.assertEqual(results[0]['data'],{'rows':[]})
         self.assertFalse(results[0]['stale'])
+        self.assertEqual(await cache.peek('steam','game_browse_ranks','fixture',max_age=timedelta(hours=2)),{'rows':[]})
         async with self.Session() as db:
             row=await db.scalar(cache.query('steam','game_browse_ranks','fixture'))
             row.expires_at=datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(seconds=1)
@@ -142,6 +143,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(MetadataSnapshot(provider='steam',kind='game_browse_ranks',external_id=f'{game_source_cache.SCHEMA_VERSION}:held',
                 lease_token='another-worker',lease_until=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(minutes=1)))
             await db.commit()
+        with self.assertRaisesRegex(ProviderError,'cursor_expired'):
+            await cache.peek('steam','game_browse_ranks','fixture',max_age=timedelta(hours=2))
         with self.assertRaisesRegex(ProviderError,'retry_pending'):
             await cache.get('steam','game_browse_ranks','fixture',failed)
         with self.assertRaisesRegex(ProviderError,'refreshing'):
@@ -157,6 +160,51 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
                 MetadataSnapshot.provider=='steam',MetadataSnapshot.kind=='game_cache_capacity')),2)
             self.assertIsNotNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='legacy_metadata')))
+
+    async def test_game_critic_bridge_and_scores_use_actual_snapshot_schema_and_reuse_warm_evidence(self):
+        from core.game_browse_sources import GameBrowseSources
+        from core.catalogue_providers import ProviderError
+        source=GameBrowseSources(self.Session)
+        binding={key:{'value':value} for key,value in {'key':'fixture-game','item':'http://www.wikidata.org/entity/Q1','slug':'game-10','id':'10'}.items()}
+        source.request=AsyncMock(side_effect=[{'results':{'bindings':[binding]}},
+            {'id':50,'slug':'fixture-game','released':'2024-01-01','metacritic':90}])
+        rows=[{'igdb_id':10,'igdb_slug':'game-10','year':'2024'}]
+        self.assertEqual(await source.critic_scores(rows),{10:90})
+        self.assertEqual(await source.critic_scores(rows),{10:90})
+        self.assertEqual(source.request.await_count,2)
+        with self.assertRaisesRegex(ProviderError,'invalid_request'):
+            await source.cache.get('wikidata','game_'+('x'*25),'invalid',AsyncMock())
+
+    async def test_game_browse_projects_only_displayed_private_state_and_shared_public_pages(self):
+        from core import game_browse
+        from core.catalogue_providers import ProviderError
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='119133',source='igdb'))
+            await db.commit()
+        await self.save(status='playing',score=8,notes='Private note',total_seconds=12345)
+        page={'rows':[{'igdb_id':119133,'type':'game','title':'Base','identity_evidence':{'private':'no'},'platform_ids':[]},
+            {'igdb_id':999,'type':'game','title':'Remote'}],'has_more':False,'cursor':None,'partial':False}
+        service=game_browse.GameBrowse()
+        service.page=AsyncMock(return_value=page)
+        with patch.object(game_browse,'GameBrowse',return_value=service),patch.object(game_browse,'filters',AsyncMock(return_value={})):
+            own=await self.client.get('/tracking/games/browse')
+            self.assertEqual(own.status_code,200,own.text)
+            self.assertEqual([(r['id'],r['list_status'],r['score']) for r in own.json()['results']],[(self.base,'playing',8),(None,None,None)])
+            for excluded in ['Private note','total_seconds','entry','identity_evidence','platform_ids']:
+                self.assertNotIn(excluded,own.text)
+            self.viewer=self.other
+            other=await self.client.get('/tracking/games/browse')
+            self.assertIsNone(other.json()['results'][0]['list_status'])
+            self.viewer=None
+            anonymous=await self.client.get('/tracking/games/browse')
+            self.assertIsNone(anonymous.json()['results'][0]['score'])
+            async with self.Session() as db:
+                global_settings=await db.get(GlobalSettings,1);global_settings.enable_logged_out_navigation=False;await db.commit()
+            self.assertEqual((await self.client.get('/tracking/games/browse')).status_code,401)
+            self.viewer=self.user
+            for error,status in [('cursor_expired',409),('invalid_cursor',422),('unavailable',503)]:
+                service.page.side_effect=ProviderError(error)
+                self.assertEqual((await self.client.get('/tracking/games/browse')).status_code,status)
 
     async def test_game_search_maps_identities_without_creating_entries_and_resolution_rechecks_type(self):
         from core import game_discovery, catalogue
@@ -549,7 +597,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row['media']['id'] for row in visible], [self.base])
 
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):
-        row = await self.save(notes='Private note', status='playing')
+        await self.save(notes='Private note', status='playing')
         prefs = await self.client.patch('/tracking/preferences', json={'show_games': False, 'show_movies_series': False})
         self.assertEqual(prefs.status_code, 200, prefs.text)
         self.assertFalse(prefs.json()['show_games'])
@@ -573,7 +621,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get('/tracking/games/users/player/list')).status_code, 403)
 
     async def test_database_rejects_cross_owner_or_wrong_work_children_and_independent_packs(self):
-        base = await self.save()
+        await self.save()
         async with self.Session() as db:
             for values in ({'user_id': self.other.id, 'work_id': self.child, 'base_work_id': self.base, 'base_entry_id': 1},
                            {'user_id': self.user.id, 'work_id': self.child, 'base_work_id': self.unknown, 'base_entry_id': 1}):

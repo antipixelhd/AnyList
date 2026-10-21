@@ -295,6 +295,69 @@ class GameBrowseSources:
         return await self.cache.get('rawg', 'game_browse_bridge', str(identifier), load,
             ttl=timedelta(days=7), max_stale=timedelta(days=30))
 
+    async def critic_scores(self, games):
+        """Exact IGDB→Wikidata→RAWG identities; missing evidence is not score zero."""
+        slugs = sorted({row['igdb_slug'] for row in games if SLUG.fullmatch(row.get('igdb_slug') or '')})
+        if len(games) > 24:
+            raise ProviderError('invalid_request')
+        if not slugs:
+            return {}
+        async def mappings():
+            values = ' '.join(json.dumps(slug) for slug in slugs)
+            query = ('SELECT ?key ?item ?slug ?id WHERE { VALUES ?slug { '+values+' } '
+                '?item <http://www.wikidata.org/prop/direct/P9968> ?key; <http://www.wikidata.org/prop/P5794> ?statement. '
+                '?statement <http://www.wikidata.org/prop/statement/P5794> ?slug; <http://wikiba.se/ontology#rank> ?rank. '
+                'FILTER(?rank != <http://wikiba.se/ontology#DeprecatedRank>) '
+                'OPTIONAL { ?statement <http://www.wikidata.org/prop/qualifier/P9043> ?id } } LIMIT 500')
+            data = await self.request('wikidata', 'https://query.wikidata.org/sparql', params={'query':query,'format':'json'})
+            raw = (data.get('results') or {}).get('bindings')
+            if not isinstance(raw, list) or len(raw) >= 500:
+                raise ProviderError('bad_response')
+            forward = bridge_rows(raw)
+            by_slug = {}
+            for rawg_slug, value in forward.items():
+                if value:
+                    by_slug.setdefault(value['igdb_slug'], []).append({**value,'rawg_slug':rawg_slug})
+            # A contradictory RAWG identity cannot be silently repaired by
+            # another binding on the same IGDB slug.
+            conflicted = {(row.get('slug') or {}).get('value') for row in raw
+                if (row.get('key') or {}).get('value') in forward and forward[(row.get('key') or {}).get('value')] is None}
+            return {'mappings':{slug:rows[0] for slug,rows in by_slug.items() if len(rows)==1 and slug not in conflicted}}
+        key = hashlib.sha256(json.dumps(slugs).encode()).hexdigest()
+        bridges = await self.cache.get('wikidata','game_critic_bridge',key,mappings,
+            ttl=timedelta(days=7),max_stale=timedelta(days=14))
+        async def score(game):
+            if not str(game.get('year') or '').isdigit():
+                return None
+            binding = bridges['data']['mappings'].get(game.get('igdb_slug'))
+            if not binding or binding['igdb_id'] is not None and binding['igdb_id'] != game['igdb_id']:
+                return None
+            slug = binding['rawg_slug']
+            async def load():
+                try:
+                    raw = await self.request('rawg',f'https://api.rawg.io/api/games/{slug}',params={'key':settings.rawg_api_key})
+                except ProviderError as cause:
+                    if cause.code=='not_found':
+                        return {'score':None,'released':None,'rawg_id':None}
+                    raise
+                if not isinstance(raw,dict) or raw.get('slug') != slug or not positive(raw.get('id')):
+                    raise ProviderError('bad_response')
+                value = raw.get('metacritic')
+                return {'score':value if isinstance(value,int) and not isinstance(value,bool) and 0<=value<=100 else None,
+                    'released':raw.get('released'),'rawg_id':raw['id']}
+            result = await self.cache.get('rawg','game_browse_critic',slug,load,
+                ttl=timedelta(days=7),max_stale=timedelta(days=30))
+            year = str(result['data'].get('released') or '')[:4]
+            if not year.isdigit() or not game.get('year') or abs(int(year)-int(game['year']))>2:
+                return None
+            return result['data']['score']
+        values = await asyncio.gather(*(score(game) for game in games),return_exceptions=True)
+        if any(isinstance(value,Exception) for value in values):
+            # An outage must remain retryable, not consume these candidates as
+            # if they simply lacked critic evidence for the next two hours.
+            raise ProviderError('unavailable')
+        return {game['igdb_id']:value for game,value in zip(games,values) if isinstance(value,int) and not isinstance(value,bool)}
+
     async def bridges(self, keys, *, metacritic=False):
         keys = sorted(set(keys))
         if not keys:

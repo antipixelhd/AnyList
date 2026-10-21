@@ -60,6 +60,21 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         self.api=sources.GameBrowseSources()
         self.api.cache=ImmediateCache()
 
+    async def test_critic_filter_uses_verified_slug_bridges_and_rejects_conflicts_wrong_ids_and_years(self):
+        rows=[{'igdb_id':i,'igdb_slug':f'game-{i}','year':'2024' if i!=40 else None} for i in [10,20,30,40,50,60]]
+        raw=[binding(f'rawg-{i}',slug=f'game-{i}',identifier=str(999 if i==20 else i)) for i in [10,20,30,40,50,60]]
+        raw.append(binding('rawg-30',item='Q2',slug='game-30',identifier='30'))
+        async def request(provider,url,**kwargs):
+            if provider=='wikidata':return {'results':{'bindings':raw}}
+            slug=url.rsplit('/',1)[-1];identifier=int(slug.split('-')[-1])
+            return {'id':identifier,'slug':slug,'metacritic':0 if identifier==50 else 92,
+                'released':'2000-01-01' if identifier==60 else '2024-01-01'}
+        self.api.request=AsyncMock(side_effect=request)
+        result=await self.api.critic_scores(rows)
+        self.assertEqual(result,{10:92,50:0})
+        self.assertEqual(self.api.request.await_count,4)
+        self.assertFalse(any('name' in call.kwargs.get('params',{}) for call in self.api.request.await_args_list))
+
     async def test_popularity_type_is_discovered_and_bad_values_or_old_evidence_are_rejected(self):
         self.api.reference=AsyncMock(side_effect=[{'data':{'rows':[{'id':121,'name':'IGDB'}]}},
             {'data':{'rows':[{'id':88,'name':'Visits','external_popularity_source':121}]}}]*4)

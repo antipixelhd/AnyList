@@ -60,6 +60,47 @@ async def resolve_game(igdb_id: WorkId, db: DB, viewer: Reader) -> dict:
     return {'id': identifier}
 
 
+@router.get('/browse/facets')
+async def browse_facets(db: DB, viewer: Viewer) -> dict:
+    from core.game_browse_sources import GameBrowseSources
+    from core.catalogue_providers import ProviderError
+    await catalog_access(db, viewer)
+    await db.close()
+    try:
+        return await GameBrowseSources().facets()
+    except ProviderError:
+        raise HTTPException(503, 'Game filters are temporarily unavailable') from None
+
+
+@router.get('/browse')
+async def browse_games(db: DB, viewer: Viewer,
+        category: Literal['trending','most_played','sellers','newest','popular','score'] = 'trending',
+        genres: Annotated[str, Query(max_length=1000)] = '',
+        platforms: Annotated[str, Query(max_length=5000)] = '',
+        start: str | None = None, end: str | None = None,
+        q: Annotated[str, Query(max_length=100)] = '',
+        min_metacritic: Annotated[int, Query(ge=0,le=100)] = 0,
+        limit: Annotated[int, Query(ge=1,le=48)] = 24,
+        cursor: Annotated[str | None, Query(max_length=512)] = None) -> dict:
+    from core import game_browse
+    from core.catalogue_providers import ProviderError
+    await catalog_access(db, viewer)
+    viewer_id = viewer.id if viewer else None
+    # Authentication/catalog policy reads must not occupy a pooled connection
+    # while a cold public ranking is waiting on providers.
+    await db.close()
+    service = game_browse.GameBrowse()
+    try:
+        query = await game_browse.filters(service.sources, category=category,genres=genres,platforms=platforms,
+            start=start,end=end,q=q,min_metacritic=min_metacritic)
+        page = await service.page(query,limit=limit,cursor=cursor)
+        return await game_browse.project(db,viewer_id,page)
+    except ProviderError as cause:
+        code = 409 if cause.code=='cursor_expired' else 422 if cause.code in {'invalid_request','invalid_cursor'} else 503
+        message = 'This Games page expired. Refresh the results.' if code==409 else 'Invalid game filters or page.' if code==422 else 'Games are temporarily unavailable.'
+        raise HTTPException(code,message) from None
+
+
 @router.post('/state')
 async def batch_state(body: GameStateBatch, db: DB, viewer: Reader) -> list[GameEntryOut]:
     return await tracking.states(db, viewer.id, body.work_ids)

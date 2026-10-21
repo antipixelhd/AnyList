@@ -27,6 +27,8 @@ class GameSourceCache:
 
     @staticmethod
     def query(provider, kind, key):
+        if any(not isinstance(value,str) for value in (provider,kind,key)) or not kind.startswith('game_') or not 1<=len(provider)<=32 or not len(kind)<=24 or len(f'{SCHEMA_VERSION}:{key}')>200:
+            raise ProviderError('invalid_request')
         return select(MetadataSnapshot).where(MetadataSnapshot.provider == provider,
             MetadataSnapshot.kind == kind, MetadataSnapshot.external_id == f'{SCHEMA_VERSION}:{key}')
 
@@ -46,6 +48,17 @@ class GameSourceCache:
             .desc().nullslast(), MetadataSnapshot.id.desc()).offset(self.max_records)
         await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.id.in_(overflow))
             .execution_options(synchronize_session=False))
+
+    async def peek(self, provider, kind, key, *, max_age):
+        """Read an immutable browse continuation; eviction means restart, not replay."""
+        if not kind.startswith('game_'):
+            raise ProviderError('invalid_request')
+        async with self.sessions() as db:
+            row = (await db.execute(self.query(provider, kind, key).with_only_columns(
+                MetadataSnapshot.payload, MetadataSnapshot.fetched_at))).one_or_none()
+        if not row or row[0] is None or not row[1] or utcnow()-row[1] > max_age:
+            raise ProviderError('cursor_expired')
+        return row[0]
 
     async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3)):
         if not kind.startswith('game_'):
@@ -81,6 +94,7 @@ class GameSourceCache:
         return previous if previous else await asyncio.shield(task)
 
     async def refresh(self, provider, kind, key, loader, ttl, max_stale):
+        self.query(provider,kind,key)  # Validate the persisted namespace before INSERT.
         token = uuid.uuid4().hex
         async with self.sessions() as db:
             await db.execute(insert(MetadataSnapshot).values(provider=provider, kind=kind, external_id=f'{SCHEMA_VERSION}:{key}')
